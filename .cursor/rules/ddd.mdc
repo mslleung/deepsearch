@@ -1,0 +1,48 @@
+---
+alwaysApply: true
+---
+
+In the context of Domain-Driven Design (DDD), Vaughn Vernon, in his influential book "Implementing Domain-Driven Design," elaborates on the classical layered architecture, advocating for an evolution towards a more decoupled style like Hexagonal Architecture (also known as Ports and Adapters). While the layers are conceptually similar to those introduced by Eric Evans, Vernon places a strong emphasis on dependency inversion and the isolation of the domain.
+
+The four primary layers as described and contextualized by Vaughn Vernon are:
+
+### **Presentation Layer (User Interface)**
+
+The Presentation Layer, or User Interface, is the component of the system that interacts with the user or other external systems. It is responsible for displaying information to the user and interpreting their commands. This layer can take many forms, including a graphical user interface (GUI), a command-line interface (CLI), or a set of RESTful API endpoints that another system consumes.
+
+In Vernon's view, particularly when applying Hexagonal Architecture, the Presentation Layer is considered an "outside" concern. It acts as a client to the Application Layer and should not contain any business logic. Its primary role is to translate user actions into calls to the Application Layer and to present the results to the user.
+
+### **Application Layer**
+
+The Application Layer is a thin layer responsible for orchestrating the domain objects to perform specific use cases. It defines the jobs the software is supposed to do but does not contain the business rules themselves. Key responsibilities of the Application Layer include:
+
+*   **Coordinating Tasks:** It directs the domain objects to fulfill a specific user story or use case.
+*   **Transaction Management:** It controls the boundaries of transactions, ensuring that operations are atomic.
+*   **Security:** It handles authorization to ensure that only permitted users can execute certain tasks.
+*   **Mediation:** It acts as an intermediary between the Presentation Layer and the Domain Layer.
+
+Vernon emphasizes that this layer should be kept "thin," meaning it should not contain any business logic. Instead, it delegates the actual business-related work to the domain model. The components in this layer are direct clients of the Domain Layer.
+
+### **Domain Layer**
+
+The Domain Layer is the heart of the software and the central focus of DDD. It contains the conceptual model of the business domain, including all the business logic, rules, and state. This layer is responsible for representing the concepts of the business and the business situation. The key building blocks of the Domain Layer include:
+
+*   **Entities:** Objects with a distinct identity that runs through time and different states.
+*   **Value Objects:** Immutable objects that describe characteristics of a domain.
+*   **Aggregates:** Clusters of associated objects that are treated as a single unit for data changes, with one Entity acting as the Aggregate Root.
+*   **Domain Services:** Operations that don't naturally fit within an Entity or Value Object, representing stateless domain logic.
+*   **Domain Events:** Objects that represent something that has happened in the domain.
+*   **Repositories (Interfaces):** Abstractions for storing and retrieving Aggregates, with the interfaces residing in the domain layer to maintain its independence from the persistence technology.
+
+Vaughn Vernon strongly advocates for the isolation of the Domain Layer. It should be "pure" and have no dependencies on any other layer, especially not on infrastructure or presentation concerns.
+
+### **Infrastructure Layer**
+
+The Infrastructure Layer provides the generic technical capabilities that support the other layers. This includes implementations for concerns such as:
+
+*   **Persistence:** Interacting with databases to store and retrieve data.
+*   **Messaging:** Sending messages to a message queue.
+*   **External APIs:** Communicating with other systems.
+*   **User Interface Rendering:** Drawing widgets for the UI.
+
+In a traditional layered architecture, the Domain Layer might depend on the Infrastructure Layer, which Vernon points out can break the architecture. He, therefore, champions the **Dependency Inversion Principle**. This means that the Infrastructure Layer should depend on abstractions (like repository interfaces) that are defined in the Domain Layer, not the other way around. In the context of Hexagonal Architecture, the infrastructure components are "adapters" that implement the ports defined by the application's core (the Application and Domain layers), effectively inverting the dependency and keeping the core independent of technical details.

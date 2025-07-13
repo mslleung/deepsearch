@@ -1,0 +1,10 @@
+ktor:
+    application:
+        modules:
+            - io.deepsearch.ApplicationKt.module
+    deployment:
+        port: 8080
+
+openai:
+    api-key: ${OPENAI_API_KEY:your-api-key-here}
+    timeout: 60
