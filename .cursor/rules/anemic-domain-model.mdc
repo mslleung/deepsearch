@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+A domain object should not just hold data; it must also encapsulate the business logic that operates on that data. If you find yourself creating service classes that take a domain object as a parameter to perform validations, calculations, or state changes on it, that logic likely belongs within the domain object itself.
+
+To apply this rule, consider the following principles:
+
+*   **Combine Data and Behavior:** A core tenant of object-oriented design is the fusion of data and the operations that manipulate it. For instance, instead of a `BookService` with a method `addStock(Book book, int quantity)`, the `Book` class itself should have an `addStock(int quantity)` method. This way, the `Book` object is responsible for maintaining its own state.
+*   **Embrace Rich Domain Models:** Strive to create rich domain models where objects are the primary bearers of business logic. This makes the system more expressive and easier to understand, as the capabilities of an object are defined within the object itself. This approach still allows for a thin service layer to orchestrate tasks and transactions, but the core business rules reside in the domain entities.
+*   **Enforce Invariants:** Domain objects should be responsible for ensuring their internal state is always valid. This means that business rules and validations should be part of the object's constructors and methods. It should be impossible to create a domain object in an invalid state. For example, an `Order` object should not allow adding an item if the order has already been shipped. This logic should be within the `Order` class.
+*   **Tell, Don't Ask:** Instead of a service asking an object for its state to then act upon it, the service should tell the object what to do. For example, instead of getting the price and quantity from an `OrderItem` to calculate the total, you should be able to ask the `OrderItem` for its total.
+
+While the anemic domain model might seem simpler for very basic applications, for any system with significant and evolving business rules, enriching your domain objects with behavior will lead to a more maintainable, scalable, and understandable codebase.
