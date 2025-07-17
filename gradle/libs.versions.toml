@@ -5,9 +5,9 @@ h2-version = "2.3.232"
 koin-version = "3.5.6"
 kotlin-version = "2.1.10"
 ktor-version = "3.2.1"
-logback-version = "1.4.14"
+logback-version = "1.5.13"
 playwright-version = "1.53.0"
-openai-version = "4.0.1"
+google-adk-version = "0.1.0"
 
 [libraries]
 ktor-server-request-validation = { module = "io.ktor:ktor-server-request-validation", version.ref = "ktor-version" }
@@ -27,8 +27,9 @@ ktor-server-config-yaml = { module = "io.ktor:ktor-server-config-yaml", version.
 ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor-version" }
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin-version" }
 playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright-version" }
-openai-client = { module = "com.aallam.openai:openai-client", version.ref = "openai-version" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor-version" }
+google-adk = { module = "com.google.adk:google-adk", version.ref = "google-adk-version" }
+google-adk-dev = { module = "com.google.adk:google-adk-dev", version.ref = "google-adk-version" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin-version" }

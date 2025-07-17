@@ -7,7 +7,7 @@ data class WebScrapeQuery(
     val url: WebUrl,
     val query: SearchQuery
 ) {
-    fun isValidForScraping(): Boolean = url.value.isNotBlank() && query.value.isNotBlank()
+    fun isValid(): Boolean = url.value.isNotBlank() && query.value.isNotBlank()
     
     fun getUrlDomain(): String {
         return try {

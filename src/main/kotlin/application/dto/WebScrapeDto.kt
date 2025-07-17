@@ -14,10 +14,7 @@ data class WebScrapeRequest(
 
 @Serializable
 data class WebScrapeResponse(
-    val url: String,
-    val query: String,
     val response: String,
-    val timestamp: Long = System.currentTimeMillis()
 )
 
 fun WebScrapeRequest.toDomain(): WebScrapeQuery {
@@ -29,9 +26,6 @@ fun WebScrapeRequest.toDomain(): WebScrapeQuery {
 
 fun WebScrapeResult.toResponse(): WebScrapeResponse {
     return WebScrapeResponse(
-        url = url.value,
-        query = query.value,
         response = response,
-        timestamp = timestamp
     )
 } 

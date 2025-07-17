@@ -1,10 +1,11 @@
 package io.deepsearch.application.services
 
-import com.aallam.openai.api.chat.ChatCompletionRequest
-import com.aallam.openai.api.chat.ChatMessage
-import com.aallam.openai.api.chat.ChatRole
-import com.aallam.openai.api.model.ModelId
-import com.aallam.openai.client.OpenAI
+import com.google.adk.agents.LlmAgent
+import com.google.adk.events.Event
+import com.google.adk.runner.InMemoryRunner
+import com.google.adk.sessions.Session
+import com.google.adk.tools.FunctionTool
+import com.google.adk.tools.Annotations.Schema
 import com.microsoft.playwright.Browser
 import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Page
@@ -19,64 +20,173 @@ import io.deepsearch.domain.exceptions.WebScrapeException
 import io.deepsearch.domain.exceptions.WebScrapeTimeoutException
 import io.deepsearch.domain.exceptions.AiInterpretationException
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
-import org.slf4j.LoggerFactory
+import org.slf4j.Logger
+import io.reactivex.rxjava3.core.Flowable
+import java.util.concurrent.CompletableFuture
 
+/**
+ * AI Agent-based web scraping service using Google ADK
+ * Creates intelligent agents that can plan, scrape, and interpret web content autonomously
+ */
 class WebScrapeService(
-    private val openAI: OpenAI
+    private val logger: Logger
 ) {
-    private val logger = LoggerFactory.getLogger(WebScrapeService::class.java)
+    
+    companion object {
+        private const val USER_ID = "webscrape_user"
+        private const val AGENT_NAME = "web_scraping_agent"
+    }
+    
+    // ADK Agent with web scraping capabilities
+    private val webScrapingAgent = createWebScrapingAgent()
+    private val runner = InMemoryRunner(webScrapingAgent)
     
     suspend fun scrapeAndInterpret(request: WebScrapeRequest): WebScrapeResponse {
         val startTime = System.currentTimeMillis()
         
         try {
-            logger.info("Starting web scraping for URL: ${request.url}")
+            logger.info("ADK Agent starting autonomous web scraping task for URL: ${request.url}")
             
             val domainQuery = request.toDomain()
-            val scrapedContent = scrapeWebsite(domainQuery)
-            val interpretedResponse = interpretContent(scrapedContent, domainQuery)
+            
+            // Create ADK session for this scraping task
+            val session = createSession()
+            
+            // Build agent prompt with the scraping request
+            val agentPrompt = buildAgentPrompt(domainQuery)
+            
+            // Execute the agent
+            val agentResponse = executeAgent(session, agentPrompt)
             
             val result = WebScrapeResult(
                 url = domainQuery.url,
                 query = domainQuery.query,
-                response = interpretedResponse,
+                response = agentResponse,
                 timestamp = System.currentTimeMillis()
             )
             
-            logger.info("Web scraping completed successfully for URL: ${request.url}")
+            logger.info("ADK Agent completed autonomous task successfully for URL: ${request.url}")
             return result.toResponse()
             
         } catch (e: Exception) {
-            logger.error("Web scraping failed for URL: ${request.url}", e)
+            logger.error("ADK Agent failed to complete task for URL: ${request.url}", e)
             throw when (e) {
                 is TimeoutCancellationException -> WebScrapeTimeoutException(request.url)
                 is WebScrapeException, is AiInterpretationException -> e
-                else -> WebScrapeException("Unexpected error: ${e.message}")
+                else -> WebScrapeException("Agent execution error: ${e.message}")
             }
         }
     }
     
-    private suspend fun scrapeWebsite(query: WebScrapeQuery): String {
-        return withTimeout(30000) { // 30 second timeout
-            try {
-                Playwright.create().use { playwright ->
-                    val browser = playwright.chromium().launch(
+    private fun createWebScrapingAgent() = LlmAgent.builder()
+        .name(AGENT_NAME)
+        .model("gemini-2.0-flash")
+        .description("An intelligent web scraping agent that can fetch and analyze web content")
+        .instruction("""
+            You are an intelligent web scraping and analysis agent. You have access to web scraping tools.
+            
+            When given a URL and a query:
+            1. Use the scrape_website tool to fetch content from the URL
+            2. Analyze the scraped content in relation to the user's query
+            3. Provide a comprehensive and accurate answer based on the content
+            
+            Always:
+            - Base your answers strictly on the scraped content
+            - Be thorough and accurate in your analysis
+            - If the content doesn't contain relevant information, say so explicitly
+            - Highlight key findings that directly address the user's query
+        """.trimIndent())
+        .tools(
+            FunctionTool.create(WebScrapeService::class.java, "scrapeWebsite")
+        )
+        .build()
+    
+    private suspend fun createSession(): Session {
+        return CompletableFuture.supplyAsync {
+            runner.sessionService()
+                .createSession(AGENT_NAME, USER_ID)
+                .blockingGet()
+        }.get()
+    }
+    
+    private fun buildAgentPrompt(query: WebScrapeQuery): String {
+        return """
+            Please scrape and analyze the website: ${query.url.value}
+            
+            Query: ${query.query.value}
+            
+            Use the scrape_website tool to fetch the content, then provide a detailed analysis 
+            that answers the query based on what you find on the page.
+        """.trimIndent()
+    }
+    
+    private suspend fun executeAgent(session: Session, prompt: String): String {
+        return CompletableFuture.supplyAsync {
+            // Use ADK's message passing system
+            val events: Flowable<Event> = runner.runAsync(USER_ID, session.id(), prompt)
+            
+            val responses = mutableListOf<String>()
+            events.blockingForEach { event ->
+                val content = event.stringifyContent()
+                if (!content.isNullOrBlank()) {
+                    responses.add(content)
+                }
+            }
+            
+            responses.joinToString("\n").ifBlank { 
+                throw AiInterpretationException("No response from agent") 
+            }
+        }.get()
+    }
+    
+    companion object {
+        /**
+         * ADK Tool Function: Scrapes website content
+         * This function is called by the ADK agent when it needs to fetch web content
+         */
+        @JvmStatic
+        fun scrapeWebsite(
+            @Schema(
+                name = "url",
+                description = "The URL of the website to scrape"
+            ) url: String
+        ): Map<String, Any> {
+            return try {
+                val content = performWebScraping(url)
+                mapOf(
+                    "status" to "success",
+                    "url" to url,
+                    "content" to content,
+                    "content_length" to content.length,
+                    "message" to "Successfully scraped website content"
+                )
+            } catch (e: Exception) {
+                mapOf(
+                    "status" to "error",
+                    "url" to url,
+                    "error" to e.message,
+                    "message" to "Failed to scrape website: ${e.message}"
+                )
+            }
+        }
+        
+        private fun performWebScraping(url: String): String {
+            return Playwright.create().use { playwright ->
+                val browser = playwright.chromium()
+                    .launch(
                         BrowserType.LaunchOptions()
                             .setHeadless(true)
                             .setSlowMo(100.0)
                     )
-                    
-                    val page = browser.newPage()
-                    
+                
+                val page = browser.newPage()
+                
+                try {
                     // Configure page settings
-                    page.setDefaultTimeout(10000.0) // 10 second timeout for page operations
-                    
-                    // Set user agent to appear more like a real browser
-                    page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                    page.setDefaultTimeout(10000.0) // 10 second timeout
                     
                     // Navigate to the page
-                    page.navigate(query.url.value)
+                    page.navigate(url)
                     
                     // Wait for the page to load
                     page.waitForLoadState()
@@ -84,65 +194,17 @@ class WebScrapeService(
                     // Extract text content from the page
                     val textContent = page.evaluate("document.body.innerText").toString()
                     
-                    browser.close()
-                    
                     if (textContent.isBlank()) {
                         throw WebScrapeException("No content found on the page")
                     }
                     
-                    textContent
+                    // Limit content size for processing
+                    textContent.take(10000)
+                    
+                } finally {
+                    browser.close()
                 }
-            } catch (e: Exception) {
-                logger.error("Error during web scraping", e)
-                throw WebScrapeException("Failed to scrape content: ${e.message}")
             }
         }
-    }
-    
-    private suspend fun interpretContent(content: String, query: WebScrapeQuery): String {
-        try {
-            val prompt = buildPrompt(content, query.query.value)
-            
-            val chatRequest = ChatCompletionRequest(
-                model = ModelId("gpt-3.5-turbo"),
-                messages = listOf(
-                    ChatMessage(
-                        role = ChatRole.System,
-                        content = "You are a helpful assistant that analyzes web content and answers questions based on the provided content. " +
-                                "Always base your answers on the content provided. If the content doesn't contain information to answer the question, " +
-                                "say so explicitly. Be accurate and concise in your responses."
-                    ),
-                    ChatMessage(
-                        role = ChatRole.User,
-                        content = prompt
-                    )
-                ),
-                maxTokens = 1000
-            )
-            
-            val response = openAI.chatCompletion(chatRequest)
-            val answer = response.choices.firstOrNull()?.message?.content
-            
-            if (answer.isNullOrBlank()) {
-                throw AiInterpretationException("No response from AI model")
-            }
-            
-            return answer
-            
-        } catch (e: Exception) {
-            logger.error("Error during AI interpretation", e)
-            throw AiInterpretationException("Failed to interpret content: ${e.message}")
-        }
-    }
-    
-    private fun buildPrompt(content: String, query: String): String {
-        return """
-            Based on the following website content, please answer this question: "$query"
-            
-            Website content:
-            ${content.take(8000)} ${if (content.length > 8000) "..." else ""}
-            
-            Please provide a clear and accurate answer based on the content above.
-        """.trimIndent()
     }
 } 

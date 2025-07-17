@@ -32,8 +32,9 @@ dependencies {
     implementation(libs.logback.classic)
     implementation(libs.ktor.server.config.yaml)
     implementation(libs.playwright)
-    implementation(libs.openai.client)
     implementation(libs.ktor.client.okhttp)
+    implementation(libs.google.adk)
+    implementation(libs.google.adk.dev)
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.kotlin.test.junit)
 }

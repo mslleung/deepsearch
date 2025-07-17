@@ -30,10 +30,5 @@ fun Application.configureUserRoutes() {
                 userController.deleteUser(call)
             }
         }
-        
-        // Keep the root endpoint for backwards compatibility
-        get("/") {
-            call.respondText("Hello World!")
-        }
     }
 } 
