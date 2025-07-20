@@ -18,7 +18,7 @@ exposed-core = { module = "org.jetbrains.exposed:exposed-core", version.ref = "e
 exposed-jdbc = { module = "org.jetbrains.exposed:exposed-jdbc", version.ref = "exposed-version" }
 h2 = { module = "com.h2database:h2", version.ref = "h2-version" }
 ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor-version" }
-ktor-server-di = { module = "io.ktor:ktor-server-di", version.ref = "ktor-version" }
+ktor-server-config = { module = "io.ktor:ktor-server-config", version.ref = "ktor-version" }
 koin-ktor = { module = "io.insert-koin:koin-ktor", version.ref = "koin-version" }
 koin-logger-slf4j = { module = "io.insert-koin:koin-logger-slf4j", version.ref = "koin-version" }
 ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor-version" }
