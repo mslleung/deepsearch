@@ -1,6 +1,6 @@
 package io.deepsearch.presentation.controllers
 
-import io.deepsearch.application.dto.WebScrapeRequest
+import io.deepsearch.presentation.dto.WebScrapeRequest
 import io.deepsearch.application.services.WebScrapeService
 import io.deepsearch.domain.exceptions.AiInterpretationException
 import io.deepsearch.domain.exceptions.InvalidUrlException
@@ -15,7 +15,7 @@ class WebScrapeController(private val webScrapeService: WebScrapeService) {
     suspend fun scrapeWebsite(call: ApplicationCall) {
         try {
             val request = call.receive<WebScrapeRequest>()
-            val response = webScrapeService.scrapeAndInterpret(request)
+            val response = webScrapeService.scrapeAndInterpret(request.query, request.url)
             call.respond(HttpStatusCode.OK, response)
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))

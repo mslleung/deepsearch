@@ -56,7 +56,7 @@ class UserController(private val userService: UserService) {
                 ?: return call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid user ID"))
 
             val request = call.receive<UpdateUserRequest>()
-            val response = userService.updateUser(id, request)
+            val response = userService.updateUser(UserId(id), request.toDomain(UserId(id)))
             call.respond(HttpStatusCode.OK, response)
         } catch (e: UserNotFoundException) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to e.message))
@@ -72,7 +72,7 @@ class UserController(private val userService: UserService) {
             val id = call.parameters["id"]?.toIntOrNull()
                 ?: return call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid user ID"))
 
-            val deleted = userService.deleteUser(id)
+            val deleted = userService.deleteUser(UserId(id))
             if (deleted) {
                 call.respond(HttpStatusCode.NoContent)
             } else {

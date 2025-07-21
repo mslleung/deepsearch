@@ -17,10 +17,15 @@ dependencies {
     // Serialization for DTOs
     implementation(libs.ktor.serialization.kotlinx.json)
 
+    implementation(libs.playwright)
+
+    implementation(libs.google.adk)
+    implementation(libs.google.adk.dev)
+
     // Dependency injection
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)
-    
+
     testImplementation(libs.kotlin.test.junit)
 }
 

@@ -1,15 +1,6 @@
 ktor:
     application:
         modules:
-            - io.deepsearch.ApplicationKt.module
+            - io.deepsearch.presentation.ApplicationKt.module
     deployment:
         port: 8080
-
-# Google ADK Configuration
-# ADK uses environment variables for configuration:
-# GOOGLE_API_KEY - Your Google AI Studio API key
-# GOOGLE_GENAI_USE_VERTEXAI - Set to "FALSE" for AI Studio, "TRUE" for Vertex AI
-adk:
-    environment: development
-    logging:
-        level: INFO
