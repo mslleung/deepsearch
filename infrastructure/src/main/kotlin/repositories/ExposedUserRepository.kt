@@ -13,7 +13,7 @@ import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransacti
 
 class ExposedUserRepository : UserRepository {
     
-    override suspend fun save(user: User): User = dbQuery {
+    override suspend fun save(user: User): User = newSuspendedTransaction(Dispatchers.IO) {
         val id = UserTable.insert {
             it[name] = user.name.value
             it[age] = user.age.value
@@ -22,19 +22,19 @@ class ExposedUserRepository : UserRepository {
         user.withId(UserId(id))
     }
 
-    override suspend fun findById(id: UserId): User? = dbQuery {
+    override suspend fun findById(id: UserId): User? = newSuspendedTransaction(Dispatchers.IO) {
         UserTable.selectAll()
             .where { UserTable.id eq id.value }
             .map { mapRowToUser(it) }
             .singleOrNull()
     }
 
-    override suspend fun findAll(): List<User> = dbQuery {
+    override suspend fun findAll(): List<User> = newSuspendedTransaction(Dispatchers.IO) {
         UserTable.selectAll()
             .map { mapRowToUser(it) }
     }
 
-    override suspend fun update(user: User): User = dbQuery {
+    override suspend fun update(user: User): User = newSuspendedTransaction(Dispatchers.IO) {
         UserTable.update({ UserTable.id eq user.id!!.value }) {
             it[name] = user.name.value
             it[age] = user.age.value
@@ -42,11 +42,11 @@ class ExposedUserRepository : UserRepository {
         user
     }
 
-    override suspend fun delete(id: UserId): Boolean = dbQuery {
+    override suspend fun delete(id: UserId): Boolean = newSuspendedTransaction(Dispatchers.IO) {
         UserTable.deleteWhere { UserTable.id eq id.value } > 0
     }
 
-    override suspend fun exists(id: UserId): Boolean = dbQuery {
+    override suspend fun exists(id: UserId): Boolean = newSuspendedTransaction(Dispatchers.IO) {
         UserTable.selectAll()
             .where { UserTable.id eq id.value }
             .limit(1)
@@ -60,7 +60,4 @@ class ExposedUserRepository : UserRepository {
             age = UserAge(row[UserTable.age])
         )
     }
-
-    private suspend fun <T> dbQuery(block: suspend () -> T): T =
-        newSuspendedTransaction(Dispatchers.IO) { block() }
 } 

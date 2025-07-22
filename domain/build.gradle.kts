@@ -16,8 +16,12 @@ dependencies {
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
 
-    implementation(libs.kotlin.test.junit)
-    testImplementation(libs.kotlin.test.junit)
+    // Dependency injection
+    implementation(libs.koin.ktor)
+    implementation(libs.koin.logger.slf4j)
+
+    testImplementation(libs.kotlin.test.junit5)
+    testRuntimeOnly(libs.junit.jupiter.engine)
 }
 
 tasks.test {
