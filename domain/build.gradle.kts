@@ -12,6 +12,7 @@ repositories {
 dependencies {
     // Domain layer should be pure - minimal dependencies only
     implementation(libs.playwright)
+    implementation(libs.playwright.axe.core)
 
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
@@ -21,6 +22,7 @@ dependencies {
     implementation(libs.koin.logger.slf4j)
 
     testImplementation(libs.kotlin.test.junit5)
+    testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.jupiter.engine)
 }
 

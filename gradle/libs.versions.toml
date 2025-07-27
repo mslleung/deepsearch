@@ -5,9 +5,11 @@ h2-version = "2.3.232"
 junit-version = "5.11.3"
 koin-version = "3.5.6"
 kotlin-version = "2.1.10"
+kotlinx-coroutines-version = "1.7.3"
 ktor-version = "3.2.1"
 logback-version = "1.5.13"
 playwright-version = "1.53.0"
+playwright-axe-core-version = "4.10.1"
 google-adk-version = "0.1.0"
 
 [libraries]
@@ -26,9 +28,11 @@ ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor-
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback-version" }
 ktor-server-config-yaml = { module = "io.ktor:ktor-server-config-yaml", version.ref = "ktor-version" }
 ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor-version" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines-version" }
 kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin-version" }
 junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit-version" }
 playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright-version" }
+playwright-axe-core = { module = "com.deque.html.axe-core:playwright", version.ref = "playwright-axe-core-version" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor-version" }
 google-adk = { module = "com.google.adk:google-adk", version.ref = "google-adk-version" }
 google-adk-dev = { module = "com.google.adk:google-adk-dev", version.ref = "google-adk-version" }

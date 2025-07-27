@@ -10,3 +10,5 @@ The user should give a URL and a query, and we should be able to answer the quer
 
 Coding guidlines:
 Code quality is paramount. Good engineering approaches such as clean code and domain-driven design (by Eric Evans and Vaughn Vernon) should be followed. That said, we should remain pragmatic and adapt the solution to best solve the problem.
+
+Respect current code style and existing working code. Don't break existing working code.
