@@ -4,12 +4,11 @@ import com.microsoft.playwright.Browser
 import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
-import io.ktor.http.Url
 import io.deepsearch.domain.exceptions.WebScrapingException
 
 class WebScrapingService {
     
-    suspend fun scrapeWebsite(url: Url): String {
+    suspend fun scrapeWebsite(url: String): String {
         return try {
             val playwright = Playwright.create()
             val browser = playwright.chromium().launch(
@@ -22,7 +21,7 @@ class WebScrapingService {
             page.setDefaultTimeout(30000.0) // 30 seconds timeout
             
             // Navigate to the URL
-            page.navigate(url.toString())
+            page.navigate(url)
             
             // Wait for the page to load completely
             page.waitForLoadState()

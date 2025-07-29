@@ -1,7 +1,6 @@
 package io.deepsearch.domain.services
 
 import io.deepsearch.domain.valueobjects.SearchQuery
-import io.deepsearch.domain.services.WebScrapingService
 
 class SearchService(
     private val webScrapingService: WebScrapingService

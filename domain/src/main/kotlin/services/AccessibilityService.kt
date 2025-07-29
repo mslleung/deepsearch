@@ -3,11 +3,8 @@ package io.deepsearch.domain.services
 import com.deque.html.axecore.playwright.AxeBuilder
 import com.deque.html.axecore.results.AxeResults
 import com.deque.html.axecore.results.Rule
-import com.microsoft.playwright.Browser
 import com.microsoft.playwright.BrowserType
-import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
-import io.ktor.http.Url
 import io.deepsearch.domain.exceptions.WebScrapingException
 import io.deepsearch.domain.models.valueobjects.AccessibilityElement
 import io.deepsearch.domain.models.valueobjects.AccessibilityScanResult
@@ -16,7 +13,7 @@ import io.deepsearch.domain.models.valueobjects.AccessibilityViolationType
 /**
  * Domain service for accessibility testing and analysis
  */
-class AccessibilityService {
+class AccessibilityService(private val playwright: Playwright) {
 
     /**
      * Scans a website and returns accessibility elements (violations, passes, and incomplete results)
@@ -25,9 +22,8 @@ class AccessibilityService {
      * @return AccessibilityScanResult containing all identified accessibility elements
      * @throws WebScrapingException if the website cannot be accessed or scanned
      */
-    suspend fun getAccessibilityElements(url: Url): AccessibilityScanResult {
+    fun getAccessibilityElements(url: String): AccessibilityScanResult {
         return try {
-            val playwright = Playwright.create()
             val browser = playwright.chromium().launch(
                 BrowserType.LaunchOptions().setHeadless(true)
             )
@@ -38,7 +34,7 @@ class AccessibilityService {
             page.setDefaultTimeout(30000.0) // 30 seconds timeout
             
             // Navigate to the URL
-            page.navigate(url.toString())
+            page.navigate(url)
             
             // Wait for the page to load completely
             page.waitForLoadState()
@@ -49,7 +45,7 @@ class AccessibilityService {
                 .analyze()
             
             // Convert results to our domain model
-            val scanResult = mapAxeResultsToScanResult(url.toString(), axeResults)
+            val scanResult = mapAxeResultsToScanResult(url, axeResults)
             
             // Clean up resources
             page.close()
@@ -70,7 +66,7 @@ class AccessibilityService {
      * @param cssSelector CSS selector to focus the scan on a specific element
      * @return AccessibilityScanResult containing accessibility elements for the specified area
      */
-    suspend fun getAccessibilityElementsForElement(url: Url, cssSelector: String): AccessibilityScanResult {
+    suspend fun getAccessibilityElementsForElement(url: String, cssSelector: String): AccessibilityScanResult {
         return try {
             val playwright = Playwright.create()
             val browser = playwright.chromium().launch(

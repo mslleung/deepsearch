@@ -4,13 +4,14 @@ import io.deepsearch.presentation.controllers.SearchController
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import org.koin.ktor.ext.inject
+import org.koin.ktor.plugin.scope
 
 fun Application.configureWebScrapeRoutes() {
-    val searchController by inject<SearchController>()
 
     routing {
         route("/api") {
             post("/search") {
+                val searchController = call.scope.get<SearchController>()
                 searchController.searchWebsite(call)
             }
         }
