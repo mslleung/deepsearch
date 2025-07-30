@@ -26,14 +26,14 @@ class AccessibilityServiceTest : KoinTest {
     @Test
     fun `getAccessibilityElements should return scan result for valid URL`() = runTest {
         // Given
-        val url = "https://www.example.com"
+        val url = "https://www.otandp.com/body-check/"
 
         // When
         val result = accessibilityService.getAccessibilityElements(url)
 
         // Then
         assertNotNull(result)
-        assertEquals("https://www.example.com", result.url)
+        assertEquals("https://www.otandp.com/body-check/", result.url)
         assertTrue(result.scanTimestamp > 0)
         assertNotNull(result.violations)
         assertNotNull(result.passes)
