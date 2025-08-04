@@ -1,7 +1,7 @@
 package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.entities.User
-import io.deepsearch.domain.repositories.UserRepository
+import io.deepsearch.domain.repositories.IUserRepository
 import io.deepsearch.domain.valueobjects.UserId
 import io.deepsearch.domain.valueobjects.UserName
 import io.deepsearch.domain.valueobjects.UserAge
@@ -11,7 +11,7 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 
-class ExposedUserRepository : UserRepository {
+class ExposedUserRepository : IUserRepository {
     
     override suspend fun save(user: User): User = newSuspendedTransaction(Dispatchers.IO) {
         val id = UserTable.insert {

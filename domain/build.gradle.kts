@@ -17,6 +17,13 @@ dependencies {
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
 
+    // OCR support
+    implementation(libs.tesserect)
+    implementation(libs.opencv)
+
+    // Coroutines
+    implementation(libs.kotlinx.coroutines.core)
+    
     // Dependency injection
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)

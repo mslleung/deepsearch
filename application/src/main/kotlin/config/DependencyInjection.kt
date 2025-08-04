@@ -2,10 +2,12 @@ package io.deepsearch.application.config
 
 import io.deepsearch.application.services.UserService
 import io.deepsearch.application.services.SearchService
+import io.deepsearch.application.services.IUserService
+import io.deepsearch.application.services.ISearchService
 import io.deepsearch.domain.config.domainModule
 import io.deepsearch.infrastructure.config.infrastructureModule
 import org.koin.core.module.dsl.scopedOf
-import org.koin.core.module.dsl.singleOf
+import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.koin.module.requestScope
 
@@ -14,7 +16,7 @@ val applicationModule = module {
     includes(infrastructureModule)
 
     requestScope {
-        scopedOf(::UserService)
-        scopedOf(::SearchService)
+        scopedOf(::UserService) bind IUserService::class
+        scopedOf(::SearchService) bind ISearchService::class
     }
 } 

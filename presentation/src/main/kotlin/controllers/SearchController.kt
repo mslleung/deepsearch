@@ -1,7 +1,7 @@
 package io.deepsearch.presentation.controllers
 
 import io.deepsearch.presentation.dto.SearchRequest
-import io.deepsearch.application.services.SearchService
+import io.deepsearch.application.services.ISearchService
 import io.deepsearch.domain.exceptions.AiInterpretationException
 import io.deepsearch.domain.exceptions.InvalidUrlException
 import io.deepsearch.domain.exceptions.WebScrapeException
@@ -12,7 +12,7 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 
-class SearchController(private val searchService: SearchService) {
+class SearchController(private val searchService: ISearchService) {
     suspend fun searchWebsite(call: ApplicationCall) {
         try {
             val request = call.receive<SearchRequest>()

@@ -1,6 +1,6 @@
 package io.deepsearch.presentation.controllers
 
-import io.deepsearch.application.services.UserService
+import io.deepsearch.application.services.IUserService
 import io.deepsearch.domain.exceptions.UserNotFoundException
 import io.deepsearch.domain.valueobjects.UserId
 import io.deepsearch.presentation.dto.CreateUserRequest
@@ -12,7 +12,7 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 
-class UserController(private val userService: UserService) {
+class UserController(private val userService: IUserService) {
     suspend fun createUser(call: ApplicationCall) {
         try {
             val request = call.receive<CreateUserRequest>()

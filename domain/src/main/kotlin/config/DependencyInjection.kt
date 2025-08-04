@@ -1,18 +1,16 @@
 package io.deepsearch.domain.config
 
-import com.microsoft.playwright.Playwright
-import io.deepsearch.domain.services.AccessibilityService
-import io.deepsearch.domain.services.SearchService
-import io.deepsearch.domain.services.WebScrapingService
+import io.deepsearch.domain.services.*
 import org.koin.core.module.dsl.scopedOf
+import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.koin.module.requestScope
+import services.BrowserService
+import services.IBrowserService
 
 val domainModule = module {
     requestScope {
-        scoped { Playwright.create() }
-        scopedOf(::AccessibilityService)
-        scopedOf(::SearchService)
-        scopedOf(::WebScrapingService)
+        scopedOf(::AgenticSearchService) bind IAgenticSearchService::class
+        scopedOf(::BrowserService) bind IBrowserService::class
     }
 } 
