@@ -1,5 +1,7 @@
 package io.deepsearch.domain.services
 
+import agents.StrategyAgent
+import com.google.adk.runner.InMemoryRunner
 import io.deepsearch.domain.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -22,13 +24,9 @@ class AgenticSearchService(
 
             page.navigate(searchQuery.url)
 
+//            page.takeFullPageScreenshot()  // TODO
 
-            // TODO: Implement the actual search logic
-            // This could include:
-            // - Wait for page to load
-            // - Extract content based on the search query
-            // - Process the content to answer the query
-            // - Return the processed result
+            val runner = InMemoryRunner(StrategyAgent.ROOT_AGENT)
 
             "Search completed for query: ${searchQuery.query} on URL: ${searchQuery.url}"
         }
