@@ -6,7 +6,7 @@
       <env name="GOOGLE_GENAI_USE_VERTEXAI" value="TRUE" />
     </envs>
     <module name="kotlin.scripts.KotlinBuildScript.application:build.gradle.kts" />
-    <shortenClasspath name="NONE" />
+    <shortenClasspath name="ARGS_FILE" />
     <method v="2">
       <option name="Make" enabled="true" />
     </method>

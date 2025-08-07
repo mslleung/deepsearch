@@ -16,6 +16,11 @@ dependencies {
 
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
+    
+    // Apache HttpClient 5 - required for Google ADK Dev UI
+    implementation(libs.apache.httpclient5)
+    implementation(libs.apache.httpcore5)
+    implementation(libs.apache.httpcore5.h2)
 
     // OCR support
     implementation(libs.tesserect)
@@ -36,4 +41,12 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.register<JavaExec>("runAdkWebServer") {
+    group = "application"
+    description = "Runs the ADK Web Server"
+    mainClass = "com.google.adk.web.AdkWebServer"
+    classpath = sourceSets.main.get().runtimeClasspath
+    args("--adk.agents.source-dir=src/test/java")
 }
