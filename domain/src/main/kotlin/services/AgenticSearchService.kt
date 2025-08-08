@@ -1,5 +1,6 @@
 package io.deepsearch.domain.services
 
+import agents.QueryExpansionAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
 import com.google.genai.types.Content
@@ -10,7 +11,6 @@ import io.deepsearch.domain.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import services.IBrowserService
 import java.util.concurrent.ConcurrentHashMap
 
 interface IAgenticSearchService {
@@ -23,7 +23,11 @@ class AgenticSearchService(
     override suspend fun performSearch(searchQuery: SearchQuery): String = withContext(dispatcher) {
 
         // For now use in-memory, later we need to consider what happens if the application restarts
-        val runner = InMemoryRunner(SearchOrchestratorAgent)
+        val runner = InMemoryRunner(
+            SearchOrchestratorAgent(
+                QueryExpansionAgent()
+            )
+        )
 
         val session = runner
             .sessionService()
