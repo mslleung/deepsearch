@@ -1,12 +1,13 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="true" type="JetRunConfigurationType">
     <envs>
+      <env name="GOOGLE_API_KEY" value="AIzaSyD3VNoxcaxqSeW9pL6FMeGw9fHjkP7ZYHA" />
       <env name="GOOGLE_CLOUD_LOCATION" value="us-central1" />
       <env name="GOOGLE_CLOUD_PROJECT" value="deep-search-466804" />
-      <env name="GOOGLE_GENAI_USE_VERTEXAI" value="TRUE" />
+      <env name="GOOGLE_GENAI_USE_VERTEXAI" value="FALSE" />
     </envs>
-    <module name="kotlin.scripts.KotlinBuildScript.application:build.gradle.kts" />
     <shortenClasspath name="ARGS_FILE" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
     <method v="2">
       <option name="Make" enabled="true" />
     </method>

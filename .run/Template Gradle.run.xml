@@ -3,9 +3,10 @@
     <ExternalSystemSettings>
       <option name="env">
         <map>
+          <entry key="GOOGLE_API_KEY" value="AIzaSyD3VNoxcaxqSeW9pL6FMeGw9fHjkP7ZYHA" />
           <entry key="GOOGLE_CLOUD_LOCATION" value="us-central1" />
           <entry key="GOOGLE_CLOUD_PROJECT" value="deep-search-466804" />
-          <entry key="GOOGLE_GENAI_USE_VERTEXAI" value="TRUE" />
+          <entry key="GOOGLE_GENAI_USE_VERTEXAI" value="FALSE" />
         </map>
       </option>
       <option name="executionName" />
