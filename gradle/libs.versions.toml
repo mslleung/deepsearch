@@ -7,6 +7,7 @@ koin-version = "4.1.0"
 koin-ktor-version = "4.1.0"
 kotlin-version = "2.2.0"
 kotlinx-coroutines-version = "1.10.2"
+kotlinx-serialization-json-version = "1.9.0"
 ktor-version = "3.2.2"
 logback-version = "1.5.18"
 opencv-version = "4.9.0-1.5.10"
@@ -35,6 +36,7 @@ logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "lo
 ktor-server-config-yaml = { module = "io.ktor:ktor-server-config-yaml", version.ref = "ktor-version" }
 ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor-version" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines-version" }
+kotlinx-coroutines-rx3 = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-rx3", version.ref = "kotlinx-coroutines-version" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines-version" }
 kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin-version" }
 junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit-version" }
@@ -48,6 +50,7 @@ google-adk-dev = { module = "com.google.adk:google-adk-dev", version.ref = "goog
 apache-httpclient5 = { module = "org.apache.httpcomponents.client5:httpclient5", version.ref = "apache-httpclient5-version" }
 apache-httpcore5 = { module = "org.apache.httpcomponents.core5:httpcore5", version.ref = "apache-httpcore5-version" }
 apache-httpcore5-h2 = { module = "org.apache.httpcomponents.core5:httpcore5-h2", version.ref = "apache-httpcore5-version" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization-json-version" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin-version" }

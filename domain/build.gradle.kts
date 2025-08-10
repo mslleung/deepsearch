@@ -16,7 +16,9 @@ dependencies {
 
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
-    
+
+    implementation(libs.kotlinx.serialization.json)
+
     // Apache HttpClient 5 - required for Google ADK Dev UI
     implementation(libs.apache.httpclient5)
     implementation(libs.apache.httpcore5)
@@ -28,7 +30,8 @@ dependencies {
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.core)
-    
+    implementation(libs.kotlinx.coroutines.rx3)
+
     // Dependency injection
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)
