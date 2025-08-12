@@ -1,8 +1,10 @@
-package io.deepsearch.domain.models.valueobjects
+package io.deepsearch.domain.browser.playwright
 
 import com.microsoft.playwright.Browser
 import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Playwright
+import io.deepsearch.domain.browser.IBrowser
+import io.deepsearch.domain.browser.IBrowserContext
 
 class PlaywrightBrowser : IBrowser {
     private val playwright: Playwright = Playwright.create()

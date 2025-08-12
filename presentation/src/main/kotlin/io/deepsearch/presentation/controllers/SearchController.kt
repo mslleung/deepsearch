@@ -16,8 +16,8 @@ class SearchController(private val searchService: ISearchService) {
     suspend fun searchWebsite(call: ApplicationCall) {
         try {
             val request = call.receive<SearchRequest>()
-            val response = searchService.searchWebsite(request.query, request.url)
-            call.respond(HttpStatusCode.OK, SearchResponse(response))
+            val searchResult = searchService.searchWebsite(request.query, request.url)
+            call.respond(HttpStatusCode.OK, SearchResponse(searchResult.content))
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
         } catch (e: InvalidUrlException) {

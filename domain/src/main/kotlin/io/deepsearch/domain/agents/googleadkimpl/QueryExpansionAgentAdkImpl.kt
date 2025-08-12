@@ -9,15 +9,15 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import org.koin.core.component.KoinComponent
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-class QueryExpansionAgentAdkImpl : KoinComponent, IQueryExpansionAgent {
+class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -113,7 +113,7 @@ class QueryExpansionAgentAdkImpl : KoinComponent, IQueryExpansionAgent {
     private val runner = InMemoryRunner(queryExpansionAgent)
 
     override suspend fun generate(input: IQueryExpansionAgent.QueryExpansionAgentInput): IQueryExpansionAgent.QueryExpansionAgentOutput {
-        logger.debug("Expand query: {}", input.query)
+        logger.debug("Expand query: {}", input.searchQuery)
 
         val session = runner
             .sessionService()
@@ -127,7 +127,7 @@ class QueryExpansionAgentAdkImpl : KoinComponent, IQueryExpansionAgent {
 
         val eventsFlow = runner.runAsync(
             session,
-            Content.fromParts(Part.fromText(input.query)),
+            Content.fromParts(Part.fromText(input.searchQuery.query)),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)
                 setMaxLlmCalls(100)
@@ -152,7 +152,7 @@ class QueryExpansionAgentAdkImpl : KoinComponent, IQueryExpansionAgent {
 
         val response = Json.decodeFromString<QueryExpansionResponse>(llmResponse)
 
-        val expandedQueries = response.queries.map { it.query }
+        val expandedQueries = response.queries.map { SearchQuery(it.query, input.searchQuery.url) }
 
         logger.debug("Expanded queries: {}", expandedQueries)
 
