@@ -1,4 +1,4 @@
-package io.deepsearch.domain.models.valueobjects
+package io.deepsearch.domain.browser
 
 interface IBrowser : AutoCloseable {
     fun createContext(): IBrowserContext

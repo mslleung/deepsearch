@@ -1,7 +1,7 @@
 package io.deepsearch.domain.services
 
-import io.deepsearch.domain.models.valueobjects.IBrowser
-import io.deepsearch.domain.models.valueobjects.PlaywrightBrowser
+import io.deepsearch.domain.browser.IBrowser
+import io.deepsearch.domain.browser.playwright.PlaywrightBrowser
 
 interface IBrowserService {
     fun createBrowser(): IBrowser

@@ -24,6 +24,10 @@ dependencies {
     implementation(libs.apache.httpcore5)
     implementation(libs.apache.httpcore5.h2)
 
+    // Ktor HTTP Client (CIO) for safe redirect resolution
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+
     // OCR support
     implementation(libs.tesserect)
     implementation(libs.opencv)

@@ -1,7 +1,9 @@
 package io.deepsearch.domain.config
 
 import com.microsoft.playwright.Playwright
+import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
+import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
 import io.deepsearch.domain.services.AccessibilityService
 import io.deepsearch.domain.services.AgenticSearchService
@@ -19,4 +21,5 @@ val domainTestModule = module {
 
     // Google ADK agent has its own lifecycle management, so we make it singleton
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
+    singleOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
 }

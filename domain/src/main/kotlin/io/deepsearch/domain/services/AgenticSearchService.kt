@@ -1,24 +1,56 @@
 package io.deepsearch.domain.services
 
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
+import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.searchstrategies.IAgenticBrowserSearchStrategy
+import io.deepsearch.domain.searchstrategies.IGoogleTextSearchStrategy
+import kotlinx.coroutines.*
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 interface IAgenticSearchService {
-    suspend fun performSearch(searchQuery: SearchQuery): String
+    suspend fun performSearch(searchQuery: SearchQuery): SearchResult
 }
 
 class AgenticSearchService(
-    private val queryExpansionService: QueryExpansionService,
+    private val queryExpansionService: IQueryExpansionService,
+    private val aggregateSearchResultsService: IAggregateSearchResultsService,
+    private val agenticBrowserSearchStrategy: IAgenticBrowserSearchStrategy,
+    private val googleTextSearchStrategy: IGoogleTextSearchStrategy,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : IAgenticSearchService {
 
-    override suspend fun performSearch(searchQuery: SearchQuery): String {
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    override suspend fun performSearch(searchQuery: SearchQuery): SearchResult = withContext(dispatcher) {
         val (query, url) = searchQuery
 
-        val expandedQueries = queryExpansionService.expandQuery(query)
+        logger.debug("Start agentic search: {} {}", query, url)
+        val subqueries = queryExpansionService.expandQuery(searchQuery)
 
-        return ""
+        // Process all subqueries in parallel
+        val subquerySearchResults = subqueries.map { subquery ->
+            async {
+                searchSubquery(subquery)
+            }
+        }.awaitAll()
+
+        // Aggregate all search results into a single final result
+        aggregateSearchResultsService.aggregate(searchQuery, subquerySearchResults)
     }
 
+    private suspend fun searchSubquery(searchQuery: SearchQuery): SearchResult = coroutineScope {
+        val searchStrategies = listOf(
+            agenticBrowserSearchStrategy,
+            googleTextSearchStrategy
+        )
+
+        val searchResults = searchStrategies.map { searchStrategy ->
+            async {
+                searchStrategy.execute(searchQuery)
+            }
+        }.awaitAll()
+
+        aggregateSearchResultsService.aggregate(searchQuery, searchResults)
+    }
 }
