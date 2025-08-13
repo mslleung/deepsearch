@@ -20,7 +20,7 @@ import org.koin.module.requestScope
 val domainModule = module {
     requestScope {
         // domain services
-        scopedOf(::AgenticSearchService) bind IAgenticSearchService::class
+        scopedOf(::UnifiedSearchService) bind IUnifiedSearchService::class
         scopedOf(::BrowserService) bind IBrowserService::class
         scopedOf(::QueryExpansionService) bind IQueryExpansionService::class
         scopedOf(::AggregateSearchResultsService) bind IAggregateSearchResultsService::class

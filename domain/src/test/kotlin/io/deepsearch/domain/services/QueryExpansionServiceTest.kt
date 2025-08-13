@@ -4,14 +4,15 @@ import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
-class QueryExpansionServiceTest  : KoinTest {
+class QueryExpansionServiceTest : KoinTest {
 
     @JvmField
     @RegisterExtension
@@ -19,7 +20,7 @@ class QueryExpansionServiceTest  : KoinTest {
         modules(domainTestModule)
     }
 
-    private val queryExpansionService: IQueryExpansionService by inject()
+    private val queryExpansionService by inject<IQueryExpansionService>()
 
     @Test
     fun `simple direct query`() = runTest {
@@ -30,7 +31,7 @@ class QueryExpansionServiceTest  : KoinTest {
         val expandedQuery = queryExpansionService.expandQuery(searchQuery)
 
         // Then
-        assertTrue(expandedQuery.size == 1, "Direct query should not need expansion")
+        assertEquals(expandedQuery.size, 1, "Direct query should not need expansion")
     }
 
     @Test
@@ -42,20 +43,21 @@ class QueryExpansionServiceTest  : KoinTest {
         val expandedQuery = queryExpansionService.expandQuery(searchQuery)
 
         // Then
-        assertTrue(expandedQuery.size == 2, "Should expand into 2")
+        assertEquals(expandedQuery.size, 2, "Should expand into 2")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `breakdown into 3 requests`() = runTest {
         // Given
-        val searchQuery = SearchQuery("Find pricing, enterprise plan limits, and SLA details", "https://www.egltours.com/")
+        val searchQuery =
+            SearchQuery("Find pricing, enterprise plan limits, and SLA details", "https://www.egltours.com/")
 
         // When
         val expandedQuery = queryExpansionService.expandQuery(searchQuery)
 
         // Then
-        assertTrue(expandedQuery.size == 3, "Should expand into 3")
+        assertEquals(expandedQuery.size, 3, "Should expand into 3")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -68,7 +70,7 @@ class QueryExpansionServiceTest  : KoinTest {
         val expandedQuery = queryExpansionService.expandQuery(searchQuery)
 
         // Then
-        assertTrue(expandedQuery.size == 1, "Should replace board query with simpler query")
+        assertEquals(expandedQuery.size, 1, "Should replace board query with simpler query")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

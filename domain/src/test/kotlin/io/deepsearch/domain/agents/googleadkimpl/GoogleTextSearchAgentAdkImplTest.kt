@@ -1,18 +1,16 @@
-package io.deepsearch.domain.services
+package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
-import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import kotlin.test.assertTrue
 
 class GoogleTextSearchAgentAdkImplTest : KoinTest {
 
@@ -22,7 +20,7 @@ class GoogleTextSearchAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
-//    private val agent: IGoogleTextSearchAgent by inject<IGoogleTextSearchAgent>()
+    private val agent by inject<IGoogleTextSearchAgent>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
@@ -32,8 +30,6 @@ class GoogleTextSearchAgentAdkImplTest : KoinTest {
             query = "company overview",
             url = "https://www.egltours.com/"
         )
-        val dispatcher = StandardTestDispatcher(testScheduler)
-        val agent = GoogleTextSearchAgentAdkImpl(dispatcher);
 
         // When
         val output = agent.generate(IGoogleTextSearchAgent.GoogleTextSearchInput(query))
@@ -44,5 +40,3 @@ class GoogleTextSearchAgentAdkImplTest : KoinTest {
         assertTrue(result.sources.isNotEmpty(), "should include at least one cited source")
     }
 }
-
-
