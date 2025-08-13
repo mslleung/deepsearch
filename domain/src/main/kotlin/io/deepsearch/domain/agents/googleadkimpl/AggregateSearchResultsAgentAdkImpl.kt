@@ -34,11 +34,11 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
                     .build(),
                 "content" to Schema.builder()
                     .type("STRING")
-                    .description("Concise, faithful synthesis of findings that answers the query")
+                    .description("Concise, faithful response that answers the query")
                     .build(),
                 "sources" to Schema.builder()
                     .type("ARRAY")
-                    .description("List of cited sources used in the synthesis")
+                    .description("List of cited sources used in the response")
                     .items(
                         Schema.builder()
                             .type("STRING")
@@ -67,8 +67,9 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
                 You are the Aggregate Search Results agent. Given the user's original query and a set of search results (each with text and sources), produce a single, coherent answer that:
                 - Is faithful to the provided results only (do not invent facts)
                 - Directly addresses the user's original query
+                - Do not include irrelevant results
                 - If information conflicts, note the discrepancy comprehensively with reference to the source.
-                - If the results are insufficient to answer, state the limitation clearly
+                - If the results are insufficient to answer, just say no relevant information found and return empty source.
                 - Preserve important figures, names, and exact quotes where relevant
                 - Cite only the sources of the input search results that are included in the final aggregated search result
 
@@ -159,9 +160,9 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
             sources = response.sources
         )
         logger.debug(
-            "Aggregated content length: {} from {} sources",
-            aggregated.content.length,
-            aggregated.sources.size
+            "Aggregated content length: {} sources: {}",
+            aggregated.content,
+            aggregated.sources
         )
         return AggregateSearchResultsOutput(aggregatedResult = aggregated)
     }

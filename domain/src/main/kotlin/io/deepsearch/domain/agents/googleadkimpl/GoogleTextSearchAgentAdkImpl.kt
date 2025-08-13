@@ -7,6 +7,7 @@ import com.google.adk.runner.InMemoryRunner
 import com.google.adk.tools.GoogleSearchTool
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
+import com.google.genai.types.GoogleSearch
 import com.google.genai.types.Part
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -129,9 +130,12 @@ class GoogleTextSearchAgentAdkImpl(private val dispatcher: CoroutineDispatcher =
             val indices = support.groundingChunkIndices().orElse(listOf())
             indices.any { idx ->
                 val resolved = chunkIndexToResolvedUrl[idx]
-                resolved != null && resolved.startsWith(url)
+//                resolved != null && resolved.startsWith(url)
+                resolved != null
             }
         }
+
+        // TODO we may restrict to url prefix
 
         // 4) Concatenate the text from relevant supports and collect their sources
         val concatenatedText = relevantSupports.mapNotNull { support ->
@@ -147,13 +151,17 @@ class GoogleTextSearchAgentAdkImpl(private val dispatcher: CoroutineDispatcher =
 
         val sources = relevantChunkIndices.mapNotNull { idx ->
             chunkIndexToResolvedUrl[idx]
-        }.filter { source -> source.startsWith(url) }.distinct()
+        }
+//            .filter { source -> source.startsWith(url) }
+            .distinct()
 
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,
             content = concatenatedText,
             sources = sources
         )
+
+        logger.debug("Google text search results: '{}' from sources {}", concatenatedText, sources)
 
         IGoogleTextSearchAgent.GoogleTextSearchOutput(searchResult)
     }
