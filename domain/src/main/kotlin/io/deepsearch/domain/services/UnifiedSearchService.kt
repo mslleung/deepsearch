@@ -2,8 +2,8 @@ package io.deepsearch.domain.services
 
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
-import io.deepsearch.domain.searchstrategies.IAgenticBrowserSearchStrategy
-import io.deepsearch.domain.searchstrategies.IGoogleTextSearchStrategy
+import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
+import io.deepsearch.domain.searchstrategies.googletextsearch.IGoogleTextSearchStrategy
 import kotlinx.coroutines.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory

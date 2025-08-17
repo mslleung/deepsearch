@@ -1,15 +1,19 @@
 package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.IQueryExpansionAgent
+import io.deepsearch.domain.agents.IBlinkTestAgent
+import io.deepsearch.domain.agents.IVisualAnalysisAgent
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.BlinkTestAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.VisualAnalysisAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkImpl
-import io.deepsearch.domain.searchstrategies.AgenticBrowserSearchStrategy
-import io.deepsearch.domain.searchstrategies.GoogleTextSearchStrategy
-import io.deepsearch.domain.searchstrategies.IAgenticBrowserSearchStrategy
-import io.deepsearch.domain.searchstrategies.IGoogleTextSearchStrategy
+import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
+import io.deepsearch.domain.searchstrategies.googletextsearch.GoogleTextSearchStrategy
+import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
+import io.deepsearch.domain.searchstrategies.googletextsearch.IGoogleTextSearchStrategy
 import io.deepsearch.domain.services.*
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -33,4 +37,6 @@ val domainModule = module {
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
     singleOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
     singleOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
+    singleOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class
+    singleOf(::VisualAnalysisAgentAdkImpl) bind IVisualAnalysisAgent::class
 }
