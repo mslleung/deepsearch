@@ -29,16 +29,18 @@ class GoogleUrlContextSearchAgentAdkImplTest : KoinTest {
     @Test
     fun `url-context search returns content and at least one source`() = runTest {
         // Given
-        val query = SearchQuery(
-            query = "what servants are S+ tier?",
-            url = "https://appmedia.jp/fategrandorder/96261"
-        )
+        val query = "what servants are S+ tier?"
+        val urls = listOf("https://appmedia.jp/fategrandorder/96261")
 
         // When
-        val output = agent.generate(IGoogleUrlContextSearchAgent.GoogleUrlContextSearchInput(query))
+        val result = agent.generate(
+            IGoogleUrlContextSearchAgent.GoogleUrlContextSearchInput(
+                query = query,
+                urls = urls
+            )
+        )
 
         // Then
-        val result = output.searchResult
         assertTrue(result.content.isNotBlank(), "content should not be blank")
         assertTrue(result.sources.isNotEmpty(), "should include at least one cited source")
     }

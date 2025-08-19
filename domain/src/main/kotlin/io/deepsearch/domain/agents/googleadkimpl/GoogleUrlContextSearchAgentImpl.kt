@@ -6,12 +6,11 @@ import com.google.adk.runner.InMemoryRunner
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
-import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.tools.UrlContextTool
+import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
-import io.reactivex.rxjava3.core.Maybe
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import org.slf4j.Logger
@@ -31,7 +30,7 @@ class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("googleUrlContextSearchAgent")
         description("Agent to answer questions using URL Context tool on a specific page")
-        model(ModelIds.GEMINI_2_5_FLASH.modelId)    // TODO I think gemini 2.5 pro works best
+        model(ModelIds.GEMINI_2_5_LITE.modelId)
         // Register the custom URL Context tool so the model can fetch and use the page content
         tools(UrlContextTool())
         generateContentConfig(
@@ -40,13 +39,11 @@ class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
                 .build()
         )
         instruction(
-            (
-                """
+            ("""
                 You are a URL-context search agent. Use the URL Context tool to retrieve the provided URL(s)
                 and answer the user's query using ONLY the content found at those URL(s).
                 Provide a concise, factual answer. If information is not present, say you cannot find it on the page.
-                """
-            ).trimIndent()
+                """).trimIndent()
         )
         build()
     }
@@ -56,12 +53,16 @@ class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
     override suspend fun generate(
         input: IGoogleUrlContextSearchAgent.GoogleUrlContextSearchInput
     ): IGoogleUrlContextSearchAgent.GoogleUrlContextSearchOutput {
-        val (query, url) = input.searchQuery
-        logger.debug("URL-context search: '{}' on {}", query, url)
+        val query = input.query
+        val urls = input.urls
 
-        // Including the URL directly in the prompt enables the URL Context tool to fetch it
+        logger.debug("URL-context search: '{}' on {} url(s)", query, urls.size)
+
+        require(urls.count() <= 20) { "URL context can take at most 20 urls." }
+
+        // Including the URLs directly in the prompt enables the URL Context tool to fetch them
         val userPrompt = buildString {
-            appendLine("$query $url")
+            appendLine("$query ${urls.joinToString(" ")}")
         }
 
         val session = runner
@@ -99,15 +100,8 @@ class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
             }
         }
 
-        val searchResult = SearchResult(
-            originalQuery = input.searchQuery,
-            content = llmResponse,
-            // The URL Context tool is driven by the explicit URL provided; expose it as the source
-            sources = listOf(url)
-        )
+        logger.debug("URL-context search results: '{}' from {} source(s)", llmResponse, urls.size)
 
-        logger.debug("URL-context search results: '{}' from source {}", llmResponse.take(200), url)
-
-        return IGoogleUrlContextSearchAgent.GoogleUrlContextSearchOutput(searchResult)
+        return IGoogleUrlContextSearchAgent.GoogleUrlContextSearchOutput(llmResponse, urls)
     }
 }
