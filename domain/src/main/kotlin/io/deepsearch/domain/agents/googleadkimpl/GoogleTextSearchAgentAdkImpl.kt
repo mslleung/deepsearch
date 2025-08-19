@@ -9,6 +9,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.GoogleSearch
 import com.google.genai.types.Part
+import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.SearchResult
@@ -30,7 +31,7 @@ import org.slf4j.LoggerFactory
  * Reference: Google ADK Built-in tools – Google Search
  * https://google.github.io/adk-docs/tools/built-in-tools/#google-search
  */
-class GoogleTextSearchAgentAdkImpl(private val dispatcher: CoroutineDispatcher = Dispatchers.IO) :
+class GoogleTextSearchAgentAdkImpl :
     IGoogleTextSearchAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
