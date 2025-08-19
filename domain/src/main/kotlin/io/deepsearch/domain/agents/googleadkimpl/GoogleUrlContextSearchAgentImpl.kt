@@ -1,0 +1,113 @@
+package io.deepsearch.domain.agents.googleadkimpl
+
+import com.google.adk.agents.LlmAgent
+import com.google.adk.agents.RunConfig
+import com.google.adk.runner.InMemoryRunner
+import com.google.genai.types.Content
+import com.google.genai.types.GenerateContentConfig
+import com.google.genai.types.Part
+import io.deepsearch.domain.agents.IGoogleTextSearchAgent
+import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
+import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.tools.UrlContextTool
+import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.reactivex.rxjava3.core.Maybe
+import kotlinx.coroutines.reactive.asFlow
+import kotlinx.coroutines.rx3.await
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+
+/**
+ * An agent that uses Google ADK with the URL Context tool to answer questions using the content
+ * of a specific URL provided by the user.
+ *
+ * Reference: URL context tool – Google Gemini API
+ * https://ai.google.dev/gemini-api/docs/url-context
+ */
+class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
+
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    private val agent: LlmAgent = LlmAgent.builder().run {
+        name("googleUrlContextSearchAgent")
+        description("Agent to answer questions using URL Context tool on a specific page")
+        model(ModelIds.GEMINI_2_5_FLASH.modelId)    // TODO I think gemini 2.5 pro works best
+        // Register the custom URL Context tool so the model can fetch and use the page content
+        tools(UrlContextTool())
+        generateContentConfig(
+            GenerateContentConfig.builder()
+                .temperature(0.2F)
+                .build()
+        )
+        instruction(
+            (
+                """
+                You are a URL-context search agent. Use the URL Context tool to retrieve the provided URL(s)
+                and answer the user's query using ONLY the content found at those URL(s).
+                Provide a concise, factual answer. If information is not present, say you cannot find it on the page.
+                """
+            ).trimIndent()
+        )
+        build()
+    }
+
+    private val runner = InMemoryRunner(agent)
+
+    override suspend fun generate(
+        input: IGoogleUrlContextSearchAgent.GoogleUrlContextSearchInput
+    ): IGoogleUrlContextSearchAgent.GoogleUrlContextSearchOutput {
+        val (query, url) = input.searchQuery
+        logger.debug("URL-context search: '{}' on {}", query, url)
+
+        // Including the URL directly in the prompt enables the URL Context tool to fetch it
+        val userPrompt = buildString {
+            appendLine("$query $url")
+        }
+
+        val session = runner
+            .sessionService()
+            .createSession(
+                this@GoogleUrlContextSearchAgentImpl::class.simpleName,
+                this@GoogleUrlContextSearchAgentImpl::class.simpleName,
+                null,
+                null
+            )
+            .await()
+
+        var llmResponse = ""
+
+        val eventsFlow = runner.runAsync(
+            session,
+            Content.fromParts(Part.fromText(userPrompt)),
+            RunConfig.builder().apply {
+                setStreamingMode(RunConfig.StreamingMode.NONE)
+                setMaxLlmCalls(100)
+            }.build()
+        ).asFlow()
+
+        eventsFlow.collect { event ->
+            if (event.finalResponse() && event.content().isPresent) {
+                val content = event.content().get()
+                if (content.parts().isPresent
+                    && !content.parts().get().isEmpty()
+                    && content.parts().get()[0].text().isPresent
+                ) {
+                    if (!event.partial().orElse(false)) {
+                        llmResponse = content.parts().get()[0].text().get()
+                    }
+                }
+            }
+        }
+
+        val searchResult = SearchResult(
+            originalQuery = input.searchQuery,
+            content = llmResponse,
+            // The URL Context tool is driven by the explicit URL provided; expose it as the source
+            sources = listOf(url)
+        )
+
+        logger.debug("URL-context search results: '{}' from source {}", llmResponse.take(200), url)
+
+        return IGoogleUrlContextSearchAgent.GoogleUrlContextSearchOutput(searchResult)
+    }
+}
