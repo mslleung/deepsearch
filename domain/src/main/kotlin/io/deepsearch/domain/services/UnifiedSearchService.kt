@@ -1,5 +1,8 @@
 package io.deepsearch.domain.services
 
+import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
+import io.deepsearch.domain.agents.IQueryExpansionAgent
+import io.deepsearch.domain.agents.IAggregateSearchResultsAgent.AggregateSearchResultsInput
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
@@ -13,8 +16,8 @@ interface IUnifiedSearchService {
 }
 
 class UnifiedSearchService(
-    private val queryExpansionService: IQueryExpansionService,
-    private val aggregateSearchResultsService: IAggregateSearchResultsService,
+    private val aggregateSearchResultsAgent: IAggregateSearchResultsAgent,
+    private val queryExpansionAgent: IQueryExpansionAgent,
     private val agenticBrowserSearchStrategy: IAgenticBrowserSearchStrategy,
     private val googleTextSearchStrategy: IGoogleSearchStrategy,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO
@@ -26,7 +29,9 @@ class UnifiedSearchService(
         val (query, url) = searchQuery
 
         logger.debug("Start unified search: {} {}", query, url)
-        val subqueries = queryExpansionService.expandQuery(searchQuery)
+        val agentInput = IQueryExpansionAgent.QueryExpansionAgentInput(searchQuery = searchQuery)
+        val agentOutput = queryExpansionAgent.generate(agentInput)
+        val subqueries = agentOutput.expandedQueries
 
         // Process all subqueries in parallel
         val subquerySearchResults = subqueries.map { subquery ->
@@ -36,7 +41,7 @@ class UnifiedSearchService(
         }.awaitAll()
 
         // Aggregate all search results into a single final result
-        aggregateSearchResultsService.aggregate(searchQuery, subquerySearchResults)
+        aggregateResults(searchQuery, subquerySearchResults)
     }
 
     private suspend fun searchSubquery(searchQuery: SearchQuery): SearchResult = coroutineScope {
@@ -51,6 +56,15 @@ class UnifiedSearchService(
             }
         }.awaitAll()
 
-        aggregateSearchResultsService.aggregate(searchQuery, searchResults)
+        aggregateResults(searchQuery, searchResults)
+    }
+
+    private suspend fun aggregateResults(
+        originalQuery: SearchQuery,
+        searchResults: List<SearchResult>
+    ): SearchResult {
+        return aggregateSearchResultsAgent
+            .generate(AggregateSearchResultsInput(originalQuery, searchResults))
+            .aggregatedResult
     }
 }

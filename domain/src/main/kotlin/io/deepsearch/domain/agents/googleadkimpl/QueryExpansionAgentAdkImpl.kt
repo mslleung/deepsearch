@@ -70,6 +70,7 @@ class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
             instruction(
                 """
             You are the Query Expansion agent. Your job is to transform the user's high-level query into a structured list of smaller, specific, and measurable queries.
+            The queries will be be used to look for information in the company's website.
 
             Output requirements:
             - Breakdown the input query into queries that are unique, atomic and unambiguous.
@@ -77,6 +78,7 @@ class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
             - Order queries by importance, starting with the most important query.
             - Keep the number of queries as small as possible
             - If the user request is overly broad or practically unbounded, return queries targeting an overview or summary of the relevant results.
+            - Ignore input queries that are not related to knowledge retrieval such as "ok", "are you a bot?" etc.
 
             Example A:
             User query: "Find leadership info and headcount for the company"

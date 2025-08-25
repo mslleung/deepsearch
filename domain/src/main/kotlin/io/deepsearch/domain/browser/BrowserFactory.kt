@@ -1,9 +1,8 @@
-package io.deepsearch.domain.services
+package io.deepsearch.domain.browser
 
-import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.playwright.PlaywrightBrowser
 
-interface IBrowserService {
+interface IBrowserFactory {
     fun createBrowser(): IBrowser
 }
 
@@ -14,7 +13,7 @@ interface IBrowserService {
  * We may potentially run thousands of them. This service helps manage
  * their lifecycle.
  */
-class BrowserService(): IBrowserService {
+class BrowserFactory : IBrowserFactory {
 
     override fun createBrowser(): IBrowser {
         return PlaywrightBrowser()

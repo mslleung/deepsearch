@@ -16,6 +16,8 @@ interface IGoogleSearchStrategy : ISearchStrategy {
 /**
  * Performs a Google search + Url Context, powered by Google Gemini.
  *
+ * This is currently the best and most powerful offering from Google.
+ *
  * Google has a long history of being the best search engine in the world, so we will leverage it.
  * Use this as a benchmark.
  */

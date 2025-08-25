@@ -27,9 +27,26 @@ class GoogleSearchStrategyTest : KoinTest {
     @Test
     fun `test sample query on OT&P`() = runTest {
         // Given
-        val url = "https://www.otandp.com/"
         val searchQuery = SearchQuery(
             query = "Does the standard body check package include testing Glomerular Filtration Rate - eGfr?",  // no
+            url = "https://www.otandp.com/"
+        )
+
+        // When
+        val result = googleSearchStrategy.execute(searchQuery)
+
+        // Then
+        assertEquals(searchQuery, result.originalQuery)
+        assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
+        assertTrue(!result.sources.isEmpty(), "Sources should not be empty")
+    }
+
+    @Test
+    fun `test sample query on HelmetKing`() = runTest {
+        // Given
+        val url = "https://www.helmetking.com/"
+        val searchQuery = SearchQuery(
+            query = "Are there any service package or plans for motorcycle maintenance?",  // yes
             url = url
         )
 

@@ -1,7 +1,7 @@
 package io.deepsearch.domain.browser.playwright
 
+import io.deepsearch.domain.browser.IBrowserFactory
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.services.IBrowserService
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -19,11 +19,11 @@ class PlaywrightBrowserPageTest: KoinTest {
         modules(domainTestModule)
     }
 
-    private val browserService by inject<IBrowserService>()
+    private val browserFactory by inject<IBrowserFactory>()
 
     @Test
     fun `getting page information for simple webpage`() = runTest {
-        val browser  = browserService.createBrowser()
+        val browser  = browserFactory.createBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
@@ -39,7 +39,7 @@ class PlaywrightBrowserPageTest: KoinTest {
 
     @Test
     fun `action space contains buttons and inputs when present`() = runTest {
-        val browser  = browserService.createBrowser()
+        val browser  = browserFactory.createBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
@@ -53,7 +53,7 @@ class PlaywrightBrowserPageTest: KoinTest {
 
     @Test
     fun `breadcrumbs if present are captured or empty otherwise`() = runTest {
-        val browser  = browserService.createBrowser()
+        val browser  = browserFactory.createBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
