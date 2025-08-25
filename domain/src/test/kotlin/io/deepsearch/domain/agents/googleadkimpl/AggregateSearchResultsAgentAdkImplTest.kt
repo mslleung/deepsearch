@@ -1,5 +1,6 @@
-package io.deepsearch.domain.services
+package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
@@ -10,10 +11,10 @@ import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
-import kotlin.test.assertTrue
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
-class AggregateSearchResultsServiceTest : KoinTest {
+class AggregateSearchResultsAgentAdkImplTest : KoinTest {
 
     @JvmField
     @RegisterExtension
@@ -21,12 +22,11 @@ class AggregateSearchResultsServiceTest : KoinTest {
         modules(domainTestModule)
     }
 
-    private val aggregateSearchResultsService by inject<IAggregateSearchResultsService>()
+    private val agent by inject<IAggregateSearchResultsAgent>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `aggregate one single search result`() = runTest {
-        // Given
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val result = SearchResult(
             originalQuery = originalQuery,
@@ -34,10 +34,9 @@ class AggregateSearchResultsServiceTest : KoinTest {
             sources = listOf("https://www.example.com/")
         )
 
-        // When
-        val aggregated = aggregateSearchResultsService.aggregate(originalQuery, listOf(result))
+        val output = agent.generate(IAggregateSearchResultsAgent.AggregateSearchResultsInput(originalQuery, listOf(result)))
+        val aggregated = output.aggregatedResult
 
-        // Then
         assertEquals(originalQuery, aggregated.originalQuery)
         assertTrue(aggregated.content.isNotBlank(), "Aggregated content should not be blank")
         assertTrue(aggregated.sources.isNotEmpty(), "Aggregated sources should not be empty")
@@ -46,7 +45,6 @@ class AggregateSearchResultsServiceTest : KoinTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `aggregate two search results`() = runTest {
-        // Given
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val result1 = SearchResult(
             originalQuery = originalQuery,
@@ -59,10 +57,9 @@ class AggregateSearchResultsServiceTest : KoinTest {
             sources = listOf("https://www.iana.org/domains/example")
         )
 
-        // When
-        val aggregated = aggregateSearchResultsService.aggregate(originalQuery, listOf(result1, result2))
+        val output = agent.generate(IAggregateSearchResultsAgent.AggregateSearchResultsInput(originalQuery, listOf(result1, result2)))
+        val aggregated = output.aggregatedResult
 
-        // Then
         assertEquals(originalQuery, aggregated.originalQuery)
         assertTrue(aggregated.content.isNotBlank(), "Aggregated content should not be blank")
         assertTrue(aggregated.sources.isNotEmpty(), "Aggregated sources should not be empty")
@@ -71,7 +68,6 @@ class AggregateSearchResultsServiceTest : KoinTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `irrelevant search results`() = runTest {
-        // Given
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val irrelevant1 = SearchResult(
             originalQuery = originalQuery,
@@ -84,10 +80,9 @@ class AggregateSearchResultsServiceTest : KoinTest {
             sources = listOf("https://en.wikipedia.org/wiki/Paris")
         )
 
-        // When
-        val aggregated = aggregateSearchResultsService.aggregate(originalQuery, listOf(irrelevant1, irrelevant2))
+        val output = agent.generate(IAggregateSearchResultsAgent.AggregateSearchResultsInput(originalQuery, listOf(irrelevant1, irrelevant2)))
+        val aggregated = output.aggregatedResult
 
-        // Then
         assertEquals(originalQuery, aggregated.originalQuery)
         assertTrue(aggregated.content.isNotBlank(), "Aggregated content should not be blank")
         assertTrue(aggregated.sources.isEmpty(), "Aggregated sources should not be empty")
@@ -96,7 +91,6 @@ class AggregateSearchResultsServiceTest : KoinTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `mix of relevant and irrelevant search results`() = runTest {
-        // Given
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val relevant = SearchResult(
             originalQuery = originalQuery,
@@ -109,12 +103,13 @@ class AggregateSearchResultsServiceTest : KoinTest {
             sources = listOf("https://www.cats.com/")
         )
 
-        // When
-        val aggregated = aggregateSearchResultsService.aggregate(originalQuery, listOf(relevant, irrelevant))
+        val output = agent.generate(IAggregateSearchResultsAgent.AggregateSearchResultsInput(originalQuery, listOf(relevant, irrelevant)))
+        val aggregated = output.aggregatedResult
 
-        // Then
         assertEquals(originalQuery, aggregated.originalQuery)
         assertTrue(aggregated.content.isNotBlank(), "Aggregated content should not be blank")
         assertTrue(aggregated.sources.contains("https://www.example.com/"), "Aggregated sources should include at least one relevant source")
     }
 }
+
+

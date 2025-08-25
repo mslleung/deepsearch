@@ -14,6 +14,8 @@ import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkI
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
+import io.deepsearch.domain.browser.BrowserFactory
+import io.deepsearch.domain.browser.IBrowserFactory
 import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
 import io.deepsearch.domain.searchstrategies.googlesearch.GoogleSearchStrategy
 import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
@@ -29,9 +31,8 @@ val domainModule = module {
     requestScope {
         // domain services
         scopedOf(::UnifiedSearchService) bind IUnifiedSearchService::class
-        scopedOf(::BrowserService) bind IBrowserService::class
-        scopedOf(::QueryExpansionService) bind IQueryExpansionService::class
-        scopedOf(::AggregateSearchResultsService) bind IAggregateSearchResultsService::class
+
+        scopedOf(::BrowserFactory) bind IBrowserFactory::class
 
         scopedOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
         scopedOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class

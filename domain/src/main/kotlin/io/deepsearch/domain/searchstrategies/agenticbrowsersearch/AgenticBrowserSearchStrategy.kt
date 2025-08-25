@@ -1,6 +1,7 @@
 package io.deepsearch.domain.searchstrategies.agenticbrowsersearch
 
 import io.deepsearch.domain.agents.IBlinkTestAgent
+import io.deepsearch.domain.browser.IBrowserFactory
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.searchstrategies.ISearchStrategy
@@ -17,8 +18,8 @@ interface IAgenticBrowserSearchStrategy : ISearchStrategy {
  * mimic human search behaviour in modeling search strategy.
  */
 class AgenticBrowserSearchStrategy(
-    private val browserService: io.deepsearch.domain.services.IBrowserService,
-    private val blinkTestAgent: io.deepsearch.domain.agents.IBlinkTestAgent,
+    private val browserFactory: IBrowserFactory,
+    private val blinkTestAgent: IBlinkTestAgent,
     private val visualAnalysisAgent: io.deepsearch.domain.agents.IVisualAnalysisAgent
 ) : IAgenticBrowserSearchStrategy {
 
@@ -42,7 +43,7 @@ class AgenticBrowserSearchStrategy(
          *    We will need to implement all actions in detail, perhaps breaking down to even smaller steps
          */
         val (query, url) = searchQuery
-        val browser = browserService.createBrowser()
+        val browser = browserFactory.createBrowser()
         try {
             val context = browser.createContext()
             val page = context.newPage()

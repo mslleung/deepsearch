@@ -1,9 +1,9 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.IBlinkTestAgent
+import io.deepsearch.domain.browser.IBrowserFactory
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.services.IBrowserService
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -21,7 +21,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
-    private val browserService by inject<IBrowserService>()
+    private val browserFactory by inject<IBrowserFactory>()
     private val agent by inject<IBlinkTestAgent>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -32,7 +32,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
             query = "website purpose",
             url = "https://www.example.com/"
         )
-        val browser = browserService.createBrowser()
+        val browser = browserFactory.createBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
@@ -61,7 +61,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
             query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
             url = "https://www.example.com/"
         )
-        val browser = browserService.createBrowser()
+        val browser = browserFactory.createBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
