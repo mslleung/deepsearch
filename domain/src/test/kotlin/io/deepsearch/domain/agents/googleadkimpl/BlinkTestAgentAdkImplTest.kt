@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.browser.IBrowserFactory
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -21,12 +22,13 @@ class BlinkTestAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val browserFactory by inject<IBrowserFactory>()
     private val agent by inject<IBlinkTestAgent>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `blink test should pass for clearly related query`() = runTest {
+    fun `blink test should pass for clearly related query`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
             query = "website purpose",
@@ -43,7 +45,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
         val output = agent.generate(
             IBlinkTestAgent.BlinkTestInput(
                 searchQuery = searchQuery,
-                screenshotBytes = screenshot
+                screenshotBytes = screenshot.bytes
             )
         )
 
@@ -54,7 +56,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `blink test should fail for clearly unrelated query`() = runTest {
+    fun `blink test should fail for clearly unrelated query`() = runTest(testCoroutineDispatcher) {
 
         // Given
         val searchQuery = SearchQuery(
@@ -72,7 +74,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
         val output = agent.generate(
             IBlinkTestAgent.BlinkTestInput(
                 searchQuery = searchQuery,
-                screenshotBytes = screenshot
+                screenshotBytes = screenshot.bytes
             )
         )
 

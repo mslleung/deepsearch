@@ -21,6 +21,11 @@ import io.deepsearch.domain.searchstrategies.googlesearch.GoogleSearchStrategy
 import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
 import io.deepsearch.domain.searchstrategies.googlesearch.IGoogleSearchStrategy
 import io.deepsearch.domain.services.*
+import io.deepsearch.domain.agents.IWebpageExtractAnswerAgent
+import io.deepsearch.domain.agents.IWebpageActionExtractor
+import io.deepsearch.domain.agents.tools.WebActionExecutor
+import io.deepsearch.domain.agents.googleadkimpl.WebpageExtractAnswerAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.WebpageActionExtractorAdkImpl
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -46,4 +51,7 @@ val domainModule = module {
     singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
     singleOf(::VisualAnalysisAgentAdkImpl) bind IVisualAnalysisAgent::class
+    singleOf(::WebpageExtractAnswerAgentAdkImpl) bind IWebpageExtractAnswerAgent::class
+    singleOf(::WebpageActionExtractorAdkImpl) bind IWebpageActionExtractor::class
+    singleOf(::WebActionExecutor)
 }

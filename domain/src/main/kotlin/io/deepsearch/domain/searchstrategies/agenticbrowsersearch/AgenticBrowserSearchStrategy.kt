@@ -1,6 +1,9 @@
 package io.deepsearch.domain.searchstrategies.agenticbrowsersearch
 
-import io.deepsearch.domain.agents.IBlinkTestAgent
+import io.deepsearch.domain.agents.IWebpageActionExtractor
+import io.deepsearch.domain.agents.IWebpageExtractAnswerAgent
+import io.deepsearch.domain.agents.WebAction
+import io.deepsearch.domain.agents.tools.WebActionExecutor
 import io.deepsearch.domain.browser.IBrowserFactory
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
@@ -11,77 +14,107 @@ interface IAgenticBrowserSearchStrategy : ISearchStrategy {
 }
 
 /**
- * Searches a website the same way human does. It follows human thought process in performing the search.
- *
- * While traditional techniques uses HTML parsing and other mechanical methods for processing websites,
- * we have observed that ultimately webpages are visual in nature. It is therefore much more efficient to
- * mimic human search behaviour in modeling search strategy.
+ * Agentic search that iteratively extracts answers from the current page and
+ * proposes actions to surface more relevant information if needed.
  */
 class AgenticBrowserSearchStrategy(
     private val browserFactory: IBrowserFactory,
-    private val blinkTestAgent: IBlinkTestAgent,
-    private val visualAnalysisAgent: io.deepsearch.domain.agents.IVisualAnalysisAgent
+    private val extractAnswerAgent: IWebpageExtractAnswerAgent,
+    private val actionExtractor: IWebpageActionExtractor,
+    private val actionExecutor: WebActionExecutor,
 ) : IAgenticBrowserSearchStrategy {
 
+    private val confidenceThreshold: Double = 0.7
+    private val maxSteps: Int = 8
+
     override suspend fun execute(searchQuery: SearchQuery): SearchResult {
-        /**
-         * Using a browser and LLM agents, we mimic human search behaviour.
-         *
-         * 1. A blink test
-         * Taking a screenshot of the current page. We make a snap judgement of whether the webpage is relevant and
-         * related to our query. The result of the blink test is to conclude whether:
-         *   - The page is completely irrelevant to our query. Conclude the search
-         *   - The page is relevant to our search query, continue to explore current page
-         *   - The screenshot does not provide enough information to decide yet. Will continue to explore current page.
-         *
-         * 2. Quick orientation
-         * Quickly observe the navigation elements and decide on the next actions:
-         * - Explore current page (invoke actions/query current visible information)
-         * - Navigate (hover, click) to a different page.
-         *
-         * 3. Start all actions in parallel
-         *    We will need to implement all actions in detail, perhaps breaking down to even smaller steps
-         */
-        val (query, url) = searchQuery
+        val url = searchQuery.url
         val browser = browserFactory.createBrowser()
         try {
             val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
 
-            // 1) Blink test from screenshot
-            val screenshot = page.takeScreenshot()
-            val blink = blinkTestAgent.generate(
-                IBlinkTestAgent.BlinkTestInput(
-                    searchQuery = searchQuery,
-                    screenshotBytes = screenshot
+            val visited = mutableSetOf<String>()
+            val answers = mutableListOf<IWebpageExtractAnswerAgent.Output.Found>()
+            val performed = mutableListOf<WebAction>()
+
+            var step = 0
+            while (step < maxSteps) {
+                step++
+                val screenshot = page.takeScreenshot()
+                val pageInfo = page.getPageInformation()
+                val fingerprint = fingerprint(pageInfo)
+                if (!visited.add(fingerprint)) break
+
+                when (val out = extractAnswerAgent.generate(
+                    IWebpageExtractAnswerAgent.Input(
+                        searchQuery = searchQuery,
+                        pageInformation = pageInfo,
+                        screenshotBytes = screenshot.bytes
+                    )
+                )) {
+                    is IWebpageExtractAnswerAgent.Output.Found -> {
+                        answers.add(out)
+                        if (out.confidence >= confidenceThreshold) break
+                    }
+                    is IWebpageExtractAnswerAgent.Output.NotFound -> {
+                        // continue to action proposals
+                    }
+                }
+
+                val proposals = actionExtractor.generate(
+                    IWebpageActionExtractor.Input(
+                        searchQuery = searchQuery,
+                        pageInformation = pageInfo,
+                        screenshotBytes = screenshot.bytes,
+                        priorActions = performed
+                    )
                 )
-            )
 
-            return when (blink.decision) {
-                IBlinkTestAgent.Decision.IRRELEVANT -> {
-                    // Conclude early
-                    SearchResult(
-                        originalQuery = searchQuery,
-                        content = "No relevant information found on the current page for the query.",
-                        sources = listOf(url)
-                    )
-                }
+                if (proposals.stopRecommended || proposals.proposals.isEmpty()) break
 
-                IBlinkTestAgent.Decision.RELEVANT -> {
-                    // 2) Visual analysis to answer from the current view
-                    val visual = visualAnalysisAgent.generate(
-                        io.deepsearch.domain.agents.IVisualAnalysisAgent.VisualAnalysisInput(
-                            searchQuery = searchQuery,
-                            screenshotBytes = screenshot
-                        )
-                    )
-                    visual.searchResult
+                var applied = false
+                for (p in proposals.proposals) {
+                    val result = actionExecutor.execute(page, p.action)
+                    if (result.success) {
+                        applied = true
+                        performed.add(p.action)
+                        page.waitForNavigationOrIdle()
+                        break
+                    }
                 }
+                if (!applied) break
             }
+
+            return aggregate(answers, searchQuery, pageInfoOrUrl(page))
         } finally {
             browser.close()
         }
     }
 
+    private fun fingerprint(pi: io.deepsearch.domain.browser.IBrowserPage.PageInformation): String {
+        val mainHash = (pi.mainText ?: "").take(512).hashCode()
+        return "${pi.url}::${pi.title}::$mainHash"
+    }
+
+    private fun pageInfoOrUrl(page: io.deepsearch.domain.browser.IBrowserPage): String {
+        return try { page.getPageInformation().url } catch (_: Throwable) { "" }
+    }
+
+    private fun aggregate(
+        answers: List<IWebpageExtractAnswerAgent.Output.Found>,
+        query: SearchQuery,
+        currentUrl: String
+    ): SearchResult {
+        if (answers.isEmpty()) {
+            return SearchResult(
+                originalQuery = query,
+                content = "No relevant information found.",
+                sources = listOfNotNull(currentUrl.ifBlank { null })
+            )
+        }
+        val top = answers.maxByOrNull { it.confidence }!!
+        return top.searchResult
+    }
 }

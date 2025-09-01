@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents.googleadkimpl
 import io.deepsearch.domain.agents.IVisualAnalysisAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -20,11 +21,12 @@ class VisualAnalysisAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IVisualAnalysisAgent>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `visual analysis returns content for screenshot`() = runTest {
+    fun `visual analysis returns content for screenshot`() = runTest(testCoroutineDispatcher) {
         // Given
         val query = SearchQuery(
             query = "What is shown on this page?",

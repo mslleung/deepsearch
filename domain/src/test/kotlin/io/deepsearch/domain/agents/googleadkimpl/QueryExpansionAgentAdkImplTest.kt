@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
@@ -24,11 +25,12 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IQueryExpansionAgent>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `url-context search returns content and at least one source`() = runTest {
+    fun `url-context search returns content and at least one source`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery("What is the main content of this webpage?", "https://www.egltours.com/")
 
@@ -44,7 +46,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
     }
 
     @Test
-    fun `breakdown into 2 requests`() = runTest {
+    fun `breakdown into 2 requests`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery("Find leadership info and headcount for the company", "https://www.egltours.com/")
 
@@ -61,7 +63,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `breakdown into 3 requests`() = runTest {
+    fun `breakdown into 3 requests`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery =
             SearchQuery("Find pricing, enterprise plan limits, and SLA details", "https://www.egltours.com/")
@@ -79,7 +81,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `overly board query`() = runTest {
+    fun `overly board query`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery("Show me all products on your ecommerce website", "https://www.egltours.com/")
 
@@ -96,7 +98,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `natural query`() = runTest {
+    fun `natural query`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery("What is on sale?", "https://www.egltours.com/")
 
@@ -113,7 +115,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `non retrieval queries`() = runTest {
+    fun `non retrieval queries`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery("am I handsome?", "https://www.egltours.com/")
 

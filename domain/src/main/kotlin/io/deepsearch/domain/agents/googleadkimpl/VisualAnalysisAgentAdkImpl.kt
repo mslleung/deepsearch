@@ -26,14 +26,9 @@ class VisualAnalysisAgentAdkImpl : IVisualAnalysisAgent {
         .description("Visual analysis answer for the user's query based on current page view")
         .properties(
             mapOf(
-                "content" to Schema.builder()
+                "answer" to Schema.builder()
                     .type("STRING")
                     .description("Concise answer derived from what is visible")
-                    .build(),
-                "sources" to Schema.builder()
-                    .type("ARRAY")
-                    .description("List of page URLs used as sources")
-                    .items(Schema.builder().type("STRING").build())
                     .build(),
             )
         )
@@ -56,7 +51,13 @@ class VisualAnalysisAgentAdkImpl : IVisualAnalysisAgent {
             (
                 """
                 You are the Visual Analysis agent. Respond to the user's query using the visible information on the page's screenshot only. If unsure, say no relevant information found.
-                Return ONLY a JSON object matching the schema with fields {"content", "sources"}.
+                If the screenshot does not contain answer to the query, just say so.
+                Return ONLY a JSON object matching the schema with fields {"result"}.
+
+                Expected output shape:
+                {
+                  "answer": "answer to the user query",
+                }
                 """
             ).trimIndent()
         )
@@ -67,16 +68,14 @@ class VisualAnalysisAgentAdkImpl : IVisualAnalysisAgent {
 
     @Serializable
     private data class VisualResponse(
-        val content: String,
-        val sources: List<String>
+        val answer: String
     )
 
     override suspend fun generate(input: IVisualAnalysisAgent.VisualAnalysisInput): IVisualAnalysisAgent.VisualAnalysisOutput {
         logger.debug("Visual analysis for {}", input.searchQuery)
 
         val userPrompt = buildString {
-            appendLine("User query: \"${input.searchQuery.query}\" for site ${input.searchQuery.url}")
-            appendLine("You are given a screenshot (binary not shown here). Answer concisely.")
+            appendLine(input.searchQuery.query)
         }
 
         val session = runner
@@ -93,7 +92,7 @@ class VisualAnalysisAgentAdkImpl : IVisualAnalysisAgent {
 
         val eventsFlow = runner.runAsync(
             session,
-            Content.fromParts(Part.fromText(userPrompt)),
+            Content.fromParts(Part.fromBytes(input.screenshotBytes, "image/jpeg"), Part.fromText(userPrompt)),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)
                 setMaxLlmCalls(100)
@@ -118,8 +117,8 @@ class VisualAnalysisAgentAdkImpl : IVisualAnalysisAgent {
 
         val result = SearchResult(
             originalQuery = input.searchQuery,
-            content = response.content,
-            sources = if (response.sources.isEmpty()) listOf(input.searchQuery.url) else response.sources
+            content = response.answer,
+            sources = listOf(input.searchQuery.url)
         )
 
         return IVisualAnalysisAgent.VisualAnalysisOutput(result)
