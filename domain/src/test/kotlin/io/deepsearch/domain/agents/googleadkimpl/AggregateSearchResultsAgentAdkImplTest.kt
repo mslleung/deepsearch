@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -22,11 +23,12 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IAggregateSearchResultsAgent>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `aggregate one single search result`() = runTest {
+    fun `aggregate one single search result`() = runTest(testCoroutineDispatcher) {
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val result = SearchResult(
             originalQuery = originalQuery,
@@ -44,7 +46,7 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `aggregate two search results`() = runTest {
+    fun `aggregate two search results`() = runTest(testCoroutineDispatcher) {
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val result1 = SearchResult(
             originalQuery = originalQuery,
@@ -67,7 +69,7 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `irrelevant search results`() = runTest {
+    fun `irrelevant search results`() = runTest(testCoroutineDispatcher) {
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val irrelevant1 = SearchResult(
             originalQuery = originalQuery,
@@ -90,7 +92,7 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `mix of relevant and irrelevant search results`() = runTest {
+    fun `mix of relevant and irrelevant search results`() = runTest(testCoroutineDispatcher) {
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val relevant = SearchResult(
             originalQuery = originalQuery,

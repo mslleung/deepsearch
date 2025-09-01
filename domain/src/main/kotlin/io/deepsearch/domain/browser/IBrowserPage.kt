@@ -17,7 +17,29 @@ interface IBrowserPage {
     /**
      * Takes a screenshot of the current viewport and returns the image bytes.
      */
-    fun takeScreenshot(): ByteArray
+    fun takeScreenshot(): Screenshot
+
+    /**
+     * Takes a screenshot of the current viewport and returns the image bytes.
+     */
+    fun takeFullPageScreenshot(): Screenshot
+
+    /**
+     * Image screenshot payload and format information.
+     */
+    data class Screenshot(
+        val bytes: ByteArray,
+        val mimeType: ImageMimeType
+    )
+
+    /**
+     * Supported image MIME types for screenshots.
+     */
+    enum class ImageMimeType(val value: String) {
+        JPEG("image/jpeg"),
+        PNG("image/png"),
+        WEBP("image/webp")
+    }
 
     /**
      * Human-oriented snapshot of the current page. Designed to describe the content and
@@ -203,5 +225,31 @@ interface IBrowserPage {
      * @return A human-oriented snapshot of the page content and available actions.
      */
     fun getPageInformation() : PageInformation
+
+    // --- Interactions (V1) ---
+
+    /** Click the first link matching the given absolute or relative href. */
+    fun clickLinkByHref(href: String): Boolean
+
+    /** Click an element by its visible text (best-effort). */
+    fun clickByText(text: String): Boolean
+
+    /** Click at absolute page coordinates within the viewport. */
+    fun clickAt(x: Double, y: Double): Boolean
+
+    /** Fill an input (text/textarea/select) by matching name or id. */
+    fun fillInputByNameOrId(nameOrId: String, value: String): Boolean
+
+    /** Submit a form by its action href if provided; otherwise best-effort submit. */
+    fun submitFormByAction(actionHref: String?): Boolean
+
+    /** Wait until navigation/network idle or timeout. */
+    fun waitForNavigationOrIdle(timeoutMs: Long = 8000): Boolean
+
+    /** Scroll vertically to y offset. */
+    fun scrollToY(y: Double)
+
+    data class ViewportSize(val width: Int, val height: Int)
+    fun getViewportSize(): ViewportSize
 
 }

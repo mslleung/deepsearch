@@ -2,6 +2,7 @@ package io.deepsearch.domain.services
 
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -19,11 +20,12 @@ class UnifiedSearchServiceTest : KoinTest {
         modules(domainTestModule)
     }
 
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val unifiedSearchService by inject<IUnifiedSearchService>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `performSearch should return content about main webpage information for www example com`() = runTest {
+    fun `performSearch should return content about main webpage information for www example com`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
             query = "What is the main content of this webpage?",

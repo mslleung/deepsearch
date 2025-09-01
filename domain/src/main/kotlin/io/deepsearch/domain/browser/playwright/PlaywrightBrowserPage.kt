@@ -3,6 +3,7 @@ package io.deepsearch.domain.browser.playwright
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.options.AriaRole
 import com.microsoft.playwright.options.ScreenshotType
+import com.microsoft.playwright.options.LoadState
 import io.deepsearch.domain.browser.IBrowserPage
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -27,12 +28,23 @@ class PlaywrightBrowserPage(
         page.navigate(url)
     }
 
-    override fun takeScreenshot(): ByteArray {
+    override fun takeScreenshot(): IBrowserPage.Screenshot {
         logger.debug("Taking screenshot ...")
-        return page.screenshot(
+        val bytes = page.screenshot(
             Page.ScreenshotOptions().apply {
                 type = ScreenshotType.JPEG
             })
+        return IBrowserPage.Screenshot(bytes = bytes, mimeType = IBrowserPage.ImageMimeType.JPEG)
+    }
+
+    override fun takeFullPageScreenshot(): IBrowserPage.Screenshot {
+        logger.debug("Taking full-page screenshot ...")
+        val bytes = page.screenshot(
+            Page.ScreenshotOptions().apply {
+                type = ScreenshotType.JPEG
+                fullPage = true
+            })
+        return IBrowserPage.Screenshot(bytes = bytes, mimeType = IBrowserPage.ImageMimeType.JPEG)
     }
 
     /**
@@ -81,6 +93,161 @@ class PlaywrightBrowserPage(
             breadcrumbs = breadcrumbs,
             actionSpace = actionSpace
         )
+    }
+
+    // --- Interactions (V1) ---
+
+    override fun clickLinkByHref(href: String): Boolean {
+        return try {
+            val base = try { java.net.URI(page.url()) } catch (_: Throwable) { null }
+            val absolute = try { base?.resolve(href)?.toString() ?: href } catch (_: Throwable) { href }
+            val loc = page.locator("a[href='$absolute'], a[href='${href}']")
+            if (loc.count() > 0) {
+                loc.first().click()
+                true
+            } else {
+                // fallback: contains match
+                val anchors = page.locator("a[href]")
+                val n = anchors.count()
+                var i = 0
+                while (i < n) {
+                    val el = anchors.nth(i)
+                    val v = el.getAttribute("href") ?: ""
+                    if (v.contains(href) || v.contains(absolute)) {
+                        el.click()
+                        return true
+                    }
+                    i++
+                }
+                false
+            }
+        } catch (t: Throwable) {
+            logger.debug("clickLinkByHref failed: {}", t.message)
+            false
+        }
+    }
+
+    override fun clickByText(text: String): Boolean {
+        return try {
+            // Prefer role-based locators
+            val byRoleLink = page.getByRole(AriaRole.LINK, Page.GetByRoleOptions().setName(text))
+            if (byRoleLink.count() > 0) { byRoleLink.first().click(); return true }
+            val byRoleButton = page.getByRole(AriaRole.BUTTON, Page.GetByRoleOptions().setName(text))
+            if (byRoleButton.count() > 0) { byRoleButton.first().click(); return true }
+
+            // Fallback: text matching
+            val cssCandidates = listOf(
+                "a:has-text('$text')",
+                "button:has-text('$text')",
+                "[role=button]:has-text('$text')"
+            )
+            for (sel in cssCandidates) {
+                val loc = page.locator(sel)
+                if (loc.count() > 0) { loc.first().click(); return true }
+            }
+
+            // Last resort: query all clickable elements and filter by innerText contains
+            val clickable = page.locator("a, button, [role=button]")
+            val n = clickable.count()
+            var i = 0
+            while (i < n) {
+                val el = clickable.nth(i)
+                val t = try { el.innerText() } catch (_: Throwable) { null }
+                if (t != null && t.contains(text, ignoreCase = true)) {
+                    el.click()
+                    return true
+                }
+                i++
+            }
+            false
+        } catch (t: Throwable) {
+            logger.debug("clickByText failed: {}", t.message)
+            false
+        }
+    }
+
+    override fun clickAt(x: Double, y: Double): Boolean {
+        return try {
+            page.mouse().click(x, y)
+            true
+        } catch (t: Throwable) {
+            logger.debug("clickAt failed: {}", t.message)
+            false
+        }
+    }
+
+    override fun fillInputByNameOrId(nameOrId: String, value: String): Boolean {
+        return try {
+            val selectors = listOf(
+                "input[name='${nameOrId}']",
+                "textarea[name='${nameOrId}']",
+                "select[name='${nameOrId}']",
+                "#${nameOrId}"
+            )
+            for (sel in selectors) {
+                val loc = page.locator(sel)
+                if (loc.count() > 0) {
+                    val el = loc.first()
+                    val tag = try { el.evaluate("e => e.tagName.toLowerCase()") as String } catch (_: Throwable) { "input" }
+                    when (tag) {
+                        "select" -> el.selectOption(value)
+                        else -> el.fill(value)
+                    }
+                    return true
+                }
+            }
+            false
+        } catch (t: Throwable) {
+            logger.debug("fillInputByNameOrId failed: {}", t.message)
+            false
+        }
+    }
+
+    override fun submitFormByAction(actionHref: String?): Boolean {
+        return try {
+            val form = if (!actionHref.isNullOrBlank()) {
+                page.locator("form[action='${actionHref}']").first()
+            } else {
+                page.locator("form").first()
+            }
+            form.evaluate("f => f.requestSubmit ? f.requestSubmit() : f.submit()")
+            true
+        } catch (t: Throwable) {
+            logger.debug("submitFormByAction failed: {}", t.message)
+            false
+        }
+    }
+
+    override fun waitForNavigationOrIdle(timeoutMs: Long): Boolean {
+        return try {
+            val end = System.currentTimeMillis() + timeoutMs
+            // Try to detect navigation; otherwise wait for network idle
+            page.waitForLoadState()
+            // Additional settle time up to timeout
+            val remaining = end - System.currentTimeMillis()
+            if (remaining > 0) {
+                // Playwright Java API does not support per-call timeout for this overload consistently across versions
+                // so we do a best-effort second wait for NETWORKIDLE.
+                page.waitForLoadState(LoadState.NETWORKIDLE)
+            }
+            true
+        } catch (t: Throwable) {
+            logger.debug("waitForNavigationOrIdle timeout or failure: {}", t.message)
+            false
+        }
+    }
+
+    override fun scrollToY(y: Double) {
+        try {
+            page.evaluate("window.scrollTo(0, arguments[0])", y)
+        } catch (t: Throwable) {
+            logger.debug("scrollToY failed: {}", t.message)
+        }
+    }
+
+    override fun getViewportSize(): IBrowserPage.ViewportSize {
+        val vs = page.viewportSize()
+        return IBrowserPage.ViewportSize(width = vs?.width ?: 0, height = vs?.height ?: 0)
     }
 
     /**

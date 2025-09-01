@@ -2,8 +2,9 @@ package io.deepsearch.domain.searchstrategies.googlesearch
 
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -15,7 +16,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 @EnabledIfEnvironmentVariable(named = "GOOGLE_API_KEY", matches = ".+")
-class GoogleSearchStrategyTest : KoinTest {
+class AgenticBrowserSearchStrategyTest : KoinTest {
 
     @JvmField
     @RegisterExtension
@@ -24,7 +25,7 @@ class GoogleSearchStrategyTest : KoinTest {
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val googleSearchStrategy by inject<IGoogleSearchStrategy>()
+    private val agenticBrowserSearchStrategy by inject<IAgenticBrowserSearchStrategy>()
 
     @Test
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
@@ -35,7 +36,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchStrategy.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -53,7 +54,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchStrategy.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -71,7 +72,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchStrategy.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -89,7 +90,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchStrategy.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -107,7 +108,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchStrategy.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -126,7 +127,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchStrategy.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)

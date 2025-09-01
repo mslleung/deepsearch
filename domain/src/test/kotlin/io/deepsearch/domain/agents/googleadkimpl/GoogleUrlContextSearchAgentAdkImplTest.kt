@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -23,11 +24,12 @@ class GoogleUrlContextSearchAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IGoogleUrlContextSearchAgent>()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `url-context search returns content and at least one source`() = runTest {
+    fun `url-context search returns content and at least one source`() = runTest(testCoroutineDispatcher) {
         // Given
         val query = "what servants are S+ tier?"
         val urls = listOf("https://appmedia.jp/fategrandorder/96261")
@@ -47,7 +49,7 @@ class GoogleUrlContextSearchAgentAdkImplTest : KoinTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `url-context search clearly state conflicting sources`() = runTest {
+    fun `url-context search clearly state conflicting sources`() = runTest(testCoroutineDispatcher) {
         // Given
         val query = "Does the standard body check package include testing Glomerular Filtration Rate - eGfr?"
         val urls = listOf("https://www.otandp.com/body-check/", "https://www.otandp.com/body-check/standard")
