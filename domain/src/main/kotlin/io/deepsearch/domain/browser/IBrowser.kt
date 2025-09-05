@@ -6,5 +6,5 @@ interface IBrowser : AutoCloseable {
     /**
      * Close everything and clean up resources in this browser.
      */
-    override fun close()
+    override suspend fun close()
 }

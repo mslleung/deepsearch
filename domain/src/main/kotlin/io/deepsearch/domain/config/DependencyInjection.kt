@@ -2,30 +2,23 @@ package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.IBlinkTestAgent
-import io.deepsearch.domain.agents.IVisualAnalysisAgent
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.BlinkTestAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.VisualAnalysisAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
-import io.deepsearch.domain.browser.BrowserFactory
-import io.deepsearch.domain.browser.IBrowserFactory
+import io.deepsearch.domain.browser.BrowserPool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
 import io.deepsearch.domain.searchstrategies.googlesearch.GoogleSearchStrategy
 import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
 import io.deepsearch.domain.searchstrategies.googlesearch.IGoogleSearchStrategy
 import io.deepsearch.domain.services.*
-import io.deepsearch.domain.agents.IWebpageExtractAnswerAgent
-import io.deepsearch.domain.agents.IWebpageActionExtractor
-import io.deepsearch.domain.agents.tools.WebActionExecutor
-import io.deepsearch.domain.agents.googleadkimpl.WebpageExtractAnswerAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.WebpageActionExtractorAdkImpl
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -37,7 +30,7 @@ val domainModule = module {
         // domain services
         scopedOf(::UnifiedSearchService) bind IUnifiedSearchService::class
 
-        scopedOf(::BrowserFactory) bind IBrowserFactory::class
+        scopedOf(::BrowserPool) bind IBrowserPool::class
 
         scopedOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
         scopedOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
@@ -50,8 +43,4 @@ val domainModule = module {
     singleOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
     singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
-    singleOf(::VisualAnalysisAgentAdkImpl) bind IVisualAnalysisAgent::class
-    singleOf(::WebpageExtractAnswerAgentAdkImpl) bind IWebpageExtractAnswerAgent::class
-    singleOf(::WebpageActionExtractorAdkImpl) bind IWebpageActionExtractor::class
-    singleOf(::WebActionExecutor)
 }
