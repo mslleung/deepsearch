@@ -224,7 +224,7 @@ interface IBrowserPage {
      *
      * @return A human-oriented snapshot of the page content and available actions.
      */
-    fun getPageInformation() : PageInformation
+    fun parse() : PageInformation
 
     // --- Interactions (V1) ---
 

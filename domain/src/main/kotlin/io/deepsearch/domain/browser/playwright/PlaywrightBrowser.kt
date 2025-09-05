@@ -18,7 +18,7 @@ class PlaywrightBrowser : IBrowser {
         return PlaywrightBrowserContext(context)
     }
 
-    override fun close() {
+    override suspend fun close() {
         try {
             browser.contexts().forEach { context ->
                 context.pages().forEach { page ->

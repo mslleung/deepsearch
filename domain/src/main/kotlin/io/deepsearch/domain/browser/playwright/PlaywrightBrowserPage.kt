@@ -50,7 +50,7 @@ class PlaywrightBrowserPage(
     /**
      * Build a comprehensive, human-facing snapshot of the current page.
      */
-    override fun getPageInformation(): IBrowserPage.PageInformation {
+    override fun parse(): IBrowserPage.PageInformation {
         logger.debug("Building PageInformation (pre-url) ...")
         val url = page.url()
         val title = page.title()

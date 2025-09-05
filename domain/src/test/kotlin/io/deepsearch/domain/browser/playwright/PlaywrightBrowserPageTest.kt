@@ -1,6 +1,6 @@
 package io.deepsearch.domain.browser.playwright
 
-import io.deepsearch.domain.browser.IBrowserFactory
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
@@ -19,16 +19,16 @@ class PlaywrightBrowserPageTest: KoinTest {
         modules(domainTestModule)
     }
 
-    private val browserFactory by inject<IBrowserFactory>()
+    private val browserPool by inject<IBrowserPool>()
 
     @Test
     fun `getting page information for simple webpage`() = runTest {
-        val browser  = browserFactory.createBrowser()
+        val browser  = browserPool.acquireBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
         browserPage.navigate("https://example.com/")
-        val pageInformation = browserPage.getPageInformation()
+        val pageInformation = browserPage.parse()
 
         assertTrue(pageInformation.url.contains("example.com"))
         assertTrue(pageInformation.title?.contains("Example", ignoreCase = true) == true)
@@ -39,12 +39,12 @@ class PlaywrightBrowserPageTest: KoinTest {
 
     @Test
     fun `action space contains buttons and inputs when present`() = runTest {
-        val browser  = browserFactory.createBrowser()
+        val browser  = browserPool.acquireBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
         browserPage.navigate("https://www.wikipedia.org/")
-        val info = browserPage.getPageInformation()
+        val info = browserPage.parse()
 
         assertTrue(info.actionSpace.inputs.isNotEmpty())
         assertTrue(info.actionSpace.buttons.isNotEmpty())
@@ -53,12 +53,12 @@ class PlaywrightBrowserPageTest: KoinTest {
 
     @Test
     fun `breadcrumbs if present are captured or empty otherwise`() = runTest {
-        val browser  = browserFactory.createBrowser()
+        val browser  = browserPool.acquireBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
         browserPage.navigate("https://example.com/")
-        val info = browserPage.getPageInformation()
+        val info = browserPage.parse()
 
         assertNotNull(info.breadcrumbs)
     }
