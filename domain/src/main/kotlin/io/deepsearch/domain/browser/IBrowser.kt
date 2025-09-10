@@ -1,10 +1,10 @@
 package io.deepsearch.domain.browser
 
-interface IBrowser : AutoCloseable {
+interface IBrowser {
     fun createContext(): IBrowserContext
 
     /**
      * Close everything and clean up resources in this browser.
      */
-    override suspend fun close()
+    suspend fun close()
 }

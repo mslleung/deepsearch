@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 private const val maxPoolSize: Int = 8
 private val maxUsageDuration: Duration = Duration.ofHours(1)
+private const val standbyMinIdleBrowsers: Int = 0
 
 interface IBrowserPool {
     suspend fun acquireBrowser(): IBrowser
@@ -70,6 +71,8 @@ class BrowserPool : IBrowserPool {
             if (existing != null) {
                 existing.inUse = true
                 logger.debug("Acquired browser #{} from idle queue", existing.id)
+                // Top-up standby idle browsers if needed
+                ensureStandbyIdleLocked()
                 return@withLock existing
             }
 
@@ -78,6 +81,8 @@ class BrowserPool : IBrowserPool {
                 val created = createNewBrowserLocked()
                 created.inUse = true
                 logger.info("Created new browser #{} (pool size after create: {})", created.id, allBrowsers.size)
+                // After provisioning for the caller, pre-warm idle browsers up to standby threshold
+                ensureStandbyIdleLocked()
                 return@withLock created
             }
 
@@ -159,6 +164,9 @@ class BrowserPool : IBrowserPool {
                     logger.debug("Returned browser #{} to idle queue (idle count={}).", pooled.id, idleQueue.size)
                 }
             }
+
+            // After any state change, try to maintain standby idle browsers
+            ensureStandbyIdleLocked()
         }
 
         // Close outside the lock to avoid blocking other threads while Playwright tears down
@@ -173,9 +181,11 @@ class BrowserPool : IBrowserPool {
     }
 
     private fun createNewBrowserLocked(): PooledBrowser {
+        val id = idGenerator.getAndIncrement()
+        logger.info("Creating new browser #{}", id)
         val browser = PlaywrightBrowser()
         val pooled = PooledBrowser(
-            id = idGenerator.getAndIncrement(),
+            id = id,
             browser = browser,
             createdAtMillis = System.currentTimeMillis(),
             inUse = false
@@ -194,6 +204,25 @@ class BrowserPool : IBrowserPool {
                 removeAndCloseLocked(b)
                 logger.info("Recycled idle expired browser #{}.", b.id)
             }
+        }
+    }
+
+    /**
+     * Ensure we have at least [standbyMinIdleBrowsers] idle browsers ready for immediate use,
+     * without exceeding [maxPoolSize]. Must be called with [mutex] held.
+     */
+    private fun ensureStandbyIdleLocked() {
+        if (standbyMinIdleBrowsers <= 0) return
+        while (idleQueue.size < standbyMinIdleBrowsers && allBrowsers.size < maxPoolSize) {
+            val prewarmed = createNewBrowserLocked()
+            idleQueue.addLast(prewarmed)
+            logger.info(
+                "Pre-warmed standby browser #{} (idle={}; pool={}/{})",
+                prewarmed.id,
+                idleQueue.size,
+                allBrowsers.size,
+                maxPoolSize
+            )
         }
     }
 
