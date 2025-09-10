@@ -14,5 +14,6 @@ Respect current code style and existing working code. Don't break existing worki
 
 Kotlin style guide:
 This is a Kotlin project, prefer coding in Kotlin.
+Prefer Kotlin libraries and APIs over other programming languages.
 Avoid Kotlin inner functions as they are less readable in long functions. Exception can be made if appropriate.
 Prefer using enums over free-form strings.
