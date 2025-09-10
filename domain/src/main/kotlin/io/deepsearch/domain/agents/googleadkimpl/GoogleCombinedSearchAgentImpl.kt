@@ -57,8 +57,8 @@ class GoogleCombinedSearchAgentImpl : IGoogleCombinedSearchAgent {
     private val runner = InMemoryRunner(agent)
 
     override suspend fun generate(
-        input: IGoogleCombinedSearchAgent.GoogleCombinedSearchInput
-    ): IGoogleCombinedSearchAgent.GoogleCombinedSearchOutput {
+        input: io.deepsearch.domain.agents.GoogleCombinedSearchInput
+    ): io.deepsearch.domain.agents.GoogleCombinedSearchOutput {
         val (query, url) = input.searchQuery
         logger.debug("Combined search: '{}' on {}", query, url)
 
@@ -114,7 +114,7 @@ class GoogleCombinedSearchAgentImpl : IGoogleCombinedSearchAgent {
 
         logger.debug("Combined search results: '{}'", contentText)
 
-        return IGoogleCombinedSearchAgent.GoogleCombinedSearchOutput(searchResult)
+        return io.deepsearch.domain.agents.GoogleCombinedSearchOutput(searchResult)
     }
 }
 

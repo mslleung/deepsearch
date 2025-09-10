@@ -1,5 +1,6 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.agents.GoogleCombinedSearchInput
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -34,7 +35,7 @@ class GoogleCombinedSearchAgentAdkImplTest : KoinTest {
         )
 
         // When
-        val output = agent.generate(IGoogleCombinedSearchAgent.GoogleCombinedSearchInput(query))
+        val output = agent.generate(GoogleCombinedSearchInput(query))
 
         // Then
         val result = output.searchResult

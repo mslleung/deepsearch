@@ -39,7 +39,7 @@ class GoogleSearchStrategy(
 
         // 1) Run text search to discover candidate sources
         val googleTextSearchOutput = googleTextSearchAgent.generate(
-            IGoogleTextSearchAgent.GoogleTextSearchInput(searchQuery)
+            io.deepsearch.domain.agents.GoogleTextSearchInput(searchQuery)
         )
         val textSources = googleTextSearchOutput.searchResult.sources
         logger.debug("Text search found {} sources; first: {}", textSources.size, textSources.firstOrNull())
@@ -60,7 +60,7 @@ class GoogleSearchStrategy(
 
         // 3) Run URL-context agent against the selected URL(s)
         val urlContextOutput = googleUrlContextSearchAgent.generate(
-            IGoogleUrlContextSearchAgent.GoogleUrlContextSearchInput(
+            io.deepsearch.domain.agents.GoogleUrlContextSearchInput(
                 query = searchQuery.query,
                 urls = selectedUrls
             )

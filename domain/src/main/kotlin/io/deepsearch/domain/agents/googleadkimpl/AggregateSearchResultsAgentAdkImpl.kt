@@ -8,8 +8,8 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
-import io.deepsearch.domain.agents.IAggregateSearchResultsAgent.AggregateSearchResultsInput
-import io.deepsearch.domain.agents.IAggregateSearchResultsAgent.AggregateSearchResultsOutput
+import io.deepsearch.domain.agents.AggregateSearchResultsInput
+import io.deepsearch.domain.agents.AggregateSearchResultsOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import kotlinx.coroutines.reactive.asFlow

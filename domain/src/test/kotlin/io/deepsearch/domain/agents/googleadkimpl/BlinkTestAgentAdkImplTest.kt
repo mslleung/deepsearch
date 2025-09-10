@@ -43,7 +43,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
 
         // When
         val output = agent.generate(
-            IBlinkTestAgent.BlinkTestInput(
+            io.deepsearch.domain.agents.BlinkTestInput(
                 searchQuery = searchQuery,
                 screenshotBytes = screenshot.bytes
             )
@@ -72,7 +72,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
 
         // When
         val output = agent.generate(
-            IBlinkTestAgent.BlinkTestInput(
+            io.deepsearch.domain.agents.BlinkTestInput(
                 searchQuery = searchQuery,
                 screenshotBytes = screenshot.bytes
             )

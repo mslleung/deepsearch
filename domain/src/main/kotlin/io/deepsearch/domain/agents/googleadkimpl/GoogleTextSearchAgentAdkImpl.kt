@@ -70,8 +70,8 @@ class GoogleTextSearchAgentAdkImpl :
     }
 
     override suspend fun generate(
-        input: IGoogleTextSearchAgent.GoogleTextSearchInput
-    ): IGoogleTextSearchAgent.GoogleTextSearchOutput = coroutineScope {
+        input: io.deepsearch.domain.agents.GoogleTextSearchInput
+    ): io.deepsearch.domain.agents.GoogleTextSearchOutput = coroutineScope {
         val (query, url) = input.searchQuery
         logger.debug("Google text search: '{}' on site {}", query, url)
 
@@ -164,7 +164,7 @@ class GoogleTextSearchAgentAdkImpl :
 
         logger.debug("Google text search results: '{}' from sources {}", concatenatedText, sources)
 
-        IGoogleTextSearchAgent.GoogleTextSearchOutput(searchResult)
+        io.deepsearch.domain.agents.GoogleTextSearchOutput(searchResult)
     }
 
     private suspend fun resolveRedirectSafely(url: String): String {
