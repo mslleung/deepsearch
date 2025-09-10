@@ -1,5 +1,6 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.config.domainTestModule
@@ -36,7 +37,7 @@ class GoogleUrlContextSearchAgentAdkImplTest : KoinTest {
 
         // When
         val result = agent.generate(
-            IGoogleUrlContextSearchAgent.GoogleUrlContextSearchInput(
+            GoogleUrlContextSearchInput(
                 query = query,
                 urls = urls
             )
@@ -56,7 +57,7 @@ class GoogleUrlContextSearchAgentAdkImplTest : KoinTest {
 
         // When
         val result = agent.generate(
-            IGoogleUrlContextSearchAgent.GoogleUrlContextSearchInput(
+            GoogleUrlContextSearchInput(
                 query = query,
                 urls = urls
             )

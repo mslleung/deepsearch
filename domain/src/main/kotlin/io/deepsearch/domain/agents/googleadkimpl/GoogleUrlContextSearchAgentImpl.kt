@@ -51,8 +51,8 @@ class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
     private val runner = InMemoryRunner(agent)
 
     override suspend fun generate(
-        input: IGoogleUrlContextSearchAgent.GoogleUrlContextSearchInput
-    ): IGoogleUrlContextSearchAgent.GoogleUrlContextSearchOutput {
+        input: io.deepsearch.domain.agents.GoogleUrlContextSearchInput
+    ): io.deepsearch.domain.agents.GoogleUrlContextSearchOutput {
         val query = input.query
         val urls = input.urls
 
@@ -102,6 +102,6 @@ class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
 
         logger.debug("URL-context search results: '{}' from {} source(s)", llmResponse, urls.size)
 
-        return IGoogleUrlContextSearchAgent.GoogleUrlContextSearchOutput(llmResponse, urls)
+        return io.deepsearch.domain.agents.GoogleUrlContextSearchOutput(llmResponse, urls)
     }
 }

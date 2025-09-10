@@ -5,8 +5,11 @@ import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Playwright
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserContext
+import io.deepsearch.domain.agents.ITableIdentificationAgent
 
-class PlaywrightBrowser : IBrowser {
+class PlaywrightBrowser(
+    private val tableIdentificationAgent: ITableIdentificationAgent
+) : IBrowser {
     private val playwright: Playwright = Playwright.create()
     private val browser: Browser = playwright.chromium().launch(
         BrowserType.LaunchOptions()
@@ -15,7 +18,7 @@ class PlaywrightBrowser : IBrowser {
 
     override fun createContext(): IBrowserContext {
         val context = browser.newContext()
-        return PlaywrightBrowserContext(context)
+        return PlaywrightBrowserContext(context, tableIdentificationAgent)
     }
 
     override suspend fun close() {

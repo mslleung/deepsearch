@@ -2,6 +2,7 @@ package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
+import io.deepsearch.domain.agents.QueryExpansionAgentInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
@@ -36,7 +37,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
         // When
         val output = agent.generate(
-            IQueryExpansionAgent.QueryExpansionAgentInput(
+            QueryExpansionAgentInput(
                 searchQuery = searchQuery
             )
         )
@@ -52,7 +53,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
         // When
         val output = agent.generate(
-            IQueryExpansionAgent.QueryExpansionAgentInput(
+            QueryExpansionAgentInput(
                 searchQuery = searchQuery
             )
         )
@@ -70,7 +71,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
         // When
         val output = agent.generate(
-            IQueryExpansionAgent.QueryExpansionAgentInput(
+            QueryExpansionAgentInput(
                 searchQuery = searchQuery
             )
         )
@@ -87,7 +88,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
         // When
         val output = agent.generate(
-            IQueryExpansionAgent.QueryExpansionAgentInput(
+            QueryExpansionAgentInput(
                 searchQuery = searchQuery
             )
         )
@@ -104,7 +105,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
         // When
         val output = agent.generate(
-            IQueryExpansionAgent.QueryExpansionAgentInput(
+            QueryExpansionAgentInput(
                 searchQuery = searchQuery
             )
         )
@@ -121,7 +122,7 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
 
         // When
         val output = agent.generate(
-            IQueryExpansionAgent.QueryExpansionAgentInput(
+            QueryExpansionAgentInput(
                 searchQuery = searchQuery
             )
         )

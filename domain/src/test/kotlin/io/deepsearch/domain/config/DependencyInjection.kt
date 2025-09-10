@@ -12,6 +12,8 @@ import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkI
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
+import io.deepsearch.domain.agents.ITableIdentificationAgent
+import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
 import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.services.IUnifiedSearchService
@@ -40,6 +42,7 @@ val domainTestModule = module {
     singleOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
     singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
+    singleOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 }

@@ -1,6 +1,7 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.browser.playwright.PlaywrightBrowser
+import io.deepsearch.domain.agents.ITableIdentificationAgent
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -31,7 +32,9 @@ interface IBrowserPool {
  *   browsers are recycled immediately on the next acquire call. If a browser becomes expired while in use,
  *   it will be closed and removed from the pool upon release (and never handed out again).
  */
-class BrowserPool : IBrowserPool {
+class BrowserPool(
+    private val tableIdentificationAgent: ITableIdentificationAgent
+) : IBrowserPool {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -183,7 +186,7 @@ class BrowserPool : IBrowserPool {
     private fun createNewBrowserLocked(): PooledBrowser {
         val id = idGenerator.getAndIncrement()
         logger.info("Creating new browser #{}", id)
-        val browser = PlaywrightBrowser()
+        val browser = PlaywrightBrowser(tableIdentificationAgent)
         val pooled = PooledBrowser(
             id = id,
             browser = browser,

@@ -114,7 +114,7 @@ class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
 
     private val runner = InMemoryRunner(queryExpansionAgent)
 
-    override suspend fun generate(input: IQueryExpansionAgent.QueryExpansionAgentInput): IQueryExpansionAgent.QueryExpansionAgentOutput {
+    override suspend fun generate(input: io.deepsearch.domain.agents.QueryExpansionAgentInput): io.deepsearch.domain.agents.QueryExpansionAgentOutput {
         logger.debug("Expand query: {}", input.searchQuery)
 
         val session = runner
@@ -158,7 +158,7 @@ class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
 
         logger.debug("Expanded queries: {}", expandedQueries)
 
-        return IQueryExpansionAgent.QueryExpansionAgentOutput(expandedQueries = expandedQueries)
+        return io.deepsearch.domain.agents.QueryExpansionAgentOutput(expandedQueries = expandedQueries)
     }
 
     @Serializable

@@ -1,5 +1,6 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.agents.AggregateSearchResultsInput
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -36,7 +37,7 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
             sources = listOf("https://www.example.com/")
         )
 
-        val output = agent.generate(IAggregateSearchResultsAgent.AggregateSearchResultsInput(originalQuery, listOf(result)))
+        val output = agent.generate(AggregateSearchResultsInput(originalQuery, listOf(result)))
         val aggregated = output.aggregatedResult
 
         assertEquals(originalQuery, aggregated.originalQuery)
@@ -59,7 +60,7 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
             sources = listOf("https://www.iana.org/domains/example")
         )
 
-        val output = agent.generate(IAggregateSearchResultsAgent.AggregateSearchResultsInput(originalQuery, listOf(result1, result2)))
+        val output = agent.generate(AggregateSearchResultsInput(originalQuery, listOf(result1, result2)))
         val aggregated = output.aggregatedResult
 
         assertEquals(originalQuery, aggregated.originalQuery)
@@ -82,7 +83,7 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
             sources = listOf("https://en.wikipedia.org/wiki/Paris")
         )
 
-        val output = agent.generate(IAggregateSearchResultsAgent.AggregateSearchResultsInput(originalQuery, listOf(irrelevant1, irrelevant2)))
+        val output = agent.generate(AggregateSearchResultsInput(originalQuery, listOf(irrelevant1, irrelevant2)))
         val aggregated = output.aggregatedResult
 
         assertEquals(originalQuery, aggregated.originalQuery)
@@ -105,7 +106,7 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
             sources = listOf("https://www.cats.com/")
         )
 
-        val output = agent.generate(IAggregateSearchResultsAgent.AggregateSearchResultsInput(originalQuery, listOf(relevant, irrelevant)))
+        val output = agent.generate(AggregateSearchResultsInput(originalQuery, listOf(relevant, irrelevant)))
         val aggregated = output.aggregatedResult
 
         assertEquals(originalQuery, aggregated.originalQuery)

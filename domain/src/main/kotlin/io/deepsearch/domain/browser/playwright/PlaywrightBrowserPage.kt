@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import com.microsoft.playwright.options.ScreenshotType
 import com.microsoft.playwright.options.LoadState
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.agents.ITableIdentificationAgent
+import io.deepsearch.domain.agents.TableIdentificationInput
 import kotlinx.coroutines.CoroutineDispatcher
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -19,6 +21,7 @@ import org.slf4j.LoggerFactory
  */
 class PlaywrightBrowserPage(
     private val page: Page,
+    private val tableIdentificationAgent: ITableIdentificationAgent,
     private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default
 ) : IBrowserPage {
 
@@ -55,32 +58,29 @@ class PlaywrightBrowserPage(
 
     override suspend fun parse(): IBrowserPage.PageInformation {
         logger.debug("Parsing page information ...")
-
+    
         val url = page.url()
         val title = page.title()
         val descriptionMeta = page.locator("meta[name=description], meta[property='og:description']")
         val description =
             if (descriptionMeta.count() > 0) descriptionMeta.first().getAttribute("content")?.trim() else null
-
+    
         logger.debug(
             "Page meta extracted: url={}, title={}, descriptionLength={}",
             url,
             title,
             description?.length ?: 0
         )
-
-        // TODO val iconMapping
-        // using a js script, we need to extract all icons (e.g. <i> etc.) and place in a map of icon to base64, icons are typically reused in the website so the mapping must be unique
-        // return the mapping here
-        // then, we need to modify the method signature to take an IWebpageIconInterpreterAgent to convert the icon map into string interpretation
-        // implement the agent according to how we invoke gemini to interpret images using google adk, reference existing agents for implementation
-        // finally, we pass the icon - to - interpretation map into the textContentForExtraction script and convert icons to their interpreted string
-
-        // Build a deterministic, indented text snapshot for downstream extraction with a single DOM-side pass.
-        // Include common textual containers; exclude interactive elements (links/buttons) and images.
+    
+        val screenshot = takeScreenshot()
+        val tableInput = TableIdentificationInput(screenshot.bytes)
+        val tableOutput = tableIdentificationAgent.generate(tableInput)
+        val tableXPaths = tableOutput.tableXPaths
+        logger.debug("Identified {} table xpaths: {}", tableXPaths.size, tableXPaths)
+    
         val script = loadScript("scripts/textContentForExtraction.js")
         @Suppress("UNCHECKED_CAST")
-        val textContentForExtraction = page.evaluate(script) as String
+        val textContentForExtraction = page.evaluate(script, tableXPaths) as String
 
         logger.debug(
             "Extraction complete: totalChars={}",

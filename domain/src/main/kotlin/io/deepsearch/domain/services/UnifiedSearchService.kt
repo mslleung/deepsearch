@@ -2,7 +2,7 @@ package io.deepsearch.domain.services
 
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
-import io.deepsearch.domain.agents.IAggregateSearchResultsAgent.AggregateSearchResultsInput
+import io.deepsearch.domain.agents.AggregateSearchResultsInput
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
@@ -29,7 +29,7 @@ class UnifiedSearchService(
         val (query, url) = searchQuery
 
         logger.debug("Start unified search: {} {}", query, url)
-        val agentInput = IQueryExpansionAgent.QueryExpansionAgentInput(searchQuery = searchQuery)
+        val agentInput = io.deepsearch.domain.agents.QueryExpansionAgentInput(searchQuery = searchQuery)
         val agentOutput = queryExpansionAgent.generate(agentInput)
         val subqueries = agentOutput.expandedQueries
 
