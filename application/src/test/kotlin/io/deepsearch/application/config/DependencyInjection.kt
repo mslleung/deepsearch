@@ -1,28 +1,11 @@
-package io.deepsearch.domain.config
+package io.deepsearch.application.config
 
-import io.deepsearch.domain.agents.IGoogleTextSearchAgent
-import io.deepsearch.domain.agents.IBlinkTestAgent
-import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
-import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
-import io.deepsearch.domain.agents.IQueryExpansionAgent
-import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.BlinkTestAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
-import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
-import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
-import io.deepsearch.domain.agents.ITableIdentificationAgent
-import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
-import io.deepsearch.domain.browser.BrowserPool
-import io.deepsearch.domain.browser.IBrowserPool
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
-import org.koin.core.module.dsl.singleOf
-import org.koin.dsl.bind
 import org.koin.dsl.module
 
 val applicationTestModule = module {
+    includes(domainTestModule)
 //    singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
 //    singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
 //

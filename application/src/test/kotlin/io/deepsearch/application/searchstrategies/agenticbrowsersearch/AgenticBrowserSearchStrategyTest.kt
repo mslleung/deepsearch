@@ -1,8 +1,8 @@
-package io.deepsearch.domain.searchstrategies.googlesearch
+package io.deepsearch.application.searchstrategies.agenticbrowsersearch
 
+import io.deepsearch.application.config.applicationTestModule
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -20,7 +20,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
     @JvmField
     @RegisterExtension
     val koinTestExtension = KoinTestExtension.create {
-        modules(domainTestModule)
+        modules(applicationTestModule)
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()

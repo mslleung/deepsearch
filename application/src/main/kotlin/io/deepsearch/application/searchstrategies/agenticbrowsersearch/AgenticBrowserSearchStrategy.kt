@@ -6,6 +6,10 @@ import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.application.searchstrategies.ISearchStrategy
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
+import io.deepsearch.domain.agents.IIconInterpreterAgent
+import io.deepsearch.domain.agents.IconInterpretationInput
+import io.deepsearch.domain.repositories.IWebpageIconRepository
+import io.deepsearch.domain.models.entities.WebpageIconRecord
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -20,6 +24,8 @@ interface IAgenticBrowserSearchStrategy : ISearchStrategy {
 class AgenticBrowserSearchStrategy(
     private val browserPool: IBrowserPool,
     private val tableIdentificationAgent: ITableIdentificationAgent,
+    private val iconInterpreterAgent: IIconInterpreterAgent,
+    private val webpageIconRepository: IWebpageIconRepository,
 ) : IAgenticBrowserSearchStrategy {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -35,29 +41,57 @@ class AgenticBrowserSearchStrategy(
             val title = page.getTitle()
             val description = page.getDescription()
 
+            // Phase 1: extract and interpret icons
+            val icons = page.extractIcons()
+            logger.debug("Icon extraction yielded {} candidates", icons.size)
+            var interpretedCount = 0
+            for (icon in icons) {
+                val existing = webpageIconRepository.findByUrlAndHash(url, icon.imageBytesHash)
+                if (existing == null) {
+                    val output = iconInterpreterAgent.generate(
+                        IconInterpretationInput(
+                            bytes = icon.bytes,
+                            mimeType = icon.mimeType,
+                            context = mapOf("selector" to icon.selector)
+                        )
+                    )
+                    val record = WebpageIconRecord(
+                        selector = icon.selector,
+                        imageBytesHash = icon.imageBytesHash,
+                        mimeType = icon.mimeType,
+                        jpegBytes = icon.bytes,
+                        label = output.label,
+                        confidence = output.confidence,
+                        hints = output.hints
+                    )
+                    webpageIconRepository.upsert(url, record)
+                    interpretedCount++
+                }
+            }
+            logger.debug("Interpreted {} new icons; {} already cached", interpretedCount, icons.size - interpretedCount)
 
-
-            // TODO we need to identify icons on the page, render them as jpeg, use an agent to turn to text and save in a cache
-            // 1. Focus on <i> elements for now, we will handle <svg> later.
-            // 2. Using a js script, we will first get the jpg base64 render of each icon. First collect all the <i> icons on the page, dedup, then render into Jpeg and convert to base64. Generate a hash on the jpeg bytes and dedup again. In the end we should have a list of objects containing (selector, imageBytesHash and the jpeg bytes in base64 plus a mimetype (image/jpeg)))
-            // 3. Return the script results here. Pass each image to an IconInterpreterAgent (new agent) to convert to string.
-            // 4. save everything into the db via a WebpageIconRepository.
-
+            // Phase 2: table identification (existing logic)
             val screenshot = page.takeScreenshot()
             val tableInput = TableIdentificationInput(screenshot.bytes, screenshot.mimeType)
             val tableOutput = tableIdentificationAgent.generate(tableInput)
             val tables = tableOutput.tables
             logger.debug("Identified {} table xpaths: {}", tables.size, tables)
 
-//            val script = loadScript("scripts/textContentForExtraction.js")
-//            @Suppress("UNCHECKED_CAST")
-//            val textContentForExtraction = page.evaluate(script, tables) as String
+            // v1 content: basic page summary
+            val summary = buildString {
+                appendLine("Title: ${title}")
+                if (!description.isNullOrBlank()) {
+                    appendLine("Description: ${description}")
+                }
+                appendLine("Icons processed: ${icons.size}, new: ${interpretedCount}")
+                appendLine("Tables identified: ${tables.size}")
+            }.trim()
 
-//            logger.debug(
-//                "Extraction complete: totalChars={}",
-//                textContentForExtraction.length
-//            )
-            TODO()  // please ignore this
+            return SearchResult(
+                originalQuery = searchQuery,
+                content = summary,
+                sources = listOf(url)
+            )
         } finally {
             browser.close()
         }

@@ -1,11 +1,14 @@
 package io.deepsearch.domain.browser.playwright
 
+import com.microsoft.playwright.Locator
 import com.microsoft.playwright.Page
 import kotlinx.coroutines.Dispatchers
 import com.microsoft.playwright.options.ScreenshotType
 import com.microsoft.playwright.options.LoadState
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.WebIconBitmap
+import io.deepsearch.domain.utils.ImageHash
 import kotlinx.coroutines.CoroutineDispatcher
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -50,6 +53,66 @@ class PlaywrightBrowserPage(
                 fullPage = true
             })
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
+    }
+
+    override suspend fun extractIcons(): List<WebIconBitmap> {
+        logger.debug("Extracting icons")
+        val results = mutableListOf<WebIconBitmap>()
+        val seenHashes = mutableSetOf<String>()
+
+        val iLocator = page.locator("i")
+        val total = iLocator.count()
+
+        for (idx in 0 until total) {
+            val nth = iLocator.nth(idx)
+            try {
+                val box = nth.boundingBox()
+                if (box == null || box.width <= 0 || box.height <= 0) {
+                    continue
+                }
+                val bytes = nth.screenshot(
+                    Locator.ScreenshotOptions().apply {
+                        type = ScreenshotType.JPEG
+                        quality = 100
+                    }
+                )
+                if (bytes.isEmpty()) continue
+
+                val hash = ImageHash.hash(bytes)
+                if (seenHashes.contains(hash)) {
+                    continue
+                }
+
+                val classes = nth.getAttribute("class")
+                val selectorHint = buildString {
+                    append("i")
+                    if (!classes.isNullOrBlank()) {
+                        val short = classes.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.take(3)
+                        if (short.isNotEmpty()) {
+                            append(".")
+                            append(short.joinToString("."))
+                        }
+                    }
+                    append("::nth=")
+                    append(idx)
+                }
+
+                results.add(
+                    WebIconBitmap(
+                        selector = selectorHint,
+                        imageBytesHash = hash,
+                        bytes = bytes,
+                        mimeType = ImageMimeType.JPEG
+                    )
+                )
+                seenHashes.add(hash)
+            } catch (t: Throwable) {
+                logger.debug("Skipping icon {} due to error: {}", idx, t.message)
+            }
+        }
+
+        logger.debug("Extracted {} unique icons (from {})", results.size, total)
+        return results
     }
 
     override suspend fun getTitle(): String {

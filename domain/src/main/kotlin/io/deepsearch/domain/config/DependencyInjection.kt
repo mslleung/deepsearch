@@ -14,6 +14,8 @@ import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
+import io.deepsearch.domain.agents.IIconInterpreterAgent
+import io.deepsearch.domain.agents.googleadkimpl.IconInterpreterAgentAdkImpl
 import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
 import org.koin.core.module.dsl.scopedOf
@@ -37,4 +39,5 @@ val domainModule = module {
     singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
     singleOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
+    singleOf(::IconInterpreterAgentAdkImpl) bind IIconInterpreterAgent::class
 }
