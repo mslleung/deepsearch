@@ -1,9 +1,9 @@
 package io.deepsearch.domain.searchstrategies.googlesearch
 
+import io.deepsearch.domain.config.applicationTestModule
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -20,7 +20,7 @@ class GoogleSearchStrategyTest : KoinTest {
     @JvmField
     @RegisterExtension
     val koinTestExtension = KoinTestExtension.create {
-        modules(domainTestModule)
+        modules(applicationTestModule, domainTestModule)
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()

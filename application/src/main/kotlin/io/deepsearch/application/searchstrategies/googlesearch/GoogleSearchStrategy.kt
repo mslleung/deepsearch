@@ -1,11 +1,12 @@
-package io.deepsearch.domain.searchstrategies.googlesearch
+package io.deepsearch.application.searchstrategies.googlesearch
 
-import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
-import io.deepsearch.domain.searchstrategies.ISearchStrategy
+import io.deepsearch.application.searchstrategies.ISearchStrategy
+import io.deepsearch.domain.agents.GoogleTextSearchInput
+import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -39,7 +40,7 @@ class GoogleSearchStrategy(
 
         // 1) Run text search to discover candidate sources
         val googleTextSearchOutput = googleTextSearchAgent.generate(
-            io.deepsearch.domain.agents.GoogleTextSearchInput(searchQuery)
+            GoogleTextSearchInput(searchQuery)
         )
         val textSources = googleTextSearchOutput.searchResult.sources
         logger.debug("Text search found {} sources; first: {}", textSources.size, textSources.firstOrNull())
@@ -60,7 +61,7 @@ class GoogleSearchStrategy(
 
         // 3) Run URL-context agent against the selected URL(s)
         val urlContextOutput = googleUrlContextSearchAgent.generate(
-            io.deepsearch.domain.agents.GoogleUrlContextSearchInput(
+            GoogleUrlContextSearchInput(
                 query = searchQuery.query,
                 urls = selectedUrls
             )

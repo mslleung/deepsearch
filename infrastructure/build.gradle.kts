@@ -15,8 +15,8 @@ dependencies {
     
     // Database dependencies
     implementation(libs.exposed.core)
-    implementation(libs.exposed.jdbc)
-    implementation(libs.h2)
+    implementation(libs.exposed.r2dbc)
+    implementation(libs.r2dbc.h2)
     
     // Dependency injection
     implementation(libs.koin.ktor)

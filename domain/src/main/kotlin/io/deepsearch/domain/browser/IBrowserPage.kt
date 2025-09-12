@@ -1,5 +1,7 @@
 package io.deepsearch.domain.browser
 
+import io.deepsearch.domain.constants.ImageMimeType
+
 /**
  * Abstraction over a single browser page/tab that can be navigated and inspected.
  *
@@ -32,25 +34,8 @@ interface IBrowserPage {
         val mimeType: ImageMimeType
     )
 
-    /**
-     * Supported image MIME types for screenshots.
-     */
-    enum class ImageMimeType(val value: String) {
-        JPEG("image/jpeg"),
-        PNG("image/png"),
-        WEBP("image/webp")
-    }
+    suspend fun getTitle(): String
 
-    data class PageInformation(
-        val url: String,    // the webpage url
-        val title: String?, // the webpage title
-        val description: String?,// the webpage description
-        val textContentForExtraction: String, // The webpage html converted to a better format for llm understanding and extracting information for answering user query
-    )
-
-    /**
-     * Parse the webpage into a structured snapshot.
-     */
-    suspend fun parse(): PageInformation
+    suspend fun getDescription(): String?
 
 }

@@ -38,7 +38,7 @@ class PlaywrightBrowserPageTest : KoinTest {
         val browserPage = browserContext.newPage()
 
         browserPage.navigate(url)
-        val pageInformation = browserPage.parse()
+        val pageInformation = browserPage.getBasicInformation()
 
         assertTrue(pageInformation.url.contains("example.com"))
         assertTrue(pageInformation.title?.contains("Example", ignoreCase = true) == true)
