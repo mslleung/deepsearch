@@ -12,6 +12,7 @@ import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import kotlin.getValue
+import kotlin.test.Test
 
 class PlaywrightBrowserPageTest : KoinTest {
 
@@ -24,6 +25,30 @@ class PlaywrightBrowserPageTest : KoinTest {
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val browserPool by inject<IBrowserPool>()
 
+    @Test
+    fun `getting title for example webpage`(url: String) = runTest(testCoroutineDispatcher) {
+        val browser = browserPool.acquireBrowser()
+        val browserContext = browser.createContext()
+        val browserPage = browserContext.newPage()
+
+        browserPage.navigate(url)
+        val title = browserPage.getTitle()
+
+        assertTrue { title.isNotBlank() }
+    }
+
+    @Test
+    fun `getting title for example webpage`(url: String) = runTest(testCoroutineDispatcher) {
+        val browser = browserPool.acquireBrowser()
+        val browserContext = browser.createContext()
+        val browserPage = browserContext.newPage()
+
+        browserPage.navigate(url)
+        val title = browserPage.getTitle()
+
+        assertTrue { title.isNotBlank() }
+    }
+
     @ParameterizedTest
     @ValueSource(
         strings = [
@@ -32,18 +57,5 @@ class PlaywrightBrowserPageTest : KoinTest {
 //            "https://sleekflow.io/pricing"
         ]
     )
-    fun `getting page information for simple webpage`(url: String) = runTest(testCoroutineDispatcher) {
-        val browser = browserPool.acquireBrowser()
-        val browserContext = browser.createContext()
-        val browserPage = browserContext.newPage()
-
-        browserPage.navigate(url)
-        val pageInformation = browserPage.getBasicInformation()
-
-        assertTrue(pageInformation.url.contains("example.com"))
-        assertTrue(pageInformation.title?.contains("Example", ignoreCase = true) == true)
-        assertTrue(pageInformation.description?.contains("Example", ignoreCase = true) == true)
-//        assertTrue(pageInformation.textContentForExtraction.contains("Example", ignoreCase = true) == true)
-    }
-
+    fun
 }

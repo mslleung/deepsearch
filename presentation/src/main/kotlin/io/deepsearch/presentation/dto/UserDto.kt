@@ -2,9 +2,9 @@ package io.deepsearch.presentation.dto
 
 import kotlinx.serialization.Serializable
 import io.deepsearch.domain.entities.User
-import io.deepsearch.domain.valueobjects.UserId
-import io.deepsearch.domain.valueobjects.UserName
-import io.deepsearch.domain.valueobjects.UserAge
+import io.deepsearch.domain.models.valueobjects.UserAge
+import io.deepsearch.domain.models.valueobjects.UserId
+import io.deepsearch.domain.models.valueobjects.UserName
 
 @Serializable
 data class CreateUserRequest(

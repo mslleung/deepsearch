@@ -1,6 +1,7 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.WebIconBitmap
 
 /**
  * Abstraction over a single browser page/tab that can be navigated and inspected.
@@ -25,6 +26,16 @@ interface IBrowserPage {
      * Takes a screenshot of the current viewport and returns the image bytes.
      */
     fun takeFullPageScreenshot(): Screenshot
+
+    /**
+     * Extract rendered icons from the current page.
+     *
+     * Phase 1 focuses on <i> elements only. Each icon is rendered as a JPEG and deduplicated
+     * first by selector, then by SHA-256 hash of the bytes.
+     *
+     * @return List of WebIconBitmap containing selector, hash, bytes, and mimeType.
+     */
+    suspend fun extractIcons(): List<WebIconBitmap>
 
     /**
      * Image screenshot payload and format information.

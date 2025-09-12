@@ -2,7 +2,7 @@ package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IUserService
 import io.deepsearch.domain.exceptions.UserNotFoundException
-import io.deepsearch.domain.valueobjects.UserId
+import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.presentation.dto.CreateUserRequest
 import io.deepsearch.presentation.dto.UpdateUserRequest
 import io.deepsearch.presentation.dto.toDomain
@@ -86,4 +86,4 @@ class UserController(private val userService: IUserService) {
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
         }
     }
-} 
+}
