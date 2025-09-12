@@ -1,7 +1,7 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.constants.ImageMimeType
-import io.deepsearch.domain.models.valueobjects.WebIconBitmap
+import java.security.MessageDigest
 
 /**
  * Abstraction over a single browser page/tab that can be navigated and inspected.
@@ -28,6 +28,19 @@ interface IBrowserPage {
     fun takeFullPageScreenshot(): Screenshot
 
     /**
+     * Rendered web icon bitmap and metadata used for interpretation and caching.
+     *
+     * bytes: raw image bytes (typically JPEG).
+     * mimeType: image mime type, defaults to JPEG.
+     */
+    data class IconBitmap(
+        val bytes: ByteArray,
+        val mimeType: ImageMimeType = ImageMimeType.JPEG
+    ) {
+        val bytesHash: ByteArray by lazy { MessageDigest.getInstance("SHA-256").digest(bytes) }
+    }
+
+    /**
      * Extract rendered icons from the current page.
      *
      * Phase 1 focuses on <i> elements only. Each icon is rendered as a JPEG and deduplicated
@@ -35,7 +48,7 @@ interface IBrowserPage {
      *
      * @return List of WebIconBitmap containing selector, hash, bytes, and mimeType.
      */
-    suspend fun extractIcons(): List<WebIconBitmap>
+    suspend fun extractIcons(): List<IconBitmap>
 
     /**
      * Image screenshot payload and format information.

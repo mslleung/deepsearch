@@ -8,8 +8,8 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.IIconInterpreterAgent
-import io.deepsearch.domain.agents.IconInterpretationInput
-import io.deepsearch.domain.agents.IconInterpretationOutput
+import io.deepsearch.domain.agents.IconInterpreterInput
+import io.deepsearch.domain.agents.IconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -29,21 +29,12 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Interpretation of a small UI icon")
+        .description("Interpretation of a UI icon")
         .properties(
             mapOf(
                 "label" to Schema.builder()
                     .type("STRING")
-                    .description("Short label describing the icon, e.g., 'search', 'download', 'settings'")
-                    .build(),
-                "confidence" to Schema.builder()
-                    .type("NUMBER")
-                    .description("Confidence score between 0.0 and 1.0")
-                    .build(),
-                "hints" to Schema.builder()
-                    .type("ARRAY")
-                    .description("Optional synonyms or related labels")
-                    .items(Schema.builder().type("STRING").build())
+                    .description("label describing the icon, e.g., 'search', 'download', 'settings'")
                     .build()
             )
         )
@@ -52,7 +43,7 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("iconInterpreterAgent")
-        description("Interpret a small UI icon image and output a concise label with confidence")
+        description("Interpret a UI icon image and output a concise label")
         model(ModelIds.GEMINI_2_5_LITE.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -64,14 +55,18 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
         )
         instruction(
             """
-            You are given a small UI icon image. Produce:
-            - "label": a concise, lowercase label (single or few words) like "search", "download", "settings", "hamburger menu", "close", "play", "pause".
-            - "confidence": 0.0..1.0 indicating how confident you are in the label.
-            - "hints": optional synonyms or related words (short list).
+            You are given a small UI icon image. Produce a label to accurately describe the image.
             
-            Important:
-            - Return ONLY a JSON object matching the schema exactly.
-            - Prefer common UI icon names over verbose descriptions.
+            Instructions:
+            - Interpret the image. 
+            - If the image is a simple UI icon, output a concise, lowercase label
+              ex. "search", "download", "settings", "hamburger menu", "close", "play", "pause", "tick", "cross".
+            - If the image is not a simple UI icon, output a more detailed label describing the icon.
+
+            Expected output shape:
+            {
+                "label": string
+            }
             """.trimIndent()
         )
         build()
@@ -81,12 +76,10 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
 
     @Serializable
     private data class IconInterpretationResponse(
-        val label: String,
-        val confidence: Double,
-        val hints: List<String> = emptyList()
+        val label: String
     )
 
-    override suspend fun generate(input: IconInterpretationInput): IconInterpretationOutput {
+    override suspend fun generate(input: IconInterpreterInput): IconInterpreterOutput {
         logger.debug("Interpreting icon ({} bytes, {})", input.bytes.size, input.mimeType.value)
 
         val session = runner
@@ -104,11 +97,11 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
         val eventsFlow = runner.runAsync(
             session,
             Content.fromParts(
-                Part.fromBytes(input.bytes, input.mimeType.value)
+                Part.fromBytes(input.bytes, input.mimeType.value),
             ),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(50)
+                setMaxLlmCalls(1)
             }.build()
         ).asFlow()
 
@@ -126,17 +119,10 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
             }
         }
 
-        val response = try {
-            Json.decodeFromString<IconInterpretationResponse>(llmResponse)
-        } catch (ex: Exception) {
-            logger.warn("Failed to parse icon interpretation JSON, falling back. Raw: {}", llmResponse)
-            IconInterpretationResponse(label = "unknown", confidence = 0.0, hints = emptyList())
-        }
+        val response = Json.decodeFromString<IconInterpretationResponse>(llmResponse)
 
-        return IconInterpretationOutput(
-            label = response.label,
-            confidence = response.confidence.coerceIn(0.0, 1.0),
-            hints = response.hints
+        return IconInterpreterOutput(
+            label = response.label
         )
     }
 }

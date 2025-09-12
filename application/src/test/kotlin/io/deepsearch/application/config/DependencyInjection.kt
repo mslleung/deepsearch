@@ -1,24 +1,17 @@
 package io.deepsearch.application.config
 
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.test.StandardTestDispatcher
+import io.deepsearch.application.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
+import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
+import io.deepsearch.application.searchstrategies.googlesearch.GoogleSearchStrategy
+import io.deepsearch.application.searchstrategies.googlesearch.IGoogleSearchStrategy
+import io.deepsearch.domain.config.domainTestModule
+import org.koin.core.module.dsl.singleOf
+import org.koin.dsl.bind
 import org.koin.dsl.module
 
 val applicationTestModule = module {
     includes(domainTestModule)
-//    singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
-//    singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
-//
-//    singleOf(::BrowserPool) bind IBrowserPool::class
-//
-//    // Google ADK agent has its own lifecycle management, so we make it singleton
-//    singleOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
-//    singleOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class
-//    singleOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
-//    singleOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
-//    singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
-//    singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
-//    singleOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
 
-    single<CoroutineDispatcher> { StandardTestDispatcher() }
+    singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
+    singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
 }
