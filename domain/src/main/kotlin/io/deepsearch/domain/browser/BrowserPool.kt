@@ -32,9 +32,7 @@ interface IBrowserPool {
  *   browsers are recycled immediately on the next acquire call. If a browser becomes expired while in use,
  *   it will be closed and removed from the pool upon release (and never handed out again).
  */
-class BrowserPool(
-    private val tableIdentificationAgent: ITableIdentificationAgent
-) : IBrowserPool {
+class BrowserPool() : IBrowserPool {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -186,7 +184,7 @@ class BrowserPool(
     private fun createNewBrowserLocked(): PooledBrowser {
         val id = idGenerator.getAndIncrement()
         logger.info("Creating new browser #{}", id)
-        val browser = PlaywrightBrowser(tableIdentificationAgent)
+        val browser = PlaywrightBrowser()
         val pooled = PooledBrowser(
             id = id,
             browser = browser,

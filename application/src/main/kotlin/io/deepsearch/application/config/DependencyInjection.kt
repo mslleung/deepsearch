@@ -1,5 +1,7 @@
 package io.deepsearch.application.config
 
+import io.deepsearch.application.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
+import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
 import io.deepsearch.application.services.UserService
 import io.deepsearch.application.services.SearchService
 import io.deepsearch.application.services.IUserService
@@ -16,6 +18,7 @@ val applicationModule = module {
     includes(infrastructureModule)
 
     requestScope {
+        scopedOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
         scopedOf(::UserService) bind IUserService::class
         scopedOf(::SearchService) bind ISearchService::class
     }

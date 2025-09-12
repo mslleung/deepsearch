@@ -6,12 +6,11 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 
 class PlaywrightBrowserContext(
-    private val context: BrowserContext,
-    private val tableIdentificationAgent: ITableIdentificationAgent
+    private val context: BrowserContext
 ) : IBrowserContext {
     
     override fun newPage(): IBrowserPage {
         val page = context.newPage()
-        return PlaywrightBrowserPage(page, tableIdentificationAgent)
+        return PlaywrightBrowserPage(page)
     }
 }

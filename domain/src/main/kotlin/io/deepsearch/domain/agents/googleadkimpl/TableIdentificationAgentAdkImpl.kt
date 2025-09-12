@@ -8,6 +8,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.ITableIdentificationAgent
+import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -27,40 +28,70 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         .description("List of XPath selectors for table roots")
         .properties(
             mapOf(
-                "tableXPaths" to Schema.builder()
+                "tables" to Schema.builder()
                     .type("ARRAY")
                     .description("Array of XPath strings pointing to table roots and captions")
-                    .items(Schema.builder().type("STRING").build())
+                    .items(
+                        Schema.builder()
+                            .type("OBJECT")
+                            .properties(
+                                mapOf(
+                                    "xpath" to Schema.builder().type("STRING").description("The XPath to the table.")
+                                        .build(),
+                                    "auxiliaryInfo" to Schema.builder().type("STRING")
+                                        .description("The auxiliary info for the table.").build()
+                                )
+                            )
+                            .required(listOf("xpath", "auxiliaryInfo"))
+                            .build()
+                    )
                     .build()
             )
         )
-        .required(listOf("tableXPaths"))
+        .required(listOf("tables"))
         .build()
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableIdentificationAgent")
         description("Identify tables in a webpage screenshot and return XPath selectors to their roots")
-        model(ModelIds.GEMINI_2_5_PRO.modelId)
+        model(ModelIds.GEMINI_2_5_LITE.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
         disallowTransferToParent(true)
         generateContentConfig(
             GenerateContentConfig.builder()
-                .temperature(0.1F)
+                .temperature(0F)
                 .build()
         )
         instruction(
             """
-            You are a table identification agent. Given a screenshot of a webpage, analyze it to identify any table-like structures, including traditional HTML tables, ARIA tables, visual tables made of divs/flexboxes, and auxiliary elements like captions.
+            Your task is to identify all tables in a webpage and generate XPath queries to those tables.
 
-            Return ONLY a JSON object with a "tableXPaths" array containing XPath selectors pointing to the root elements of each identified table, including captions if present.
+            Input:
+            A screenshot of a webpage.
+
+            Instructions:
+            - Scan the entire webpage and identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
+            - For every table you find, create an XPath selector using words from within the table. Use the XPath "contains" operator to select words from multiple cells to ensure uniqueness.
+            - The selected words should include content from different parts of the table, and must include some words from the table's first and last rows.
+            - Each "contains" selector should match only one word with no spaces.
+            - The XPath selector should point to the lowest common ancestor element that contains the entire table.
+            - Do not make any assumption on the underlying HTML. Use * to match all possible tags that the table uses (e.g., <table>, <div>, <ul>). This is crucial for identifying tables not made with standard <table> tags.
+            - Each XPath selector should uniquely identify a single table in the webpage.
+            - Additionally, extract auxiliaryInfo using surrounding text such as a table header and caption to provide extra information for understanding the table.
+
+            Example:
+            //*[contains(., 'Standard') and contains(., '30mins') and contains(., 'Follow')]
 
             Expected output shape:
             {
-              "tableXPaths": ["/html/body/div/table", "//div[@class='table-root']"]
+                "tables": [
+                    {
+                        "xpath": "string",
+                        "auxiliaryInfo": "string"
+                    }
+                ]
             }
-
-            Use precise XPath to the lowest ancestor that encompasses the entire table structure. If no tables are found, return an empty array.
             """.trimIndent()
         )
         build()
@@ -70,7 +101,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     @Serializable
     private data class TableIdentificationResponse(
-        val tableXPaths: List<String>
+        val tables: List<TableIdentification>
     )
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
@@ -91,7 +122,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         val eventsFlow = runner.runAsync(
             session,
             Content.fromParts(
-                Part.fromBytes(input.screenshotBytes, "image/jpeg")
+                Part.fromBytes(input.screenshotBytes, input.mimetype.value)
             ),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)
@@ -115,8 +146,8 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
         val response = Json.decodeFromString<TableIdentificationResponse>(llmResponse)
 
-        logger.debug("Table identification found {} xpaths", response.tableXPaths.size)
+        logger.debug("Table identification found {} tables", response.tables.size)
 
-        return TableIdentificationOutput(tableXPaths = response.tableXPaths)
+        return TableIdentificationOutput(tables = response.tables)
     }
 }

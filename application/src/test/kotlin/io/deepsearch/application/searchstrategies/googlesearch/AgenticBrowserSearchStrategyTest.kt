@@ -4,7 +4,6 @@ import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension

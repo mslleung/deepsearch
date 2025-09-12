@@ -16,11 +16,6 @@ import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
-import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
-import io.deepsearch.domain.searchstrategies.googlesearch.GoogleSearchStrategy
-import io.deepsearch.domain.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
-import io.deepsearch.domain.searchstrategies.googlesearch.IGoogleSearchStrategy
-import io.deepsearch.domain.services.*
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -30,12 +25,8 @@ import org.koin.module.requestScope
 val domainModule = module {
     requestScope {
         // domain services
-        scopedOf(::UnifiedSearchService) bind IUnifiedSearchService::class
 
         scopedOf(::BrowserPool) bind IBrowserPool::class
-
-        scopedOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
-        scopedOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
     }
 
     // Google ADK agent has its own lifecycle management, so we make it singleton
