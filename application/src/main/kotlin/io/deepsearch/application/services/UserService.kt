@@ -2,8 +2,8 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.entities.User
 import io.deepsearch.domain.repositories.IUserRepository
-import io.deepsearch.domain.valueobjects.UserId
 import io.deepsearch.domain.exceptions.UserNotFoundException
+import io.deepsearch.domain.models.valueobjects.UserId
 
 interface IUserService {
     suspend fun createUser(user: User): UserId
