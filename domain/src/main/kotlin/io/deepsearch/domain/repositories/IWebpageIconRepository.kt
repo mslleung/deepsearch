@@ -1,10 +1,8 @@
 package io.deepsearch.domain.repositories
 
-import io.deepsearch.domain.models.entities.WebpageIconRecord
+import io.deepsearch.domain.models.entities.WebpageIcon
 
 interface IWebpageIconRepository {
-    suspend fun upsert(pageUrl: String, icon: WebpageIconRecord)
-    suspend fun findByUrlAndSelector(pageUrl: String, selector: String): List<WebpageIconRecord>
-    suspend fun findByUrlAndHash(pageUrl: String, imageBytesHash: String): WebpageIconRecord?
-    suspend fun listByUrl(pageUrl: String): List<WebpageIconRecord>
+    suspend fun upsert(icon: WebpageIcon)
+    suspend fun findByHash(imageBytesHash: ByteArray): WebpageIcon?
 }

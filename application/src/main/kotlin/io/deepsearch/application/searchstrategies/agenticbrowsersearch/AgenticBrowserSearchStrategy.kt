@@ -7,9 +7,9 @@ import io.deepsearch.application.searchstrategies.ISearchStrategy
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.IIconInterpreterAgent
-import io.deepsearch.domain.agents.IconInterpretationInput
+import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.repositories.IWebpageIconRepository
-import io.deepsearch.domain.models.entities.WebpageIconRecord
+import io.deepsearch.domain.models.entities.WebpageIcon
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -46,25 +46,19 @@ class AgenticBrowserSearchStrategy(
             logger.debug("Icon extraction yielded {} candidates", icons.size)
             var interpretedCount = 0
             for (icon in icons) {
-                val existing = webpageIconRepository.findByUrlAndHash(url, icon.imageBytesHash)
+                val existing = webpageIconRepository.findByHash(icon.bytesHash)
                 if (existing == null) {
-                    val output = iconInterpreterAgent.generate(
-                        IconInterpretationInput(
+                    val iconInterpreterOutput = iconInterpreterAgent.generate(
+                        IconInterpreterInput(
                             bytes = icon.bytes,
                             mimeType = icon.mimeType,
-                            context = mapOf("selector" to icon.selector)
                         )
                     )
-                    val record = WebpageIconRecord(
-                        selector = icon.selector,
-                        imageBytesHash = icon.imageBytesHash,
-                        mimeType = icon.mimeType,
-                        jpegBytes = icon.bytes,
-                        label = output.label,
-                        confidence = output.confidence,
-                        hints = output.hints
+                    val webpageIcon = WebpageIcon(
+                        imageBytesHash = icon.bytesHash,
+                        label = iconInterpreterOutput.label,
                     )
-                    webpageIconRepository.upsert(url, record)
+                    webpageIconRepository.upsert(webpageIcon)
                     interpretedCount++
                 }
             }

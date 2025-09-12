@@ -26,36 +26,38 @@ class PlaywrightBrowserPageTest : KoinTest {
     private val browserPool by inject<IBrowserPool>()
 
     @Test
-    fun `getting title for example webpage`(url: String) = runTest(testCoroutineDispatcher) {
+    fun `getting title for example webpage`() = runTest(testCoroutineDispatcher) {
         val browser = browserPool.acquireBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
-        browserPage.navigate(url)
+        browserPage.navigate("https://example.com/")
         val title = browserPage.getTitle()
 
         assertTrue { title.isNotBlank() }
     }
 
     @Test
-    fun `getting title for example webpage`(url: String) = runTest(testCoroutineDispatcher) {
+    fun `getting description for example webpage`() = runTest(testCoroutineDispatcher) {
         val browser = browserPool.acquireBrowser()
         val browserContext = browser.createContext()
         val browserPage = browserContext.newPage()
 
-        browserPage.navigate(url)
-        val title = browserPage.getTitle()
+        browserPage.navigate("https://example.com/")
+        val description = browserPage.getDescription()
 
-        assertTrue { title.isNotBlank() }
+        assertTrue { !description.isNullOrBlank() }
     }
 
-    @ParameterizedTest
-    @ValueSource(
-        strings = [
-//            "https://example.com/",
-            "https://www.otandp.com/body-check/",
-//            "https://sleekflow.io/pricing"
-        ]
-    )
-    fun
+    @Test
+    fun `getting icons for example webpage`() = runTest(testCoroutineDispatcher) {
+        val browser = browserPool.acquireBrowser()
+        val browserContext = browser.createContext()
+        val browserPage = browserContext.newPage()
+
+        browserPage.navigate("https://www.otandp.com/body-check/")
+        val icons = browserPage.extractIcons()
+
+        assertTrue { !icons.isEmpty() }
+    }
 }
