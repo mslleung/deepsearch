@@ -96,7 +96,7 @@ class GoogleTextSearchAgentAdkImpl :
             Content.fromParts(Part.fromText(userPrompt)),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(100)
+                setMaxLlmCalls(1)
             }.build()
         ).asFlow()
 

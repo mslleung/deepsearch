@@ -132,7 +132,7 @@ class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
             Content.fromParts(Part.fromText(input.searchQuery.query)),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(100)
+                setMaxLlmCalls(1)
             }.build()
         ).asFlow()
 
