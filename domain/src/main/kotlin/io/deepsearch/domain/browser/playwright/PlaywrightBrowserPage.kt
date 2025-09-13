@@ -57,21 +57,12 @@ class PlaywrightBrowserPage(
 
     override suspend fun extractIcons(): List<IBrowserPage.IconBitmap> {
         logger.debug("Extracting icons via evaluate()")
-        val results = mutableListOf<IBrowserPage.IconBitmap>()
-        val seenHashes = mutableSetOf<String>()
-
         val extractIconJsonRaw = page.evaluate(loadScript("out/extractIcons.js")) as String
         val base64IconJpegs = Json.decodeFromString<List<String>>(extractIconJsonRaw)
 
-        for (jpegBase64 in base64IconJpegs) {   // base64IconJpegs can contain duplicates
-            val bytes = Base64.decode(jpegBase64)
-            val hash = MessageDigest.getInstance("SHA-256").digest(bytes)
-            val hashB64 = Base64.encode(hash)
-            if (seenHashes.contains(hashB64)) {
-                continue
-            }
-            results.add(IBrowserPage.IconBitmap(bytes = bytes, mimeType = ImageMimeType.JPEG))
-            seenHashes.add(hashB64)
+        val results = base64IconJpegs.map { it ->
+            val bytes = Base64.decode(it)
+            IBrowserPage.IconBitmap(bytes = bytes, mimeType = ImageMimeType.JPEG)
         }
 
         logger.debug("extractIcons produced {} unique icons", results.size)
