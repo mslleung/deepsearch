@@ -80,7 +80,8 @@ val compileTypeScript by tasks.registering(Exec::class) {
     // Run from the resources directory where tsconfig.json lives
     workingDir = tsResourcesDir
     // Use npx to invoke the local/global TypeScript compiler; --yes for non-interactive
-    commandLine = listOf("npx", "--yes", "-p", "typescript", "tsc")
+    val npxBinary = if (System.getProperty("os.name").lowercase().contains("windows")) "npx.cmd" else "npx"
+    commandLine = listOf(npxBinary, "--yes", "-p", "typescript", "tsc")
     // Inputs/outputs for incremental builds
     inputs.files(fileTree(tsSrcDir) { include("**/*.ts") })
     inputs.file(file("src/main/resources/tsconfig.json"))
