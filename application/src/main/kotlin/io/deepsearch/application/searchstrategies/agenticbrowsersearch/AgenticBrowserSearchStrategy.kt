@@ -10,8 +10,13 @@ import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.repositories.IWebpageIconRepository
 import io.deepsearch.domain.models.entities.WebpageIcon
+import kotlinx.coroutines.CoroutineDispatcher
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 interface IAgenticBrowserSearchStrategy : ISearchStrategy {
     override suspend fun execute(searchQuery: SearchQuery): SearchResult
@@ -26,6 +31,7 @@ class AgenticBrowserSearchStrategy(
     private val tableIdentificationAgent: ITableIdentificationAgent,
     private val iconInterpreterAgent: IIconInterpreterAgent,
     private val webpageIconRepository: IWebpageIconRepository,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : IAgenticBrowserSearchStrategy {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -44,23 +50,29 @@ class AgenticBrowserSearchStrategy(
             // Phase 1: extract and interpret icons
             val icons = page.extractIcons()
             logger.debug("Icon extraction yielded {} candidates", icons.size)
-            var interpretedCount = 0
-            for (icon in icons) {
-                val existing = webpageIconRepository.findByHash(icon.bytesHash)
-                if (existing == null) {
-                    val iconInterpreterOutput = iconInterpreterAgent.generate(
-                        IconInterpreterInput(
-                            bytes = icon.bytes,
-                            mimeType = icon.mimeType,
-                        )
-                    )
-                    val webpageIcon = WebpageIcon(
-                        imageBytesHash = icon.bytesHash,
-                        label = iconInterpreterOutput.label,
-                    )
-                    webpageIconRepository.upsert(webpageIcon)
-                    interpretedCount++
-                }
+
+            val interpretedCount = coroutineScope {
+                icons.map { icon ->
+                    async(ioDispatcher.limitedParallelism(100)) {
+                        val existing = webpageIconRepository.findByHash(icon.bytesHash)
+                        if (existing == null) {
+                            val iconInterpreterOutput = iconInterpreterAgent.generate(
+                                IconInterpreterInput(
+                                    bytes = icon.bytes,
+                                    mimeType = icon.mimeType,
+                                )
+                            )
+                            val webpageIcon = WebpageIcon(
+                                imageBytesHash = icon.bytesHash,
+                                label = iconInterpreterOutput.label,
+                            )
+                            webpageIconRepository.upsert(webpageIcon)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }.awaitAll().count { it }
             }
             logger.debug("Interpreted {} new icons; {} already cached", interpretedCount, icons.size - interpretedCount)
 
