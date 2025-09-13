@@ -60,7 +60,7 @@ class PlaywrightBrowserPage(
         val results = mutableListOf<IBrowserPage.IconBitmap>()
         val seenHashes = mutableSetOf<String>()
 
-        val extractIconJsonRaw = page.evaluate(loadScript("scripts/extractIcons.ts")) as String
+        val extractIconJsonRaw = page.evaluate(loadScript("scripts/extractIcons.js")) as String
         val base64IconJpegs = Json.decodeFromString<List<String>>(extractIconJsonRaw)
 
         for (jpegBase64 in base64IconJpegs) {   // base64IconJpegs can contain duplicates
