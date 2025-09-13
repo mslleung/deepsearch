@@ -38,7 +38,7 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
                     .build()
             )
         )
-        .required(listOf("label", "confidence"))
+        .required(listOf("label"))
         .build()
 
     private val agent: LlmAgent = LlmAgent.builder().run {
