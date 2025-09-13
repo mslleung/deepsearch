@@ -44,9 +44,9 @@ interface IBrowserPage {
      * Extract rendered icons from the current page.
      *
      * Phase 1 focuses on <i> elements only. Each icon is rendered as a JPEG and deduplicated
-     * first by selector, then by SHA-256 hash of the bytes.
+     * by SHA-256 hash of the bytes.
      *
-     * @return List of WebIconBitmap containing selector, hash, bytes, and mimeType.
+     * @return List of IconBitmap containing bytes, and mimeType.
      */
     suspend fun extractIcons(): List<IconBitmap>
 

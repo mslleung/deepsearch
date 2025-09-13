@@ -6,14 +6,12 @@ import com.microsoft.playwright.options.ScreenshotType
 import com.microsoft.playwright.options.LoadState
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
-import io.deepsearch.domain.models.valueobjects.WebIconBitmap
-import io.deepsearch.domain.utils.ImageHash
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.util.Base64
+import java.security.MessageDigest
+import kotlin.io.encoding.Base64
 
 /**
  * Playwright-backed implementation of a browser page.
@@ -57,16 +55,26 @@ class PlaywrightBrowserPage(
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
     }
 
-    override suspend fun extractIcons(): List<WebIconBitmap> {
+    override suspend fun extractIcons(): List<IBrowserPage.IconBitmap> {
         logger.debug("Extracting icons via evaluate()")
-        val results = mutableListOf<WebIconBitmap>()
+        val results = mutableListOf<IBrowserPage.IconBitmap>()
         val seenHashes = mutableSetOf<String>()
 
-        val extractIconJsonRaw = page.evaluate(loadScript("scripts/extractIcons.js")) as String
+        val extractIconJsonRaw = page.evaluate(loadScript("scripts/extractIcons.ts")) as String
+        val base64IconJpegs = Json.decodeFromString<List<String>>(extractIconJsonRaw)
 
-        val entries = Json.decodeFromString<ExtractedIcons>(extractIconJsonRaw)
+        for (jpegBase64 in base64IconJpegs) {   // base64IconJpegs can contain duplicates
+            val bytes = Base64.decode(jpegBase64)
+            val hash = MessageDigest.getInstance("SHA-256").digest(bytes)
+            val hashB64 = Base64.encode(hash)
+            if (seenHashes.contains(hashB64)) {
+                continue
+            }
+            results.add(IBrowserPage.IconBitmap(bytes = bytes, mimeType = ImageMimeType.JPEG))
+            seenHashes.add(hashB64)
+        }
 
-
+        logger.debug("extractIcons produced {} unique icons", results.size)
         return results
     }
 
@@ -87,13 +95,3 @@ class PlaywrightBrowserPage(
         return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 }
-
-@Serializable
-private data class ExtractedIcon(
-    // TODO
-)
-
-@Serializable
-private data class ExtractedIcons(
-    val icons: List<ExtractedIcon>
-)
