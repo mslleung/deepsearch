@@ -6,7 +6,6 @@ import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.models.valueobjects.UserName
 import io.deepsearch.domain.models.valueobjects.UserAge
 import io.deepsearch.infrastructure.database.UserTable
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
