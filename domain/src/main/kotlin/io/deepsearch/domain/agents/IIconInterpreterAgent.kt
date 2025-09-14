@@ -10,7 +10,7 @@ data class IconInterpreterInput(
 ) : IAgent.IAgentInput
 
 data class IconInterpreterOutput(
-    val label: String
+    val label: String?
 ) : IAgent.IAgentOutput
 
 interface IIconInterpreterAgent : IAgent<IconInterpreterInput, IconInterpreterOutput> {

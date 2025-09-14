@@ -11,12 +11,16 @@ import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.agents.IconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.io.ByteArrayInputStream
+import javax.imageio.ImageIO
+import kotlin.io.encoding.Base64
 
 /**
  * Multimodal icon interpretation agent.
@@ -35,6 +39,7 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
                 "label" to Schema.builder()
                     .type("STRING")
                     .description("label describing the icon, e.g., 'search', 'download', 'settings'")
+                    .nullable(true)
                     .build()
             )
         )
@@ -62,10 +67,11 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
             - If the image is a simple UI icon, output a concise, lowercase label
               ex. "search", "download", "settings", "hamburger menu", "close", "play", "pause", "tick", "cross".
             - If the image is not a simple UI icon, output a more detailed label describing the icon.
+            - If the image is meaningless or empty or cannot be interpreted, output nothing.
 
             Expected output shape:
             {
-                "label": string
+                "label": string | null
             }
             """.trimIndent()
         )
@@ -76,11 +82,18 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
 
     @Serializable
     private data class IconInterpretationResponse(
-        val label: String
+        val label: String?
     )
 
     override suspend fun generate(input: IconInterpreterInput): IconInterpreterOutput {
         logger.debug("Interpreting icon ({} bytes, {})", input.bytes.size, input.mimeType.value)
+
+        // Plain colour icons carry no semantic meaning (they are just uniform background blocks).
+        // Skip LLM invocation to save cost/latency and return a null label instead.
+        if (isPlainColourIcon(input.bytes, input.mimeType)) {
+            logger.debug("Detected plain-colour icon; returning null label")
+            return IconInterpreterOutput(label = null)
+        }
 
         val session = runner
             .sessionService()
@@ -121,8 +134,69 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
 
         val response = Json.decodeFromString<IconInterpretationResponse>(llmResponse)
 
-        return IconInterpreterOutput(
-            label = response.label
-        )
+        if (!response.label.isNullOrBlank()) {
+            logger.debug("Icon interpreted: {}", response.label)
+
+            val formattedLabel = formatIconLabel(response.label)
+
+            return IconInterpreterOutput(
+                label = formattedLabel
+            )
+        } else {
+            logger.debug("Icon cannot be interpreted {}", Base64.encode(input.bytes))
+            return IconInterpreterOutput(
+                label = null
+            )
+        }
+    }
+
+    /**
+     * Detects if the provided icon image is effectively a solid, uniform colour.
+     * Plain colour icons carry no semantic meaning for UI intent, so they are skipped.
+     */
+    private fun isPlainColourIcon(bytes: ByteArray, mimeType: ImageMimeType): Boolean {
+        // only deal with jpegs for now
+        if (mimeType != ImageMimeType.JPEG) return false
+
+        return try {
+            val bufferedImage = ImageIO.read(ByteArrayInputStream(bytes)) ?: return false
+            val width = bufferedImage.width
+            val height = bufferedImage.height
+            if (width <= 0 || height <= 0) return false
+
+            val firstPixel = bufferedImage.getRGB(0, 0)
+            // Sample a grid of pixels instead of all for performance.
+            val sampleSteps = 8
+            val stepX = maxOf(1, width / sampleSteps)
+            val stepY = maxOf(1, height / sampleSteps)
+
+            var y = 0
+            while (y < height) {
+                var x = 0
+                while (x < width) {
+                    if (bufferedImage.getRGB(x, y) != firstPixel) {
+                        return false
+                    }
+                    x += stepX
+                }
+                y += stepY
+            }
+            true
+        } catch (e: Exception) {
+            logger.warn("Failed to inspect JPEG for uniform colour, proceeding with LLM", e)
+            false
+        }
+    }
+
+    /**
+     * Formats the final icon label string.
+     * - Wraps in square brackets
+     * - Appends " icon" only if the label does not already end with "icon" (case-insensitive)
+     * - Returns null if the input is null or blank
+     */
+    private fun formatIconLabel(label: String): String {
+        val endsWithIcon = label.endsWith("icon", ignoreCase = true)
+        val text = if (endsWithIcon) label else "$label icon"
+        return "[$text]"
     }
 }

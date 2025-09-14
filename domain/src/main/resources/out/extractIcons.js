@@ -19,6 +19,25 @@
         }
         return s;
     };
+    const getContrastingBackground = (color) => {
+        // Parse color to RGB values
+        const div = document.createElement('div');
+        div.style.color = color;
+        document.body.appendChild(div);
+        const computedColor = window.getComputedStyle(div).color;
+        document.body.removeChild(div);
+        // Extract RGB values from computed color (format: rgb(r, g, b) or rgba(r, g, b, a))
+        const rgbMatch = computedColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (!rgbMatch)
+            return '#f0f0f0'; // Default light gray background
+        const r = parseInt(rgbMatch[1]);
+        const g = parseInt(rgbMatch[2]);
+        const b = parseInt(rgbMatch[3]);
+        // Calculate luminance using relative luminance formula
+        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        // If the color is light (luminance > 0.5), use dark background, otherwise use light background
+        return luminance > 0.5 ? '#2a2a2a' : '#f0f0f0';
+    };
     const renderIcon = async (el) => {
         const style = window.getComputedStyle(el);
         const before = window.getComputedStyle(el, '::before');
@@ -29,7 +48,7 @@
         const font = style.font ||
             `${style.fontStyle || 'normal'} ${style.fontVariant || 'normal'} ${style.fontWeight || '400'} ${style.fontSize || '16px'} / ${style.lineHeight || 'normal'} ${style.fontFamily || 'sans-serif'}`;
         const fontSizePx = parseFloat(style.fontSize || '16');
-        const fill = style.color || 'rgb(0,0,0)';
+        const fill = style.color;
         const measureCanvas = document.createElement('canvas');
         const measureCtx = measureCanvas.getContext('2d');
         if (!measureCtx)
@@ -46,8 +65,11 @@
         if (!ctx)
             return null;
         ctx.scale(scale, scale);
-        ctx.fillStyle = '#ffffff';
+        // Choose contrasting background color based on icon color
+        const backgroundColor = getContrastingBackground(fill);
+        ctx.fillStyle = backgroundColor;
         ctx.fillRect(0, 0, width, height);
+        // Draw the icon
         ctx.fillStyle = fill;
         ctx.font = font;
         ctx.textAlign = 'center';
