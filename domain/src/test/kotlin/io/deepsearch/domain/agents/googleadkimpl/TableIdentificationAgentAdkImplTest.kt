@@ -46,7 +46,7 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
             page.navigate(url)
             val screenshot = page.takeFullPageScreenshot()
 
-            val input = TableIdentificationInput(screenshot.bytes, ImageMimeType.PNG)
+            val input = TableIdentificationInput(screenshot.bytes, ImageMimeType.JPEG)
             val output = agent.generate(input)
 
             assertEquals(1, output.tables.size, "Should identify exactly one table")

@@ -29,7 +29,15 @@ interface IBrowserPage {
 
     suspend fun getFullHtml(): String
 
-    suspend fun <Input, Output> evaluateJavascript(input: Input): Output
+    /**
+     * Takes a screenshot of the element matched by the provided XPath expression.
+     */
+    suspend fun getElementScreenshotByXPath(xpath: String): Screenshot
+
+    /**
+     * Returns the outer HTML of the element matched by the provided XPath expression.
+     */
+    suspend fun getElementHtmlByXPath(xpath: String): String
 
     /**
      * Rendered web icon bitmap and metadata used for interpretation and caching.
@@ -38,7 +46,7 @@ interface IBrowserPage {
      * mimeType: image mime type, defaults to JPEG.
      * selectors: list of CSS selectors for DOM nodes that render this icon image.
      */
-    data class IconBitmap(
+    data class Icon(
         val bytes: ByteArray,
         val mimeType: ImageMimeType = ImageMimeType.JPEG,
         val selectors: List<String>
@@ -54,7 +62,7 @@ interface IBrowserPage {
      *
      * @return List of IconBitmap containing bytes, and mimeType.
      */
-    suspend fun extractIcons(): List<IconBitmap>
+    suspend fun extractIcons(): List<Icon>
 
     /**
      * Image screenshot payload and format information.

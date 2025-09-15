@@ -1,5 +1,6 @@
 package io.deepsearch.domain.browser.playwright
 
+import com.microsoft.playwright.Locator
 import com.microsoft.playwright.Page
 import kotlinx.coroutines.Dispatchers
 import com.microsoft.playwright.options.ScreenshotType
@@ -11,7 +12,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.security.MessageDigest
 import java.util.Base64
 
 /**
@@ -60,21 +60,32 @@ class PlaywrightBrowserPage(
         return page.content()
     }
 
-    override suspend fun <Input, Output> evaluateJavascript(input: Input): Output {
-        TODO()
+    override suspend fun getElementScreenshotByXPath(xpath: String): IBrowserPage.Screenshot {
+        logger.debug("Taking element screenshot by XPath: {}", xpath)
+        val locator = page.locator("xpath=$xpath")
+        val bytes = locator.screenshot(
+            Locator.ScreenshotOptions().apply { type = ScreenshotType.JPEG }
+        )
+        return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
+    }
+
+    override suspend fun getElementHtmlByXPath(xpath: String): String {
+        logger.debug("Getting element outerHTML by XPath: {}", xpath)
+        val locator = page.locator("xpath=$xpath")
+        return locator.evaluate("el => el.outerHTML") as String
     }
 
     @Serializable
     private data class IconResult(val base64: String, val selectors: List<String>)
 
-    override suspend fun extractIcons(): List<IBrowserPage.IconBitmap> {
+    override suspend fun extractIcons(): List<IBrowserPage.Icon> {
         logger.debug("Extracting icons via evaluate()")
         val extractIconJsonRaw = page.evaluate(loadScript("out/extractIcons.js")) as String
 
         val decoded = Json.decodeFromString<List<IconResult>>(extractIconJsonRaw)
         val results = decoded.map { result ->
             val bytes = Base64.getDecoder().decode(result.base64)
-            IBrowserPage.IconBitmap(
+            IBrowserPage.Icon(
                 bytes = bytes,
                 mimeType = ImageMimeType.JPEG,
                 selectors = result.selectors
