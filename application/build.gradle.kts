@@ -16,6 +16,7 @@ dependencies {
 
     // Serialization for DTOs
     implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.jsoup)
 
     implementation(libs.playwright)
 

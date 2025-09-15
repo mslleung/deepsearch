@@ -15,27 +15,33 @@ interface IBrowserPage {
      * Navigates the current page to the given URL and waits for the default load state.
      * @param url Absolute or relative URL to open.
      */
-    fun navigate(url: String)
+    suspend fun navigate(url: String)
 
     /**
      * Takes a screenshot of the current viewport and returns the image bytes.
      */
-    fun takeScreenshot(): Screenshot
+    suspend fun takeScreenshot(): Screenshot
 
     /**
-     * Takes a screenshot of the current viewport and returns the image bytes.
+     * Takes a screenshot of the full page and returns the image bytes.
      */
-    fun takeFullPageScreenshot(): Screenshot
+    suspend fun takeFullPageScreenshot(): Screenshot
+
+    suspend fun getFullHtml(): String
+
+    suspend fun <Input, Output> evaluateJavascript(input: Input): Output
 
     /**
      * Rendered web icon bitmap and metadata used for interpretation and caching.
      *
      * bytes: raw image bytes (typically JPEG).
      * mimeType: image mime type, defaults to JPEG.
+     * selectors: list of CSS selectors for DOM nodes that render this icon image.
      */
     data class IconBitmap(
         val bytes: ByteArray,
-        val mimeType: ImageMimeType = ImageMimeType.JPEG
+        val mimeType: ImageMimeType = ImageMimeType.JPEG,
+        val selectors: List<String>
     ) {
         val bytesHash: ByteArray by lazy { MessageDigest.getInstance("SHA-256").digest(bytes) }
     }

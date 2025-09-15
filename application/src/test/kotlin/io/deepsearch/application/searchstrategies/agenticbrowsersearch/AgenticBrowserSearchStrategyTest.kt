@@ -1,7 +1,6 @@
 package io.deepsearch.application.searchstrategies.agenticbrowsersearch
 
 import io.deepsearch.application.config.applicationTestModule
-import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
