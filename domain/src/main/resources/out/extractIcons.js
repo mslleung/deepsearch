@@ -79,18 +79,69 @@
         const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
         return base64;
     };
+    const isUniqueId = (id) => {
+        if (!id)
+            return false;
+        try {
+            const match = document.querySelectorAll(`#${CSS.escape(id)}`);
+            return match.length === 1;
+        }
+        catch (_e) {
+            return false;
+        }
+    };
+    const cssSegmentFor = (el) => {
+        const tag = el.tagName.toLowerCase();
+        const id = el.id;
+        if (id && isUniqueId(id)) {
+            return `${tag}#${CSS.escape(id)}`;
+        }
+        const classList = Array.from(el.classList || []);
+        const classSegment = classList.length > 0 ? `.${classList.map(c => CSS.escape(c)).join('.')}` : '';
+        // nth-of-type for disambiguation among siblings of same tag
+        let nth = 1;
+        let sibling = el.previousElementSibling;
+        while (sibling) {
+            if (sibling.tagName === el.tagName)
+                nth++;
+            sibling = sibling.previousElementSibling;
+        }
+        const siblingsSameTag = el.parentElement ? Array.from(el.parentElement.children).filter(ch => ch.tagName === el.tagName).length : 1;
+        const nthSegment = siblingsSameTag > 1 ? `:nth-of-type(${nth})` : '';
+        return `${tag}${classSegment}${nthSegment}`;
+    };
+    const uniqueSelectorFor = (el) => {
+        const segments = [];
+        let node = el;
+        while (node && node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() !== 'html') {
+            const seg = cssSegmentFor(node);
+            segments.unshift(seg);
+            // If this segment has a unique id, we can stop climbing
+            const id = node.id;
+            if (id && isUniqueId(id))
+                break;
+            node = node.parentElement;
+        }
+        return segments.join(' > ');
+    };
     const run = async () => {
-        const icons = [];
-        const seen = new Set();
+        const imagesToSelectors = new Map();
         const elements = Array.from(document.querySelectorAll('i'));
         for (const el of elements) {
             const rendered = await renderIcon(el);
-            if (rendered && !seen.has(rendered)) {
-                seen.add(rendered);
-                icons.push(rendered);
+            if (!rendered)
+                continue;
+            const selector = uniqueSelectorFor(el);
+            if (!imagesToSelectors.has(rendered)) {
+                imagesToSelectors.set(rendered, new Set());
             }
+            imagesToSelectors.get(rendered).add(selector);
         }
-        return JSON.stringify(icons);
+        const results = Array.from(imagesToSelectors.entries()).map(([base64, sels]) => ({
+            base64,
+            selectors: Array.from(sels)
+        }));
+        return JSON.stringify(results);
     };
     return run();
 })();

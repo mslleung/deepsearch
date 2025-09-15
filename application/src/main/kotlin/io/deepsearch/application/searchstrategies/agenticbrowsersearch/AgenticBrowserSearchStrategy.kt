@@ -53,7 +53,7 @@ class AgenticBrowserSearchStrategy(
 
             val interpretedCount = coroutineScope {
                 icons.map { icon ->
-                    async(ioDispatcher.limitedParallelism(100)) {
+                    async(ioDispatcher) {
                         val existing = webpageIconRepository.findByHash(icon.bytesHash)
                         if (existing == null) {
                             val iconInterpreterOutput = iconInterpreterAgent.generate(
@@ -76,7 +76,7 @@ class AgenticBrowserSearchStrategy(
             }
             logger.debug("Interpreted {} new icons; {} already cached", interpretedCount, icons.size - interpretedCount)
 
-            // Phase 2: table identification (existing logic)
+            // Phase 2: table identification
             val screenshot = page.takeScreenshot()
             val tableInput = TableIdentificationInput(screenshot.bytes, screenshot.mimeType)
             val tableOutput = tableIdentificationAgent.generate(tableInput)

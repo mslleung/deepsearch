@@ -19,6 +19,7 @@ google-adk-version = "0.2.0"
 apache-httpclient5-version = "5.5"
 apache-httpcore5-version = "5.3.4"
 r2dbc-h2-version = "1.0.0.RELEASE"
+jsoup-version = "1.21.2"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor-version" }
@@ -56,6 +57,7 @@ apache-httpclient5 = { module = "org.apache.httpcomponents.client5:httpclient5",
 apache-httpcore5 = { module = "org.apache.httpcomponents.core5:httpcore5", version.ref = "apache-httpcore5-version" }
 apache-httpcore5-h2 = { module = "org.apache.httpcomponents.core5:httpcore5-h2", version.ref = "apache-httpcore5-version" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization-json-version" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup-version" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin-version" }

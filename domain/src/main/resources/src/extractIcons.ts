@@ -1,4 +1,6 @@
 (() => {
+  type IconResult = { base64: string; selectors: string[] };
+
   const toPlainString = (cssContent: string | null): string => {
     if (!cssContent || cssContent === 'none') return '';
     let s = String(cssContent).trim();
@@ -91,18 +93,68 @@
     return base64;
   };
 
+  const isUniqueId = (id: string): boolean => {
+    if (!id) return false;
+    try {
+      const match = document.querySelectorAll(`#${CSS.escape(id)}`);
+      return match.length === 1;
+    } catch (_e) {
+      return false;
+    }
+  };
+
+  const cssSegmentFor = (el: Element): string => {
+    const tag = el.tagName.toLowerCase();
+    const id = (el as HTMLElement).id;
+    if (id && isUniqueId(id)) {
+      return `${tag}#${CSS.escape(id)}`;
+    }
+    const classList = Array.from((el as HTMLElement).classList || []);
+    const classSegment = classList.length > 0 ? `.${classList.map(c => CSS.escape(c)).join('.')}` : '';
+
+    // nth-of-type for disambiguation among siblings of same tag
+    let nth = 1;
+    let sibling = el.previousElementSibling;
+    while (sibling) {
+      if (sibling.tagName === el.tagName) nth++;
+      sibling = sibling.previousElementSibling;
+    }
+    const siblingsSameTag = el.parentElement ? Array.from(el.parentElement.children).filter(ch => ch.tagName === el.tagName).length : 1;
+    const nthSegment = siblingsSameTag > 1 ? `:nth-of-type(${nth})` : '';
+    return `${tag}${classSegment}${nthSegment}`;
+  };
+
+  const uniqueSelectorFor = (el: Element): string => {
+    const segments: string[] = [];
+    let node: Element | null = el;
+    while (node && node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() !== 'html') {
+      const seg = cssSegmentFor(node);
+      segments.unshift(seg);
+      // If this segment has a unique id, we can stop climbing
+      const id = (node as HTMLElement).id;
+      if (id && isUniqueId(id)) break;
+      node = node.parentElement;
+    }
+    return segments.join(' > ');
+  };
+
   const run = async (): Promise<string> => {
-    const icons: string[] = [];
-    const seen = new Set<string>();
+    const imagesToSelectors = new Map<string, Set<string>>();
     const elements = Array.from(document.querySelectorAll('i'));
     for (const el of elements) {
       const rendered = await renderIcon(el);
-      if (rendered && !seen.has(rendered)) {
-        seen.add(rendered);
-        icons.push(rendered);
+      if (!rendered) continue;
+      const selector = uniqueSelectorFor(el);
+      if (!imagesToSelectors.has(rendered)) {
+        imagesToSelectors.set(rendered, new Set());
       }
+      imagesToSelectors.get(rendered)!.add(selector);
     }
-    return JSON.stringify(icons);
+    const results: IconResult[] = Array.from(imagesToSelectors.entries()).map(([base64, sels]) => ({
+      base64,
+      selectors: Array.from(sels)
+    }));
+    return JSON.stringify(results);
   };
 
   return run();

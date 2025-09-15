@@ -8,10 +8,11 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
-import kotlin.io.encoding.Base64
+import java.util.Base64
 
 /**
  * Playwright-backed implementation of a browser page.
@@ -29,14 +30,14 @@ class PlaywrightBrowserPage(
     /**
      * Navigate to a new URL and wait for default load state.
      */
-    override fun navigate(url: String) {
+    override suspend fun navigate(url: String) {
         logger.debug("Navigate to {}", url)
         page.navigate(url)
         // Ensure baseline document readiness before any parsing calls
         page.waitForLoadState(LoadState.DOMCONTENTLOADED)
     }
 
-    override fun takeScreenshot(): IBrowserPage.Screenshot {
+    override suspend fun takeScreenshot(): IBrowserPage.Screenshot {
         logger.debug("Taking screenshot ...")
         val bytes = page.screenshot(
             Page.ScreenshotOptions().apply {
@@ -45,7 +46,7 @@ class PlaywrightBrowserPage(
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
     }
 
-    override fun takeFullPageScreenshot(): IBrowserPage.Screenshot {
+    override suspend fun takeFullPageScreenshot(): IBrowserPage.Screenshot {
         logger.debug("Taking full-page screenshot ...")
         val bytes = page.screenshot(
             Page.ScreenshotOptions().apply {
@@ -55,14 +56,29 @@ class PlaywrightBrowserPage(
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
     }
 
+    override suspend fun getFullHtml(): String {
+        return page.content()
+    }
+
+    override suspend fun <Input, Output> evaluateJavascript(input: Input): Output {
+        TODO()
+    }
+
+    @Serializable
+    private data class IconResult(val base64: String, val selectors: List<String>)
+
     override suspend fun extractIcons(): List<IBrowserPage.IconBitmap> {
         logger.debug("Extracting icons via evaluate()")
         val extractIconJsonRaw = page.evaluate(loadScript("out/extractIcons.js")) as String
-        val base64IconJpegs = Json.decodeFromString<List<String>>(extractIconJsonRaw)
 
-        val results = base64IconJpegs.map { it ->
-            val bytes = Base64.decode(it)
-            IBrowserPage.IconBitmap(bytes = bytes, mimeType = ImageMimeType.JPEG)
+        val decoded = Json.decodeFromString<List<IconResult>>(extractIconJsonRaw)
+        val results = decoded.map { result ->
+            val bytes = Base64.getDecoder().decode(result.base64)
+            IBrowserPage.IconBitmap(
+                bytes = bytes,
+                mimeType = ImageMimeType.JPEG,
+                selectors = result.selectors
+            )
         }
 
         logger.debug("extractIcons produced {} unique icons", results.size)
