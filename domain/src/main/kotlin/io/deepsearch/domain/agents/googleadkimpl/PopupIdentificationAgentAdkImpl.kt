@@ -49,7 +49,8 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
         )
         instruction(
             """
-            Your task is to detect whether any popup or cookie consent banner is currently visible on the webpage and, if present, return a unique CSS selector for the specific element to click in order to dismiss it.
+            Your task is to detect whether any popup or cookie consent banner is currently visible on the webpage
+            If present, return a unique CSS selector for the specific element to click in order to dismiss it.
 
             Input:
             A screenshot of a webpage.
@@ -59,7 +60,9 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
             - If a banner is visible, return exists=true and generate a unique CSS selector that, when clicked, dismisses the popup.
             - The selector must make no assumptions about the underlying HTML structure. Prefer text-based matching on the button/control label that dismisses the banner.
             - Build a robust selector that uses :has-text(...) or text() matching when possible; otherwise, combine attributes and structure to ensure uniqueness.
-            - The selector must target the direct clickable control (e.g., a button) that dismisses the popup. Examples of texts: "Accept all", "Accept", "I agree", "Got it", "OK", "Close", "Reject", "Continue", "Dismiss". If multiple dismissal options are available, prefer the most privacy-preserving option like "Reject all" or "Decline"; otherwise choose a neutral dismiss like "Dismiss".
+            - The selector must target the direct clickable control (e.g., a button) that dismisses the popup. 
+              Examples of texts: "Accept all", "Accept", "I agree", "Got it", "OK", "Close", "Reject", "Continue", "Dismiss".
+            - If given a choice to accept or reject cookies, prefer to accept.
             - Return only one selector string that is expected to be unique on the page.
 
             Expected output shape:
