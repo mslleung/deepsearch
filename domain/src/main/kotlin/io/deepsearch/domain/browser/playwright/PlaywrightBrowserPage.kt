@@ -78,15 +78,20 @@ class PlaywrightBrowserPage(
         return target.evaluate("el => el.outerHTML") as String
     }
 
-    override suspend fun clickByCssSelector(selector: String): Boolean {
-        logger.debug("Click by CSS selector: {}", selector)
-        val locator = page.locator(selector)
-        val count = locator.count()
-        if (count <= 0) {
-            return false
+    override suspend fun clickByXPathSelector(xpath: String) {
+        logger.debug("Click by XPath selector: {}", xpath)
+        val locator = page.locator("xpath=$xpath")
+        val target = locator.last()
+        target.click()
+    }
+
+    override suspend fun removeElement(xpath: String) {
+        logger.debug("Remove element by XPath: {}", xpath)
+        val locator = page.locator("xpath=$xpath")
+        if (locator.count() > 0) {
+            val target = locator.last()
+            target.evaluate("el => el.remove()")
         }
-        locator.first().click()
-        return true
     }
 
     @Serializable

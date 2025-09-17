@@ -96,9 +96,6 @@ val ensureNodeTooling by tasks.registering(Exec::class) {
             nvm install --lts
             nvm use --lts
             npm install -g npm@latest
-            node -v
-            npm -v
-            npx -v
             """.trimIndent()
         )
     }

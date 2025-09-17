@@ -3,7 +3,6 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.IPopupIdentificationAgent
 import io.deepsearch.domain.agents.PopupIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
-import kotlinx.coroutines.delay
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -15,7 +14,7 @@ interface IPopupDismissService {
 }
 
 class PopupDismissService(
-    private val popupIdentificationAgent: IPopupIdentificationAgent,
+    private val popupIdentificationAgent: IPopupIdentificationAgent
 ) : IPopupDismissService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -28,22 +27,22 @@ class PopupDismissService(
                 PopupIdentificationInput(screenshot.bytes, screenshot.mimeType)
             ).result
 
-            if (!result.exists) {
+            if (result.exists == false) {
                 logger.debug("No popup detected on iteration {}", iteration)
                 return
             }
 
-            val selector = result.dismissSelector
-            if (selector.isNullOrBlank()) {
-                logger.debug("Popup detected but no dismiss selector provided on iteration {}", iteration)
+            val containerXPath = result.containerXPath
+            if (containerXPath == null || containerXPath.isBlank()) {
+                logger.debug("Popup detected but no container XPath provided on iteration {}", iteration)
                 return
             }
 
-            logger.debug("Attempting to dismiss popup via selector: {}", selector)
-            val clicked = runCatching { webpage.clickByCssSelector(selector) }.getOrElse { false }
-            if (!clicked) {
-                logger.debug("Selector not found/clicked; stopping dismiss loop on iteration {}", iteration)
-                return
+            logger.debug("Attempting to remove popup container via XPath: {}", containerXPath)
+            try {
+                webpage.removeElement(containerXPath)
+            } catch (t: Throwable) {
+                logger.debug("Failed to remove popup container on iteration {}: {}", iteration, t.message)
             }
         }
     }
