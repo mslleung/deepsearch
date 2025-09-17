@@ -4,6 +4,8 @@ import io.deepsearch.application.searchstrategies.agenticbrowsersearch.AgenticBr
 import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
 import io.deepsearch.application.searchstrategies.googlesearch.GoogleSearchStrategy
 import io.deepsearch.application.searchstrategies.googlesearch.IGoogleSearchStrategy
+import io.deepsearch.application.services.IWebpageExtractionService
+import io.deepsearch.application.services.WebpageExtractionService
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
@@ -24,6 +26,7 @@ import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -45,4 +48,6 @@ val applicationTestModule = module {
 
     singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
     singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
+
+    singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
 }

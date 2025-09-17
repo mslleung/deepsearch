@@ -1,0 +1,74 @@
+---
+alwaysApply: true
+---
+
+### DeepSearch: Dependency Injection in Main Codebase (Koin)
+
+Standardize Koin modules and lifecycles across layers. Keep the Application layer thin, with business logic in the Domain layer.
+
+- **Module entry points**:
+  - Application: `io.deepsearch.application.config.applicationModule` includes `domainModule` and `infrastructureModule`.
+  - Domain: `io.deepsearch.domain.config.domainModule` defines domain agents and services.
+  - Infrastructure: `io.deepsearch.infrastructure.config.infrastructureModule` provides adapters (DB, repos).
+
+- **Lifecycle guidelines**:
+  - Use `singleOf(::...) bind Interface::class` for domain agents with internal lifecycle/state that should be shared.
+  - Use `requestScope { scopedOf(::...) bind Interface::class }` for per-request components (e.g., repositories, request-scoped services) using `org.koin.module.requestScope`.
+  - Initialize infrastructure singletons eagerly only when necessary (e.g., `DatabaseConfig.configureDatabase()` with `single(createdAtStart = true)`).
+
+- **Wiring conventions**:
+  - Bind to interfaces, not concrete types.
+  - Application module only orchestrates: define services like `WebpageExtractionService`, `SearchService`, `UserService` as request-scoped and bind to their interfaces.
+  - Do not place business logic in Application or Infrastructure modules; keep it in Domain services/agents.
+
+- **Adding a new domain agent/service**:
+  1) Implement in Domain layer.
+  2) Register in `domainModule` with correct lifecycle (prefer `singleOf` unless per-request state is required).
+  3) If it needs infra (repos, external APIs), define ports/interfaces in Domain; implement adapters in Infrastructure; wire adapters via `infrastructureModule` request scope.
+
+- **Coroutines & threading**:
+  - Inject `CoroutineDispatcher` at boundaries when needed. In production, prefer Dispatchers from infra adapters; in tests, the dispatcher is provided by test modules.
+
+- **Avoid anti-patterns**:
+  - Avoid ad-hoc DI inside functions or manual singletons; always wire via Koin modules.
+  - Avoid circular dependencies; if encountered, refactor responsibilities or introduce ports.
+
+- **Example skeletons**:
+
+```kotlin
+// application/src/main/.../config/DependencyInjection.kt
+val applicationModule = module {
+  includes(io.deepsearch.domain.config.domainModule)
+  includes(io.deepsearch.infrastructure.config.infrastructureModule)
+
+  requestScope {
+    scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
+    // other application services...
+  }
+}
+```
+
+```kotlin
+// domain/src/main/.../config/DependencyInjection.kt
+val domainModule = module {
+  requestScope {
+    scopedOf(::BrowserPool) bind IBrowserPool::class
+  }
+
+  singleOf(::SomeAgentImpl) bind ISomeAgent::class
+}
+```
+
+```kotlin
+// infrastructure/src/main/.../config/DependencyInjection.kt
+val infrastructureModule = module {
+  single(createdAtStart = true) { DatabaseConfig.configureDatabase() }
+
+  requestScope {
+    scopedOf(::ExposedUserRepository) bind IUserRepository::class
+  }
+}
+```
+
+- **When changing lifecycles**: Reassess test modules to keep parity. Update `domainTestModule`/`applicationTestModule` accordingly to preserve integration coverage.
+

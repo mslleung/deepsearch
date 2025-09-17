@@ -1,5 +1,7 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
 import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.agents.IconInterpreterOutput
@@ -12,66 +14,36 @@ import io.deepsearch.domain.browser.playwright.PlaywrightBrowser
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.agents.TableInterpretationOutput
 import io.deepsearch.domain.repositories.IWebpageIconRepository
+import kotlinx.coroutines.CoroutineDispatcher
 import java.util.Base64
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
+import org.junit.jupiter.api.extension.RegisterExtension
+import org.koin.test.KoinTest
+import org.koin.test.inject
+import org.koin.test.junit5.KoinTestExtension
+import kotlin.getValue
 
-@EnabledIfEnvironmentVariable(named = "PLAYWRIGHT_ENABLED", matches = ".+")
-class WebpageExtractionServiceTest {
+class WebpageExtractionServiceTest : KoinTest{
 
-    private class NoopTableAgent : ITableIdentificationAgent {
-        override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
-            // Provide a minimal hint to remove the comparison table by tokens if present
-            return TableIdentificationOutput(
-                tables = listOf(
-                    TableIdentification(
-                        xpath = "//*[contains(., 'Standard') and contains(., 'Comprehensive') and contains(., 'Ultra')]",
-                        auxiliaryInfo = "comparison"
-                    )
-                )
-            )
-        }
+    @JvmField
+    @RegisterExtension
+    val koinTestExtension = KoinTestExtension.create {
+        modules(applicationTestModule)
     }
 
-    private class StubTableInterpretationAgent : ITableInterpretationAgent {
-        override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
-            return TableInterpretationOutput(markdown = "| A | B |\n|---|---|\n| 1 | 2 |")
-        }
-    }
-
-    private class EchoIconAgent : IIconInterpreterAgent {
-        override suspend fun generate(input: IconInterpreterInput): IconInterpreterOutput {
-            return IconInterpreterOutput(label = "menu icon")
-        }
-    }
-
-    private class InMemoryIconRepo : IWebpageIconRepository {
-        private val map = mutableMapOf<String, String?>()
-        override suspend fun upsert(icon: io.deepsearch.domain.models.entities.WebpageIcon) {
-            map[Base64.getEncoder().encodeToString(icon.imageBytesHash)] = icon.label
-        }
-        override suspend fun findByHash(imageBytesHash: ByteArray): io.deepsearch.domain.models.entities.WebpageIcon? {
-            val key = Base64.getEncoder().encodeToString(imageBytesHash)
-            val label = map[key]
-            return if (map.containsKey(key)) io.deepsearch.domain.models.entities.WebpageIcon(imageBytesHash, label) else null
-        }
-    }
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
+    private val webpageExtractionService by inject<IWebpageExtractionService>()
 
     @Test
     fun `extract webpage text for OTandP body check page`() = runTest {
-        val tableAgent = NoopTableAgent()
-        val iconAgent = EchoIconAgent()
-        val repo = InMemoryIconRepo()
-        val service = WebpageExtractionService(tableAgent, iconAgent, repo, StubTableInterpretationAgent())
-
         val browser = PlaywrightBrowser()
         val context = browser.createContext()
         val page = context.newPage()
 
         page.navigate("https://www.otandp.com/body-check/")
-        val text = service.extractWebpage(page)
+        val text = webpageExtractionService.extractWebpage(page)
 
         assertTrue(text.contains("Body Check"))
         assertTrue(text.length > 200)

@@ -6,14 +6,12 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-@EnabledIfEnvironmentVariable(named = "GOOGLE_API_KEY", matches = ".+")
 class AgenticBrowserSearchStrategyTest : KoinTest {
 
     @JvmField

@@ -1,0 +1,61 @@
+---
+alwaysApply: true
+---
+
+### DeepSearch: Dependency Injection in Tests (Koin)
+
+Adopt Koin-based integration/component tests by default. Favor real modules over mocks to reflect production wiring and catch integration issues early.
+
+- **Use JUnit 5 Koin extension**: Prefer `KoinTestExtension` over manual `startKoin/stopKoin`.
+
+```kotlin
+import org.junit.jupiter.api.extension.RegisterExtension
+import org.koin.test.KoinTest
+import org.koin.test.inject
+import org.koin.test.junit5.KoinTestExtension
+
+// Domain tests: use domainTestModule
+class MyDomainTest : KoinTest {
+  @JvmField
+  @RegisterExtension
+  val koin = KoinTestExtension.create { modules(io.deepsearch.domain.config.domainTestModule) }
+
+  private val agent by inject<SomeDomainInterface>()
+}
+
+// Application tests: use applicationTestModule
+class MyAppTest : KoinTest {
+  @JvmField
+  @RegisterExtension
+  val koin = KoinTestExtension.create { modules(io.deepsearch.application.config.applicationTestModule) }
+
+  private val service by inject<SomeAppInterface>()
+}
+```
+
+- **Default to real bindings**: Do not stub or mock domain agents or application services unless isolating an external boundary (e.g., network, time, randomness) is essential for determinism.
+
+- **Coroutine testing**: `domainTestModule` and `applicationTestModule` already provide `StandardTestDispatcher`. Use `runTest { ... }` and inject `CoroutineDispatcher` when needed.
+
+- **Targeted overrides (sparingly)**: If necessary, add a small test module with `override = true` and compose it with the base test module.
+
+```kotlin
+import org.koin.dsl.module
+
+private val overrides = module {
+  single<SomePort>(override = true) { FakePortImpl() }
+}
+
+@JvmField
+@RegisterExtension
+val koin = KoinTestExtension.create {
+  modules(io.deepsearch.domain.config.domainTestModule, overrides)
+}
+```
+
+- **Request-scoped components**: Exercise them via injected services/agents. Avoid manual scope management unless the test specifically verifies scope behavior.
+
+- **Resolution pattern**: Prefer `by inject<T>()` within a `KoinTest`. Avoid global lookups.
+
+- **When adding new bindings**: Mirror production lifecycles in the test modules. Update `domainTestModule`/`applicationTestModule` to keep integration coverage high.
+

@@ -6,7 +6,8 @@ import io.deepsearch.domain.constants.ImageMimeType
 data class TableInterpretationInput(
     val screenshotBytes: ByteArray,
     val mimetype: ImageMimeType,
-    val html: String
+    val auxiliaryInfo: String,
+    val html: String,
 ) : IAgent.IAgentInput
 
 data class TableInterpretationOutput(
@@ -16,5 +17,3 @@ data class TableInterpretationOutput(
 interface ITableInterpretationAgent : IAgent<TableInterpretationInput, TableInterpretationOutput> {
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput
 }
-
-
