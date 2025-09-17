@@ -4,6 +4,9 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.application.searchstrategies.ISearchStrategy
+import io.deepsearch.application.services.IWebpageExtractionService
+import io.deepsearch.application.services.IPopupDismissService
+import io.deepsearch.application.services.WebpageExtractionService
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.IIconInterpreterAgent
@@ -28,10 +31,8 @@ interface IAgenticBrowserSearchStrategy : ISearchStrategy {
  */
 class AgenticBrowserSearchStrategy(
     private val browserPool: IBrowserPool,
-    private val tableIdentificationAgent: ITableIdentificationAgent,
-    private val iconInterpreterAgent: IIconInterpreterAgent,
-    private val webpageIconRepository: IWebpageIconRepository,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val webpageExtractionService: IWebpageExtractionService,
+    private val popupDismissService: IPopupDismissService,
 ) : IAgenticBrowserSearchStrategy {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -44,53 +45,21 @@ class AgenticBrowserSearchStrategy(
             val page = context.newPage()
             page.navigate(url)
 
+            // Dismiss any popups/cookie banners before extraction
+            popupDismissService.dismissAll(page)
+
             val title = page.getTitle()
             val description = page.getDescription()
 
-            // Phase 1: extract and interpret icons
-            val icons = page.extractIcons()
-            logger.debug("Icon extraction yielded {} candidates", icons.size)
-
-            val interpretedCount = coroutineScope {
-                icons.map { icon ->
-                    async(ioDispatcher) {
-                        val existing = webpageIconRepository.findByHash(icon.bytesHash)
-                        if (existing == null) {
-                            val iconInterpreterOutput = iconInterpreterAgent.generate(
-                                IconInterpreterInput(
-                                    bytes = icon.bytes,
-                                    mimeType = icon.mimeType,
-                                )
-                            )
-                            val webpageIcon = WebpageIcon(
-                                imageBytesHash = icon.bytesHash,
-                                label = iconInterpreterOutput.label,
-                            )
-                            webpageIconRepository.upsert(webpageIcon)
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                }.awaitAll().count { it }
-            }
-            logger.debug("Interpreted {} new icons; {} already cached", interpretedCount, icons.size - interpretedCount)
-
-            // Phase 2: table identification
-            val screenshot = page.takeScreenshot()
-            val tableInput = TableIdentificationInput(screenshot.bytes, screenshot.mimeType)
-            val tableOutput = tableIdentificationAgent.generate(tableInput)
-            val tables = tableOutput.tables
-            logger.debug("Identified {} table xpaths: {}", tables.size, tables)
+            val extractedWebpageText = webpageExtractionService.extractWebpage(page)
 
             // v1 content: basic page summary
             val summary = buildString {
-                appendLine("Title: ${title}")
+                appendLine("Title: $title")
                 if (!description.isNullOrBlank()) {
-                    appendLine("Description: ${description}")
+                    appendLine("Description: $description")
                 }
-                appendLine("Icons processed: ${icons.size}, new: ${interpretedCount}")
-                appendLine("Tables identified: ${tables.size}")
+                appendLine(extractedWebpageText)
             }.trim()
 
             return SearchResult(

@@ -40,6 +40,12 @@ interface IBrowserPage {
     suspend fun getElementHtmlByXPath(xpath: String): String
 
     /**
+     * Click the first element matching the provided CSS selector.
+     * Returns true if a matching element was found and clicked; false otherwise.
+     */
+    suspend fun clickByCssSelector(selector: String): Boolean
+
+    /**
      * Rendered web icon bitmap and metadata used for interpretation and caching.
      *
      * bytes: raw image bytes (typically JPEG).

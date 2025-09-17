@@ -7,8 +7,6 @@ import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.models.entities.WebpageIcon
-import io.deepsearch.domain.repositories.IWebpageIconRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -18,18 +16,21 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.TextNode
 
+interface IWebpageExtractionService {
+    suspend fun extractWebpage(webpage: IBrowserPage): String
+}
+
 class WebpageExtractionService(
     private val tableIdentificationAgent: ITableIdentificationAgent,
     private val iconInterpreterAgent: IIconInterpreterAgent,
-    private val webpageIconRepository: IWebpageIconRepository,
     private val tableInterpretationAgent: ITableInterpretationAgent,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
-) {
+) : IWebpageExtractionService {
 
     /**
      * Converts a webpage into text for downstream LLM processing
      */
-    suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
+    override suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
         // Load full HTML
         val html = webpage.getFullHtml()
         val doc = Jsoup.parse(html)
@@ -52,7 +53,8 @@ class WebpageExtractionService(
                     TableInterpretationInput(
                         screenshotBytes = elementScreenshot.bytes,
                         mimetype = elementScreenshot.mimeType,
-                        html = elementHtml
+                        auxiliaryInfo = t.auxiliaryInfo,
+                        html = elementHtml,
                     )
                 ).markdown
                 xpath to md
@@ -82,6 +84,7 @@ class WebpageExtractionService(
                     sb.append(text)
                 }
             }
+
             is org.jsoup.nodes.Element -> {
                 // If this element matches an identified table by best-effort token matching, emit markdown once and skip children
                 val elementText = node.text()
@@ -104,6 +107,7 @@ class WebpageExtractionService(
 
                 node.childNodes().forEach { child -> traverseAndAppend(child, sb, xpathToMarkdown) }
             }
+
             else -> {
                 node.childNodes().forEach { child -> traverseAndAppend(child, sb, xpathToMarkdown) }
             }
@@ -134,18 +138,9 @@ class WebpageExtractionService(
     }
 
     private suspend fun resolveIconLabel(icon: IBrowserPage.Icon): String? {
-        val existing = webpageIconRepository.findByHash(icon.bytesHash)
-        val label = existing?.label ?: run {
-            val interpreterAgentOutput = iconInterpreterAgent.generate(
-                IconInterpreterInput(bytes = icon.bytes, mimeType = icon.mimeType)
-            )
-            val webpageIcon = WebpageIcon(
-                imageBytesHash = icon.bytesHash,
-                label = interpreterAgentOutput.label
-            )
-            webpageIconRepository.upsert(webpageIcon)
-            interpreterAgentOutput.label
-        }
-        return label?.takeIf { it.isNotBlank() }
+        val interpreterAgentOutput = iconInterpreterAgent.generate(
+            IconInterpreterInput(bytes = icon.bytes, mimeType = icon.mimeType)
+        )
+        return interpreterAgentOutput.label?.takeIf { it.isNotBlank() }
     }
 }

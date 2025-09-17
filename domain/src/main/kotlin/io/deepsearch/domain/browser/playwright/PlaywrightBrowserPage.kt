@@ -63,7 +63,9 @@ class PlaywrightBrowserPage(
     override suspend fun getElementScreenshotByXPath(xpath: String): IBrowserPage.Screenshot {
         logger.debug("Taking element screenshot by XPath: {}", xpath)
         val locator = page.locator("xpath=$xpath")
-        val bytes = locator.screenshot(
+        // When XPath matches a chain (target + ancestors), select the leaf-most node
+        val target = locator.last()
+        val bytes = target.screenshot(
             Locator.ScreenshotOptions().apply { type = ScreenshotType.JPEG }
         )
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
@@ -72,7 +74,19 @@ class PlaywrightBrowserPage(
     override suspend fun getElementHtmlByXPath(xpath: String): String {
         logger.debug("Getting element outerHTML by XPath: {}", xpath)
         val locator = page.locator("xpath=$xpath")
-        return locator.evaluate("el => el.outerHTML") as String
+        val target = locator.last()
+        return target.evaluate("el => el.outerHTML") as String
+    }
+
+    override suspend fun clickByCssSelector(selector: String): Boolean {
+        logger.debug("Click by CSS selector: {}", selector)
+        val locator = page.locator(selector)
+        val count = locator.count()
+        if (count <= 0) {
+            return false
+        }
+        locator.first().click()
+        return true
     }
 
     @Serializable

@@ -34,8 +34,8 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
     @ValueSource(
         strings = [
 //            "https://example.com/",
-//            "https://www.otandp.com/body-check/",
-            "https://sleekflow.io/pricing"
+            "https://www.otandp.com/body-check/",
+//            "https://sleekflow.io/pricing"
         ]
     )
     fun `identifies a single table from a webpage screenshot`(url: String) = runTest(testCoroutineDispatcher) {
