@@ -73,20 +73,68 @@ val ensureTsOutDir by tasks.registering {
     }
 }
 
+// Ensure Node.js toolchain is available by installing NVM/Node/npm when missing (Unix-like)
+val ensureNodeTooling by tasks.registering(Exec::class) {
+    group = "build setup"
+    description = "Ensure NVM, Node (LTS) and latest npm are installed for TypeScript tooling"
+    val isWindows = System.getProperty("os.name").lowercase().contains("windows")
+    if (isWindows) {
+        // Best-effort noop on Windows; rely on existing Node/npm/npx
+        commandLine = listOf("cmd", "/c", "echo Skipping ensureNodeTooling on Windows")
+    } else {
+        // Use a login shell to source NVM and install toolchain idempotently
+        commandLine = listOf(
+            "bash", "-lc",
+            """
+            set -euo pipefail
+            export NVM_DIR="${'$'}HOME/.nvm"
+            if [ ! -d "${'$'}NVM_DIR" ]; then
+              curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+            fi
+            # shellcheck source=/dev/null
+            [ -s "${'$'}NVM_DIR/nvm.sh" ] && . "${'$'}NVM_DIR/nvm.sh"
+            nvm install --lts
+            nvm use --lts
+            npm install -g npm@latest
+            node -v
+            npm -v
+            npx -v
+            """.trimIndent()
+        )
+    }
+}
+
 // Compile TypeScript resources using system Node via npx
 val compileTypeScript by tasks.registering(Exec::class) {
     group = "build"
     description = "Compile TypeScript in resources/src to resources/out"
     // Run from the resources directory where tsconfig.json lives
     workingDir = tsResourcesDir
-    // Use npx to invoke the local/global TypeScript compiler; --yes for non-interactive
-    val npxBinary = if (System.getProperty("os.name").lowercase().contains("windows")) "npx.cmd" else "npx"
-    commandLine = listOf(npxBinary, "--yes", "-p", "typescript", "tsc")
+    // Use npx to invoke the TypeScript compiler; ensure NVM/Node/npm are available first
+    val isWindows = System.getProperty("os.name").lowercase().contains("windows")
+    if (isWindows) {
+        // On Windows, prefer existing npx on PATH
+        commandLine = listOf("npx.cmd", "--yes", "-p", "typescript", "tsc")
+    } else {
+        // On Unix-like systems, source NVM to ensure node/npm/npx are available in this Exec
+        commandLine = listOf(
+            "bash", "-lc",
+            """
+            set -euo pipefail
+            export NVM_DIR="${'$'}HOME/.nvm"
+            # shellcheck source=/dev/null
+            [ -s "${'$'}NVM_DIR/nvm.sh" ] && . "${'$'}NVM_DIR/nvm.sh"
+            nvm install --lts
+            nvm use --lts
+            npx --yes -p typescript tsc
+            """.trimIndent()
+        )
+    }
     // Inputs/outputs for incremental builds
     inputs.files(fileTree(tsSrcDir) { include("**/*.ts") })
     inputs.file(file("src/main/resources/tsconfig.json"))
     outputs.dir(tsOutDir)
-    dependsOn(ensureTsOutDir)
+    dependsOn(ensureTsOutDir, ensureNodeTooling)
     // Helpful message if npx is not found
     isIgnoreExitValue = false
 }
