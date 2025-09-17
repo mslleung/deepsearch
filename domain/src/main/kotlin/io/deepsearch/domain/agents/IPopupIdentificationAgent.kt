@@ -12,7 +12,7 @@ data class PopupIdentificationInput(
 @Serializable
 data class PopupIdentificationResult(
     val exists: Boolean,
-    val dismissSelector: String? = null
+    val containerXPath: String? = null
 )
 
 data class PopupIdentificationOutput(

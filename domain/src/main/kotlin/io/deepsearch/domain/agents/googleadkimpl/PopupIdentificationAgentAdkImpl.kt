@@ -25,11 +25,11 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Detect presence of popup/cookie banner and provide a unique CSS selector to dismiss it")
+        .description("Detect presence of popup/cookie banner and provide a unique XPath selector to the popup container")
         .properties(
             mapOf(
                 "exists" to Schema.builder().type("BOOLEAN").description("Whether a popup/cookie banner exists").build(),
-                "dismissSelector" to Schema.builder().type("STRING").description("A unique CSS selector of a button or control that dismisses the popup").build(),
+                "containerXPath" to Schema.builder().type("STRING").description("A unique XPath selector that targets the popup container element. Returns null if no popup exists.").build(),
             )
         )
         .required(listOf("exists"))
@@ -37,7 +37,7 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("popupIdentificationAgent")
-        description("Identify if a popup/cookie banner exists and provide a unique CSS selector to dismiss it")
+        description("Identify if a popup/cookie banner exists and provide a unique XPath selector to the popup container element")
         model(ModelIds.GEMINI_2_5_LITE.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -49,26 +49,27 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
         )
         instruction(
             """
-            Your task is to detect whether any popup or cookie consent banner is currently visible on the webpage
-            If present, return a unique CSS selector for the specific element to click in order to dismiss it.
+            Your task is to detect whether any popup or cookie consent banner is currently visible on the webpage.
+            If present, return a unique XPath selector that identifies the POPUP CONTAINER ELEMENT itself, not a button.
 
             Input:
             A screenshot of a webpage.
 
             Instructions:
-            - Determine if a popup banner or cookie consent banner is visible. If none is visible, set exists=false and leave dismissSelector empty.
-            - If a banner is visible, return exists=true and generate a unique CSS selector that, when clicked, dismisses the popup.
-            - The selector must make no assumptions about the underlying HTML structure. Prefer text-based matching on the button/control label that dismisses the banner.
-            - Build a robust selector that uses :has-text(...) or text() matching when possible; otherwise, combine attributes and structure to ensure uniqueness.
-            - The selector must target the direct clickable control (e.g., a button) that dismisses the popup. 
-              Examples of texts: "Accept all", "Accept", "I agree", "Got it", "OK", "Close", "Reject", "Continue", "Dismiss".
-            - If given a choice to accept or reject cookies, prefer to accept.
-            - Return only one selector string that is expected to be unique on the page.
+            - Determine if a popup banner or cookie consent banner is visible.
+            - If visible, return exists=true and generate a unique XPath selector to the popup container node.
+            - The selector must make no assumptions about the HTML structure. Prefer using * and text containment where applicable.
+            - The XPath should try to capture a stable container (e.g., modal root, banner div) and avoid main page content.
+            - If multiple popups exist, choose the most prominent one.
+            - If no popup or banner is visible, return exists=false and omit containerXPath.
+
+            Examples (illustrative only):
+            //*[contains(@role, 'dialog') or contains(@class, 'modal')][contains(., 'cookies')]
 
             Expected output shape:
             {
               "exists": true,
-              "dismissSelector": "string"
+              "containerXPath": "string"
             }
             or when no popup exists:
             {
@@ -84,7 +85,7 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
     @Serializable
     private data class PopupIdentificationResponse(
         val exists: Boolean,
-        val dismissSelector: String? = null
+        val containerXPath: String? = null
     )
 
     override suspend fun generate(input: PopupIdentificationInput): PopupIdentificationOutput {
@@ -130,7 +131,7 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
         val response = Json.decodeFromString<PopupIdentificationResponse>(llmResponse)
         val result = PopupIdentificationResult(
             exists = response.exists,
-            dismissSelector = response.dismissSelector
+            containerXPath = response.containerXPath
         )
         return PopupIdentificationOutput(result = result)
     }
