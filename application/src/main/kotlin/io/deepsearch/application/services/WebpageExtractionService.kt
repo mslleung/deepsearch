@@ -7,6 +7,8 @@ import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.models.entities.WebpageIcon
+import io.deepsearch.domain.repositories.IWebpageIconRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -24,6 +26,7 @@ class WebpageExtractionService(
     private val tableIdentificationAgent: ITableIdentificationAgent,
     private val iconInterpreterAgent: IIconInterpreterAgent,
     private val tableInterpretationAgent: ITableInterpretationAgent,
+    private val webpageIconRepository: IWebpageIconRepository,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : IWebpageExtractionService {
 
@@ -35,7 +38,7 @@ class WebpageExtractionService(
         val html = webpage.getFullHtml()
         val doc = Jsoup.parse(html)
 
-        processIcons(webpage, doc)
+        replaceIconsWithTexts(webpage, doc)
 
         // Table processing: identify tables from full-page screenshot and interpret them to markdown
         val fullScreenshot = webpage.takeFullPageScreenshot()
@@ -43,8 +46,8 @@ class WebpageExtractionService(
             TableIdentificationInput(fullScreenshot.bytes, fullScreenshot.mimeType)
         )
 
-        // Interpret each identified table by XPath
-        val xpathToMarkdown: Map<String, String> = tableOutput.tables.mapNotNull { t ->
+        // Interpret each identified table by XPath and capture element HTML for later replacement
+        val tableReplacements: List<Pair<String, String>> = tableOutput.tables.mapNotNull { t ->
             val xpath = t.xpath
             try {
                 val elementScreenshot = webpage.getElementScreenshotByXPath(xpath)
@@ -57,64 +60,49 @@ class WebpageExtractionService(
                         html = elementHtml,
                     )
                 ).markdown
-                xpath to md
+                elementHtml to md
             } catch (ex: Exception) {
                 null
             }
-        }.toMap()
+        }
 
-        // Build final output by traversing nodes; replace identified tables with markdown
-        val sb = StringBuilder()
-        val body = doc.body()
-        traverseAndAppend(body, sb, xpathToMarkdown)
-        sb.toString().trim()
-    }
+        // Replace matching table nodes in parsed Jsoup document with interpreted markdown
+        for ((elementHtml, markdown) in tableReplacements) {
+            val match = doc.allElements.firstOrNull { it.outerHtml() == elementHtml }
+            match?.replaceWith(TextNode(markdown))
+        }
 
-    private fun extractContainsTokensFromXPath(xpath: String): List<String> {
-        val regex = Regex("contains\\(\\.,\\s*['\"]([^'\"]+)['\"]\\)")
-        return regex.findAll(xpath).map { it.groupValues[1] }.filter { it.isNotBlank() }.toList()
-    }
+        // Traverse DOM in document order, collecting text from TextNodes while skipping script/style
+        val builder = StringBuilder()
+        val stack = ArrayDeque<org.jsoup.nodes.Node>()
+        stack.addLast(doc)
 
-    private fun traverseAndAppend(node: org.jsoup.nodes.Node, sb: StringBuilder, xpathToMarkdown: Map<String, String>) {
-        when (node) {
-            is TextNode -> {
+        while (stack.isNotEmpty()) {
+            val node = stack.removeLast()
+            if (node is TextNode) {
                 val text = node.text().trim()
-                if (text.isNotEmpty()) {
-                    if (sb.isNotEmpty()) sb.append('\n')
-                    sb.append(text)
+                if (text.isNotBlank()) {
+                    if (builder.isNotEmpty()) builder.append('\n')
+                    builder.append(text)
                 }
-            }
-
-            is org.jsoup.nodes.Element -> {
-                // If this element matches an identified table by best-effort token matching, emit markdown once and skip children
-                val elementText = node.text()
-                val matchingMarkdown = xpathToMarkdown.entries.firstOrNull { (xpath, _) ->
-                    val tokens = extractContainsTokensFromXPath(xpath)
-                    tokens.isNotEmpty() && tokens.all { token -> elementText.contains(token, ignoreCase = true) }
-                }?.value
-
-                if (matchingMarkdown != null) {
-                    if (sb.isNotEmpty()) sb.append('\n')
-                    sb.append(matchingMarkdown.trim())
-                    return
+            } else {
+                val nodeName = node.nodeName().lowercase()
+                if (nodeName == "script" || nodeName == "style") {
+                    continue
                 }
-
-                // Skip script/style to avoid code/css noise; otherwise include all text nodes
-                val tag = node.tagName()
-                if (tag in setOf("script", "style")) {
-                    return
+                val children = node.childNodes()
+                for (i in children.size - 1 downTo 0) {
+                    stack.addLast(children[i])
                 }
-
-                node.childNodes().forEach { child -> traverseAndAppend(child, sb, xpathToMarkdown) }
-            }
-
-            else -> {
-                node.childNodes().forEach { child -> traverseAndAppend(child, sb, xpathToMarkdown) }
             }
         }
+
+        return@coroutineScope builder.toString()
+
     }
 
-    private suspend fun processIcons(webpage: IBrowserPage, doc: Document) = coroutineScope {
+
+    private suspend fun replaceIconsWithTexts(webpage: IBrowserPage, doc: Document) = coroutineScope {
         val icons = webpage.extractIcons()
 
         val resolvedIcons = icons
@@ -138,9 +126,25 @@ class WebpageExtractionService(
     }
 
     private suspend fun resolveIconLabel(icon: IBrowserPage.Icon): String? {
+        val bytesHash = java.security.MessageDigest.getInstance("SHA-256").digest(icon.bytes)
+
+        val existing = webpageIconRepository.findByHash(bytesHash)
+        if (existing != null) {
+            return existing.label?.takeIf { it.isNotBlank() }
+        }
+
         val interpreterAgentOutput = iconInterpreterAgent.generate(
             IconInterpreterInput(bytes = icon.bytes, mimeType = icon.mimeType)
         )
-        return interpreterAgentOutput.label?.takeIf { it.isNotBlank() }
+        val label = interpreterAgentOutput.label?.takeIf { it.isNotBlank() }
+
+        webpageIconRepository.upsert(
+            WebpageIcon(
+                imageBytesHash = bytesHash,
+                label = label
+            )
+        )
+
+        return label
     }
 }
