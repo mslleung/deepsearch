@@ -1,6 +1,5 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
-import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.QueryExpansionAgentInput
 import io.deepsearch.domain.config.domainTestModule
@@ -8,13 +7,11 @@ import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
-import kotlin.getValue
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 

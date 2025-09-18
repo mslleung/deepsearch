@@ -22,6 +22,7 @@ import io.deepsearch.domain.agents.IPopupIdentificationAgent
 import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.agents.googleadkimpl.PopupIdentificationAgentAdkImpl
+import kotlinx.coroutines.CoroutineDispatcher
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind

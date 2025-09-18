@@ -12,8 +12,6 @@ import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.agents.IconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.constants.ImageMimeType
-import io.deepsearch.domain.models.entities.WebpageIcon
-import io.deepsearch.domain.repositories.IWebpageIconRepository
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -21,7 +19,6 @@ import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.io.ByteArrayInputStream
-import java.security.MessageDigest
 import javax.imageio.ImageIO
  
 
@@ -30,9 +27,7 @@ import javax.imageio.ImageIO
  *
  * Given a small icon image, produce a short, human-friendly label, a confidence score, and optional synonyms.
  */
-class IconInterpreterAgentAdkImpl(
-    private val webpageIconRepository: IWebpageIconRepository
-) : IIconInterpreterAgent {
+class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -93,15 +88,6 @@ class IconInterpreterAgentAdkImpl(
     override suspend fun generate(input: IconInterpreterInput): IconInterpreterOutput {
         logger.debug("Interpreting icon ({} bytes, {})", input.bytes.size, input.mimeType.value)
 
-        // Cache-first lookup by hash to avoid unnecessary LLM calls
-        val bytesHash = MessageDigest.getInstance("SHA-256").digest(input.bytes)
-        val existing = webpageIconRepository.findByHash(bytesHash)
-        if (existing != null) {
-            val cached = existing.label?.takeIf { it.isNotBlank() }
-            logger.debug("Cache hit for icon; returning {}", cached)
-            return IconInterpreterOutput(label = cached)
-        }
-
         // Plain colour icons carry no semantic meaning (they are just uniform background blocks).
         // Skip LLM invocation to save cost/latency and return a null label instead.
         if (isPlainColourIcon(input.bytes, input.mimeType)) {
@@ -153,26 +139,10 @@ class IconInterpreterAgentAdkImpl(
 
             val formattedLabel = formatIconLabel(response.label)
 
-            val output = IconInterpreterOutput(label = formattedLabel)
-            // Upsert cache with formatted label
-            webpageIconRepository.upsert(
-                WebpageIcon(
-                    imageBytesHash = bytesHash,
-                    label = output.label
-                )
-            )
-            return output
+            return IconInterpreterOutput(label = formattedLabel)
         } else {
             logger.debug("Icon cannot be interpreted ({} bytes)", input.bytes.size)
-            val output = IconInterpreterOutput(label = null)
-            // Upsert negative cache to avoid re-calling the agent for the same bytes
-            webpageIconRepository.upsert(
-                WebpageIcon(
-                    imageBytesHash = bytesHash,
-                    label = null
-                )
-            )
-            return output
+            return IconInterpreterOutput(label = null)
         }
     }
 

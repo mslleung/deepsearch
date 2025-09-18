@@ -1,6 +1,7 @@
 package io.deepsearch.application.searchstrategies.agenticbrowsersearch
 
 import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.application.config.testModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -17,7 +18,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
     @JvmField
     @RegisterExtension
     val koinTestExtension = KoinTestExtension.create {
-        modules(applicationTestModule)
+        modules(applicationTestModule, testModule)
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()

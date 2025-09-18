@@ -2,14 +2,7 @@ package io.deepsearch.application.config
 
 import io.deepsearch.application.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
 import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
-import io.deepsearch.application.services.UserService
-import io.deepsearch.application.services.SearchService
-import io.deepsearch.application.services.IUserService
-import io.deepsearch.application.services.ISearchService
-import io.deepsearch.application.services.IWebpageExtractionService
-import io.deepsearch.application.services.WebpageExtractionService
-import io.deepsearch.application.services.IPopupDismissService
-import io.deepsearch.application.services.PopupDismissService
+import io.deepsearch.application.services.*
 import io.deepsearch.domain.config.domainModule
 import io.deepsearch.infrastructure.config.infrastructureModule
 import org.koin.core.module.dsl.scopedOf
@@ -28,4 +21,4 @@ val applicationModule = module {
         scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
         scopedOf(::PopupDismissService) bind IPopupDismissService::class
     }
-} 
+}

@@ -6,6 +6,7 @@ import io.deepsearch.infrastructure.database.DatabaseConfig
 import io.deepsearch.infrastructure.repositories.ExposedUserRepository
 import io.deepsearch.infrastructure.repositories.ExposedWebpageIconRepository
 import org.koin.core.module.dsl.scopedOf
+import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.koin.module.requestScope

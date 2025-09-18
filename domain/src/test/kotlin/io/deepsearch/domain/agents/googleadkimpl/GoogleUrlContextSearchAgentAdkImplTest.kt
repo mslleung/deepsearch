@@ -1,20 +1,16 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
-import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
-import kotlin.getValue
 import kotlin.test.assertTrue
 
 class GoogleUrlContextSearchAgentAdkImplTest : KoinTest {
