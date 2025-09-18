@@ -33,20 +33,17 @@ val domainModule = module {
         // domain services
 
         scopedOf(::BrowserPool) bind IBrowserPool::class
-    }
 
-    // Google ADK agent has its own lifecycle management, so we make it singleton
-    singleOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
-    singleOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class
-    singleOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
-    singleOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
-    singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
-    singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
-    singleOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
-    singleOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
-    singleOf(::PopupIdentificationAgentAdkImpl) bind IPopupIdentificationAgent::class
-    // Depends on request-scoped repository; keep agent in the request scope
-    requestScope {
+        // domain agents (request scoped)
+        scopedOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
+        scopedOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class
+        scopedOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
+        scopedOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
+        scopedOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
+        scopedOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
+        scopedOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
+        scopedOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
+        scopedOf(::PopupIdentificationAgentAdkImpl) bind IPopupIdentificationAgent::class
         scopedOf(::IconInterpreterAgentAdkImpl) bind IIconInterpreterAgent::class
     }
 }

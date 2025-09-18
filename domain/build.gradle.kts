@@ -18,6 +18,7 @@ dependencies {
     implementation(libs.google.adk.dev)
 
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.jsoup)
 
     // Apache HttpClient 5 - required for Google ADK Dev UI
     implementation(libs.apache.httpclient5)
