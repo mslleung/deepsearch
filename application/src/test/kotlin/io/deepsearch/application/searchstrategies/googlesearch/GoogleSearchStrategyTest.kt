@@ -1,7 +1,6 @@
 package io.deepsearch.application.searchstrategies.googlesearch
 
 import io.deepsearch.application.config.applicationTestModule
-import io.deepsearch.application.config.testModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -18,7 +17,7 @@ class GoogleSearchStrategyTest : KoinTest {
     @JvmField
     @RegisterExtension
     val koinTestExtension = KoinTestExtension.create {
-        modules(applicationTestModule, testModule)
+        modules(applicationTestModule)
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()

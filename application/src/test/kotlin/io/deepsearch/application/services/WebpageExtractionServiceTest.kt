@@ -1,7 +1,6 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationTestModule
-import io.deepsearch.application.config.testModule
 import io.deepsearch.domain.browser.playwright.PlaywrightBrowser
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -17,7 +16,7 @@ class WebpageExtractionServiceTest : KoinTest{
     @JvmField
     @RegisterExtension
     val koinTestExtension = KoinTestExtension.create {
-        modules(applicationTestModule, testModule)
+        modules(applicationTestModule)
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
