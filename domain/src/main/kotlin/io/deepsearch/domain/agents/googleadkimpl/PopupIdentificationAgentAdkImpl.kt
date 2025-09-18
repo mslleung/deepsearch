@@ -10,12 +10,15 @@ import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.IPopupIdentificationAgent
 import io.deepsearch.domain.agents.PopupIdentificationInput
 import io.deepsearch.domain.agents.PopupIdentificationOutput
-import io.deepsearch.domain.agents.PopupIdentificationResult
 import io.deepsearch.domain.agents.infra.ModelIds
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Comment
+import org.jsoup.nodes.Node
+import org.jsoup.select.NodeVisitor
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -25,19 +28,21 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Detect presence of popup/cookie banner and provide a unique XPath selector to the popup container")
+        .description("Return a unique XPath selector to the dismiss button of a visible popup/cookie banner; null if none")
         .properties(
             mapOf(
-                "exists" to Schema.builder().type("BOOLEAN").description("Whether a popup/cookie banner exists").build(),
-                "containerXPath" to Schema.builder().type("STRING").description("A unique XPath selector that targets the popup container element. Returns null if no popup exists.").build(),
+                "dismissButtonXPath" to Schema.builder()
+                    .type("STRING")
+                    .description("Unique XPath selector targeting the clickable dismiss/accept/reject button for the popup. Null if no popup is present.")
+                    .nullable(true)
+                    .build(),
             )
         )
-        .required(listOf("exists"))
         .build()
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("popupIdentificationAgent")
-        description("Identify if a popup/cookie banner exists and provide a unique XPath selector to the popup container element")
+        description("Identify and return the XPath of the dismiss button for cookie/pop-up consent using screenshot and cleaned HTML")
         model(ModelIds.GEMINI_2_5_LITE.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -49,31 +54,21 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
         )
         instruction(
             """
-            Your task is to detect whether any popup or cookie consent banner is currently visible on the webpage.
-            If present, return a unique XPath selector that identifies the POPUP CONTAINER ELEMENT itself, not a button.
+            Task: Find if a cookie consent or popup banner is visible and return a unique XPath to the clickable dismiss/accept/reject button.
 
-            Input:
-            A screenshot of a webpage.
+            Inputs:
+            - A screenshot of the webpage (current viewport)
+            - CLEANED HTML (subset of DOM with key attributes)
 
-            Instructions:
-            - Determine if a popup banner or cookie consent banner is visible.
-            - If visible, return exists=true and generate a unique XPath selector to the popup container node.
-            - The selector must make no assumptions about the HTML structure. Prefer using * and text containment where applicable.
-            - The XPath should try to capture a stable container (e.g., modal root, banner div) and avoid main page content.
-            - If multiple popups exist, choose the most prominent one.
-            - If no popup or banner is visible, return exists=false and omit containerXPath.
+            Guidelines:
+            - Understand the website using the webpage and HTML
+            - The XPath must point to the CLICKABLE BUTTON (e.g., <button>, <a>, or clickable div) that dismisses the popup.
+            - If multiple popups/buttons exist, choose the most prominent and primary dismiss action (e.g., "Accept all", "Reject all", "I agree").
+            - If no popup is visible, return null.
 
-            Examples (illustrative only):
-            //*[contains(@role, 'dialog') or contains(@class, 'modal')][contains(., 'cookies')]
-
-            Expected output shape:
+            Output structure:
             {
-              "exists": true,
-              "containerXPath": "string"
-            }
-            or when no popup exists:
-            {
-              "exists": false
+                "dismissButtonXPath": string?
             }
             """.trimIndent()
         )
@@ -84,12 +79,13 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
 
     @Serializable
     private data class PopupIdentificationResponse(
-        val exists: Boolean,
-        val containerXPath: String? = null
+        val dismissButtonXPath: String? = null
     )
 
     override suspend fun generate(input: PopupIdentificationInput): PopupIdentificationOutput {
-        logger.debug("Popup identification for screenshot")
+        logger.debug("Popup dismissal XPath identification for screenshot + HTML")
+
+        val cleanedHtml = cleanHtml(input.html)
 
         val session = runner
             .sessionService()
@@ -106,7 +102,8 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
         val eventsFlow = runner.runAsync(
             session,
             Content.fromParts(
-                Part.fromBytes(input.screenshotBytes, input.mimetype.value)
+                Part.fromBytes(input.screenshotBytes, input.mimetype.value),
+                Part.fromText("CLEANED_HTML:\n" + cleanedHtml)
             ),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)
@@ -129,12 +126,49 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
         }
 
         val response = Json.decodeFromString<PopupIdentificationResponse>(llmResponse)
-        val result = PopupIdentificationResult(
-            exists = response.exists,
-            containerXPath = response.containerXPath
+        val xpath = response.dismissButtonXPath?.takeIf { it.isNotBlank() }
+
+        return PopupIdentificationOutput(dismissButtonXPath = xpath)
+    }
+
+    private fun cleanHtml(rawHtml: String): String {
+        val doc = Jsoup.parse(rawHtml)
+
+        // Remove non-essential tags
+        doc.select("script, style, noscript, svg, path, img, video, source, picture, canvas, iframe").remove()
+
+        // Remove comments
+        doc.traverse(object : NodeVisitor {
+            override fun head(node: Node, depth: Int) {
+                if (node is Comment) node.remove()
+            }
+
+            override fun tail(node: Node, depth: Int) { /* no-op */
+            }
+        })
+
+        // Keep only a safe set of attributes useful for identification
+        val allowedAttrs = setOf(
+            "id", "class", "role", "aria-label", "aria-labelledby", "aria-describedby",
+            "type", "name", "value", "href", "title"
         )
-        return PopupIdentificationOutput(result = result)
+
+        doc.allElements.forEach { el ->
+            val it = el.attributes().iterator()
+            val toRemove = mutableListOf<String>()
+            while (it.hasNext()) {
+                val attr = it.next()
+                val key = attr.key
+                val isDataAttr = key.startsWith("data-")
+                if (!allowedAttrs.contains(key) && !isDataAttr) {
+                    toRemove.add(key)
+                }
+            }
+            toRemove.forEach { key -> el.removeAttr(key) }
+        }
+
+        val bodyHtml = doc.body().outerHtml()
+        val maxLen = 150_000
+        return bodyHtml.take(maxLen)
     }
 }
-
-

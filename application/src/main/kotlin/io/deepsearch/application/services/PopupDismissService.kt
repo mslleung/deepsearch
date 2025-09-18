@@ -23,26 +23,26 @@ class PopupDismissService(
         // Safety to avoid infinite loops due to mis-detected selectors
         repeat(5) { iteration ->
             val screenshot = webpage.takeScreenshot()
-            val result = popupIdentificationAgent.generate(
-                PopupIdentificationInput(screenshot.bytes, screenshot.mimeType)
-            ).result
+            val html = webpage.getFullHtml()
+            val output = popupIdentificationAgent.generate(
+                PopupIdentificationInput(
+                    screenshotBytes = screenshot.bytes,
+                    mimetype = screenshot.mimeType,
+                    html = html
+                )
+            )
 
-            if (result.exists == false) {
-                logger.debug("No popup detected on iteration {}", iteration)
+            val dismissXPath = output.dismissButtonXPath
+            if (dismissXPath.isNullOrBlank()) {
+                logger.debug("No popup dismiss button detected on iteration {}", iteration)
                 return
             }
 
-            val containerXPath = result.containerXPath
-            if (containerXPath == null || containerXPath.isBlank()) {
-                logger.debug("Popup detected but no container XPath provided on iteration {}", iteration)
-                return
-            }
-
-            logger.debug("Attempting to remove popup container via XPath: {}", containerXPath)
+            logger.debug("Attempting to click dismiss button via XPath: {}", dismissXPath)
             try {
-                webpage.removeElement(containerXPath)
+                webpage.clickByXPathSelector(dismissXPath)
             } catch (t: Throwable) {
-                logger.debug("Failed to remove popup container on iteration {}: {}", iteration, t.message)
+                logger.debug("Failed to click dismiss button on iteration {}: {}", iteration, t.message)
             }
         }
     }

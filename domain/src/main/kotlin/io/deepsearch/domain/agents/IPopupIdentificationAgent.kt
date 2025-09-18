@@ -6,17 +6,13 @@ import kotlinx.serialization.Serializable
 
 data class PopupIdentificationInput(
     val screenshotBytes: ByteArray,
-    val mimetype: ImageMimeType
+    val mimetype: ImageMimeType,
+    val html: String
 ) : IAgent.IAgentInput
 
 @Serializable
-data class PopupIdentificationResult(
-    val exists: Boolean,
-    val containerXPath: String? = null
-)
-
 data class PopupIdentificationOutput(
-    val result: PopupIdentificationResult
+    val dismissButtonXPath: String?
 ) : IAgent.IAgentOutput
 
 interface IPopupIdentificationAgent : IAgent<PopupIdentificationInput, PopupIdentificationOutput> {
