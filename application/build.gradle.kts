@@ -32,6 +32,10 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.jupiter.engine)
     testImplementation(libs.junit.jupiter.params)
+
+    // Depend on domain and infrastructure test fixtures
+    testImplementation(testFixtures(project(":domain")))
+    testImplementation(testFixtures(project(":infrastructure")))
 }
 
 tasks.test {
