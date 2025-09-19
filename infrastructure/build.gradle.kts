@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.plugin.serialization)
+    id("java-test-fixtures")
 }
 
 group = "io.deepsearch"
@@ -25,6 +26,12 @@ dependencies {
     testImplementation(libs.kotlin.test.junit5)
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.jupiter.engine)
+
+    // Expose reusable Koin test modules via test fixtures
+    testFixturesImplementation(libs.koin.ktor)
+    testFixturesImplementation(libs.koin.logger.slf4j)
+    testFixturesImplementation(libs.kotlinx.coroutines.test)
+    testFixturesImplementation(project(":domain"))
 }
 
 tasks.test {

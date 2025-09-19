@@ -10,6 +10,8 @@ import io.deepsearch.application.services.PopupDismissService
 import io.deepsearch.application.services.SearchService
 import io.deepsearch.application.services.UserService
 import io.deepsearch.application.services.WebpageExtractionService
+import io.deepsearch.domain.config.domainTestModule
+import io.deepsearch.infrastructure.config.infrastructureTestModule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.singleOf
