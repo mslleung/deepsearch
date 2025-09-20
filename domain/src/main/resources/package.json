@@ -1,0 +1,9 @@
+{
+  "name": "deepsearch-domain-typescript",
+  "version": "1.0.0",
+  "description": "TypeScript resources for DeepSearch domain layer",
+  "private": true,
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

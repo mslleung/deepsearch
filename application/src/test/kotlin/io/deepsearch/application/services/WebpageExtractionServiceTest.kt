@@ -1,6 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.browser.playwright.PlaywrightBrowser
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -19,12 +20,13 @@ class WebpageExtractionServiceTest : KoinTest{
         modules(applicationTestModule)
     }
 
+    private val browserPool by inject<IBrowserPool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val webpageExtractionService by inject<IWebpageExtractionService>()
 
     @Test
     fun `extract webpage text for OTandP body check page`() = runTest(testCoroutineDispatcher) {
-        val browser = PlaywrightBrowser()
+        val browser = browserPool.acquireBrowser()
         val context = browser.createContext()
         val page = context.newPage()
 
