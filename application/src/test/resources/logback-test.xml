@@ -6,8 +6,16 @@
         </encoder>
     </appender>
 
-    <!-- Set DEBUG for the agent impl to see its logs during tests -->
+    <!-- Set DEBUG for all DeepSearch packages to see logs during tests -->
     <logger name="io.deepsearch.application" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="io.deepsearch.domain" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="io.deepsearch.infrastructure" level="DEBUG" additivity="false">
         <appender-ref ref="STDOUT"/>
     </logger>
 

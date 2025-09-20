@@ -37,5 +37,3 @@ class WebpageExtractionServiceTest : KoinTest{
         browser.close()
     }
 }
-
-

@@ -2,6 +2,8 @@ package io.deepsearch.application.config
 
 import io.deepsearch.application.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
 import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
+import io.deepsearch.application.searchstrategies.googlesearch.GoogleSearchStrategy
+import io.deepsearch.application.searchstrategies.googlesearch.IGoogleSearchStrategy
 import io.deepsearch.application.services.IPopupDismissService
 import io.deepsearch.application.services.ISearchService
 import io.deepsearch.application.services.IUserService
@@ -23,6 +25,7 @@ val applicationTestModule = module {
     includes(infrastructureTestModule)
 
     singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
+    singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
     singleOf(::UserService) bind IUserService::class
     singleOf(::SearchService) bind ISearchService::class
     singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
