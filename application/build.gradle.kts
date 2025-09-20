@@ -1,3 +1,5 @@
+import org.gradle.kotlin.dsl.compileTestKotlin
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.plugin.serialization)
@@ -40,6 +42,10 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.compileKotlin {
+    dependsOn(project(":domain").tasks.named("processResources"))
 }
 
 // Ensure test JARs are built before compiling application tests

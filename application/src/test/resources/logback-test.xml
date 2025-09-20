@@ -19,6 +19,10 @@
         <appender-ref ref="STDOUT"/>
     </logger>
 
+    <logger name="ch.qos.logback" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+
     <!-- Root logger at INFO for cleanliness -->
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
