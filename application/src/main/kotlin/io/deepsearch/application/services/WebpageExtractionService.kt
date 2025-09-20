@@ -47,23 +47,19 @@ class WebpageExtractionService(
         )
 
         // Interpret each identified table by XPath and capture element HTML for later replacement
-        val tableReplacements: List<Pair<String, String>> = tableOutput.tables.mapNotNull { t ->
+        val tableReplacements: List<Pair<String, String>> = tableOutput.tables.map { t ->
             val xpath = t.xpath
-            try {
-                val elementScreenshot = webpage.getElementScreenshotByXPath(xpath)
-                val elementHtml = webpage.getElementHtmlByXPath(xpath)
-                val md = tableInterpretationAgent.generate(
-                    TableInterpretationInput(
-                        screenshotBytes = elementScreenshot.bytes,
-                        mimetype = elementScreenshot.mimeType,
-                        auxiliaryInfo = t.auxiliaryInfo,
-                        html = elementHtml,
-                    )
-                ).markdown
-                elementHtml to md
-            } catch (ex: Exception) {
-                null
-            }
+            val elementScreenshot = webpage.getElementScreenshotByXPath(xpath)
+            val elementHtml = webpage.getElementHtmlByXPath(xpath)
+            val md = tableInterpretationAgent.generate(
+                TableInterpretationInput(
+                    screenshotBytes = elementScreenshot.bytes,
+                    mimetype = elementScreenshot.mimeType,
+                    auxiliaryInfo = t.auxiliaryInfo,
+                    html = elementHtml,
+                )
+            ).markdown
+            elementHtml to md
         }
 
         // Replace matching table nodes in parsed Jsoup document with interpreted markdown
@@ -97,8 +93,7 @@ class WebpageExtractionService(
             }
         }
 
-        return@coroutineScope builder.toString()
-
+        builder.toString()
     }
 
 

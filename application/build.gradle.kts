@@ -32,12 +32,18 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.jupiter.engine)
     testImplementation(libs.junit.jupiter.params)
-
-    // Depend on domain and infrastructure test fixtures
-    testImplementation(testFixtures(project(":domain")))
-    testImplementation(testFixtures(project(":infrastructure")))
+    
+    // Test dependencies on domain and infrastructure test JARs
+    testImplementation(files("../domain/build/libs/domain-test.jar"))
+    testImplementation(files("../infrastructure/build/libs/infrastructure-test.jar"))
 }
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// Ensure test JARs are built before compiling application tests
+tasks.compileTestKotlin {
+    dependsOn(project(":domain").tasks.named("testJar"))
+    dependsOn(project(":infrastructure").tasks.named("testJar"))
 }

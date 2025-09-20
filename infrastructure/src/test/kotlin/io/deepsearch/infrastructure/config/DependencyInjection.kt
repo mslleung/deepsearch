@@ -1,6 +1,7 @@
 package io.deepsearch.infrastructure.config
 
 import io.deepsearch.domain.repositories.IWebpageIconRepository
+import io.deepsearch.infrastructure.database.DatabaseConfig
 import io.deepsearch.infrastructure.repositories.ExposedWebpageIconRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -9,6 +10,9 @@ import org.koin.dsl.bind
 import org.koin.dsl.module
 
 val infrastructureTestModule = module {
+    // Initialize database for tests
+    single(createdAtStart = true) { DatabaseConfig.configureDatabase() }
+    
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }

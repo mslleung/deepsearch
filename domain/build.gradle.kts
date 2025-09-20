@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.plugin.serialization)
-    id("java-test-fixtures")
 }
 
 group = "io.deepsearch"
@@ -47,15 +46,28 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.jupiter.engine)
     testImplementation(libs.junit.jupiter.params)
-
-    // Expose reusable Koin test modules via test fixtures
-    testFixturesImplementation(libs.koin.ktor)
-    testFixturesImplementation(libs.koin.logger.slf4j)
-    testFixturesImplementation(libs.kotlinx.coroutines.test)
 }
 
 tasks.test {
     useJUnitPlatform()
+}
+
+// Create a test JAR to allow other modules to depend on test classes
+tasks.register<Jar>("testJar") {
+    archiveClassifier.set("test")
+    from(sourceSets.test.get().output)
+    dependsOn(tasks.testClasses)
+}
+
+// Make the test JAR available as an artifact
+configurations {
+    create("testArtifacts") {
+        extendsFrom(configurations.testImplementation.get())
+    }
+}
+
+artifacts {
+    add("testArtifacts", tasks.named("testJar"))
 }
 
 tasks.register<JavaExec>("runAdkWebServer") {
