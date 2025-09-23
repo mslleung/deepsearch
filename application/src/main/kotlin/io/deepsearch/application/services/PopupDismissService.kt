@@ -39,11 +39,7 @@ class PopupDismissService(
             }
 
             logger.debug("Attempting to click dismiss button via XPath: {}", dismissXPath)
-            try {
-                webpage.clickByXPathSelector(dismissXPath)
-            } catch (t: Throwable) {
-                logger.debug("Failed to click dismiss button on iteration {}: {}", iteration, t.message)
-            }
+            webpage.clickByXPathSelector(dismissXPath)
         }
     }
 }
