@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertNull
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
@@ -34,10 +35,10 @@ class PopupIdentificationAgentAdkImplTest : KoinTest {
     private fun resourceText(name: String): String = resourceBytes(name).toString(Charsets.UTF_8)
 
     // Loaded resources
-    private val exampleScreenshot: ByteArray = resourceBytes("example.com_.png")
+    private val exampleScreenshot: ByteArray = resourceBytes("example.com_.jpg")
     private val exampleHtml: String = resourceText("view-source_https___example.com.html")
 
-    private val otandpBodyCheckScreenshot = Base64.encode(resourceBytes("www.otandp.com_body-check_.png"))
+    private val otandpBodyCheckScreenshot = Base64.encode(resourceBytes("www.otandp.com_body-check_.jpg"))
     private val otandpBodyCheckHtml = resourceText("view-source_https___www.otandp.com_body-check_.html")
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
@@ -48,23 +49,22 @@ class PopupIdentificationAgentAdkImplTest : KoinTest {
     fun `no popup should be detected on example`() = runTest(testCoroutineDispatcher) {
         val input = PopupIdentificationInput(
             screenshotBytes = exampleScreenshot,
-            mimetype = ImageMimeType.PNG,
+            mimetype = ImageMimeType.JPEG,
             html = exampleHtml
         )
         val output = agent.generate(input)
 
-        assertFalse(
-            !output.dismissButtonXPath.isNullOrBlank(),
+        assertNull(
+            output.dismissButtonXPath,
             "example.com should not have a popup banner in test env"
         )
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class, ExperimentalEncodingApi::class)
     @Test
     fun `popup should be detected on otandp body check page`() = runTest(testCoroutineDispatcher) {
         val input = PopupIdentificationInput(
             screenshotBytes = Base64.decode(otandpBodyCheckScreenshot),
-            mimetype = ImageMimeType.PNG,
+            mimetype = ImageMimeType.JPEG,
             html = otandpBodyCheckHtml
         )
         val output = agent.generate(input)

@@ -61,8 +61,9 @@ class PopupIdentificationAgentAdkImpl : IPopupIdentificationAgent {
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
-            - Understand the website using the webpage and HTML
-            - The XPath must point to the CLICKABLE BUTTON (e.g., <button>, <a>, or clickable div) that dismisses the popup.
+            - Understand the website visually using the webpage screenshot
+            - Identify any pop-up or cookie banner
+            - Using the HTML, identify the XPath that points to the CLICKABLE BUTTON (e.g., <button>, <a>, or clickable div) that dismisses the popup.
             - If multiple popups/buttons exist, choose the most prominent and primary dismiss action (e.g., "Accept all", "Reject all", "I agree").
             - If no popup is visible, return null.
 
