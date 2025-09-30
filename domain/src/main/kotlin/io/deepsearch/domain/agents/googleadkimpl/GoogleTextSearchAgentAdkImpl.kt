@@ -7,9 +7,7 @@ import com.google.adk.runner.InMemoryRunner
 import com.google.adk.tools.GoogleSearchTool
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
-import com.google.genai.types.GoogleSearch
 import com.google.genai.types.Part
-import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.SearchResult
@@ -39,7 +37,7 @@ class GoogleTextSearchAgentAdkImpl :
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("googleTextSearchAgent")
         description("Agent to answer questions using Google Search")
-        model(ModelIds.GEMINI_2_5_LITE.modelId) // Google Search tool supports Gemini 2 models
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId) // Google Search tool supports Gemini 2 models
         // Register the built-in Google Search tool on the agent
         tools(GoogleSearchTool())
         generateContentConfig(

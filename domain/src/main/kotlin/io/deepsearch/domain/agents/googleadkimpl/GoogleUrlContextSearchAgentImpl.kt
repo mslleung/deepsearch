@@ -9,8 +9,6 @@ import com.google.genai.types.Part
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.tools.UrlContextTool
-import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.models.valueobjects.SearchResult
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import org.slf4j.Logger
@@ -30,7 +28,7 @@ class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("googleUrlContextSearchAgent")
         description("Agent to answer questions using URL Context tool on a specific page")
-        model(ModelIds.GEMINI_2_5_LITE.modelId)
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         // Register the custom URL Context tool so the model can fetch and use the page content
         tools(UrlContextTool())
         generateContentConfig(

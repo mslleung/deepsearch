@@ -41,7 +41,7 @@ class BlinkTestAgentAdkImpl : IBlinkTestAgent {
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("blinkTestAgent")
         description("Make a snap judgment whether the current page is relevant to the user's query")
-        model(ModelIds.GEMINI_2_5_LITE.modelId)
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
         disallowTransferToParent(true)

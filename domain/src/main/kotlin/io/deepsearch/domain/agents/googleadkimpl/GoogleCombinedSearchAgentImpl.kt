@@ -12,13 +12,10 @@ import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.tools.UrlContextTool
 import io.deepsearch.domain.models.valueobjects.SearchResult
-import io.reactivex.rxjava3.core.Maybe
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.util.Optional
 
 /**
  * An agent that enables BOTH Google Search and URL Context tools, so the model can
@@ -34,7 +31,7 @@ class GoogleCombinedSearchAgentImpl : IGoogleCombinedSearchAgent {
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("googleCombinedSearchAgent")
         description("Agent that combines Google Search tool and URL Context tool")
-        model(ModelIds.GEMINI_2_5_LITE.modelId)
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         tools(GoogleSearchTool(), UrlContextTool())
         generateContentConfig(
             GenerateContentConfig.builder()

@@ -54,7 +54,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableIdentificationAgent")
         description("Identify tables in a webpage screenshot and return XPath selectors to their roots")
-        model(ModelIds.GEMINI_2_5_LITE.modelId)
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
         disallowTransferToParent(true)

@@ -18,6 +18,8 @@ val applicationModule = module {
         scopedOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
         scopedOf(::UserService) bind IUserService::class
         scopedOf(::SearchService) bind ISearchService::class
+        scopedOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
+        scopedOf(::PopupContainerIdentificationService) bind IPopupContainerIdentificationService::class
         scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
         scopedOf(::PopupDismissService) bind IPopupDismissService::class
     }

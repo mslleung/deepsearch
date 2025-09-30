@@ -19,6 +19,8 @@ google-adk-version = "0.3.0"
 apache-httpclient5-version = "5.5"
 apache-httpcore5-version = "5.3.4"
 r2dbc-h2-version = "1.0.0.RELEASE"
+r2dbc-postgresql-version = "1.0.7.RELEASE"
+sqlite-jdbc-version = "3.49.1.0"
 jsoup-version = "1.21.2"
 
 [libraries]
@@ -32,6 +34,8 @@ exposed-core = { module = "org.jetbrains.exposed:exposed-core", version.ref = "e
 exposed-jdbc = { module = "org.jetbrains.exposed:exposed-jdbc", version.ref = "exposed-version" }
 exposed-r2dbc = { module = "org.jetbrains.exposed:exposed-r2dbc", version.ref = "exposed-r2dbc-version" }
 r2dbc-h2 = { module = "io.r2dbc:r2dbc-h2", version.ref = "r2dbc-h2-version" }
+r2dbc-postgresql = { module = "org.postgresql:r2dbc-postgresql", version.ref = "r2dbc-postgresql-version" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc-version" }
 ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor-version" }
 ktor-server-config = { module = "io.ktor:ktor-server-config", version.ref = "ktor-version" }
 koin-ktor = { module = "io.insert-koin:koin-ktor", version.ref = "koin-ktor-version" }

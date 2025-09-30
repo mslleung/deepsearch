@@ -49,7 +49,7 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("iconInterpreterAgent")
         description("Interpret a UI icon image and output a concise label")
-        model(ModelIds.GEMINI_2_5_LITE.modelId)
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
         disallowTransferToParent(true)

@@ -17,10 +17,14 @@ dependencies {
     implementation(libs.exposed.core)
     implementation(libs.exposed.r2dbc)
     implementation(libs.r2dbc.h2)
+    implementation(libs.r2dbc.postgresql)
     
     // Dependency injection
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)
+    
+    // Serialization
+    implementation(libs.kotlinx.serialization.json)
     
     testImplementation(libs.kotlin.test.junit5)
     testImplementation(libs.kotlinx.coroutines.test)

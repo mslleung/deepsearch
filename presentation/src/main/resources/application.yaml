@@ -1,4 +1,5 @@
 ktor:
+    development: true  # Enable development mode by default for local development
     application:
         modules:
             - io.deepsearch.presentation.ApplicationKt.module
