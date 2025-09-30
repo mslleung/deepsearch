@@ -88,10 +88,11 @@ class PlaywrightBrowserPage(
     override suspend fun removeElement(xpath: String) {
         logger.debug("Remove element by XPath: {}", xpath)
         val locator = page.locator("xpath=$xpath")
-        if (locator.count() > 0) {
-            val target = locator.last()
-            target.evaluate("el => el.remove()")
+        if (locator.count() != 1) {
+            throw IllegalStateException("xpath $xpath points to ${locator.count()} elements")
         }
+        val target = locator.last()
+        target.evaluate("el => el.remove()")
     }
 
     @Serializable

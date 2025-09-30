@@ -53,7 +53,7 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
     private val agent = LlmAgent.builder().run {
         name("aggregateSearchResultsAgent")
         description("Aggregate multiple search results into a single, concise answer against the user query")
-        model(ModelIds.GEMINI_2_5_LITE.modelId)
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
         disallowTransferToParent(true)

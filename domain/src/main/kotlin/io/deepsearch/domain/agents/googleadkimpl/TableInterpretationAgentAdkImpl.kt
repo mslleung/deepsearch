@@ -39,7 +39,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableInterpretationAgent")
         description("Interpret a table region from a webpage and output Markdown")
-        model(ModelIds.GEMINI_2_5_LITE.modelId)
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
         disallowTransferToParent(true)

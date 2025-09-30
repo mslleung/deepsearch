@@ -1,25 +1,14 @@
 package io.deepsearch.application.searchstrategies.agenticbrowsersearch
 
+import io.deepsearch.application.searchstrategies.ISearchStrategy
+import io.deepsearch.application.services.IPopupDismissService
+import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
-import io.deepsearch.application.searchstrategies.ISearchStrategy
-import io.deepsearch.application.services.IWebpageExtractionService
-import io.deepsearch.application.services.IPopupDismissService
-import io.deepsearch.application.services.WebpageExtractionService
-import io.deepsearch.domain.agents.ITableIdentificationAgent
-import io.deepsearch.domain.agents.TableIdentificationInput
-import io.deepsearch.domain.agents.IIconInterpreterAgent
-import io.deepsearch.domain.agents.IconInterpreterInput
-import io.deepsearch.domain.repositories.IWebpageIconRepository
-import io.deepsearch.domain.models.entities.WebpageIcon
-import kotlinx.coroutines.CoroutineDispatcher
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import java.net.URI
 
 interface IAgenticBrowserSearchStrategy : ISearchStrategy {
     override suspend fun execute(searchQuery: SearchQuery): SearchResult
@@ -46,7 +35,7 @@ class AgenticBrowserSearchStrategy(
             page.navigate(url)
 
             // Dismiss any popups/cookie banners before extraction
-            popupDismissService.dismissAll(page)
+            popupDismissService.dismissAll(page, URI(url).toURL())
 
             val title = page.getTitle()
             val description = page.getDescription()

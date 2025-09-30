@@ -58,7 +58,7 @@ class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
         LlmAgent.builder().run {
             name("queryExpansionAgent")
             description("Expand a user query into more specific queries")
-            model(ModelIds.GEMINI_2_5_LITE.modelId)
+            model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
             outputSchema(queryExpansionOutputSchema)
             disallowTransferToPeers(true)
             disallowTransferToParent(true)
