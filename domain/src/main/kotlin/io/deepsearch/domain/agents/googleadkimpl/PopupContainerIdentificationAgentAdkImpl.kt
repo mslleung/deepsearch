@@ -131,9 +131,33 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
         }
 
         val response = Json.decodeFromString<PopupContainerIdentificationResponse>(llmResponse)
-        val validXPaths = response.popupContainerXPaths.filter { it.isNotBlank() }
+        val validXPaths = response.popupContainerXPaths
+            .filter { it.isNotBlank() }
+            .map { normalizeXPath(it) }
 
         return PopupContainerIdentificationOutput(popupContainerXPaths = validXPaths)
+    }
+
+    /**
+     * Normalizes XPath expressions to ensure they work correctly with Playwright.
+     * 
+     * Common issues fixed:
+     * - Converts absolute paths like `/div[@id='x']` to relative paths `//div[@id='x']`
+     *   (since `/div` expects div to be a direct child of the document root, which is invalid for HTML)
+     * - Preserves valid absolute paths like `/html/body/div[@id='x']`
+     */
+    private fun normalizeXPath(xpath: String): String {
+        val trimmed = xpath.trim()
+        
+        // If XPath starts with a single `/` followed by something other than `html`, convert to `//`
+        // This handles cases like `/div[@id='x']` -> `//div[@id='x']`
+        if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.startsWith("/html")) {
+            val normalized = "/$trimmed"
+            logger.debug("Normalized XPath from '{}' to '{}'", trimmed, normalized)
+            return normalized
+        }
+        
+        return trimmed
     }
 
     private fun cleanHtml(rawHtml: String): String {

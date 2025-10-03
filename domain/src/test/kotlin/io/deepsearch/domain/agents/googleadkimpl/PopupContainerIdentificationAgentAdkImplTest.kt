@@ -14,6 +14,7 @@ import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class PopupContainerIdentificationAgentAdkImplTest : KoinTest {
@@ -69,9 +70,6 @@ class PopupContainerIdentificationAgentAdkImplTest : KoinTest {
         )
         val output = agent.generate(input)
 
-        assertTrue(
-            output.popupContainerXPaths.isNotEmpty(),
-            "Expected at least one popup container XPath when popup exists"
-        )
+        assertEquals(output.popupContainerXPaths.count(), 1, "Expects one popup container XPath when popup exists")
     }
 }

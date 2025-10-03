@@ -88,15 +88,26 @@ class PlaywrightBrowserPage(
     override suspend fun removeElement(xpath: String) {
         logger.debug("Remove element by XPath: {}", xpath)
         val locator = page.locator("xpath=$xpath")
-        if (locator.count() != 1) {
-            throw IllegalStateException("xpath $xpath points to ${locator.count()} elements")
+        val count = locator.count()
+
+        if (count == 0) {
+            logger.warn("No element found at XPath: {}", xpath)
+            return
         }
-        val target = locator.last()
-        target.evaluate("el => el.remove()")
+
+        if (count > 1) {
+            logger.warn("Multiple elements ({}) found at XPath: {}, removing first", count, xpath)
+        }
+
+        // Get the first matching element and remove it using JavaScript
+        val target = locator.first()
+        target.evaluate("element => element.remove()")
+
+        logger.debug("Successfully removed element at XPath: {}", xpath)
     }
 
     @Serializable
-    private data class IconResult(val base64: String, val selectors: List<String>)
+    private data class IconResult(val base64: String, val xPathSelectors: List<String>)
 
     override suspend fun extractIcons(): List<IBrowserPage.Icon> {
         logger.debug("Extracting icons via evaluate()")
@@ -108,7 +119,7 @@ class PlaywrightBrowserPage(
             IBrowserPage.Icon(
                 bytes = bytes,
                 mimeType = ImageMimeType.JPEG,
-                selectors = result.selectors
+                xPathSelectors = result.xPathSelectors
             )
         }
 
@@ -125,6 +136,94 @@ class PlaywrightBrowserPage(
         val description =
             if (descriptionMeta.count() > 0) descriptionMeta.first().getAttribute("content")?.trim() else null
         return description
+    }
+
+    override suspend fun replaceElementsWithText(cssSelector: String, text: String?) {
+        logger.debug("Replace elements by CSS selector: {} with text: {}", cssSelector, text)
+
+        if (text != null) {
+            page.evaluate(
+                """
+                (selector, replacement) => {
+                    const elements = document.querySelectorAll(selector);
+                    elements.forEach(el => {
+                        const textNode = document.createTextNode(replacement);
+                        el.replaceWith(textNode);
+                    });
+                }
+            """, mapOf("selector" to cssSelector, "replacement" to text)
+            )
+        } else {
+            page.evaluate(
+                """
+                (selector) => {
+                    const elements = document.querySelectorAll(selector);
+                    elements.forEach(el => el.remove());
+                }
+            """, cssSelector
+            )
+        }
+    }
+
+    override suspend fun replaceElementsByXPathWithText(replacements: List<IBrowserPage.XPathReplacementWithText>) {
+        if (replacements.isEmpty()) {
+            return
+        }
+
+        logger.debug("Replace {} XPath elements with text", replacements.size)
+
+        page.evaluate(
+            """
+            (replacements) => {
+                replacements.forEach(({ xpath, text }) => {
+                    const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+                    for (let i = 0; i < result.snapshotLength; i++) {
+                        const el = result.snapshotItem(i);
+                        if (text !== null) {
+                            const textNode = document.createTextNode(text);
+                            el.replaceWith(textNode);
+                        } else {
+                            el.remove();
+                        }
+                    }
+                });
+            }
+        """, replacements.map { r -> mapOf("xpath" to r.xpath, "text" to r.text) }
+        )
+    }
+
+    override suspend fun extractTextContent(): String {
+        logger.debug("Extracting text content from page")
+
+        return page.evaluate(
+            """
+            () => {
+                const result = [];
+                const stack = [document.body];
+                
+                while (stack.length > 0) {
+                    const node = stack.pop();
+                    
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        const text = node.textContent.trim();
+                        if (text.length > 0) {
+                            result.push(text);
+                        }
+                    } else if (node.nodeType === Node.ELEMENT_NODE) {
+                        const tagName = node.tagName.toLowerCase();
+                        if (tagName !== 'script' && tagName !== 'style') {
+                            const children = Array.from(node.childNodes);
+                            for (let i = children.length - 1; i >= 0; i--) {
+                                stack.push(children[i]);
+                            }
+                        }
+                    }
+                }
+                
+                return result.join('\\n');
+            }
+        """
+        ) as String
     }
 
     private fun loadScript(path: String): String {

@@ -10,9 +10,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
-import org.jsoup.nodes.TextNode
 
 interface IWebpageExtractionService {
     suspend fun extractWebpage(webpage: IBrowserPage): String
@@ -29,88 +26,56 @@ class WebpageExtractionService(
      * Converts a webpage into text for downstream LLM processing
      */
     override suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
-        // Load full HTML
-        val html = webpage.getFullHtml()
-        val doc = Jsoup.parse(html)
+        replaceIconsWithTexts(webpage)
+        replaceTablesWithTexts(webpage)
+        webpage.extractTextContent()
+    }
 
-        replaceIconsWithTexts(webpage, doc)
+    private suspend fun replaceIconsWithTexts(webpage: IBrowserPage) = coroutineScope {
+        val icons = webpage.extractIcons()
 
+        val replacements = icons
+            .map { icon ->
+                async(ioDispatcher) {
+                    val interpretedText = webpageIconInterpretationService.interpretIcon(icon)
+                    icon.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, interpretedText) }
+                }
+            }
+            .awaitAll()
+            .flatten()
+
+        webpage.replaceElementsByXPathWithText(replacements)
+    }
+
+    private suspend fun replaceTablesWithTexts(webpage: IBrowserPage) = coroutineScope {
         // Table processing: identify tables from full-page screenshot and interpret them to markdown
         val fullScreenshot = webpage.takeFullPageScreenshot()
         val tableOutput = tableIdentificationAgent.generate(
             TableIdentificationInput(fullScreenshot.bytes, fullScreenshot.mimeType)
         )
 
-        // Interpret each identified table by XPath and capture element HTML for later replacement
-        val tableReplacements: List<Pair<String, String>> = tableOutput.tables.map { t ->
-            val xpath = t.xpath
-            val elementScreenshot = webpage.getElementScreenshotByXPath(xpath)
-            val elementHtml = webpage.getElementHtmlByXPath(xpath)
-            val md = tableInterpretationAgent.generate(
-                TableInterpretationInput(
-                    screenshotBytes = elementScreenshot.bytes,
-                    mimetype = elementScreenshot.mimeType,
-                    auxiliaryInfo = t.auxiliaryInfo,
-                    html = elementHtml,
-                )
-            ).markdown
-            elementHtml to md
+        // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)
+        val tableInputs = tableOutput.tables.map { table ->
+            val elementScreenshot = webpage.getElementScreenshotByXPath(table.xpath)
+            val elementHtml = webpage.getElementHtmlByXPath(table.xpath)
+            table.xpath to TableInterpretationInput(
+                screenshotBytes = elementScreenshot.bytes,
+                mimetype = elementScreenshot.mimeType,
+                auxiliaryInfo = table.auxiliaryInfo,
+                html = elementHtml
+            )
         }
 
-        // Replace matching table nodes in parsed Jsoup document with interpreted markdown
-        for ((elementHtml, markdown) in tableReplacements) {
-            val match = doc.allElements.firstOrNull { it.outerHtml() == elementHtml }
-            match?.replaceWith(TextNode(markdown))
-        }
-
-        // Traverse DOM in document order, collecting text from TextNodes while skipping script/style
-        val builder = StringBuilder()
-        val stack = ArrayDeque<org.jsoup.nodes.Node>()
-        stack.addLast(doc)
-
-        while (stack.isNotEmpty()) {
-            val node = stack.removeLast()
-            if (node is TextNode) {
-                val text = node.text().trim()
-                if (text.isNotBlank()) {
-                    if (builder.isNotEmpty()) builder.append('\n')
-                    builder.append(text)
-                }
-            } else {
-                val nodeName = node.nodeName().lowercase()
-                if (nodeName == "script" || nodeName == "style") {
-                    continue
-                }
-                val children = node.childNodes()
-                for (i in children.size - 1 downTo 0) {
-                    stack.addLast(children[i])
-                }
-            }
-        }
-
-        builder.toString()
-    }
-
-    private suspend fun replaceIconsWithTexts(webpage: IBrowserPage, doc: Document) = coroutineScope {
-        val icons = webpage.extractIcons()
-
-        val resolvedIcons = icons
-            .map { icon ->
+        // Interpret tables in parallel (LLM calls can be parallelized)
+        val replacements = tableInputs
+            .map { (xpath, input) ->
                 async(ioDispatcher) {
-                    Pair(icon.selectors, webpageIconInterpretationService.interpretIcon(icon))
+                    val markdown = tableInterpretationAgent.generate(input).markdown
+                    IBrowserPage.XPathReplacementWithText(xpath, markdown)
                 }
             }
             .awaitAll()
 
-        for ((selectors, label) in resolvedIcons) {
-            for (selector in selectors) {
-                val nodes = doc.select(selector)
-                if (label != null) {
-                    nodes.forEach { el -> el.replaceWith(TextNode(label)) }
-                } else {
-                    nodes.forEach { el -> el.remove() }
-                }
-            }
-        }
+        webpage.replaceElementsByXPathWithText(replacements)
     }
 }
