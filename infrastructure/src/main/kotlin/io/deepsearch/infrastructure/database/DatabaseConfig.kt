@@ -95,44 +95,20 @@ object DatabaseConfig {
     }
 
     /**
-     * Gets the database directory using a robust, cross-platform approach.
-     * Priority order:
-     * 1. Explicit DB_DATA_DIR environment variable
-     * 2. Platform-specific application data directory
-     * 3. Current working directory as fallback
+     * Gets the database directory.
+     * Returns the project root directory.
      */
     private fun getDatabaseDirectory(): File {
-        // 1. Check for explicit configuration
-        System.getenv("DB_DATA_DIR")?.let { customPath ->
-            return File(customPath).apply {
-                if (!exists()) mkdirs()
+        var currentDir = File(System.getProperty("user.dir"))
+        
+        // Walk up to find the Gradle project root (identified by gradlew)
+        while (currentDir.parentFile != null) {
+            if (File(currentDir, "gradlew").exists()) {
+                return currentDir
             }
+            currentDir = currentDir.parentFile
         }
         
-        // 2. Use platform-specific application data directories
-        val appDataDir = when {
-            // macOS: ~/Library/Application Support/deepsearch
-            System.getProperty("os.name").lowercase().contains("mac") -> {
-                File(System.getProperty("user.home"), "Library/Application Support/deepsearch")
-            }
-            // Windows: %APPDATA%/deepsearch
-            System.getProperty("os.name").lowercase().contains("windows") -> {
-                val appData = System.getenv("APPDATA") ?: "${System.getProperty("user.home")}/AppData/Roaming"
-                File(appData, "deepsearch")
-            }
-            // Linux/Unix: ~/.local/share/deepsearch (XDG Base Directory Specification)
-            else -> {
-                val xdgDataHome = System.getenv("XDG_DATA_HOME") 
-                    ?: "${System.getProperty("user.home")}/.local/share"
-                File(xdgDataHome, "deepsearch")
-            }
-        }
-        
-        // Create directory if it doesn't exist
-        if (!appDataDir.exists()) {
-            appDataDir.mkdirs()
-        }
-        
-        return appDataDir
+        error("Could not find Gradle project root directory")
     }
 }
