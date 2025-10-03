@@ -20,6 +20,8 @@ val applicationModule = module {
         scopedOf(::SearchService) bind ISearchService::class
         scopedOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
         scopedOf(::PopupContainerIdentificationService) bind IPopupContainerIdentificationService::class
+        scopedOf(::TableIdentificationService) bind ITableIdentificationService::class
+        scopedOf(::TableInterpretationService) bind ITableInterpretationService::class
         scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
         scopedOf(::PopupDismissService) bind IPopupDismissService::class
     }

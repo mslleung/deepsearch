@@ -1,7 +1,5 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.agents.ITableIdentificationAgent
-import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
@@ -16,8 +14,8 @@ interface IWebpageExtractionService {
 }
 
 class WebpageExtractionService(
-    private val tableIdentificationAgent: ITableIdentificationAgent,
-    private val tableInterpretationAgent: ITableInterpretationAgent,
+    private val tableIdentificationService: ITableIdentificationService,
+    private val tableInterpretationService: ITableInterpretationService,
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : IWebpageExtractionService {
@@ -50,12 +48,12 @@ class WebpageExtractionService(
     private suspend fun replaceTablesWithTexts(webpage: IBrowserPage) = coroutineScope {
         // Table processing: identify tables from full-page screenshot and interpret them to markdown
         val fullScreenshot = webpage.takeFullPageScreenshot()
-        val tableOutput = tableIdentificationAgent.generate(
+        val tables = tableIdentificationService.identifyTables(
             TableIdentificationInput(fullScreenshot.bytes, fullScreenshot.mimeType)
         )
 
         // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)
-        val tableInputs = tableOutput.tables.map { table ->
+        val tableInputs = tables.map { table ->
             val elementScreenshot = webpage.getElementScreenshotByXPath(table.xpath)
             val elementHtml = webpage.getElementHtmlByXPath(table.xpath)
             table.xpath to TableInterpretationInput(
@@ -70,7 +68,7 @@ class WebpageExtractionService(
         val replacements = tableInputs
             .map { (xpath, input) ->
                 async(ioDispatcher) {
-                    val markdown = tableInterpretationAgent.generate(input).markdown
+                    val markdown = tableInterpretationService.interpretTable(input)
                     IBrowserPage.XPathReplacementWithText(xpath, markdown)
                 }
             }
