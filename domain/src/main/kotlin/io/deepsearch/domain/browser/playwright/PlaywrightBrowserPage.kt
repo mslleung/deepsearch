@@ -172,23 +172,52 @@ class PlaywrightBrowserPage(
 
         logger.debug("Replace {} XPath elements with text", replacements.size)
 
+        // Convert replacements to a format that can be serialized for JavaScript
+        val replacementsData = replacements.map { 
+            mapOf("xpath" to it.xpath, "text" to it.text)
+        }
+
+        // Perform all replacements in a single evaluate call for optimal performance
         page.evaluate(
             """
             (replacements) => {
-                replacements.forEach(({ xpath, text }) => {
-                    const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-                    for (let i = 0; i < result.snapshotLength; i++) {
-                        const el = result.snapshotItem(i);
-                        if (text !== null) {
-                            const textNode = document.createTextNode(text);
-                            el.replaceWith(textNode);
-                        } else {
-                            el.remove();
-                        }
+                for (const replacement of replacements) {
+                    const xpath = replacement.xpath;
+                    const text = replacement.text;
+                    
+                    // Evaluate XPath to get all matching nodes
+                    const xpathResult = document.evaluate(
+                        xpath,
+                        document,
+                        null,
+                        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+                        null
+                    );
+                    
+                    const count = xpathResult.snapshotLength;
+                    
+                    if (count === 0) {
+                        continue;
                     }
-                });
+                    
+                    // When XPath matches multiple nodes (target + ancestors), select the leaf-most node
+                    const target = xpathResult.snapshotItem(count - 1);
+                    
+                    if (text !== null && text !== undefined) {
+                        // Replace element with text node
+                        const parent = target.parentNode;
+                        if (!parent || parent.nodeType === Node.DOCUMENT_NODE) {
+                            continue;
+                        }
+                        const textNode = document.createTextNode(text);
+                        parent.replaceChild(textNode, target);
+                    } else {
+                        // Remove element
+                        target.remove();
+                    }
+                }
             }
-        """, replacements.map { r -> mapOf("xpath" to r.xpath, "text" to r.text) }
+            """, replacementsData
         )
     }
 
@@ -220,7 +249,7 @@ class PlaywrightBrowserPage(
                     }
                 }
                 
-                return result.join('\\n');
+                return result.join('\n');
             }
         """
         ) as String
