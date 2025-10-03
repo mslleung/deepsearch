@@ -24,7 +24,7 @@ object DatabaseConfig {
         // Initialize schema using R2DBC suspended transaction
         runBlocking {
             suspendTransaction {
-                SchemaUtils.create(UserTable, WebpageIconTable, WebpagePopupTable, PopupXPathMappingTable)
+                SchemaUtils.create(UserTable, WebpageIconTable, WebpagePopupTable)
             }
         }
 

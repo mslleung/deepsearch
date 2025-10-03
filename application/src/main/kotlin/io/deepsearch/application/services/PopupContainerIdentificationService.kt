@@ -25,7 +25,7 @@ class PopupContainerIdentificationService(
 
         val existing = webpagePopupRepository.findByHash(pageHash)
         if (existing != null) {
-            return existing.popupXPaths
+            return existing.popupXPaths.map { normalizeXPath(it) }
         }
 
         val identificationResult = popupContainerIdentificationAgent.generate(
@@ -46,5 +46,23 @@ class PopupContainerIdentificationService(
         )
 
         return popupXPaths
+    }
+
+    /**
+     * Normalizes XPath expressions to ensure they work correctly with Playwright.
+     * 
+     * Converts absolute paths like `/div[@id='x']` to relative paths `//div[@id='x']`
+     * since `/div` expects div to be a direct child of the document root, which is invalid for HTML.
+     * Preserves valid absolute paths like `/html/body/div[@id='x']`.
+     */
+    private fun normalizeXPath(xpath: String): String {
+        val trimmed = xpath.trim()
+        
+        // If XPath starts with a single `/` followed by something other than `html`, convert to `//`
+        if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.startsWith("/html")) {
+            return "/$trimmed"
+        }
+        
+        return trimmed
     }
 }

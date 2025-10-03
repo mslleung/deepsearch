@@ -1,5 +1,5 @@
 (() => {
-  type IconResult = { base64: string; selectors: string[] };
+  type IconResult = { base64: string; xPathSelectors: string[] };
 
   const toPlainString = (cssContent: string | null): string => {
     if (!cssContent || cssContent === 'none') return '';
@@ -93,66 +93,63 @@
     return base64;
   };
 
-  const isUniqueId = (id: string): boolean => {
-    if (!id) return false;
-    try {
-      const match = document.querySelectorAll(`#${CSS.escape(id)}`);
-      return match.length === 1;
-    } catch (_e) {
-      return false;
-    }
-  };
-
-  const cssSegmentFor = (el: Element): string => {
-    const tag = el.tagName.toLowerCase();
-    const id = (el as HTMLElement).id;
-    if (id && isUniqueId(id)) {
-      return `${tag}#${CSS.escape(id)}`;
-    }
-    const classList = Array.from((el as HTMLElement).classList || []);
-    const classSegment = classList.length > 0 ? `.${classList.map(c => CSS.escape(c)).join('.')}` : '';
-
-    // nth-of-type for disambiguation among siblings of same tag
-    let nth = 1;
+  const getElementIndex = (el: Element): number => {
+    let index = 1;
     let sibling = el.previousElementSibling;
     while (sibling) {
-      if (sibling.tagName === el.tagName) nth++;
+      if (sibling.tagName === el.tagName) {
+        index++;
+      }
       sibling = sibling.previousElementSibling;
     }
-    const siblingsSameTag = el.parentElement ? Array.from(el.parentElement.children).filter(ch => ch.tagName === el.tagName).length : 1;
-    const nthSegment = siblingsSameTag > 1 ? `:nth-of-type(${nth})` : '';
-    return `${tag}${classSegment}${nthSegment}`;
+    return index;
   };
 
-  const uniqueSelectorFor = (el: Element): string => {
+  const xPathSegmentFor = (el: Element): string => {
+    const tag = el.tagName.toLowerCase();
+    const index = getElementIndex(el);
+    
+    // Count total siblings with same tag
+    const parent = el.parentElement;
+    const siblingsSameTag = parent 
+      ? Array.from(parent.children).filter(ch => ch.tagName === el.tagName).length 
+      : 1;
+    
+    // Only add index predicate if there are multiple siblings with same tag
+    if (siblingsSameTag > 1) {
+      return `${tag}[${index}]`;
+    }
+    return tag;
+  };
+
+  const uniqueXPathFor = (el: Element): string => {
     const segments: string[] = [];
     let node: Element | null = el;
+    
     while (node && node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() !== 'html') {
-      const seg = cssSegmentFor(node);
-      segments.unshift(seg);
-      // If this segment has a unique id, we can stop climbing
-      const id = (node as HTMLElement).id;
-      if (id && isUniqueId(id)) break;
+      const segment = xPathSegmentFor(node);
+      segments.unshift(segment);
       node = node.parentElement;
     }
-    return segments.join(' > ');
+    
+    return '//' + segments.join('/');
   };
 
   const run = async (): Promise<string> => {
-    const imagesToSelectors = new Map<string, Set<string>>();
+    const imagesToXPathSelectors = new Map<string, Set<string>>();
     const elements = Array.from(document.querySelectorAll('i'));
     for (const el of elements) {
       const rendered = await renderIcon(el);
       if (!rendered) continue;
-      const selector = uniqueSelectorFor(el);
-      if (!imagesToSelectors.has(rendered)) {
-        imagesToSelectors.set(rendered, new Set());
+      const xPathSelector = uniqueXPathFor(el);
+      if (!imagesToXPathSelectors.has(rendered)) {
+        imagesToXPathSelectors.set(rendered, new Set());
       }
-      imagesToSelectors.get(rendered)!.add(selector);
+      imagesToXPathSelectors.get(rendered)!.add(xPathSelector);
     }
-    const results: IconResult[] = Array.from(imagesToSelectors.entries()).map(([base64, sels]) => ({
+    const results: IconResult[] = Array.from(imagesToXPathSelectors.entries()).map(([base64, xPaths]) => ({
       base64,
-      selectors: Array.from(sels)
+      xPathSelectors: Array.from(xPaths)
     }));
     return JSON.stringify(results);
   };

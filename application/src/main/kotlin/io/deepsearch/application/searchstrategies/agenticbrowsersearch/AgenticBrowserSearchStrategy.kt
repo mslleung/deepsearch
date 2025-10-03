@@ -8,7 +8,6 @@ import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.net.URI
 
 interface IAgenticBrowserSearchStrategy : ISearchStrategy {
     override suspend fun execute(searchQuery: SearchQuery): SearchResult
@@ -35,15 +34,15 @@ class AgenticBrowserSearchStrategy(
             page.navigate(url)
 
             // Dismiss any popups/cookie banners before extraction
-            popupDismissService.dismissAll(page, URI(url).toURL())
+            popupDismissService.dismissAll(page)
 
             val title = page.getTitle()
             val description = page.getDescription()
 
             val extractedWebpageText = webpageExtractionService.extractWebpage(page)
 
-            // v1 content: basic page summary
-            val summary = buildString {
+            val webpageText = buildString {
+                appendLine("URL: $url")
                 appendLine("Title: $title")
                 if (!description.isNullOrBlank()) {
                     appendLine("Description: $description")
@@ -53,25 +52,11 @@ class AgenticBrowserSearchStrategy(
 
             return SearchResult(
                 originalQuery = searchQuery,
-                content = summary,
+                content = webpageText,
                 sources = listOf(url)
             )
         } finally {
             browser.close()
         }
     }
-
-//    private data class WebpageAnalysisResults(
-//        val url: String,
-//        val answer: String?,
-////        val actions: List<IAgenticBrowserAction>
-//    )
-//
-//    private suspend fun analyzeWebpage(query: String, url: String): WebpageAnalysisResults {
-//        // TODO use agents to analyze the webpage and return the results
-//        // 1. try to extract an answer from the current page using an llm agent
-//        // 2. look for additional actions that may yield more information
-//        // 3. synthesize the WebpageAnalysisResults and return
-//        TODO()
-//    }
 }

@@ -56,12 +56,12 @@ interface IBrowserPage {
      *
      * bytes: raw image bytes (typically JPEG).
      * mimeType: image mime type, defaults to JPEG.
-     * selectors: list of CSS selectors for DOM nodes that render this icon image.
+     * xPathSelectors: list of XPath selectors for DOM nodes that render this icon image.
      */
     data class Icon(
         val bytes: ByteArray,
         val mimeType: ImageMimeType = ImageMimeType.JPEG,
-        val selectors: List<String>
+        val xPathSelectors: List<String>
     ) {
         val bytesHash: ByteArray by lazy { MessageDigest.getInstance("SHA-256").digest(bytes) }
     }
@@ -87,5 +87,34 @@ interface IBrowserPage {
     suspend fun getTitle(): String
 
     suspend fun getDescription(): String?
+
+    /**
+     * Replace all elements matching the given CSS selector with a text node.
+     * If text is null, remove the elements entirely.
+     * @param cssSelector CSS selector to match elements
+     * @param text Replacement text, or null to remove elements
+     */
+    suspend fun replaceElementsWithText(cssSelector: String, text: String?)
+
+    /**
+     * Replacement instruction for XPath-targeted nodes.
+     */
+    data class XPathReplacementWithText(
+        val xpath: String,
+        val text: String?
+    )
+
+    /**
+     * Replace multiple elements by XPath with text nodes in a single batch operation.
+     * @param replacements List of XPathReplacement. If text is null, removes the elements.
+     */
+    suspend fun replaceElementsByXPathWithText(replacements: List<XPathReplacementWithText>)
+
+    /**
+     * Extract text content from the page, excluding script and style tags.
+     * Text nodes are traversed in document order.
+     * @return Extracted text with one text node per line
+     */
+    suspend fun extractTextContent(): String
 
 }

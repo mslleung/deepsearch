@@ -101,9 +101,9 @@ val ensureNodeTooling by tasks.registering(Exec::class) {
         // Best-effort noop on Windows; rely on existing Node/npm/npx
         commandLine = listOf("cmd", "/c", "echo Skipping ensureNodeTooling on Windows")
     } else {
-        // Use a login shell to source NVM and install toolchain idempotently
+        // Use zsh on Unix-like systems (default on macOS)
         commandLine = listOf(
-            "bash", "-lc",
+            "zsh", "-lc",
             """
             set -euo pipefail
             export NVM_DIR="${'$'}HOME/.nvm"
@@ -132,9 +132,9 @@ val compileTypeScript by tasks.registering(Exec::class) {
         // On Windows, prefer existing npx on PATH
         commandLine = listOf("npx.cmd", "--yes", "-p", "typescript", "tsc")
     } else {
-        // On Unix-like systems, source NVM to ensure node/npm/npx are available in this Exec
+        // On Unix-like systems, use zsh and source NVM to ensure node/npm/npx are available
         commandLine = listOf(
-            "bash", "-lc",
+            "zsh", "-lc",
             """
             set -euo pipefail
             export NVM_DIR="${'$'}HOME/.nvm"
