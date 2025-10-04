@@ -29,7 +29,8 @@ object DatabaseConfig {
                     WebpageIconTable,
                     WebpagePopupTable,
                     WebpageTableTable,
-                    WebpageTableInterpretationTable
+                    WebpageTableInterpretationTable,
+                    WebpageNavigationElementTable
                 )
             }
         }

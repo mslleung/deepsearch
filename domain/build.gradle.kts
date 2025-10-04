@@ -92,14 +92,19 @@ val ensureTsOutDir by tasks.registering {
     }
 }
 
-// Ensure Node.js toolchain is available by installing NVM/Node/npm when missing (Unix-like)
+// Check that Node.js toolchain is available (without installing/modifying on every build)
 val ensureNodeTooling by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Ensure NVM, Node (LTS) and latest npm are installed for TypeScript tooling"
+    description =
+        "Check that Node.js tooling is available. On Windows: verify npx is on PATH. On Unix: ensure NVM is set up and install LTS if needed."
     val isWindows = System.getProperty("os.name").lowercase().contains("windows")
     if (isWindows) {
-        // Best-effort noop on Windows; rely on existing Node/npm/npx
-        commandLine = listOf("cmd", "/c", "echo Skipping ensureNodeTooling on Windows")
+        // On Windows, just verify npx is available. Don't run nvm commands that require elevation.
+        // If npx is not found, provide a helpful error message.
+        commandLine = listOf(
+            "cmd", "/c",
+            "where npx >nul 2>&1 || (echo Node.js not found. Please install Node.js from https://nodejs.org/ or use nvm-windows: https://github.com/coreybutler/nvm-windows & exit /b 1)"
+        )
     } else {
         // Use zsh on Unix-like systems (default on macOS)
         commandLine = listOf(

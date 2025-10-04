@@ -1,6 +1,7 @@
 package io.deepsearch.application.searchstrategies.agenticbrowsersearch
 
 import io.deepsearch.application.searchstrategies.ISearchStrategy
+import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupDismissService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.domain.browser.IBrowserPool
@@ -21,6 +22,7 @@ class AgenticBrowserSearchStrategy(
     private val browserPool: IBrowserPool,
     private val webpageExtractionService: IWebpageExtractionService,
     private val popupDismissService: IPopupDismissService,
+    private val navigationElementRemovalService: INavigationElementRemovalService,
 ) : IAgenticBrowserSearchStrategy {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -35,6 +37,9 @@ class AgenticBrowserSearchStrategy(
 
             // Dismiss any popups/cookie banners before extraction
             popupDismissService.dismissAll(page)
+
+            // Remove header and footer navigation elements
+            navigationElementRemovalService.removeNavigationElements(page)
 
             val title = page.getTitle()
             val description = page.getDescription()
