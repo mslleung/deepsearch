@@ -1,10 +1,8 @@
 package io.deepsearch.infrastructure.config
 
-import io.deepsearch.domain.repositories.IWebpageIconRepository
-import io.deepsearch.domain.repositories.IWebpagePopupRepository
+import io.deepsearch.domain.repositories.*
 import io.deepsearch.infrastructure.database.DatabaseConfig
-import io.deepsearch.infrastructure.repositories.ExposedWebpageIconRepository
-import io.deepsearch.infrastructure.repositories.ExposedWebpagePopupRepository
+import io.deepsearch.infrastructure.repositories.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.singleOf
@@ -17,6 +15,9 @@ val infrastructureTestModule = module {
     
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
+    singleOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
+    singleOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class
+    singleOf(::ExposedWebpageNavigationElementRepository) bind IWebpageNavigationElementRepository::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 }

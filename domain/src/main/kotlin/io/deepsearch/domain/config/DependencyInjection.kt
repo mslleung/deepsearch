@@ -26,5 +26,6 @@ val domainModule = module {
         scopedOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
         scopedOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
         scopedOf(::IconInterpreterAgentAdkImpl) bind IIconInterpreterAgent::class
+        scopedOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
     }
 }
