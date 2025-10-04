@@ -1,0 +1,143 @@
+<!DOCTYPE html SYSTEM "about:legacy-compat">
+<html lang="en-US" data-preset="contrast" data-primary-color="#307FFF"><head><link rel="canonical" href="https://www.jetbrains.com/help/exposed/working-with-database.html" data-react-helmet="true"/><meta charset="UTF-8"></meta><meta name="built-on" content="2025-09-04T08:59:37.282326824"><meta name="build-number" content="80"><meta name="google-site-verification" content="BEoynZSVdedLULz0ydEHB4nigTKNPf-uecdJtIVO9B0">
+<!-- Google Analytics -->
+<script>
+    (function (w, d, s, l, i) {
+        w[l] = w[l] || [];
+        w[l].push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+        var f = d.getElementsByTagName(s)[0], j = d.createElement(s), dl = l != 'dataLayer' ? '&amp;l=' + l : '';
+        j.async = true;
+        j.src = '//www.googletagmanager.com/gtm.js?id=' + i + dl;
+        f.parentNode.insertBefore(j, f);
+    })(window, document, 'script', 'dataLayer', 'GTM-5P98');
+</script>
+<!-- End Google Analytics -->
+<title>Working with Databases | Exposed Documentation</title><script type="application/json" id="virtual-toc-data">[{"id":"choosing-between-jdbc-and-r2dbc","level":0,"title":"Choosing between JDBC and R2DBC","anchor":"#choosing-between-jdbc-and-r2dbc"},{"id":"jdbc","level":1,"title":"JDBC","anchor":"#jdbc"},{"id":"r2dbc","level":1,"title":"R2DBC","anchor":"#r2dbc"},{"id":"connecting-to-a-database","level":0,"title":"Connecting to a Database","anchor":"#connecting-to-a-database"},{"id":"h2","level":1,"title":"H2","anchor":"#h2"},{"id":"mariadb","level":1,"title":"MariaDB","anchor":"#mariadb"},{"id":"mysql","level":1,"title":"MySQL","anchor":"#mysql"},{"id":"oracle","level":1,"title":"Oracle","anchor":"#oracle"},{"id":"postgresql","level":1,"title":"PostgreSQL","anchor":"#postgresql"},{"id":"postgresql-using-the-pgjdbc-ng-jdbc-driver","level":1,"title":"PostgreSQL using the pgjdbc-ng JDBC driver","anchor":"#postgresql-using-the-pgjdbc-ng-jdbc-driver"},{"id":"sql-server","level":1,"title":"SQL Server","anchor":"#sql-server"},{"id":"sqlite","level":1,"title":"SQLite","anchor":"#sqlite"}]</script><script type="application/json" id="topic-shortcuts"></script><link href="https://resources.jetbrains.com/writerside/apidoc/6.23/app.css" rel="stylesheet"><link rel="manifest" href="https://www.jetbrains.com/site.webmanifest"><link rel="icon" type="image/svg" sizes="16x16" href="images/exposed-logo.svg"><meta name="image" content=""><!-- Open Graph --><meta property="og:title" content="Working with Databases | Exposed"><meta property="og:description" content=""><meta property="og:image" content=""><meta property="og:site_name" content="Exposed Help"><meta property="og:type" content="website"><meta property="og:locale" content="en_US"><meta property="og:url" content="https://www.jetbrains.com/help/docs/1.0.0-rc-1/working-with-database.html"><!-- End Open Graph --><!-- Twitter Card --><meta name="twitter:card" content="summary_large_image"><meta name="twitter:site" content=""><meta name="twitter:title" content="Working with Databases | Exposed"><meta name="twitter:description" content=""><meta name="twitter:creator" content=""><meta name="twitter:image:src" content=""><!-- End Twitter Card --><!-- Schema.org WebPage --><script type="application/ld+json">{
+    "@context": "http://schema.org",
+    "@type": "WebPage",
+    "@id": "https://www.jetbrains.com/help/docs/1.0.0-rc-1/working-with-database.html#webpage",
+    "url": "https://www.jetbrains.com/help/docs/1.0.0-rc-1/working-with-database.html",
+    "name": "Working with Databases | Exposed",
+    "description": "",
+    "image": "",
+    "inLanguage":"en-US"
+}</script><!-- End Schema.org --><!-- Schema.org WebSite --><script type="application/ld+json">{
+    "@type": "WebSite",
+    "@id": "https://www.jetbrains.com/help/docs/#website",
+    "url": "https://www.jetbrains.com/help/docs/",
+    "name": "Exposed Help"
+}</script><!-- End Schema.org --></head><body data-id="Working-with-Database" data-main-title="Working with Databases" data-article-props="{&quot;seeAlsoStyle&quot;:&quot;links&quot;}" data-template="article" data-breadcrumbs="Databases"><div class="wrapper"><main class="panel _main"><header class="panel__header"><div class="container"><h3>Exposed 1.0.0-rc-1 Help</h3><div class="panel-trigger"></div></div></header><section class="panel__content"><div class="container"><article class="article" data-shortcut-switcher="inactive"><h1 data-toc="Working-with-Database" id="Working-with-Database.md">Working with Databases</h1><p id="z8q9f48_4">In Exposed, the <a href="https://jetbrains.github.io/Exposed/api/exposed-jdbc/org.jetbrains.exposed.v1.jdbc/-database/index.html" id="z8q9f48_7" data-external="true" rel="noopener noreferrer"><code class="code" id="z8q9f48_9">Database</code></a> and <a href="https://jetbrains.github.io/Exposed/api/exposed-r2dbc/org.jetbrains.exposed.v1.r2dbc/-r2dbc-database/index.html" id="z8q9f48_8" data-external="true" rel="noopener noreferrer"><code class="code" id="z8q9f48_10">R2dbcDatabase</code></a> classes represent a database instance, and encapsulates the necessary connection details and configuration required to interact with a specific database.</p><section class="chapter"><h2 id="choosing-between-jdbc-and-r2dbc" data-toc="choosing-between-jdbc-and-r2dbc">Choosing between JDBC and R2DBC</h2><p id="z8q9f48_11">Exposed supports both JDBC and R2DBC as transport layers for database connectivity. Understanding their differences will help you choose the right approach for your application:</p><section class="chapter"><h3 id="jdbc" data-toc="jdbc">JDBC</h3><p id="z8q9f48_14">JDBC (Java Database Connectivity) is the traditional, synchronous and blocking API used for interacting with relational databases. Exposed's JDBC integration is well-established with broad database support and extensive tooling. It’s ideal for:</p><ul class="list _bullet" id="z8q9f48_15"><li class="list__item" id="z8q9f48_17"><p>Traditional applications where simplicity is preferred over scalability.</p></li><li class="list__item" id="z8q9f48_18"><p>Projects using connection pools and transaction management in a synchronous context.</p></li></ul><p id="z8q9f48_16">JDBC is well-supported and works seamlessly with most existing database drivers and tools.</p></section><section class="chapter"><h3 id="r2dbc" data-toc="r2dbc">R2DBC</h3><p id="z8q9f48_19">R2DBC (Reactive Relational Database Connectivity) is a non-blocking, asynchronous alternative to JDBC. Exposed's R2DBC support enables integration with reactive frameworks and Kotlin coroutines. Use R2DBC if:</p><ul class="list _bullet" id="z8q9f48_20"><li class="list__item" id="z8q9f48_23"><p>You're building a high-concurrency, I/O-bound application.</p></li><li class="list__item" id="z8q9f48_24"><p>You want to avoid thread-blocking and leverage Kotlin coroutines end-to-end.</p></li></ul><p id="z8q9f48_21">R2DBC is still evolving, and not all databases or features are supported equally compared to JDBC.</p><p id="z8q9f48_22">Choose JDBC when you need simplicity, broad database compatibility, or are building a traditional application with moderate concurrency requirements. Choose R2DBC when building reactive applications, working with Kotlin coroutines, or needing to handle many concurrent connections efficiently with limited resources.</p></section></section><section class="chapter"><h2 id="connecting-to-a-database" data-toc="connecting-to-a-database">Connecting to a Database</h2><p id="z8q9f48_25">Every database access in Exposed begins by establishing a connection and creating a transaction.</p><p id="z8q9f48_26">To connect to a database, you first need to tell Exposed of the connection details. You have two options:</p><ul class="list _bullet" id="z8q9f48_27"><li class="list__item" id="z8q9f48_41"><p>Use <a href="https://jetbrains.github.io/Exposed/api/exposed-jdbc/org.jetbrains.exposed.v1.jdbc/-database/-companion/connect.html" id="z8q9f48_43" data-external="true" rel="noopener noreferrer"><code class="code" id="z8q9f48_44">Database.connect()</code></a> for traditional JDBC-based access.</p></li><li class="list__item" id="z8q9f48_42"><p>Use <a href="https://jetbrains.github.io/Exposed/api/exposed-r2dbc/org.jetbrains.exposed.v1.r2dbc/-r2dbc-database/-companion/connect.html" id="z8q9f48_45" data-external="true" rel="noopener noreferrer"><code class="code" id="z8q9f48_46">R2dbcDatabase.connect()</code></a> for reactive, non-blocking access with R2DBC.</p></li></ul><p id="z8q9f48_28">These functions do not immediately establish a connection. Instead, they provide a descriptor for future usage. An actual connection is only established when a <a href="transactions.html" id="z8q9f48_47" data-tooltip="CRUD operations in Exposed must be called from within a transaction. Transactions encapsulate a set of DSL operations.">transaction</a> is initiated.</p><p id="z8q9f48_29">To get a database instance using simple connection parameters, use the following approach:</p><div class="tabs" id="z8q9f48_30" data-group="connectivity" data-anchors="[jdbc-connect,r2dbc-connect]"><div class="tabs__content" data-gtm="tab" id="jdbc-connect" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val h2db = Database.connect("jdbc:h2:mem:test", driver = "org.h2.Driver")
+</div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-connect" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val h2db = R2dbcDatabase.connect("r2dbc:h2:mem:///test")
+</div></div></div><aside class="prompt" data-type="note" data-title="" id="z8q9f48_31"><p>Executing this code more than once per database will create leaks in your application, hence it is recommended to store it for later use: </p><div class="code-block" data-lang="kotlin" data-disable-link-processing="true">object DbSettings {
+    val db by lazy {
+        Database.connect("jdbc:h2:mem:test", driver = "org.h2.Driver")
+    }
+}
+</div></aside><aside class="prompt" data-type="note" data-title="" id="z8q9f48_32"><p>By default, Exposed uses a <code class="code" id="z8q9f48_53">ServiceLoader</code> to get an implementation of the <a href="https://jetbrains.github.io/Exposed/api/exposed-core/org.jetbrains.exposed.v1.core/-database-connection-auto-registration/index.html" id="z8q9f48_54" data-external="true" rel="noopener noreferrer"><code class="code" id="z8q9f48_58">DatabaseConnectionAutoRegistration</code></a> interface that represents a connection accessed by the <code class="code" id="z8q9f48_55">Database</code> instance. This can be modified when calling the <code class="code" id="z8q9f48_56">Database.connect()</code> method by providing an argument to <code class="code" id="z8q9f48_57">connectionAutoRegistration</code> in the parameter list.</p></aside><section class="chapter"><h3 id="h2" data-toc="h2">H2</h3><p id="z8q9f48_59">In order to use H2, you need to add the H2 driver dependency:</p><div class="tabs" id="z8q9f48_60" data-group="connectivity" data-anchors="[jdbc-h2-db,r2dbc-h2-db]"><div class="tabs__content" data-gtm="tab" id="jdbc-h2-db" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("com.h2database:h2:2.2.224")
+        </div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-h2-db" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("io.r2dbc:r2dbc-h2:1.0.0.RELEASE")
+        </div></div></div><p id="z8q9f48_61">Then connect to a database:</p><div class="tabs" id="z8q9f48_62" data-group="connectivity" data-anchors="[jdbc-h2-driver-connect,r2dbc-h2-driver-connect]"><div class="tabs__content" data-gtm="tab" id="jdbc-h2-driver-connect" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val h2dbFromFile = Database.connect("jdbc:h2:./myh2file", driver = "org.h2.Driver")
+</div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-h2-driver-connect" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val h2dbFromFile = R2dbcDatabase.connect("r2dbc:h2:file///./myh2file")
+</div></div></div><p id="z8q9f48_63">Or in-memory database:</p><div class="tabs" id="z8q9f48_64" data-group="connectivity" data-anchors="[jdbc-h2-db-in-memory,r2dbc-h2-db-in-memory]"><div class="tabs__content" data-gtm="tab" id="jdbc-h2-db-in-memory" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val h2db = Database.connect("jdbc:h2:mem:test", driver = "org.h2.Driver")
+</div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-h2-db-in-memory" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val h2db = R2dbcDatabase.connect("r2dbc:h2:mem:///test")
+</div></div></div><p id="z8q9f48_65">By default, H2 closes the database when the last connection is closed. If you want to keep the database open, you can use the <code class="code" id="z8q9f48_79">DB_CLOSE_DELAY=-1</code> option:</p><div class="code-block" data-lang="kotlin">
+Database.connect("jdbc:h2:mem:regular;DB_CLOSE_DELAY=-1;", "org.h2.Driver")
+</div></section><section class="chapter"><h3 id="mariadb" data-toc="mariadb">MariaDB</h3><p id="z8q9f48_80">Add the required dependency:</p><div class="tabs" id="z8q9f48_81" data-group="connectivity" data-anchors="[jdbc-maria-db,r2dbc-maria-db]"><div class="tabs__content" data-gtm="tab" id="jdbc-maria-db" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("org.mariadb.jdbc:mariadb-java-client:3.3.1")
+        </div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-maria-db" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("org.mariadb:r2dbc-mariadb:1.3.0")
+        </div></div></div><p id="z8q9f48_82">Connect to a database:</p><div class="tabs" id="z8q9f48_83" data-group="connectivity" data-anchors="[jdbc-maria-db-connect,r2dbc-maria-db-connect]"><div class="tabs__content" data-gtm="tab" id="jdbc-maria-db-connect" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val mariadb = Database.connect(
+            "jdbc:mariadb://localhost:3306/test",
+            driver = "org.mariadb.jdbc.Driver",
+            user = "root",
+            password = "your_pwd"
+        )
+</div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-maria-db-connect" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val mariadb = R2dbcDatabase.connect(
+            "r2dbc:mariadb://localhost:3306/test",
+            driver = "mariadb",
+            user = "root",
+            password = "your_pwd"
+        )
+</div></div></div></section><section class="chapter"><h3 id="mysql" data-toc="mysql">MySQL</h3><p id="z8q9f48_92">Add the required dependency:</p><div class="tabs" id="z8q9f48_93" data-group="connectivity" data-anchors="[jdbc-mysql,r2dbc-mysql]"><div class="tabs__content" data-gtm="tab" id="jdbc-mysql" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("mysql:mysql-connector-java:8.0.33")
+        </div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-mysql" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("io.asyncer:r2dbc-mysql:1.3.2")
+        </div></div></div><p id="z8q9f48_94">Connect to a database:</p><div class="tabs" id="z8q9f48_95" data-group="connectivity" data-anchors="[jdbc-mysql-connect,r2dbc-mysql-connect]"><div class="tabs__content" data-gtm="tab" id="jdbc-mysql-connect" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val mysqldb = Database.connect(
+            "jdbc:mysql://localhost:3306/test",
+            driver = "com.mysql.cj.jdbc.Driver",
+            user = "user",
+            password = "password"
+        )
+</div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-mysql-connect" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val mysqldb = R2dbcDatabase.connect(
+            "r2dbc:mysql://localhost:3306/test",
+            driver = "mysql",
+            user = "user",
+            password = "password"
+        )
+</div></div></div></section><section class="chapter"><h3 id="oracle" data-toc="oracle">Oracle</h3><p id="z8q9f48_104">Add the required dependency:</p><div class="tabs" id="z8q9f48_105" data-group="connectivity" data-anchors="[jdbc-oracle,r2dbc-oracle]"><div class="tabs__content" data-gtm="tab" id="jdbc-oracle" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("com.oracle.database.jdbc:ojdbc8:19.24.0.0")
+        </div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-oracle" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("com.oracle.database.r2dbc:oracle-r2dbc:1.3.0")
+        </div></div></div><p id="z8q9f48_106">Connect to a database:</p><div class="tabs" id="z8q9f48_107" data-group="connectivity" data-anchors="[jdbc-oracle-connect,r2dbc-oracle-connect]"><div class="tabs__content" data-gtm="tab" id="jdbc-oracle-connect" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val oracledb = Database.connect(
+            "jdbc:oracle:thin:@//localhost:1521/test",
+            driver = "oracle.jdbc.OracleDriver",
+            user = "user",
+            password = "password"
+        )
+</div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-oracle-connect" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val oracledb = R2dbcDatabase.connect(
+            "r2dbc:oracle://localhost:3306/test",
+            driver = "oracle",
+            user = "user",
+            password = "password"
+        )
+</div></div></div></section><section class="chapter"><h3 id="postgresql" data-toc="postgresql">PostgreSQL</h3><p id="z8q9f48_116">Add the required dependency:</p><div class="tabs" id="z8q9f48_117" data-group="connectivity" data-anchors="[jdbc-postgresql,r2dbc-postgresql]"><div class="tabs__content" data-gtm="tab" id="jdbc-postgresql" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("org.postgresql:postgresql:42.7.3")
+        </div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-postgresql" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("org.postgresql:r2dbc-postgresql:1.0.7.RELEASE")
+        </div></div></div><p id="z8q9f48_118">Connect to a database:</p><div class="tabs" id="z8q9f48_119" data-group="connectivity" data-anchors="[jdbc-postgresql-connect,r2dbc-postgresql-connect]"><div class="tabs__content" data-gtm="tab" id="jdbc-postgresql-connect" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val postgresqldb = Database.connect(
+            "jdbc:postgresql://localhost:12346/test",
+            driver = "org.postgresql.Driver",
+            user = "user",
+            password = "password"
+        )
+</div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-postgresql-connect" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val postgresqldb = R2dbcDatabase.connect(
+            url = "r2dbc:postgresql://db:5432/test",
+            driver = "postgresql",
+            user = "user",
+            password = "password"
+        )
+</div></div></div></section><section class="chapter"><h3 id="postgresql-using-the-pgjdbc-ng-jdbc-driver" data-toc="postgresql-using-the-pgjdbc-ng-jdbc-driver">PostgreSQL using the pgjdbc-ng JDBC driver</h3><p id="z8q9f48_128">Add the required dependency:</p><div class="code-block" data-lang="kotlin">
+implementation("com.impossibl.pgjdbc-ng:pgjdbc-ng:0.8.9")
+</div><p id="z8q9f48_130">Connect to a database:</p><div class="code-block" data-lang="kotlin" data-disable-link-processing="true">        val postgresqldbNG = Database.connect(
+            "jdbc:pgsql://localhost:12346/test",
+            driver = "com.impossibl.postgres.jdbc.PGDriver",
+            user = "user",
+            password = "password"
+        )
+</div></section><section class="chapter"><h3 id="sql-server" data-toc="sql-server">SQL Server</h3><p id="z8q9f48_132">Add the required dependency:</p><div class="tabs" id="z8q9f48_133" data-group="connectivity" data-anchors="[jdbc-sqlserver,r2dbc-sqlserver]"><div class="tabs__content" data-gtm="tab" id="jdbc-sqlserver" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("com.microsoft.sqlserver:mssql-jdbc:9.4.1.jre8")
+        </div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-sqlserver" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin">
+            implementation("io.r2dbc:r2dbc-mssql:1.0.2.RELEASE")
+        </div></div></div><p id="z8q9f48_134">Connect to a database:</p><div class="tabs" id="z8q9f48_135" data-group="connectivity" data-anchors="[jdbc-sqlserver-connect,r2dbc-sqlserver-connect]"><div class="tabs__content" data-gtm="tab" id="jdbc-sqlserver-connect" data-sync-tabs="jdbc" data-title="JDBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val sqlserverdb = Database.connect(
+            "jdbc:sqlserver://localhost:32768;databaseName=test",
+            "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+            user = "user",
+            password = "password"
+        )
+</div></div><div class="tabs__content" data-gtm="tab" id="r2dbc-sqlserver-connect" data-sync-tabs="r2dbc" data-title="R2DBC"><div class="code-block" data-lang="kotlin" data-title="Kotlin" data-disable-link-processing="true">        val sqlserverdb = R2dbcDatabase.connect(
+            "r2dbc:mssql://localhost:32768;databaseName=test",
+            driver = "sqlserver",
+            user = "user",
+            password = "password"
+        )
+</div></div></div></section><section class="chapter"><h3 id="sqlite" data-toc="sqlite">SQLite</h3><p id="z8q9f48_144">Add the required dependency:</p><div class="code-block" data-lang="kotlin">
+implementation("org.xerial:sqlite-jdbc:3.49.1.0")
+</div><p id="z8q9f48_146">Connect to a database:</p><div class="code-block" data-lang="kotlin">
+Database.connect("jdbc:sqlite:/data/data.db", "org.sqlite.JDBC")  
+</div><p id="z8q9f48_148">Or an in-memory database:</p><div class="code-block" data-lang="kotlin">
+Database.connect("jdbc:sqlite:file:test?mode=memory&amp;cache=shared", "org.sqlite.JDBC")  
+</div><p id="z8q9f48_150">Set SQLite compatible <a href="https://www.sqlite.org/isolation.html" id="z8q9f48_152" data-external="true" rel="noopener noreferrer">isolation level</a>:</p><div class="code-block" data-lang="kotlin">
+TransactionManager.manager.defaultIsolationLevel = Connection.TRANSACTION_SERIALIZABLE
+// or Connection.TRANSACTION_READ_UNCOMMITTED
+</div></section></section><div class="last-modified">Last modified: 04 September 2025</div><div data-feedback-placeholder="true"></div><div class="navigation-links _bottom"><a href="exposed-modules.html" class="navigation-links__prev">Modules</a><a href="working-with-datasource.html" class="navigation-links__next">Working with DataSources</a></div></article><div id="disqus_thread"></div></div></section></main></div><script src="https://resources.jetbrains.com/writerside/apidoc/6.23/app.js"></script></body></html>

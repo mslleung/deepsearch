@@ -61,7 +61,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             Task: Identify the main header and footer navigation elements on the webpage and return their XPaths.
 
             Inputs:
-            - A screenshot of the webpage (current viewport)
+            - A screenshot of the webpage
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
@@ -69,11 +69,8 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             - Identify the MAIN HEADER element (typically at the top, contains site navigation, logo, menu)
             - Identify the MAIN FOOTER element (typically at the bottom, contains copyright, links, contact info)
             - For each element, identify the ROOT CONTAINER that wraps the entire header or footer
-            - Return XPath selectors that point to these root container elements (e.g., <header>, <nav>, <div> with role="banner" or "contentinfo")
-            - Common header indicators: <header>, role="banner", top navigation bars, site logos
-            - Common footer indicators: <footer>, role="contentinfo", copyright text, bottom navigation
+            - Return XPath selectors that point to these root container elements
             - If no header or footer is visible, return null for that field
-            - Focus on persistent navigation elements that appear across multiple pages, not content-specific headers
 
             Output structure:
             {
@@ -112,7 +109,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             session,
             Content.fromParts(
                 Part.fromBytes(input.screenshotBytes, input.mimetype.value),
-                Part.fromText("CLEANED_HTML:\n" + cleanedHtml)
+                Part.fromText("CLEANED_HTML:\n$cleanedHtml")
             ),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)

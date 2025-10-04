@@ -25,7 +25,7 @@ class NavigationElementRemovalService(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun removeNavigationElements(webpage: IBrowserPage) {
-        val screenshot = webpage.takeScreenshot()
+        val screenshot = webpage.takeFullPageScreenshot()
         val html = webpage.getFullHtml()
         
         val pageHash = MessageDigest.getInstance("SHA-256").digest(screenshot.bytes)

@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertNull
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
@@ -37,16 +38,14 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
     private val exampleScreenshot: ByteArray = resourceBytes("example.com_.jpg")
     private val exampleHtml: String = resourceText("view-source_https___example.com.html")
 
-    @OptIn(ExperimentalEncodingApi::class)
-    private val otandpBodyCheckScreenshot = Base64.encode(resourceBytes("www.otandp.com_body-check_.jpg"))
-    private val otandpBodyCheckHtml = resourceText("view-source_https___www.otandp.com_body-check_.html")
+    private val exposedDocScreenshot = Base64.encode(resourceBytes("www.jetbrains.com_help_exposed_working-with-database.jpg"))
+    private val exposedDocHtml = resourceText("view-source_https___www.jetbrains.com_help_exposed_working-with-database.html")
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<INavigationElementIdentificationAgent>()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `should identify navigation elements on example page`() = runTest(testCoroutineDispatcher) {
+    fun `should identify no navigation elements on example page`() = runTest(testCoroutineDispatcher) {
         val input = NavigationElementIdentificationInput(
             screenshotBytes = exampleScreenshot,
             mimetype = ImageMimeType.JPEG,
@@ -54,82 +53,21 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
         )
         val output = agent.generate(input)
 
-        // example.com is a simple page but should have some basic structure
-        // The agent should return non-null results or null if no clear navigation elements exist
-        assertTrue(
-            output.headerXPath != null || output.footerXPath != null || 
-            (output.headerXPath == null && output.footerXPath == null),
-            "Agent should return valid navigation element identification result"
-        )
+        assertNull(output.headerXPath, "Example page should not have header")
+        assertNull(output.footerXPath, "Example page should not have footer")
     }
 
-    @OptIn(ExperimentalEncodingApi::class, ExperimentalCoroutinesApi::class)
     @Test
-    fun `should identify header on otandp body check page`() = runTest(testCoroutineDispatcher) {
+    fun `should identify header and footer on exposed doc page`() = runTest(testCoroutineDispatcher) {
         val input = NavigationElementIdentificationInput(
-            screenshotBytes = Base64.decode(otandpBodyCheckScreenshot),
+            screenshotBytes = Base64.decode(exposedDocScreenshot),
             mimetype = ImageMimeType.JPEG,
-            html = otandpBodyCheckHtml
+            html = exposedDocHtml
         )
         val output = agent.generate(input)
 
-        // The otandp page is a real website that likely has header/footer
-        // We expect at least a header to be identified
-        assertNotNull(
-            output.headerXPath,
-            "Real website should have an identifiable header element"
-        )
-        
-        // Validate XPath format if present
-        if (output.headerXPath != null) {
-            assertTrue(
-                output.headerXPath!!.isNotBlank(),
-                "Header XPath should not be blank when present"
-            )
-            assertTrue(
-                output.headerXPath!!.startsWith("/") || output.headerXPath!!.startsWith("//"),
-                "Header XPath should be a valid XPath expression"
-            )
-        }
-        
-        // Validate footer XPath format if present
-        if (output.footerXPath != null) {
-            assertTrue(
-                output.footerXPath!!.isNotBlank(),
-                "Footer XPath should not be blank when present"
-            )
-            assertTrue(
-                output.footerXPath!!.startsWith("/") || output.footerXPath!!.startsWith("//"),
-                "Footer XPath should be a valid XPath expression"
-            )
-        }
-    }
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    @Test
-    fun `agent should handle minimal HTML gracefully`() = runTest(testCoroutineDispatcher) {
-        val minimalHtml = """
-            <html>
-                <body>
-                    <p>Hello World</p>
-                </body>
-            </html>
-        """.trimIndent()
-        
-        val input = NavigationElementIdentificationInput(
-            screenshotBytes = exampleScreenshot,
-            mimetype = ImageMimeType.JPEG,
-            html = minimalHtml
-        )
-        val output = agent.generate(input)
-
-        // For minimal HTML with no clear navigation structure, 
-        // the agent should return null for both or handle gracefully
-        assertTrue(
-            output.headerXPath == null || output.footerXPath == null || 
-            (output.headerXPath != null && output.footerXPath != null),
-            "Agent should handle minimal HTML without errors"
-        )
+        assertNotNull(output.headerXPath, "Exposed doc webpage should have header")
+        assertNotNull(output.footerXPath, "Exposed doc webpage should have footer")
     }
 }
 
