@@ -106,6 +106,12 @@ class PlaywrightBrowserPage(
         logger.debug("Successfully removed element at XPath: {}", xpath)
     }
 
+    override suspend fun elementExists(xpath: String): Boolean {
+        val locator = page.locator("xpath=$xpath")
+        val count = locator.count()
+        return count > 0
+    }
+
     @Serializable
     private data class IconResult(val base64: String, val xPathSelectors: List<String>)
 

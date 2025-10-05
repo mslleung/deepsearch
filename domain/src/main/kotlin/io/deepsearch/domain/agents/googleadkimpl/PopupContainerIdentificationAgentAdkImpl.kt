@@ -163,57 +163,91 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
 
-        // Remove scripts, styles, and other non-visual elements
-        doc.select("script, style, noscript, meta, link[rel=stylesheet]").remove()
+        // Remove non-visual/noise elements aggressively
+        doc.select(
+            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed"
+        ).remove()
 
-        // Focus on elements that commonly contain popups/modals
-        val relevantElements = doc.select(
-            "div, section, aside, dialog, article, header, footer, nav, main, " +
-            "[role=dialog], [role=banner], [role=alert], [role=alertdialog], " +
-            ".modal, .popup, .overlay, .banner, .cookie, .consent, " +
-            "[class*=modal], [class*=popup], [class*=overlay], [class*=banner], " +
-            "[class*=cookie], [class*=consent], [class*=dialog], " +
-            "[id*=modal], [id*=popup], [id*=overlay], [id*=banner], " +
-            "[id*=cookie], [id*=consent], [id*=dialog]"
+        // Define relevance for popup/modal related containers
+        val relevanceSelector = (
+            "dialog, " +
+            "[role=dialog], [role=alertdialog], [role=alert], " +
+            "[id*~=modal|popup|dialog|overlay|banner|cookie|consent], " +
+            "[class*~=modal|popup|dialog|overlay|banner|cookie|consent], " +
+            // Common container tags that often hold overlays
+            "div, section, aside"
         )
 
-        // Build simplified HTML with key attributes
-        val sb = StringBuilder()
-        for (element in relevantElements) {
-            appendElementInfo(element, sb, 0)
+        val relevant = doc.select(relevanceSelector)
+        if (relevant.isEmpty()) {
+            return ""
         }
 
-        return sb.toString().take(8000) // Limit size for LLM processing
+        // Keep only TOP-LEVEL relevant elements to avoid duplicates
+        val topLevelRelevant = relevant.filter { el ->
+            el.parents().none { parent -> parent.`is`(relevanceSelector) }
+        }
+
+        val sb = StringBuilder()
+        for (root in topLevelRelevant) {
+            appendSanitizedOutline(root, sb, 0)
+        }
+
+        return sb.toString()
     }
 
-    private fun appendElementInfo(element: Element, sb: StringBuilder, depth: Int) {
-        if (depth > 10) return // Prevent infinite recursion
+    private fun appendSanitizedOutline(element: Element, sb: StringBuilder, depth: Int) {
+        val MAX_DEPTH = 4
+        val MAX_CHILDREN = 30
+        if (depth > MAX_DEPTH) return
+
+        val allowedTags = setOf(
+            "dialog", "div", "section", "aside", "header", "footer", "nav", "ul", "li", "a", "button", "span", "p", "img"
+        )
+
+        val tagName = element.tagName()
+        if (depth > 0 && !allowedTags.contains(tagName)) {
+            return
+        }
 
         val indent = "  ".repeat(depth)
-        val tagName = element.tagName()
-        val id = element.attr("id")
-        val className = element.attr("class")
-        val role = element.attr("role")
-        val style = element.attr("style")
+        val id = element.attr("id").take(80)
+        val classAttr = element.attr("class").split(" ")
+            .filter { it.isNotBlank() }
+            .take(3)
+            .joinToString(" ")
+            .take(120)
+        val role = element.attr("role").take(40)
+        val ariaLabel = element.attr("aria-label").take(120)
+        val style = element.attr("style").lowercase()
 
-        sb.append("$indent<$tagName")
+        // Keep a minimal hint from style to detect overlays without leaking big strings
+        val styleFlags = buildList {
+            if (style.contains("position:fixed") || style.contains("position: absolute")) add("pos")
+            if (style.contains("z-index")) add("z")
+            if (style.contains("backdrop") || style.contains("overlay")) add("overlay")
+        }.joinToString(",")
+
+        sb.append("$indent<${tagName}")
         if (id.isNotEmpty()) sb.append(" id=\"$id\"")
-        if (className.isNotEmpty()) sb.append(" class=\"$className\"")
+        if (classAttr.isNotEmpty()) sb.append(" class=\"$classAttr\"")
         if (role.isNotEmpty()) sb.append(" role=\"$role\"")
-        if (style.isNotEmpty()) sb.append(" style=\"${style.take(100)}\"")
+        if (ariaLabel.isNotEmpty()) sb.append(" aria-label=\"$ariaLabel\"")
+        if (styleFlags.isNotEmpty()) sb.append(" flags=\"$styleFlags\"")
         sb.append(">\n")
 
-        // Only include text content for small elements to avoid noise
         val text = element.ownText().trim()
-        if (text.isNotEmpty() && text.length < 200) {
-            sb.append("$indent  $text\n")
+        if (text.isNotEmpty() && text.length <= 160) {
+            sb.append("$indent  ${text}\n")
         }
 
-        // Recursively process children (limited depth)
-        element.children().take(20).forEach { child ->
-            appendElementInfo(child, sb, depth + 1)
+        var count = 0
+        for (child in element.children()) {
+            if (count >= MAX_CHILDREN) break
+            appendSanitizedOutline(child, sb, depth + 1)
+            count++
         }
 
-        sb.append("$indent</$tagName>\n")
+        sb.append("$indent</${tagName}>\n")
     }
 }

@@ -52,6 +52,13 @@ interface IBrowserPage {
     suspend fun removeElement(xpath: String)
 
     /**
+     * Check if an element matching the provided XPath selector exists in the document.
+     * @param xpath XPath expression to match
+     * @return true if at least one element matches; false otherwise
+     */
+    suspend fun elementExists(xpath: String): Boolean
+
+    /**
      * Rendered web icon bitmap and metadata used for interpretation and caching.
      *
      * bytes: raw image bytes (typically JPEG).

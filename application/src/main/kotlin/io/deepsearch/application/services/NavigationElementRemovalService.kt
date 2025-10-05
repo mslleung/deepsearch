@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.NavigationElementIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageNavigationElement
+import io.deepsearch.domain.models.valueobjects.NavigationElementMatch
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -11,7 +12,7 @@ import java.security.MessageDigest
 
 interface INavigationElementRemovalService {
     /**
-     * Removes header and footer navigation elements from the webpage.
+     * Removes navigational elements (header, footer, sidebars, navbars, sticky bars, etc.).
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
      */
     suspend fun removeNavigationElements(webpage: IBrowserPage)
@@ -25,53 +26,67 @@ class NavigationElementRemovalService(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun removeNavigationElements(webpage: IBrowserPage) {
-        val screenshot = webpage.takeFullPageScreenshot()
+        val navigationElements = extractNavigationalElements(webpage)
+        removeElementsIfPresent(webpage, navigationElements)
+    }
+
+    data class NavigationElements(
+        val elements: List<NavigationElementMatch>
+    )
+
+    private suspend fun extractNavigationalElements(webpage: IBrowserPage): NavigationElements {
         val html = webpage.getFullHtml()
-        
-        val pageHash = MessageDigest.getInstance("SHA-256").digest(screenshot.bytes)
 
-        // Check cache first
+        val pageHash = MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
+
         val cached = webpageNavigationElementRepository.findByHash(pageHash)
-        val (headerXPath, footerXPath) = if (cached != null) {
+        if (cached != null) {
             logger.debug("Using cached navigation elements")
-            Pair(cached.headerXPath, cached.footerXPath)
-        } else {
-            // Call agent to identify navigation elements
-            logger.debug("Identifying navigation elements via agent")
-            val identificationResult = navigationElementIdentificationAgent.generate(
-                NavigationElementIdentificationInput(
-                    screenshotBytes = screenshot.bytes,
-                    mimetype = screenshot.mimeType,
-                    html = html
-                )
-            )
-
-            // Cache the result
-            webpageNavigationElementRepository.upsert(
-                WebpageNavigationElement(
-                    pageHash = pageHash,
-                    headerXPath = identificationResult.headerXPath,
-                    footerXPath = identificationResult.footerXPath
-                )
-            )
-
-            Pair(identificationResult.headerXPath, identificationResult.footerXPath)
+            return NavigationElements(elements = cached.elements)
         }
 
-        // Remove header if found
-        if (headerXPath != null) {
-            logger.debug("Removing header via XPath: {}", headerXPath)
-            webpage.removeElement(headerXPath)
-        } else {
-            logger.debug("No header element detected")
-        }
+        val navigationElements = identifyViaAgent(html)
 
-        // Remove footer if found
-        if (footerXPath != null) {
-            logger.debug("Removing footer via XPath: {}", footerXPath)
-            webpage.removeElement(footerXPath)
-        } else {
-            logger.debug("No footer element detected")
+        cacheNavigationElements(pageHash, navigationElements)
+        return navigationElements
+    }
+
+    private suspend fun identifyViaAgent(
+        html: String
+    ): NavigationElements {
+        val identificationResult = navigationElementIdentificationAgent.generate(
+            NavigationElementIdentificationInput(
+                html = html
+            )
+        )
+        return NavigationElements(
+            elements = identificationResult.elements.map { NavigationElementMatch(xpath = it.xpath, type = it.type, note = it.note) }
+        )
+    }
+
+    private suspend fun cacheNavigationElements(
+        pageHash: ByteArray,
+        elements: NavigationElements
+    ) {
+        webpageNavigationElementRepository.upsert(
+            WebpageNavigationElement(
+                pageHash = pageHash,
+                elements = elements.elements
+            )
+        )
+    }
+
+    private suspend fun removeElementsIfPresent(
+        webpage: IBrowserPage,
+        elements: NavigationElements
+    ) {
+        for (match in elements.elements) {
+            try {
+                logger.debug("Removing navigation element [{}] via XPath: {}", match.type, match.xpath)
+                webpage.removeElement(match.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove navigation element [{}] at {}: {}", match.type, match.xpath, e.message)
+            }
         }
     }
 }

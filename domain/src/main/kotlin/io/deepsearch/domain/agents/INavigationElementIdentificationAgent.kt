@@ -1,19 +1,23 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
-import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.NavigationElementType
 import kotlinx.serialization.Serializable
 
 data class NavigationElementIdentificationInput(
-    val screenshotBytes: ByteArray,
-    val mimetype: ImageMimeType,
     val html: String
 ) : IAgent.IAgentInput
 
 @Serializable
+data class IdentifiedNavigationElement(
+    val xpath: String,
+    val type: NavigationElementType,
+    val note: String
+)
+
+@Serializable
 data class NavigationElementIdentificationOutput(
-    val headerXPath: String?,
-    val footerXPath: String?
+    val elements: List<IdentifiedNavigationElement>
 ) : IAgent.IAgentOutput
 
 interface INavigationElementIdentificationAgent : IAgent<NavigationElementIdentificationInput, NavigationElementIdentificationOutput> {

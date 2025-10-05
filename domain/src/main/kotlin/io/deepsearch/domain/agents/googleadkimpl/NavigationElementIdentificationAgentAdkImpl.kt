@@ -11,6 +11,8 @@ import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.NavigationElementIdentificationInput
 import io.deepsearch.domain.agents.NavigationElementIdentificationOutput
+import io.deepsearch.domain.agents.IdentifiedNavigationElement
+import io.deepsearch.domain.models.valueobjects.NavigationElementType
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -25,20 +27,28 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    private val outputSchema: Schema = Schema.builder()
+    private val elementSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Return XPath selectors to header and footer navigation elements")
+        .description("A navigation element XPath with type and note")
         .properties(
             mapOf(
-                "headerXPath" to Schema.builder()
-                    .type("STRING")
-                    .description("XPath selector targeting the main header/navigation container. Null if no header is present.")
-                    .nullable(true)
-                    .build(),
-                "footerXPath" to Schema.builder()
-                    .type("STRING")
-                    .description("XPath selector targeting the main footer container. Null if no footer is present.")
-                    .nullable(true)
+                "xpath" to Schema.builder().type("STRING").description("XPath to the root container").build(),
+                "type" to Schema.builder().type("STRING").description("Type of navigation element").enum_(
+                    NavigationElementType.entries.map { it.name }
+                ).build(),
+                "note" to Schema.builder().type("STRING").description("Brief note of what this element is").build()
+            )
+        ).build()
+
+    private val outputSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .description("Return a list of navigation elements with xpaths, types, and notes")
+        .properties(
+            mapOf(
+                "elements" to Schema.builder()
+                    .type("ARRAY")
+                    .items(elementSchema)
+                    .description("All detected navigation elements")
                     .build()
             )
         )
@@ -46,7 +56,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("navigationElementIdentificationAgent")
-        description("Identify and return XPath selectors of header and footer navigation elements using screenshot and cleaned HTML")
+        description("Identify and return XPath selectors of all navigation elements (header, footer, sidebars, navbars, sticky bars, etc.) using cleaned HTML")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -58,24 +68,22 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
         )
         instruction(
             """
-            Task: Identify the main header and footer navigation elements on the webpage and return their XPaths.
+            Task: Identify ALL navigational elements on the page and provide their XPath, type, and a short note.
 
             Inputs:
-            - A screenshot of the webpage
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
-            - Understand the website visually using the webpage screenshot
-            - Identify the MAIN HEADER element (typically at the top, contains site navigation, logo, menu)
-            - Identify the MAIN FOOTER element (typically at the bottom, contains copyright, links, contact info)
-            - For each element, identify the ROOT CONTAINER that wraps the entire header or footer
-            - Return XPath selectors that point to these root container elements
-            - If no header or footer is visible, return null for that field
+            - Include: header, footer, left/right sidebars (including aside/complementary regions), top navbars, sticky toolbars/bars, breadcrumb bars, cookie banners, chat widgets, ad banners, other persistent nav-like regions.
+            - For each element, return the ROOT CONTAINER that wraps the entire navigation region.
+            - Provide an XPath that is robust and targets the container, avoid overly specific dynamic classes.
+            - Classify each element with one of: HEADER, FOOTER, SIDEBAR_LEFT, SIDEBAR_RIGHT, NAVBAR, BREADCRUMB, STICKY_BAR, CHAT_WIDGET, COOKIE_BANNER, AD_BANNER, OTHER.
+            - Write a brief note describing why it is considered navigation (e.g., "Top navbar with logo and menu", "Left sidebar with category links").
+            - Return an empty list if none found.
 
             Output structure:
             {
-                "headerXPath": "string or null",
-                "footerXPath": "string or null"
+              "elements": [ { "xpath": string, "type": string, "note": string }, ... ]
             }
             """.trimIndent()
         )
@@ -85,13 +93,18 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
     private val runner = InMemoryRunner(agent)
 
     @Serializable
-    private data class NavigationElementIdentificationResponse(
-        val headerXPath: String? = null,
-        val footerXPath: String? = null
+    private data class NavigationElementsResponse(
+        val elements: List<IdentifiedNavigationElement> = emptyList()
     )
 
     override suspend fun generate(input: NavigationElementIdentificationInput): NavigationElementIdentificationOutput {
         val cleanedHtml = cleanHtml(input.html)
+
+        if (cleanedHtml.isEmpty()) {
+            return NavigationElementIdentificationOutput(
+                elements = emptyList()
+            )
+        }
 
         val session = runner
             .sessionService()
@@ -108,7 +121,6 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
         val eventsFlow = runner.runAsync(
             session,
             Content.fromParts(
-                Part.fromBytes(input.screenshotBytes, input.mimetype.value),
                 Part.fromText("CLEANED_HTML:\n$cleanedHtml")
             ),
             RunConfig.builder().apply {
@@ -131,14 +143,16 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             }
         }
 
-        val response = Json.decodeFromString<NavigationElementIdentificationResponse>(llmResponse)
-        
-        val normalizedHeaderXPath = response.headerXPath?.let { normalizeXPath(it) }
-        val normalizedFooterXPath = response.footerXPath?.let { normalizeXPath(it) }
+        val response = Json.decodeFromString<NavigationElementsResponse>(llmResponse)
+
+        val normalized = response.elements.mapNotNull { item ->
+            val x = item.xpath.trim().ifEmpty { null } ?: return@mapNotNull null
+            val normalizedXPath = normalizeXPath(x)
+            item.copy(xpath = normalizedXPath)
+        }
 
         return NavigationElementIdentificationOutput(
-            headerXPath = normalizedHeaderXPath,
-            footerXPath = normalizedFooterXPath
+            elements = normalized
         )
     }
 
@@ -156,7 +170,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
         // If XPath starts with a single `/` followed by something other than `html`, convert to `//`
         // This handles cases like `/div[@id='x']` -> `//div[@id='x']`
         if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.startsWith("/html")) {
-            val normalized = "/$trimmed"
+            val normalized = "//$trimmed".replace("///", "//")
             logger.debug("Normalized XPath from '{}' to '{}'", trimmed, normalized)
             return normalized
         }
@@ -167,56 +181,88 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
 
-        // Remove scripts, styles, and other non-visual elements
-        doc.select("script, style, noscript, meta, link[rel=stylesheet]").remove()
+        // Remove non-visual/noise elements aggressively
+        doc.select(
+            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed"
+        ).remove()
 
-        // Focus on elements that commonly contain headers and footers
-        val relevantElements = doc.select(
-            "header, footer, nav, div, section, aside, main, article, " +
-            "[role=banner], [role=navigation], [role=contentinfo], " +
-            ".header, .footer, .nav, .navigation, " +
-            "[class*=header], [class*=footer], [class*=nav], " +
-            "[id*=header], [id*=footer], [id*=nav]"
-        )
+        // Define relevance for navigation-related containers
+        val keywordRegex = "(?i)(header|navbar|nav|menu|topbar|toolbar|footer|foot|sidebar|sidenav|side-nav|aside|drawer|breadcrumb|breadcrumbs|sticky)"
+        val roleRegex = "(?i)(banner|navigation|contentinfo|complementary|menubar|toolbar)"
+        val relevanceSelector = listOf(
+            // Semantically explicit containers
+            "header", "footer", "nav", "aside",
+            // ARIA roles commonly used for navigational/complementary regions
+            "[role~=$roleRegex]",
+            // Heuristic keywords in id/class/aria-label
+            "[id~=$keywordRegex]",
+            "[class~=$keywordRegex]",
+            "[aria-label~=(?i)(breadcrumb|breadcrumbs|sidebar|navigation|menu|navbar)]"
+        ).joinToString(", ")
 
-        // Build simplified HTML with key attributes
-        val sb = StringBuilder()
-        for (element in relevantElements) {
-            appendElementInfo(element, sb, 0)
+        val relevant = doc.select(relevanceSelector)
+        if (relevant.isEmpty()) {
+            return "" // Nothing obviously relevant
         }
 
-        return sb.toString().take(8000) // Limit size for LLM processing
+        // Keep only TOP-LEVEL relevant elements to avoid duplicates
+        val topLevelRelevant = relevant.filter { el ->
+            el.parents().none { parent -> parent.`is`(relevanceSelector) }
+        }
+
+        val sb = StringBuilder()
+        for (root in topLevelRelevant) {
+            appendSanitizedOutline(root, sb, 0)
+        }
+
+        return sb.toString()
     }
 
-    private fun appendElementInfo(element: Element, sb: StringBuilder, depth: Int) {
-        if (depth > 10) return // Prevent infinite recursion
+    private fun appendSanitizedOutline(element: Element, sb: StringBuilder, depth: Int) {
+        val MAX_DEPTH = 4
+        val MAX_CHILDREN = 25
+        if (depth > MAX_DEPTH) return
+
+        val allowedTags = setOf(
+            "header", "nav", "footer", "aside", "div", "section", "ul", "li", "a", "button", "span", "img", "main", "article"
+        )
+
+        val tagName = element.tagName()
+        if (depth > 0 && !allowedTags.contains(tagName)) {
+            // Skip non-structural/noisy tags below root
+            return
+        }
 
         val indent = "  ".repeat(depth)
-        val tagName = element.tagName()
-        val id = element.attr("id")
-        val className = element.attr("class")
-        val role = element.attr("role")
-        val style = element.attr("style")
+        val id = element.attr("id").take(80)
+        val classAttr = element.attr("class").split(" ")
+            .filter { it.isNotBlank() }
+            .take(3)
+            .joinToString(" ")
+            .take(120)
+        val role = element.attr("role").take(40)
+        val ariaLabel = element.attr("aria-label").take(120)
 
-        sb.append("$indent<$tagName")
+        sb.append("$indent<${tagName}")
         if (id.isNotEmpty()) sb.append(" id=\"$id\"")
-        if (className.isNotEmpty()) sb.append(" class=\"$className\"")
+        if (classAttr.isNotEmpty()) sb.append(" class=\"$classAttr\"")
         if (role.isNotEmpty()) sb.append(" role=\"$role\"")
-        if (style.isNotEmpty()) sb.append(" style=\"${style.take(100)}\"")
+        if (ariaLabel.isNotEmpty()) sb.append(" aria-label=\"$ariaLabel\"")
         sb.append(">\n")
 
-        // Only include text content for small elements to avoid noise
         val text = element.ownText().trim()
-        if (text.isNotEmpty() && text.length < 200) {
-            sb.append("$indent  $text\n")
+        if (text.isNotEmpty() && text.length <= 160) {
+            sb.append("$indent  ${text}\n")
         }
 
-        // Recursively process children (limited depth)
-        element.children().take(20).forEach { child ->
-            appendElementInfo(child, sb, depth + 1)
+        var count = 0
+        for (child in element.children()) {
+            if (count >= MAX_CHILDREN) break
+            appendSanitizedOutline(child, sb, depth + 1)
+            count++
         }
 
-        sb.append("$indent</$tagName>\n")
+        sb.append("$indent</${tagName}>\n")
     }
 }
 

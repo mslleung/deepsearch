@@ -1,6 +1,7 @@
 package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.WebpageNavigationElement
+import io.deepsearch.domain.models.valueobjects.NavigationElementMatch
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import io.deepsearch.infrastructure.database.WebpageNavigationElementTable
 import kotlinx.coroutines.flow.map
@@ -11,6 +12,8 @@ import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepository {
 
@@ -29,14 +32,12 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
 
         if (existing != null) {
             WebpageNavigationElementTable.update({ WebpageNavigationElementTable.pageHash eq webpageNavigationElement.pageHash }) {
-                it[headerXPath] = webpageNavigationElement.headerXPath
-                it[footerXPath] = webpageNavigationElement.footerXPath
+                it[elementsJson] = if (webpageNavigationElement.elements.isNotEmpty()) Json.encodeToString(webpageNavigationElement.elements) else null
             }
         } else {
             WebpageNavigationElementTable.insert {
                 it[pageHash] = webpageNavigationElement.pageHash
-                it[headerXPath] = webpageNavigationElement.headerXPath
-                it[footerXPath] = webpageNavigationElement.footerXPath
+                it[elementsJson] = if (webpageNavigationElement.elements.isNotEmpty()) Json.encodeToString(webpageNavigationElement.elements) else null
             }
         }
         Unit
@@ -45,8 +46,13 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
     private fun mapRowToWebpageNavigationElement(row: ResultRow): WebpageNavigationElement {
         return WebpageNavigationElement(
             pageHash = row[WebpageNavigationElementTable.pageHash],
-            headerXPath = row[WebpageNavigationElementTable.headerXPath],
-            footerXPath = row[WebpageNavigationElementTable.footerXPath]
+            elements = row[WebpageNavigationElementTable.elementsJson]?.let {
+                try {
+                    Json.decodeFromString<List<NavigationElementMatch>>(it)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            } ?: emptyList()
         )
     }
 }
