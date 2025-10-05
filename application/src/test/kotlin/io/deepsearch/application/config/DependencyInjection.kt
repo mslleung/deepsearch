@@ -6,7 +6,6 @@ import io.deepsearch.application.searchstrategies.googlesearch.GoogleSearchStrat
 import io.deepsearch.application.searchstrategies.googlesearch.IGoogleSearchStrategy
 import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupContainerIdentificationService
-import io.deepsearch.application.services.IPopupDismissService
 import io.deepsearch.application.services.ISearchService
 import io.deepsearch.application.services.ITableIdentificationService
 import io.deepsearch.application.services.ITableInterpretationService
@@ -15,7 +14,6 @@ import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.NavigationElementRemovalService
 import io.deepsearch.application.services.PopupContainerIdentificationService
-import io.deepsearch.application.services.PopupDismissService
 import io.deepsearch.application.services.SearchService
 import io.deepsearch.application.services.TableIdentificationService
 import io.deepsearch.application.services.TableInterpretationService
@@ -39,7 +37,6 @@ val applicationTestModule = module {
     singleOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
     singleOf(::PopupContainerIdentificationService) bind IPopupContainerIdentificationService::class
     singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
-    singleOf(::PopupDismissService) bind IPopupDismissService::class
     singleOf(::TableIdentificationService) bind ITableIdentificationService::class
     singleOf(::TableInterpretationService) bind ITableInterpretationService::class
     singleOf(::NavigationElementRemovalService) bind INavigationElementRemovalService::class

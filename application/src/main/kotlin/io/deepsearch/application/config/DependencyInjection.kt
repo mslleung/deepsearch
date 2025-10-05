@@ -23,7 +23,6 @@ val applicationModule = module {
         scopedOf(::TableIdentificationService) bind ITableIdentificationService::class
         scopedOf(::TableInterpretationService) bind ITableInterpretationService::class
         scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
-        scopedOf(::PopupDismissService) bind IPopupDismissService::class
         scopedOf(::NavigationElementRemovalService) bind INavigationElementRemovalService::class
     }
 }

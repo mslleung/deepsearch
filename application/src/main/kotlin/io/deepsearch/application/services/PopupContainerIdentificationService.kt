@@ -12,7 +12,7 @@ interface IPopupContainerIdentificationService {
      * Identifies popup containers on a webpage and returns their XPaths.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
      */
-    suspend fun identifyPopupContainers(screenshot: IBrowserPage.Screenshot, html: String): List<String>
+    suspend fun identifyPopupContainers(screenshot: IBrowserPage.Screenshot, html: String): WebpagePopup
 }
 
 class PopupContainerIdentificationService(
@@ -20,12 +20,12 @@ class PopupContainerIdentificationService(
     private val webpagePopupRepository: IWebpagePopupRepository
 ) : IPopupContainerIdentificationService {
 
-    override suspend fun identifyPopupContainers(screenshot: IBrowserPage.Screenshot, html: String): List<String> {
+    override suspend fun identifyPopupContainers(screenshot: IBrowserPage.Screenshot, html: String): WebpagePopup {
         val pageHash = MessageDigest.getInstance("SHA-256").digest(screenshot.bytes)
 
         val existing = webpagePopupRepository.findByHash(pageHash)
         if (existing != null) {
-            return existing.popupXPaths.map { normalizeXPath(it) }
+            return existing
         }
 
         val identificationResult = popupContainerIdentificationAgent.generate(
@@ -38,31 +38,31 @@ class PopupContainerIdentificationService(
 
         val popupXPaths = identificationResult.popupContainerXPaths
 
-        webpagePopupRepository.upsert(
-            WebpagePopup(
-                pageHash = pageHash,
-                popupXPaths = popupXPaths
-            )
+        val webpagePopup = WebpagePopup(
+            pageHash = pageHash,
+            popupXPaths = popupXPaths.map { normalizeXPath(it) }
         )
 
-        return popupXPaths
+        webpagePopupRepository.upsert(webpagePopup)
+
+        return webpagePopup
     }
 
     /**
      * Normalizes XPath expressions to ensure they work correctly with Playwright.
-     * 
+     *
      * Converts absolute paths like `/div[@id='x']` to relative paths `//div[@id='x']`
      * since `/div` expects div to be a direct child of the document root, which is invalid for HTML.
      * Preserves valid absolute paths like `/html/body/div[@id='x']`.
      */
     private fun normalizeXPath(xpath: String): String {
         val trimmed = xpath.trim()
-        
+
         // If XPath starts with a single `/` followed by something other than `html`, convert to `//`
         if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.startsWith("/html")) {
             return "/$trimmed"
         }
-        
+
         return trimmed
     }
 }

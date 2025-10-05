@@ -2,6 +2,7 @@ package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.constants.ImageMimeType
 import java.security.MessageDigest
+ 
 
 /**
  * Abstraction over a single browser page/tab that can be navigated and inspected.
@@ -10,6 +11,7 @@ import java.security.MessageDigest
  * current document. This snapshot is the "eye" for LLM agents to reason over.
  */
 interface IBrowserPage {
+    suspend fun getUrl(): String
 
     /**
      * Navigates the current page to the given URL and waits for the default load state.
@@ -124,4 +126,10 @@ interface IBrowserPage {
      */
     suspend fun extractTextContent(): String
 
+    /**
+     * Extract text content from specific popup containers, identified by their XPath.
+     * Each popup's subtree is traversed similarly to extractTextContent, excluding script and style tags.
+     * The resulting lines are joined with newlines.
+     */
+    suspend fun extractPopupTextContent(popupXPaths: List<String>): String
 }

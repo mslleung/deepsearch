@@ -27,6 +27,8 @@ class PlaywrightBrowserPage(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
+    override suspend fun getUrl(): String = page.url()
+
     /**
      * Navigate to a new URL and wait for default load state.
      */
@@ -258,6 +260,61 @@ class PlaywrightBrowserPage(
                 return result.join('\n');
             }
         """
+        ) as String
+    }
+
+    override suspend fun extractPopupTextContent(popupXPaths: List<String>): String {
+        if (popupXPaths.isEmpty()) return ""
+
+        logger.debug("Extracting text content from {} popup container(s)", popups.size)
+
+        return page.evaluate(
+            """
+            (xpaths) => {
+                const collectText = (root) => {
+                    const result = [];
+                    const stack = [root];
+                    while (stack.length > 0) {
+                        const node = stack.pop();
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            const text = node.textContent.trim();
+                            if (text.length > 0) {
+                                result.push(text);
+                            }
+                        } else if (node.nodeType === Node.ELEMENT_NODE) {
+                            const tagName = node.tagName.toLowerCase();
+                            if (tagName !== 'script' && tagName !== 'style') {
+                                const children = Array.from(node.childNodes);
+                                for (let i = children.length - 1; i >= 0; i--) {
+                                    stack.push(children[i]);
+                                }
+                            }
+                        }
+                    }
+                    return result;
+                };
+
+                const allLines = [];
+                for (const xpath of xpaths) {
+                    const xpathResult = document.evaluate(
+                        xpath,
+                        document,
+                        null,
+                        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+                        null
+                    );
+
+                    const count = xpathResult.snapshotLength;
+                    if (count === 0) {
+                        continue;
+                    }
+                    const target = xpathResult.snapshotItem(count - 1);
+                    allLines.push(...collectText(target));
+                }
+                return allLines.join('\n');
+            }
+            """,
+            popupXPaths
         ) as String
     }
 

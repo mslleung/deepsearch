@@ -32,12 +32,12 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
 
         if (existing != null) {
             WebpageNavigationElementTable.update({ WebpageNavigationElementTable.pageHash eq webpageNavigationElement.pageHash }) {
-                it[elementsJson] = if (webpageNavigationElement.elements.isNotEmpty()) Json.encodeToString(webpageNavigationElement.elements) else null
+                it[elementsJson] = Json.encodeToString(webpageNavigationElement.elements)
             }
         } else {
             WebpageNavigationElementTable.insert {
                 it[pageHash] = webpageNavigationElement.pageHash
-                it[elementsJson] = if (webpageNavigationElement.elements.isNotEmpty()) Json.encodeToString(webpageNavigationElement.elements) else null
+                it[elementsJson] = Json.encodeToString(webpageNavigationElement.elements)
             }
         }
         Unit

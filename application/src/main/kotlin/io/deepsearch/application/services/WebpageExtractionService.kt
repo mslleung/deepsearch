@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.models.entities.WebpagePopup
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -17,6 +18,8 @@ class WebpageExtractionService(
     private val tableIdentificationService: ITableIdentificationService,
     private val tableInterpretationService: ITableInterpretationService,
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
+    private val popupContainerIdentificationService: IPopupContainerIdentificationService,
+    private val navigationElementRemovalService: INavigationElementRemovalService,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : IWebpageExtractionService {
 
@@ -24,9 +27,44 @@ class WebpageExtractionService(
      * Converts a webpage into text for downstream LLM processing
      */
     override suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
+        val title = webpage.getTitle()
+        val description = webpage.getDescription()
+
+        // Identify popup containers before any modifications
+        val initialScreenshot = webpage.takeScreenshot()
+        val initialHtml = webpage.getFullHtml()
+        val popupInfo: WebpagePopup = popupContainerIdentificationService.identifyPopupContainers(initialScreenshot, initialHtml)
+
+        // Extract popup text content and immediately remove popup containers
+        val popupText = if (popupInfo.popupXPaths.isNotEmpty()) webpage.extractPopupTextContent(popupInfo.popupXPaths) else ""
+        if (popupInfo.popupXPaths.isNotEmpty()) {
+            // Remove popup containers so they don't appear in subsequent screenshots
+            for (xpath in popupInfo.popupXPaths) {
+                webpage.removeElement(xpath)
+            }
+        }
+
         replaceIconsWithTexts(webpage)
+        // replaceImagesWithTexts(webpage)
+
+        // Remove header and footer navigation elements
+        navigationElementRemovalService.removeNavigationElements(webpage)
+
         replaceTablesWithTexts(webpage)
-        webpage.extractTextContent()
+        val extractedText = webpage.extractTextContent()
+
+        buildString {
+            appendLine("URL: ${webpage.getUrl()}")
+            appendLine("Title: $title")
+            if (!description.isNullOrBlank()) {
+                appendLine("Description: $description")
+            }
+            appendLine(extractedText)
+            if (popupText.isNotBlank()) {
+                appendLine()
+                appendLine(popupText)
+            }
+        }.trim()
     }
 
     private suspend fun replaceIconsWithTexts(webpage: IBrowserPage) = coroutineScope {
