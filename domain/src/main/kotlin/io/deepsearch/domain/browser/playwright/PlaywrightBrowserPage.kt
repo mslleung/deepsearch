@@ -12,7 +12,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.util.Base64
+import kotlin.io.encoding.Base64
 
 /**
  * Playwright-backed implementation of a browser page.
@@ -123,7 +123,7 @@ class PlaywrightBrowserPage(
 
         val decoded = Json.decodeFromString<List<IconResult>>(extractIconJsonRaw)
         val results = decoded.map { result ->
-            val bytes = Base64.getDecoder().decode(result.base64)
+            val bytes = Base64.decode(result.base64)
             IBrowserPage.Icon(
                 bytes = bytes,
                 mimeType = ImageMimeType.JPEG,
@@ -133,6 +133,139 @@ class PlaywrightBrowserPage(
 
         logger.debug("extractIcons produced {} unique icons", results.size)
         return results
+    }
+
+    @Serializable
+    private data class ImageResult(val base64: String, val xPathSelectors: List<String>)
+
+    override suspend fun extractImages(): List<IBrowserPage.WebImage> {
+        logger.debug("Extracting images via evaluate()")
+        
+        val extractImageScript = """
+            (() => {
+              type ImageResult = { base64: string; xPathSelectors: string[] };
+              
+              const getElementIndex = (el: Element): number => {
+                let index = 1;
+                let sibling = el.previousElementSibling;
+                while (sibling) {
+                  if (sibling.tagName === el.tagName) {
+                    index++;
+                  }
+                  sibling = sibling.previousElementSibling;
+                }
+                return index;
+              };
+              
+              const xPathSegmentFor = (el: Element): string => {
+                const tag = el.tagName.toLowerCase();
+                const index = getElementIndex(el);
+                const parent = el.parentElement;
+                const siblingsSameTag = parent 
+                  ? Array.from(parent.children).filter(ch => ch.tagName === el.tagName).length 
+                  : 1;
+                if (siblingsSameTag > 1) {
+                  return `${'$'}{tag}[${'$'}{index}]`;
+                }
+                return tag;
+              };
+              
+              const uniqueXPathFor = (el: Element): string => {
+                const segments: string[] = [];
+                let node: Element | null = el;
+                while (node && node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() !== 'html') {
+                  const segment = xPathSegmentFor(node);
+                  segments.unshift(segment);
+                  node = node.parentElement;
+                }
+                return '//' + segments.join('/');
+              };
+              
+              const run = async (): Promise<string> => {
+                const imagesToXPathSelectors = new Map<string, Set<string>>();
+                const images = Array.from(document.querySelectorAll('img'));
+                
+                for (const img of images) {
+                  const canvas = document.createElement('canvas');
+                  const ctx = canvas.getContext('2d');
+                  if (!ctx) continue;
+                  
+                  // Get displayed dimensions
+                  const rect = img.getBoundingClientRect();
+                  if (rect.width === 0 || rect.height === 0) continue;
+                  
+                  const width = Math.ceil(rect.width);
+                  const height = Math.ceil(rect.height);
+                  
+                  const scale = 2;
+                  canvas.width = Math.max(1, Math.floor(width * scale));
+                  canvas.height = Math.max(1, Math.floor(height * scale));
+                  ctx.scale(scale, scale);
+                  
+                  try {
+                    ctx.drawImage(img, 0, 0, width, height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                    const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+                    
+                    const xPathSelector = uniqueXPathFor(img);
+                    if (!imagesToXPathSelectors.has(base64)) {
+                      imagesToXPathSelectors.set(base64, new Set());
+                    }
+                    imagesToXPathSelectors.get(base64)!.add(xPathSelector);
+                  } catch (e) {
+                    // Skip images that can't be drawn (CORS, etc.)
+                    continue;
+                  }
+                }
+                
+                const results: ImageResult[] = Array.from(imagesToXPathSelectors.entries()).map(([base64, xPaths]) => ({
+                  base64,
+                  xPathSelectors: Array.from(xPaths)
+                }));
+                return JSON.stringify(results);
+              };
+              
+              return run();
+            })();
+        """.trimIndent()
+        
+        val extractImageJsonRaw = page.evaluate(extractImageScript) as String
+        val decoded = Json.decodeFromString<List<ImageResult>>(extractImageJsonRaw)
+        val results = decoded.map { result ->
+            val bytes = Base64.decode(result.base64)
+            IBrowserPage.WebImage(
+                bytes = bytes,
+                mimeType = ImageMimeType.JPEG,
+                xPathSelectors = result.xPathSelectors
+            )
+        }
+
+        logger.debug("extractImages produced {} unique images", results.size)
+        return results
+    }
+
+    override suspend fun removeButtons() {
+        logger.debug("Removing button elements")
+        page.evaluate(
+            """
+            () => {
+                const buttons = document.querySelectorAll('button, [role="button"]');
+                buttons.forEach(btn => btn.remove());
+            }
+            """
+        )
+    }
+
+    override suspend fun removeIFrames() {
+        logger.debug("Removing iframe elements")
+        page.evaluate(
+            """
+            () => {
+                const iframes = document.querySelectorAll('iframe');
+                iframes.forEach(iframe => iframe.remove());
+            }
+            """
+        )
     }
 
     override suspend fun getTitle(): String {

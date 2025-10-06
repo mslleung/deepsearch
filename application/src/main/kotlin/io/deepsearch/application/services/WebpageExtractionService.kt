@@ -17,6 +17,7 @@ class WebpageExtractionService(
     private val tableIdentificationService: ITableIdentificationService,
     private val tableInterpretationService: ITableInterpretationService,
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
+    private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
     private val popupContainerIdentificationService: IPopupContainerIdentificationService,
     private val navigationElementRemovalService: INavigationElementRemovalService,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
@@ -47,7 +48,11 @@ class WebpageExtractionService(
         }
 
         replaceIconsWithTexts(webpage)
-        // replaceImagesWithTexts(webpage)
+        replaceImagesWithTexts(webpage)
+
+        // Remove buttons and iframes as they are unlikely to contain useful text for retrieval
+        webpage.removeButtons()
+        webpage.removeIFrames()
 
         // Remove header and footer navigation elements
         navigationElementRemovalService.removeNavigationElements(webpage)
@@ -78,6 +83,22 @@ class WebpageExtractionService(
                 async(ioDispatcher) {
                     val interpretedText = webpageIconInterpretationService.interpretIcon(icon)
                     icon.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, interpretedText) }
+                }
+            }
+            .awaitAll()
+            .flatten()
+
+        webpage.replaceElementsByXPathWithText(replacements)
+    }
+
+    private suspend fun replaceImagesWithTexts(webpage: IBrowserPage) = coroutineScope {
+        val images = webpage.extractImages()
+
+        val replacements = images
+            .map { image ->
+                async(ioDispatcher) {
+                    val extractedText = webpageImageTextExtractionService.extractTextFromImage(image)
+                    image.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, extractedText) }
                 }
             }
             .awaitAll()

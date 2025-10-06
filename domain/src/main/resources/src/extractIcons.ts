@@ -135,18 +135,101 @@
     return '//' + segments.join('/');
   };
 
+  const renderSvgIcon = async (el: Element): Promise<string | null> => {
+    const svg = el as SVGElement;
+    
+    // Get computed dimensions
+    const bbox = svg.getBoundingClientRect();
+    if (bbox.width === 0 || bbox.height === 0) return null;
+    
+    // Get the computed color
+    const style = window.getComputedStyle(svg);
+    const fill = style.color || style.fill || '#000000';
+    
+    // Clone the SVG to avoid modifying the original
+    const svgClone = svg.cloneNode(true) as SVGElement;
+    
+    // Set explicit width/height for rendering
+    const width = Math.ceil(bbox.width);
+    const height = Math.ceil(bbox.height);
+    svgClone.setAttribute('width', width.toString());
+    svgClone.setAttribute('height', height.toString());
+    
+    // Serialize SVG to data URL
+    const svgString = new XMLSerializer().serializeToString(svgClone);
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    
+    // Convert to canvas for JPEG output
+    return new Promise<string | null>((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(width * scale));
+        canvas.height = Math.max(1, Math.floor(height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        
+        ctx.scale(scale, scale);
+        
+        // Choose contrasting background color based on icon color
+        const backgroundColor = getContrastingBackground(fill);
+        ctx.fillStyle = backgroundColor;
+        ctx.fillRect(0, 0, width, height);
+        
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+        const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+        resolve(base64);
+      };
+      img.onerror = () => resolve(null);
+      img.src = URL.createObjectURL(svgBlob);
+    });
+  };
+
   const run = async (): Promise<string> => {
     const imagesToXPathSelectors = new Map<string, Set<string>>();
-    const elements = Array.from(document.querySelectorAll('i'));
+    
+    // Query for multiple icon types:
+    // 1. <i> tags (Font Awesome, Bootstrap Icons, etc.)
+    // 2. <svg> tags (inline SVG icons)
+    // 3. Elements with common icon class patterns
+    // 4. <span> with icon fonts or classes
+    const selectors = [
+      'i',
+      'svg[class*="icon"]',
+      'svg[class*="Icon"]',
+      '[class*="icon-"]',
+      '[class*="Icon-"]',
+      'span[class*="icon"]',
+      'span[class*="Icon"]',
+      '[role="img"]'
+    ];
+    
+    const elements = Array.from(document.querySelectorAll(selectors.join(', ')));
+    
     for (const el of elements) {
-      const rendered = await renderIcon(el);
+      let rendered: string | null = null;
+      
+      if (el.tagName.toLowerCase() === 'svg') {
+        rendered = await renderSvgIcon(el);
+      } else {
+        rendered = await renderIcon(el);
+      }
+      
       if (!rendered) continue;
+      
       const xPathSelector = uniqueXPathFor(el);
       if (!imagesToXPathSelectors.has(rendered)) {
         imagesToXPathSelectors.set(rendered, new Set());
       }
       imagesToXPathSelectors.get(rendered)!.add(xPathSelector);
     }
+    
     const results: IconResult[] = Array.from(imagesToXPathSelectors.entries()).map(([base64, xPaths]) => ({
       base64,
       xPathSelectors: Array.from(xPaths)

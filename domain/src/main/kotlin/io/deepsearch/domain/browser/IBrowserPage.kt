@@ -1,6 +1,11 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.constants.ImageMimeType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.bytedeco.javacpp.BytePointer
+import org.bytedeco.leptonica.global.leptonica
+import org.bytedeco.tesseract.TessBaseAPI
 import java.security.MessageDigest
  
 
@@ -78,12 +83,74 @@ interface IBrowserPage {
     /**
      * Extract rendered icons from the current page.
      *
-     * Phase 1 focuses on <i> elements only. Each icon is rendered as a JPEG and deduplicated
-     * by SHA-256 hash of the bytes.
+     * Extracts various icon types (i, svg, span with icon classes, etc.). 
+     * Each icon is rendered as a JPEG and deduplicated by SHA-256 hash of the bytes.
      *
-     * @return List of IconBitmap containing bytes, and mimeType.
+     * @return List of Icon containing bytes, mimeType, and xPathSelectors.
      */
     suspend fun extractIcons(): List<Icon>
+
+    /**
+     * Rendered web image and metadata used for text extraction and caching.
+     *
+     * bytes: raw image bytes (typically JPEG).
+     * mimeType: image mime type.
+     * xPathSelectors: list of XPath selectors for DOM nodes that contain this image.
+     */
+    data class WebImage(
+        val bytes: ByteArray,
+        val mimeType: ImageMimeType,
+        val xPathSelectors: List<String>
+    ) {
+        val bytesHash: ByteArray by lazy { MessageDigest.getInstance("SHA-256").digest(bytes) }
+        /**
+         * Detects if this image likely contains text using OCR.
+         * Returns true if text is detected, false otherwise.
+         */
+        suspend fun containsText(): Boolean {
+            var api: TessBaseAPI? = null
+            try {
+                api = TessBaseAPI()
+                if (api.Init(null, "eng") != 0) {
+                    return true
+                }
+
+                val imagePointer = BytePointer(*bytes)
+                val pix = leptonica.pixReadMem(imagePointer, bytes.size.toLong())
+                if (pix == null || pix.isNull) {
+                    return true
+                }
+
+                api.SetImage(pix)
+                val text = api.GetUTF8Text()?.string
+                leptonica.pixDestroy(pix)
+
+                return !text.isNullOrBlank() && text.trim().length > 2
+            } finally {
+                api?.End()
+            }
+        }
+    }
+
+    /**
+     * Extract images from the current page.
+     *
+     * Each image is captured as a screenshot and deduplicated by SHA-256 hash of the bytes.
+     *
+     * @return List of WebImage containing bytes, mimeType, and xPathSelectors.
+     */
+    suspend fun extractImages(): List<WebImage>
+
+    /**
+     * Remove all button elements from the page.
+     * Removes <button> tags and elements with role="button".
+     */
+    suspend fun removeButtons()
+
+    /**
+     * Remove all iframe elements from the page.
+     */
+    suspend fun removeIFrames()
 
     /**
      * Image screenshot payload and format information.

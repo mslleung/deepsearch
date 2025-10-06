@@ -14,6 +14,7 @@ val infrastructureModule = module {
     requestScope {
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
+        scopedOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
         scopedOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
         scopedOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
         scopedOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class
