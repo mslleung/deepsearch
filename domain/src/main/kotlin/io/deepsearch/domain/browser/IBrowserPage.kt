@@ -127,9 +127,9 @@ interface IBrowserPage {
     suspend fun extractTextContent(): String
 
     /**
-     * Extract text content from specific popup containers, identified by their XPath.
+     * Extract text content from specific element, identified by their XPath.
      * Each popup's subtree is traversed similarly to extractTextContent, excluding script and style tags.
      * The resulting lines are joined with newlines.
      */
-    suspend fun extractPopupTextContent(popupXPaths: List<String>): String
+    suspend fun extractElementTextContent(elementXPath: String): String
 }

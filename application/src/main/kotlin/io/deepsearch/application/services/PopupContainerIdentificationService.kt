@@ -12,7 +12,7 @@ interface IPopupContainerIdentificationService {
      * Identifies popup containers on a webpage and returns their XPaths.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
      */
-    suspend fun identifyPopupContainers(screenshot: IBrowserPage.Screenshot, html: String): WebpagePopup
+    suspend fun identifyPopupContainers(webpage: IBrowserPage): List<String>
 }
 
 class PopupContainerIdentificationService(
@@ -20,12 +20,15 @@ class PopupContainerIdentificationService(
     private val webpagePopupRepository: IWebpagePopupRepository
 ) : IPopupContainerIdentificationService {
 
-    override suspend fun identifyPopupContainers(screenshot: IBrowserPage.Screenshot, html: String): WebpagePopup {
+    override suspend fun identifyPopupContainers(webpage: IBrowserPage): List<String> {
+        val screenshot = webpage.takeScreenshot()
+        val html = webpage.getFullHtml()
+
         val pageHash = MessageDigest.getInstance("SHA-256").digest(screenshot.bytes)
 
         val existing = webpagePopupRepository.findByHash(pageHash)
         if (existing != null) {
-            return existing
+            return existing.popupXPaths
         }
 
         val identificationResult = popupContainerIdentificationAgent.generate(
@@ -45,7 +48,7 @@ class PopupContainerIdentificationService(
 
         webpagePopupRepository.upsert(webpagePopup)
 
-        return webpagePopup
+        return webpagePopup.popupXPaths
     }
 
     /**

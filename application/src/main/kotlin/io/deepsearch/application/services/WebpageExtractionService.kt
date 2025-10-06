@@ -3,7 +3,6 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.models.entities.WebpagePopup
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -24,24 +23,27 @@ class WebpageExtractionService(
 ) : IWebpageExtractionService {
 
     /**
-     * Converts a webpage into text for downstream LLM processing
+     * Converts a webpage into text for downstream LLM processing.
+     * The extracted text is primed for information retrieval on the current page.
      */
     override suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
         val title = webpage.getTitle()
         val description = webpage.getDescription()
 
         // Identify popup containers before any modifications
-        val initialScreenshot = webpage.takeScreenshot()
-        val initialHtml = webpage.getFullHtml()
-        val popupInfo: WebpagePopup = popupContainerIdentificationService.identifyPopupContainers(initialScreenshot, initialHtml)
+        val popupContainerSelectors = popupContainerIdentificationService.identifyPopupContainers(webpage)
 
         // Extract popup text content and immediately remove popup containers
-        val popupText = if (popupInfo.popupXPaths.isNotEmpty()) webpage.extractPopupTextContent(popupInfo.popupXPaths) else ""
-        if (popupInfo.popupXPaths.isNotEmpty()) {
-            // Remove popup containers so they don't appear in subsequent screenshots
-            for (xpath in popupInfo.popupXPaths) {
-                webpage.removeElement(xpath)
+        val popupText = if (popupContainerSelectors.isNotEmpty()) {
+            buildString {
+                popupContainerSelectors.forEach { selector ->
+                    val popupText = webpage.extractElementTextContent(selector)
+                    appendLine(popupText)
+                    webpage.removeElement(selector)
+                }
             }
+        } else {
+            null
         }
 
         replaceIconsWithTexts(webpage)
@@ -59,11 +61,12 @@ class WebpageExtractionService(
             if (!description.isNullOrBlank()) {
                 appendLine("Description: $description")
             }
-            appendLine(extractedText)
-            if (popupText.isNotBlank()) {
-                appendLine()
+            appendLine()
+            if (!popupText.isNullOrBlank()) {
                 appendLine(popupText)
             }
+            appendLine()
+            appendLine(extractedText)
         }.trim()
     }
 

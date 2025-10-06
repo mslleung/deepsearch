@@ -263,14 +263,12 @@ class PlaywrightBrowserPage(
         ) as String
     }
 
-    override suspend fun extractPopupTextContent(popupXPaths: List<String>): String {
-        if (popupXPaths.isEmpty()) return ""
-
-        logger.debug("Extracting text content from {} popup container(s)", popups.size)
+    override suspend fun extractElementTextContent(elementXPath: String): String {
+        logger.debug("Extracting text content from {}", elementXPath)
 
         return page.evaluate(
             """
-            (xpaths) => {
+            (xpath) => {
                 const collectText = (root) => {
                     const result = [];
                     const stack = [root];
@@ -294,27 +292,24 @@ class PlaywrightBrowserPage(
                     return result;
                 };
 
-                const allLines = [];
-                for (const xpath of xpaths) {
-                    const xpathResult = document.evaluate(
-                        xpath,
-                        document,
-                        null,
-                        XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
-                        null
-                    );
+                const xpathResult = document.evaluate(
+                    xpath,
+                    document,
+                    null,
+                    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+                    null
+                );
 
-                    const count = xpathResult.snapshotLength;
-                    if (count === 0) {
-                        continue;
-                    }
-                    const target = xpathResult.snapshotItem(count - 1);
-                    allLines.push(...collectText(target));
+                const count = xpathResult.snapshotLength;
+                if (count === 0) {
+                    return '';
                 }
-                return allLines.join('\n');
+                const target = xpathResult.snapshotItem(count - 1);
+                const result = collectText(target);
+                return result.join('\n');
             }
             """,
-            popupXPaths
+            elementXPath
         ) as String
     }
 
