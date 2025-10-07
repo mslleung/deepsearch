@@ -27,18 +27,11 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
-//    private val tableInterpretationInput1 = TableInterpretationInput(
-//        screenshotBytes = elementShot.bytes,
-//        mimetype = ImageMimeType.JPEG,
-//        html = elementHtml,
-//        auxiliaryInfo = first.auxiliaryInfo)
-
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val tableIdentificationAgent by inject<ITableIdentificationAgent>()
     private val tableInterpretationAgent by inject<ITableInterpretationAgent>()
     private val browserPool by inject<IBrowserPool>()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @ParameterizedTest
     @ValueSource(
         strings = [
@@ -59,8 +52,6 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
             val first = idOutput.tables.firstOrNull() ?: return@runTest
             val elementShot = page.getElementScreenshotByXPath(first.xpath)
             val elementHtml = page.getElementHtmlByXPath(first.xpath)
-
-            val base64 = Base64.encode(elementShot.bytes)
 
             val md = tableInterpretationAgent.generate(
                 TableInterpretationInput(

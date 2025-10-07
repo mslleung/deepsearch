@@ -4,6 +4,6 @@
   "description": "TypeScript resources for DeepSearch domain layer",
   "private": true,
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.3"
   }
 }

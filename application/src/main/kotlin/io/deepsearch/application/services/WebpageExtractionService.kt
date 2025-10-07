@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlin.io.encoding.Base64
 
 interface IWebpageExtractionService {
     suspend fun extractWebpage(webpage: IBrowserPage): String
@@ -52,6 +53,8 @@ class WebpageExtractionService(
 
         replaceIconsWithTexts(webpage)
         replaceImagesWithTexts(webpage)
+
+        val checkScreenshot = Base64.encode(webpage.takeFullPageScreenshot().bytes)
         replaceTablesWithTexts(webpage)
 
         val extractedText = webpage.extractTextContent()

@@ -76,7 +76,8 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             Guidelines:
             - Include: header, footer, left/right sidebars (including aside/complementary regions), top navbars, sticky toolbars/bars, breadcrumb bars, cookie banners, chat widgets, ad banners, other persistent nav-like regions.
             - For each element, return the ROOT CONTAINER that wraps the entire navigation region.
-            - Provide an XPath that is robust and targets the container, avoid overly specific dynamic classes.
+            - Provide a relative XPath that is robust and targets the container.
+            - Do not use positional predicates, use class attributes or other information to create unique XPaths.
             - Classify each element with one of: HEADER, FOOTER, SIDEBAR_LEFT, SIDEBAR_RIGHT, NAVBAR, BREADCRUMB, STICKY_BAR, CHAT_WIDGET, COOKIE_BANNER, AD_BANNER, OTHER.
             - Write a brief note describing why it is considered navigation (e.g., "Top navbar with logo and menu", "Left sidebar with category links").
             - Return an empty list if none found.
