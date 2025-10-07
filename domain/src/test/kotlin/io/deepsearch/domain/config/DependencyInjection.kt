@@ -3,6 +3,7 @@ package io.deepsearch.domain.config
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
+import io.deepsearch.domain.agents.IImageTextExtractionAgent
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.IIconInterpreterAgent
@@ -14,6 +15,7 @@ import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.BlinkTestAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
+import io.deepsearch.domain.agents.googleadkimpl.ImageTextExtractionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.IconInterpreterAgentAdkImpl
@@ -45,6 +47,7 @@ val domainTestModule = module {
     singleOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
     singleOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
+    singleOf(::ImageTextExtractionAgentAdkImpl) bind IImageTextExtractionAgent::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 }
