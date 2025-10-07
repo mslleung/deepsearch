@@ -41,3 +41,6 @@ out/
 *.h2.mv.db
 *.trace.db
 *.lock.db
+
+### JS Output ###
+domain/src/main/resources/out/

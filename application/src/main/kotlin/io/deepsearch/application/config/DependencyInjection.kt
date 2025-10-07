@@ -25,5 +25,6 @@ val applicationModule = module {
         scopedOf(::TableInterpretationService) bind ITableInterpretationService::class
         scopedOf(::NavigationElementRemovalService) bind INavigationElementRemovalService::class
         scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
+        scopedOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     }
 }

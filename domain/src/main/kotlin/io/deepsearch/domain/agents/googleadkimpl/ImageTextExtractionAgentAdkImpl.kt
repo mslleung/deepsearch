@@ -62,7 +62,7 @@ class ImageTextExtractionAgentAdkImpl : IImageTextExtractionAgent {
             You are given an image that may contain text. Your task is to extract all visible text from the image.
             
             Instructions:
-            - Extract all text present in the image
+            - Extract all text present in the image, with reasonable line breaks
             - For each table inside the image, convert to a HTML table
             - For table merged cells, please unmerge them by duplicating the cell value to all corresponding cells.
             - If the image contains no meaningful text, return null
@@ -289,6 +289,4 @@ class ImageTextExtractionAgentAdkImpl : IImageTextExtractionAgent {
 
         return sb.toString().trimEnd()
     }
-
-    // Note: We intentionally do not serialize non-table HTML; we only replace table blocks inline
 }

@@ -5,6 +5,7 @@ import io.deepsearch.infrastructure.database.DatabaseConfig
 import io.deepsearch.infrastructure.repositories.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -14,6 +15,7 @@ val infrastructureTestModule = module {
     single(createdAtStart = true) { DatabaseConfig.configureDatabase() }
     
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
+    singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
     singleOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
     singleOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
     singleOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class

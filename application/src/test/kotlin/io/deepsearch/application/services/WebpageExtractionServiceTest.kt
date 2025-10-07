@@ -12,7 +12,7 @@ import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 
-class WebpageExtractionServiceTest : KoinTest{
+class WebpageExtractionServiceTest : KoinTest {
 
     @JvmField
     @RegisterExtension

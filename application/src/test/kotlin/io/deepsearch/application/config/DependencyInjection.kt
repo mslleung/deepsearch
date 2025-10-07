@@ -12,6 +12,7 @@ import io.deepsearch.application.services.ITableInterpretationService
 import io.deepsearch.application.services.IUserService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
+import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.application.services.NavigationElementRemovalService
 import io.deepsearch.application.services.PopupContainerIdentificationService
 import io.deepsearch.application.services.SearchService
@@ -20,10 +21,12 @@ import io.deepsearch.application.services.TableInterpretationService
 import io.deepsearch.application.services.UserService
 import io.deepsearch.application.services.WebpageExtractionService
 import io.deepsearch.application.services.WebpageIconInterpretationService
+import io.deepsearch.application.services.WebpageImageTextExtractionService
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -42,6 +45,7 @@ val applicationTestModule = module {
     singleOf(::NavigationElementRemovalService) bind INavigationElementRemovalService::class
     singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
     singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
+    singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 }
