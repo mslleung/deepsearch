@@ -262,11 +262,7 @@ class PlaywrightBrowserPage(
                 // Elements that don't generally contain meaningful text for retrieval
                 const excludeTags = new Set([
                     'script', 'style', 'noscript', 'button', 'iframe', 'nav', 'header', 'footer',
-                    'aside', 'menu', 'menuitem', 'dialog', 'dialog', 'form', 'input', 'textarea',
-                    'select', 'option', 'optgroup', 'fieldset', 'legend', 'label', 'meter',
-                    'progress', 'output', 'canvas', 'svg', 'audio', 'video', 'source', 'track',
-                    'embed', 'object', 'param', 'area', 'map', 'base', 'link', 'meta', 'title',
-                    'head', 'html', 'body'
+                    'aside', 'link', 'meta'
                 ]);
                 
                 while (stack.length > 0) {
@@ -307,11 +303,7 @@ class PlaywrightBrowserPage(
                     // Elements that don't generally contain meaningful text for retrieval
                     const excludeTags = new Set([
                         'script', 'style', 'noscript', 'button', 'iframe', 'nav', 'header', 'footer',
-                        'aside', 'menu', 'menuitem', 'dialog', 'dialog', 'form', 'input', 'textarea',
-                        'select', 'option', 'optgroup', 'fieldset', 'legend', 'label', 'meter',
-                        'progress', 'output', 'canvas', 'svg', 'audio', 'video', 'source', 'track',
-                        'embed', 'object', 'param', 'area', 'map', 'base', 'link', 'meta', 'title',
-                        'head', 'html', 'body'
+                        'aside', 'link', 'meta'
                     ]);
                     
                     while (stack.length > 0) {
