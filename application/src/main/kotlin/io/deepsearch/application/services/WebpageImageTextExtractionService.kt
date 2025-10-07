@@ -28,16 +28,13 @@ class WebpageImageTextExtractionService(
      * Results are cached to avoid reprocessing the same image.
      */
     override suspend fun extractTextFromImage(image: IBrowserPage.WebImage): String? {
-        val bytesHash = MessageDigest.getInstance("SHA-256").digest(image.bytes)
-
         // Check cache first
-        val existing = webpageImageRepository.findByHash(bytesHash)
+        val existing = webpageImageRepository.findByHash(image.bytesHash)
         if (existing != null) {
             logger.debug("Found cached result for image")
             return existing.extractedText?.takeIf { it.isNotBlank() }
         }
 
-        // Let the domain object determine if the image contains text
         val hasText = image.containsText()
         
         if (!hasText) {
@@ -45,7 +42,7 @@ class WebpageImageTextExtractionService(
             // Cache the result as having no text
             webpageImageRepository.upsert(
                 WebpageImage(
-                    imageBytesHash = bytesHash,
+                    imageBytesHash = image.bytesHash,
                     extractedText = null
                 )
             )
@@ -63,7 +60,7 @@ class WebpageImageTextExtractionService(
         // Cache the result
         webpageImageRepository.upsert(
             WebpageImage(
-                imageBytesHash = bytesHash,
+                imageBytesHash = image.bytesHash,
                 extractedText = extractedText
             )
         )

@@ -7,7 +7,9 @@ import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.leptonica.global.leptonica
 import org.bytedeco.tesseract.TessBaseAPI
 import java.security.MessageDigest
- 
+import kotlin.io.path.createTempDirectory
+import kotlin.io.path.div
+import kotlin.io.path.writeBytes
 
 /**
  * Abstraction over a single browser page/tab that can be navigated and inspected.
@@ -16,6 +18,54 @@ import java.security.MessageDigest
  * current document. This snapshot is the "eye" for LLM agents to reason over.
  */
 interface IBrowserPage {
+    companion object {
+        /**
+         * Tessdata path extracted from JAR resources to temporary directory.
+         * Tesseract requires filesystem access to tessdata files, not JAR resources.
+         */
+        private val tessdataPath: String by lazy { extractTessdataToTempDirectory() }
+
+        /**
+         * Creates a new TessBaseAPI instance for OCR operations.
+         * Each call creates a new instance to ensure thread safety.
+         * Supports English, Chinese Simplified, and Chinese Traditional.
+         */
+        private fun createTessBaseAPI(): TessBaseAPI {
+            return TessBaseAPI().apply {
+                // Initialize with English, Chinese Simplified, and Chinese Traditional
+                if (Init(tessdataPath, "eng+chi_sim+chi_tra") != 0) {
+                    throw RuntimeException("Failed to initialize Tesseract OCR with tessdata path: $tessdataPath")
+                }
+            }
+        }
+
+        /**
+         * Extracts tessdata files from JAR resources to a temporary directory.
+         * Tesseract requires filesystem access to tessdata files, not JAR resources.
+         */
+        private fun extractTessdataToTempDirectory(): String {
+            val tempDir = createTempDirectory("tessdata")
+            tempDir.toFile().deleteOnExit()
+
+            val tessdataFiles = listOf("eng.traineddata", "chi_sim.traineddata", "chi_tra.traineddata")
+
+            for (fileName in tessdataFiles) {
+                val resourcePath = "tessdata/$fileName"
+                val resource = IBrowserPage::class.java.classLoader.getResourceAsStream(resourcePath)
+                    ?: throw RuntimeException("Tessdata file not found: $resourcePath")
+
+                val outputFile = tempDir / fileName
+                outputFile.toFile().deleteOnExit()
+
+                resource.use { input ->
+                    outputFile.writeBytes(input.readBytes())
+                }
+            }
+
+            return tempDir.toFile().absolutePath
+        }
+    }
+
     suspend fun getUrl(): String
 
     /**
@@ -83,7 +133,7 @@ interface IBrowserPage {
     /**
      * Extract rendered icons from the current page.
      *
-     * Extracts various icon types (i, svg, span with icon classes, etc.). 
+     * Extracts various icon types (i, svg, span with icon classes, etc.).
      * Each icon is rendered as a JPEG and deduplicated by SHA-256 hash of the bytes.
      *
      * @return List of Icon containing bytes, mimeType, and xPathSelectors.
@@ -103,31 +153,26 @@ interface IBrowserPage {
         val xPathSelectors: List<String>
     ) {
         val bytesHash: ByteArray by lazy { MessageDigest.getInstance("SHA-256").digest(bytes) }
+
         /**
          * Detects if this image likely contains text using OCR.
          * Returns true if text is detected, false otherwise.
          */
-        suspend fun containsText(): Boolean {
-            var api: TessBaseAPI? = null
+        fun containsText(): Boolean {
+            val imagePointer = BytePointer(*bytes)
+            val pix = leptonica.pixReadMem(imagePointer, bytes.size.toLong())
+            if (pix == null || pix.isNull) {
+                return true
+            }
+
+            val tessBaseAPI = createTessBaseAPI()
             try {
-                api = TessBaseAPI()
-                if (api.Init(null, "eng") != 0) {
-                    return true
-                }
-
-                val imagePointer = BytePointer(*bytes)
-                val pix = leptonica.pixReadMem(imagePointer, bytes.size.toLong())
-                if (pix == null || pix.isNull) {
-                    return true
-                }
-
-                api.SetImage(pix)
-                val text = api.GetUTF8Text()?.string
-                leptonica.pixDestroy(pix)
-
+                tessBaseAPI.SetImage(pix)
+                val text = tessBaseAPI.GetUTF8Text()?.string
                 return !text.isNullOrBlank() && text.trim().length > 2
             } finally {
-                api?.End()
+                leptonica.pixDestroy(pix)
+                tessBaseAPI.End()
             }
         }
     }
@@ -141,16 +186,6 @@ interface IBrowserPage {
      */
     suspend fun extractImages(): List<WebImage>
 
-    /**
-     * Remove all button elements from the page.
-     * Removes <button> tags and elements with role="button".
-     */
-    suspend fun removeButtons()
-
-    /**
-     * Remove all iframe elements from the page.
-     */
-    suspend fun removeIFrames()
 
     /**
      * Image screenshot payload and format information.

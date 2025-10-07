@@ -47,17 +47,13 @@ class WebpageExtractionService(
             null
         }
 
-        replaceIconsWithTexts(webpage)
-        replaceImagesWithTexts(webpage)
-
-        // Remove buttons and iframes as they are unlikely to contain useful text for retrieval
-        webpage.removeButtons()
-        webpage.removeIFrames()
-
         // Remove header and footer navigation elements
         navigationElementRemovalService.removeNavigationElements(webpage)
 
+        replaceIconsWithTexts(webpage)
+        replaceImagesWithTexts(webpage)
         replaceTablesWithTexts(webpage)
+
         val extractedText = webpage.extractTextContent()
 
         buildString {

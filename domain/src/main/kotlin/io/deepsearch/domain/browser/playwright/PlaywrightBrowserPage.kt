@@ -155,29 +155,6 @@ class PlaywrightBrowserPage(
         return results
     }
 
-    override suspend fun removeButtons() {
-        logger.debug("Removing button elements")
-        page.evaluate(
-            """
-            () => {
-                const buttons = document.querySelectorAll('button, [role="button"]');
-                buttons.forEach(btn => btn.remove());
-            }
-            """
-        )
-    }
-
-    override suspend fun removeIFrames() {
-        logger.debug("Removing iframe elements")
-        page.evaluate(
-            """
-            () => {
-                const iframes = document.querySelectorAll('iframe');
-                iframes.forEach(iframe => iframe.remove());
-            }
-            """
-        )
-    }
 
     override suspend fun getTitle(): String {
         return page.title()
@@ -282,6 +259,16 @@ class PlaywrightBrowserPage(
                 const result = [];
                 const stack = [document.body];
                 
+                // Elements that don't generally contain meaningful text for retrieval
+                const excludeTags = new Set([
+                    'script', 'style', 'noscript', 'button', 'iframe', 'nav', 'header', 'footer',
+                    'aside', 'menu', 'menuitem', 'dialog', 'dialog', 'form', 'input', 'textarea',
+                    'select', 'option', 'optgroup', 'fieldset', 'legend', 'label', 'meter',
+                    'progress', 'output', 'canvas', 'svg', 'audio', 'video', 'source', 'track',
+                    'embed', 'object', 'param', 'area', 'map', 'base', 'link', 'meta', 'title',
+                    'head', 'html', 'body'
+                ]);
+                
                 while (stack.length > 0) {
                     const node = stack.pop();
                     
@@ -292,7 +279,7 @@ class PlaywrightBrowserPage(
                         }
                     } else if (node.nodeType === Node.ELEMENT_NODE) {
                         const tagName = node.tagName.toLowerCase();
-                        if (tagName !== 'script' && tagName !== 'style') {
+                        if (!excludeTags.has(tagName)) {
                             const children = Array.from(node.childNodes);
                             for (let i = children.length - 1; i >= 0; i--) {
                                 stack.push(children[i]);
@@ -316,6 +303,17 @@ class PlaywrightBrowserPage(
                 const collectText = (root) => {
                     const result = [];
                     const stack = [root];
+                    
+                    // Elements that don't generally contain meaningful text for retrieval
+                    const excludeTags = new Set([
+                        'script', 'style', 'noscript', 'button', 'iframe', 'nav', 'header', 'footer',
+                        'aside', 'menu', 'menuitem', 'dialog', 'dialog', 'form', 'input', 'textarea',
+                        'select', 'option', 'optgroup', 'fieldset', 'legend', 'label', 'meter',
+                        'progress', 'output', 'canvas', 'svg', 'audio', 'video', 'source', 'track',
+                        'embed', 'object', 'param', 'area', 'map', 'base', 'link', 'meta', 'title',
+                        'head', 'html', 'body'
+                    ]);
+                    
                     while (stack.length > 0) {
                         const node = stack.pop();
                         if (node.nodeType === Node.TEXT_NODE) {
@@ -325,7 +323,7 @@ class PlaywrightBrowserPage(
                             }
                         } else if (node.nodeType === Node.ELEMENT_NODE) {
                             const tagName = node.tagName.toLowerCase();
-                            if (tagName !== 'script' && tagName !== 'style') {
+                            if (!excludeTags.has(tagName)) {
                                 const children = Array.from(node.childNodes);
                                 for (let i = children.length - 1; i >= 0; i--) {
                                     stack.push(children[i]);
