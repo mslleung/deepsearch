@@ -16,6 +16,9 @@ import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -53,7 +56,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableIdentificationAgent")
-        description("Identify tables in a webpage screenshot and return XPath selectors to their roots")
+        description("Identify tables in cleaned HTML and return XPath selectors to their roots")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -65,13 +68,14 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         )
         instruction(
             """
-            Your task is to identify all tables in a webpage and generate XPath queries to those tables.
+            Your task is to identify all tables in the provided HTML and generate XPath queries to those tables.
 
             Input:
-            A screenshot of a webpage.
+            Cleaned HTML structure of a webpage.
 
             Instructions:
-            - Scan the entire webpage and identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
+            - Scan the entire HTML and identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
+            - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
             - For every table you find, create an XPath selector using words from within the table. Use the XPath "contains" operator to select words from multiple cells to ensure uniqueness.
             - The selected words should include content from different parts of the table, and must include some words from the table's first and last rows.
             - Each "contains" selector should match only one word with no spaces.
@@ -105,7 +109,13 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     )
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
-        logger.debug("Table identification for screenshot")
+        logger.debug("Table identification for HTML")
+
+        val cleanedHtml = cleanHtml(input.html)
+
+        if (cleanedHtml.isEmpty()) {
+            return TableIdentificationOutput(tables = emptyList())
+        }
 
         val session = runner
             .sessionService()
@@ -122,7 +132,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         val eventsFlow = runner.runAsync(
             session,
             Content.fromParts(
-                Part.fromBytes(input.screenshotBytes, input.mimetype.value)
+                Part.fromText("CLEANED_HTML:\n$cleanedHtml")
             ),
             RunConfig.builder().apply {
                 setStreamingMode(RunConfig.StreamingMode.NONE)
@@ -149,5 +159,95 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         logger.debug("Table identification found {} tables", response.tables.size)
 
         return TableIdentificationOutput(tables = response.tables)
+    }
+
+    private fun cleanHtml(rawHtml: String): String {
+        val doc: Document = Jsoup.parse(rawHtml)
+
+        // Remove non-visual/noise elements aggressively
+        doc.select(
+            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed"
+        ).remove()
+
+        // Define relevance for table-related containers
+        val keywordRegex = "(?i)(table|grid|data|chart|schedule|pricing|comparison|list|matrix|report)"
+        val roleRegex = "(?i)(table|grid|presentation|region)"
+        val relevanceSelector = listOf(
+            // Standard table elements
+            "table, thead, tbody, tfoot, tr, td, th",
+            // CSS-based table layouts
+            "[role~=$roleRegex]",
+            // Heuristic keywords in id/class/aria-label
+            "[id~=$keywordRegex]",
+            "[class~=$keywordRegex]",
+            "[aria-label~=(?i)(table|grid|data|chart|schedule|pricing|comparison)]",
+            // Common container tags that often hold tabular data
+            "div, section, article, main"
+        ).joinToString(", ")
+
+        val relevant = doc.select(relevanceSelector)
+        if (relevant.isEmpty()) {
+            return "" // Nothing obviously relevant
+        }
+
+        // Keep only TOP-LEVEL relevant elements to avoid duplicates
+        val topLevelRelevant = relevant.filter { el ->
+            el.parents().none { parent -> parent.`is`(relevanceSelector) }
+        }
+
+        val sb = StringBuilder()
+        for (root in topLevelRelevant) {
+            appendSanitizedOutline(root, sb, 0)
+        }
+
+        return sb.toString()
+    }
+
+    private fun appendSanitizedOutline(element: Element, sb: StringBuilder, depth: Int) {
+        val MAX_DEPTH = 5
+        val MAX_CHILDREN = 30
+        if (depth > MAX_DEPTH) return
+
+        val allowedTags = setOf(
+            "table", "thead", "tbody", "tfoot", "tr", "td", "th", "div", "section", "article", "main",
+            "ul", "ol", "li", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "b", "i"
+        )
+
+        val tagName = element.tagName()
+        if (depth > 0 && !allowedTags.contains(tagName)) {
+            // Skip non-structural/noisy tags below root
+            return
+        }
+
+        val indent = "  ".repeat(depth)
+        val id = element.attr("id").take(80)
+        val classAttr = element.attr("class").split(" ")
+            .filter { it.isNotBlank() }
+            .take(3)
+            .joinToString(" ")
+            .take(120)
+        val role = element.attr("role").take(40)
+        val ariaLabel = element.attr("aria-label").take(120)
+
+        sb.append("$indent<${tagName}")
+        if (id.isNotEmpty()) sb.append(" id=\"$id\"")
+        if (classAttr.isNotEmpty()) sb.append(" class=\"$classAttr\"")
+        if (role.isNotEmpty()) sb.append(" role=\"$role\"")
+        if (ariaLabel.isNotEmpty()) sb.append(" aria-label=\"$ariaLabel\"")
+        sb.append(">\n")
+
+        val text = element.ownText().trim()
+        if (text.isNotEmpty() && text.length <= 200) {
+            sb.append("$indent  ${text}\n")
+        }
+
+        var count = 0
+        for (child in element.children()) {
+            if (count >= MAX_CHILDREN) break
+            appendSanitizedOutline(child, sb, depth + 1)
+            count++
+        }
+
+        sb.append("$indent</${tagName}>\n")
     }
 }

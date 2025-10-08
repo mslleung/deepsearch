@@ -1,7 +1,7 @@
 package io.deepsearch.application.searchstrategies.agenticbrowsersearch
 
 import io.deepsearch.application.searchstrategies.ISearchStrategy
-import io.deepsearch.application.services.IWebpageExtractionService
+import io.deepsearch.application.services.IQueryAnsweringService
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
@@ -18,7 +18,7 @@ interface IAgenticBrowserSearchStrategy : ISearchStrategy {
  */
 class AgenticBrowserSearchStrategy(
     private val browserPool: IBrowserPool,
-    private val webpageExtractionService: IWebpageExtractionService,
+    private val queryAnsweringService: IQueryAnsweringService,
 ) : IAgenticBrowserSearchStrategy {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -31,12 +31,16 @@ class AgenticBrowserSearchStrategy(
             val page = context.newPage()
             page.navigate(url)
 
-            val webpageText = webpageExtractionService.extractWebpage(page)
+            // val webpageText = webpageExtractionService.extractWebpage(page)
 
-            return SearchResult(
-                originalQuery = searchQuery,
-                content = webpageText,
-                sources = listOf(url)
+            // Take screenshot and get HTML for query answering
+            val screenshot = page.takeFullPageScreenshot()
+            val html = page.getFullHtml()
+
+            return queryAnsweringService.answerQuery(
+                screenshotBytes = screenshot.bytes,
+                html = html,
+                searchQuery = searchQuery
             )
         } finally {
             browser.close()

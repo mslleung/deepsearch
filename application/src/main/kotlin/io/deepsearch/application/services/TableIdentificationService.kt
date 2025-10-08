@@ -18,13 +18,13 @@ class TableIdentificationService(
 ) : ITableIdentificationService {
 
     /**
-     * Identifies tables in a webpage screenshot using an LLM agent.
-     * Results are cached in the repository to avoid repeated calls with the same screenshot.
+     * Identifies tables in webpage HTML using an LLM agent.
+     * Results are cached in the repository to avoid repeated calls with the same HTML.
      */
     override suspend fun identifyTables(input: TableIdentificationInput): List<TableIdentification> {
-        val bytesHash = MessageDigest.getInstance("SHA-256").digest(input.screenshotBytes)
+        val htmlHash = MessageDigest.getInstance("SHA-256").digest(input.html.toByteArray())
 
-        val existing = webpageTableRepository.findByHash(bytesHash)
+        val existing = webpageTableRepository.findByHash(htmlHash)
         if (existing != null) {
             return Json.decodeFromString<List<TableIdentification>>(existing.tables)
         }
@@ -34,7 +34,7 @@ class TableIdentificationService(
 
         webpageTableRepository.upsert(
             WebpageTable(
-                fullPageScreenshotHash = bytesHash,
+                webpageHtmlHash = htmlHash,
                 tables = Json.encodeToString(tables)
             )
         )

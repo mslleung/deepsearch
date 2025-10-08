@@ -19,5 +19,6 @@ val infrastructureModule = module {
         scopedOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
         scopedOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class
         scopedOf(::ExposedWebpageNavigationElementRepository) bind IWebpageNavigationElementRepository::class
+        scopedOf(::ExposedQueryAnswerRepository) bind IQueryAnswerRepository::class
     }
 }

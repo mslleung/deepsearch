@@ -6,7 +6,6 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -17,7 +16,6 @@ import org.junit.jupiter.params.provider.ValueSource
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
-import kotlin.io.encoding.Base64
 
 class TableInterpretationAgentAdkImplTest : KoinTest {
 
@@ -44,9 +42,9 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
         try {
             val page = context.newPage()
             page.navigate(url)
-            val full = page.takeFullPageScreenshot()
+            val html = page.getFullHtml()
             val idOutput = tableIdentificationAgent.generate(
-                TableIdentificationInput(full.bytes, ImageMimeType.JPEG)
+                TableIdentificationInput(html)
             )
             // Take first table if any
             val first = idOutput.tables.firstOrNull() ?: return@runTest

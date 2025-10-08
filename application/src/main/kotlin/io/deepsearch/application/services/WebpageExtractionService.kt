@@ -53,8 +53,6 @@ class WebpageExtractionService(
 
         replaceIconsWithTexts(webpage)
         replaceImagesWithTexts(webpage)
-
-        val checkScreenshot = Base64.encode(webpage.takeFullPageScreenshot().bytes)
         replaceTablesWithTexts(webpage)
 
         val extractedText = webpage.extractTextContent()
@@ -107,10 +105,10 @@ class WebpageExtractionService(
     }
 
     private suspend fun replaceTablesWithTexts(webpage: IBrowserPage) = coroutineScope {
-        // Table processing: identify tables from full-page screenshot and interpret them to markdown
-        val fullScreenshot = webpage.takeFullPageScreenshot()
+        // Table processing: identify tables from HTML and interpret them to markdown
+        val fullHtml = webpage.getFullHtml()
         val tables = tableIdentificationService.identifyTables(
-            TableIdentificationInput(fullScreenshot.bytes, fullScreenshot.mimeType)
+            TableIdentificationInput(fullHtml)
         )
 
         // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)

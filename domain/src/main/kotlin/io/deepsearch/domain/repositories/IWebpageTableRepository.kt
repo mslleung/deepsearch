@@ -4,6 +4,6 @@ import io.deepsearch.domain.models.entities.WebpageTable
 
 interface IWebpageTableRepository {
     suspend fun upsert(table: WebpageTable)
-    suspend fun findByHash(fullPageScreenshotHash: ByteArray): WebpageTable?
+    suspend fun findByHash(webpageHtmlHash: ByteArray): WebpageTable?
 }
 

@@ -4,7 +4,6 @@ import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -37,15 +36,15 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
 //            "https://sleekflow.io/pricing"
         ]
     )
-    fun `identifies a single table from a webpage screenshot`(url: String) = runTest(testCoroutineDispatcher) {
+    fun `identifies a single table from webpage HTML`(url: String) = runTest(testCoroutineDispatcher) {
         val browser = browserPool.acquireBrowser()
         val context = browser.createContext()
         try {
             val page = context.newPage()
             page.navigate(url)
-            val screenshot = page.takeFullPageScreenshot()
+            val html = page.getFullHtml()
 
-            val input = TableIdentificationInput(screenshot.bytes, ImageMimeType.JPEG)
+            val input = TableIdentificationInput(html)
             val output = agent.generate(input)
 
             assertEquals(1, output.tables.size, "Should identify exactly one table")

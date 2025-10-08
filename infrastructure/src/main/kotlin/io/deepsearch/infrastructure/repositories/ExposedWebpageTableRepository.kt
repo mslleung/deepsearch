@@ -12,21 +12,23 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
 import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 class ExposedWebpageTableRepository : IWebpageTableRepository {
 
+    @OptIn(ExperimentalEncodingApi::class)
     override suspend fun upsert(table: WebpageTable) = suspendTransaction {
-        val hashBase64 = Base64.encode(table.fullPageScreenshotHash)
+        val hashBase64 = Base64.encode(table.webpageHtmlHash)
 
         // Try update first; if nothing updated, insert
-        val updated = WebpageTableTable.update({ WebpageTableTable.fullPageScreenshotHash eq hashBase64 }) {
+        val updated = WebpageTableTable.update({ WebpageTableTable.webpageHtmlHash eq hashBase64 }) {
             it[tables] = table.tables
             it[updatedAtEpochMs] = table.updatedAtEpochMs
         }
 
         if (updated == 0) {
             WebpageTableTable.insert {
-                it[fullPageScreenshotHash] = hashBase64
+                it[webpageHtmlHash] = hashBase64
                 it[tables] = table.tables
                 it[createdAtEpochMs] = table.createdAtEpochMs
                 it[updatedAtEpochMs] = table.updatedAtEpochMs
@@ -34,17 +36,19 @@ class ExposedWebpageTableRepository : IWebpageTableRepository {
         }
     }
 
-    override suspend fun findByHash(fullPageScreenshotHash: ByteArray): WebpageTable? = suspendTransaction {
-        val hashBase64 = Base64.encode(fullPageScreenshotHash)
+    @OptIn(ExperimentalEncodingApi::class)
+    override suspend fun findByHash(webpageHtmlHash: ByteArray): WebpageTable? = suspendTransaction {
+        val hashBase64 = Base64.encode(webpageHtmlHash)
         WebpageTableTable.selectAll()
-            .where { WebpageTableTable.fullPageScreenshotHash eq hashBase64 }
+            .where { WebpageTableTable.webpageHtmlHash eq hashBase64 }
             .map { mapRowToWebpageTable(it) }
             .singleOrNull()
     }
 
+    @OptIn(ExperimentalEncodingApi::class)
     private fun mapRowToWebpageTable(row: ResultRow): WebpageTable {
         return WebpageTable(
-            fullPageScreenshotHash = Base64.decode(row[WebpageTableTable.fullPageScreenshotHash]),
+            webpageHtmlHash = Base64.decode(row[WebpageTableTable.webpageHtmlHash]),
             tables = row[WebpageTableTable.tables],
             createdAtEpochMs = row[WebpageTableTable.createdAtEpochMs],
             updatedAtEpochMs = row[WebpageTableTable.updatedAtEpochMs],

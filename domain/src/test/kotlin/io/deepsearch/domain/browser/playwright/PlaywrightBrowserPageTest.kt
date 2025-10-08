@@ -58,4 +58,24 @@ class PlaywrightBrowserPageTest : KoinTest {
 
         assertTrue { !icons.isEmpty() }
     }
+
+    @Test
+    fun `extracting images with CORS fallback`() = runTest(testCoroutineDispatcher) {
+        val browser = browserPool.acquireBrowser()
+        val browserContext = browser.createContext()
+        val browserPage = browserContext.newPage()
+
+        // Navigate to a page with CORS-blocked images
+        browserPage.navigate("https://www.otandp.com/body-check/")
+        val images = browserPage.extractImages()
+
+        // Should successfully extract images even with CORS issues
+        assertTrue { !images.isEmpty() }
+        
+        // Verify all images have valid data
+        images.forEach { image ->
+            assertTrue { image.bytes.isNotEmpty() }
+            assertTrue { image.xPathSelectors.isNotEmpty() }
+        }
+    }
 }
