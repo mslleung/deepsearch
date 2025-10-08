@@ -12,40 +12,42 @@ import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 class ExposedWebpagePopupRepository : IWebpagePopupRepository {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun findByHash(pageHash: ByteArray): WebpagePopup? = suspendTransaction {
+        val hashBase64 = Base64.encode(pageHash)
         WebpagePopupTable.selectAll()
-            .where { WebpagePopupTable.pageHash eq pageHash }
+            .where { WebpagePopupTable.pageHash eq hashBase64 }
             .map { mapRowToWebpagePopup(it) }
             .singleOrNull()
     }
 
     override suspend fun upsert(webpagePopup: WebpagePopup): Unit = suspendTransaction {
-        val existing = WebpagePopupTable.selectAll()
-            .where { WebpagePopupTable.pageHash eq webpagePopup.pageHash }
-            .map { it }
-            .singleOrNull()
+        val hashBase64 = Base64.encode(webpagePopup.pageHash)
+        
+        // Try update first; if nothing updated, insert
+        val updated = WebpagePopupTable.update({ WebpagePopupTable.pageHash eq hashBase64 }) {
+            it[popupXPaths] = json.encodeToString(webpagePopup.popupXPaths)
+        }
 
-        if (existing != null) {
-            WebpagePopupTable.update({ WebpagePopupTable.pageHash eq webpagePopup.pageHash }) {
-                it[popupXPaths] = json.encodeToString(webpagePopup.popupXPaths)
-            }
-        } else {
+        if (updated == 0) {
             WebpagePopupTable.insert {
-                it[pageHash] = webpagePopup.pageHash
+                it[pageHash] = hashBase64
                 it[popupXPaths] = json.encodeToString(webpagePopup.popupXPaths)
             }
         }
         Unit
     }
 
+    @OptIn(ExperimentalEncodingApi::class)
     private fun mapRowToWebpagePopup(row: ResultRow): WebpagePopup {
         return WebpagePopup(
-            pageHash = row[WebpagePopupTable.pageHash],
+            pageHash = Base64.decode(row[WebpagePopupTable.pageHash]),
             popupXPaths = json.decodeFromString(row[WebpagePopupTable.popupXPaths])
         )
     }
