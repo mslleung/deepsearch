@@ -13,6 +13,7 @@ import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * Playwright-backed implementation of a browser page.
@@ -26,6 +27,19 @@ class PlaywrightBrowserPage(
 ) : IBrowserPage {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    init {
+        page.onConsoleMessage { consoleMessage ->
+            val message = consoleMessage.text()
+            when (val type = consoleMessage.type()) {
+                "log", "info" -> logger.info("[JS Console] {}", message)
+                "warn" -> logger.warn("[JS Console] {}", message)
+                "error" -> logger.error("[JS Console] {}", message)
+                "debug" -> logger.debug("[JS Console] {}", message)
+                else -> logger.info("[JS Console] [{}] {}", type, message)
+            }
+        }
+    }
 
     override suspend fun getUrl(): String = page.url()
 
@@ -117,6 +131,7 @@ class PlaywrightBrowserPage(
     @Serializable
     private data class IconResult(val base64: String, val xPathSelectors: List<String>)
 
+    @OptIn(ExperimentalEncodingApi::class)
     override suspend fun extractIcons(): List<IBrowserPage.Icon> {
         logger.debug("Extracting icons via evaluate()")
         val extractIconJsonRaw = page.evaluate(loadScript("out/extractIcons.js")) as String
@@ -137,21 +152,58 @@ class PlaywrightBrowserPage(
 
     @Serializable
     private data class ImageResult(val base64: String, val xPathSelectors: List<String>)
+    
+    @Serializable
+    private data class FailedImage(val xPath: String, val reason: String)
+    
+    @Serializable
+    private data class ImageExtractionResult(
+        val successful: List<ImageResult>,
+        val failed: List<FailedImage>
+    )
 
+    @OptIn(ExperimentalEncodingApi::class)
     override suspend fun extractImages(): List<IBrowserPage.WebImage> {
         logger.debug("Extracting images via evaluate()")
         val extractImageJsonRaw = page.evaluate(loadScript("out/extractImages.js")) as String
-        val decoded = Json.decodeFromString<List<ImageResult>>(extractImageJsonRaw)
-        val results = decoded.map { result ->
+        val decoded = Json.decodeFromString<ImageExtractionResult>(extractImageJsonRaw)
+        
+        val results = mutableListOf<IBrowserPage.WebImage>()
+        
+        // Process successful canvas-based extractions
+        decoded.successful.forEach { result ->
             val bytes = Base64.decode(result.base64)
-            IBrowserPage.WebImage(
-                bytes = bytes,
-                mimeType = ImageMimeType.JPEG,
-                xPathSelectors = result.xPathSelectors
+            results.add(
+                IBrowserPage.WebImage(
+                    bytes = bytes,
+                    mimeType = ImageMimeType.JPEG,
+                    xPathSelectors = result.xPathSelectors
+                )
             )
         }
+        
+        // Process failed images using screenshot fallback
+        if (decoded.failed.isNotEmpty()) {
+            logger.info("Processing {} failed images using screenshot fallback", decoded.failed.size)
+            decoded.failed.forEach { failedImage ->
+                try {
+                    val screenshot = getElementScreenshotByXPath(failedImage.xPath)
+                    results.add(
+                        IBrowserPage.WebImage(
+                            bytes = screenshot.bytes,
+                            mimeType = screenshot.mimeType,
+                            xPathSelectors = listOf(failedImage.xPath)
+                        )
+                    )
+                    logger.debug("Successfully captured screenshot for failed image at {}", failedImage.xPath)
+                } catch (e: Exception) {
+                    logger.warn("Failed to capture screenshot for image at {}: {}", failedImage.xPath, e.message)
+                }
+            }
+        }
 
-        logger.debug("extractImages produced {} unique images", results.size)
+        logger.debug("extractImages produced {} unique images ({} canvas-based, {} screenshot-based)", 
+            results.size, decoded.successful.size, decoded.failed.size)
         return results
     }
 
