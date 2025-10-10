@@ -144,6 +144,7 @@ class MarkdownConversionAgentAdkImpl : IMarkdownConversionAgent {
     /**
      * Cleans HTML by removing non-content elements that don't contribute to markdown conversion.
      * This includes scripts, styles, navigation elements, ads, and other noise.
+     * Performs aggressive cleaning to reduce token count while preserving content structure.
      */
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
@@ -164,10 +165,36 @@ class MarkdownConversionAgentAdkImpl : IMarkdownConversionAgent {
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Remove empty elements that don't contribute to content
+        // Strip all attributes except those essential for content structure
         doc.select("*").forEach { element ->
-            if (element.children().isEmpty() && element.ownText().isBlank()) {
-                element.remove()
+            val essentialAttrs = setOf("href", "src", "alt", "title", "colspan", "rowspan")
+            val attrsToKeep = element.attributes().filter { attr -> 
+                attr.key in essentialAttrs 
+            }
+            element.clearAttributes()
+            attrsToKeep.forEach { attr -> 
+                element.attr(attr.key, attr.value) 
+            }
+        }
+
+        // Remove empty elements that don't contribute to content
+        var changed = true
+        while (changed) {
+            changed = false
+            val emptyElements = doc.select("*").filter { element ->
+                element.children().isEmpty() && element.ownText().isBlank()
+            }
+            if (emptyElements.isNotEmpty()) {
+                emptyElements.forEach { it.remove() }
+                changed = true
+            }
+        }
+
+        // Normalize whitespace in text nodes
+        doc.select("*").forEach { element ->
+            element.textNodes().forEach { textNode ->
+                val normalized = textNode.text().replace("\\s+".toRegex(), " ")
+                textNode.text(normalized)
             }
         }
 

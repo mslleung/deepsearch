@@ -170,7 +170,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
             "head, title, base, form, input, button, select, textarea, " +
             "nav, header, footer, aside, " +
-            "img, video, audio, source, track"
+            "img, video, audio, source, track, picture"
         ).remove()
 
         // Remove comments and processing instructions
@@ -180,60 +180,40 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             }
         }
 
-        // Keep the body content, but limit depth to avoid overly complex structures
-        val body = doc.body()
-
-        val sb = StringBuilder()
-        appendSanitizedOutline(body, sb, 0)
-
-        return sb.toString()
-    }
-
-    private fun appendSanitizedOutline(element: Element, sb: StringBuilder, depth: Int) {
-        val MAX_DEPTH = 5
-        val MAX_CHILDREN = 30
-        if (depth > MAX_DEPTH) return
-
-        val allowedTags = setOf(
-            "table", "thead", "tbody", "tfoot", "tr", "td", "th", "div", "section", "article", "main",
-            "ul", "ol", "li", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "b", "i"
-        )
-
-        val tagName = element.tagName()
-        if (depth > 0 && !allowedTags.contains(tagName)) {
-            // Skip non-structural/noisy tags below root
-            return
+        // Strip all attributes except those essential for table identification
+        doc.select("*").forEach { element ->
+            val essentialAttrs = setOf("id", "class", "role", "colspan", "rowspan", "scope")
+            val attrsToKeep = element.attributes().filter { attr -> 
+                attr.key in essentialAttrs 
+            }
+            element.clearAttributes()
+            attrsToKeep.forEach { attr -> 
+                element.attr(attr.key, attr.value) 
+            }
         }
 
-        val indent = "  ".repeat(depth)
-        val id = element.attr("id").take(80)
-        val classAttr = element.attr("class").split(" ")
-            .filter { it.isNotBlank() }
-            .take(3)
-            .joinToString(" ")
-            .take(120)
-        val role = element.attr("role").take(40)
-        val ariaLabel = element.attr("aria-label").take(120)
-
-        sb.append("$indent<${tagName}")
-        if (id.isNotEmpty()) sb.append(" id=\"$id\"")
-        if (classAttr.isNotEmpty()) sb.append(" class=\"$classAttr\"")
-        if (role.isNotEmpty()) sb.append(" role=\"$role\"")
-        if (ariaLabel.isNotEmpty()) sb.append(" aria-label=\"$ariaLabel\"")
-        sb.append(">\n")
-
-        val text = element.ownText().trim()
-        if (text.isNotEmpty() && text.length <= 200) {
-            sb.append("$indent  ${text}\n")
+        // Normalize whitespace in text nodes to reduce size
+        doc.select("*").forEach { element ->
+            element.textNodes().forEach { textNode ->
+                val normalized = textNode.text().replace("\\s+".toRegex(), " ").trim()
+                textNode.text(normalized)
+            }
         }
 
-        var count = 0
-        for (child in element.children()) {
-            if (count >= MAX_CHILDREN) break
-            appendSanitizedOutline(child, sb, depth + 1)
-            count++
+        // Remove empty elements iteratively
+        var changed = true
+        while (changed) {
+            changed = false
+            val emptyElements = doc.select("*").filter { element ->
+                element.children().isEmpty() && element.ownText().isBlank() &&
+                element.attr("id").isEmpty() && element.attr("class").isEmpty()
+            }
+            if (emptyElements.isNotEmpty()) {
+                emptyElements.forEach { it.remove() }
+                changed = true
+            }
         }
 
-        sb.append("$indent</${tagName}>\n")
+        return doc.outerHtml()
     }
 }

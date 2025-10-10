@@ -59,20 +59,18 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
         )
         instruction(
             """
-            Task: Find all visible popup/cookie banner containers and return unique XPaths to their root container elements.
+            Task: Find all popup/cookie banner containers and return unique XPaths to their root container elements.
 
             Inputs:
             - A screenshot of the webpage (current viewport)
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
-            - Understand the website visually using the webpage screenshot
-            - Identify ALL visible popups, cookie banners, modal dialogs, overlay containers, and promotional overlays
+            - Identify all popups, cookie banners and modal dialogs
+            - The identified elements should normally interrupt the user's use of the website, all other elements should be excluded
             - For each popup, identify the ROOT CONTAINER element (not buttons, not text, but the container that wraps the entire popup)
             - Return XPath selectors that point to these root container elements (e.g., <div>, <section>, <aside> that contain the popup)
-            - Focus on containers that overlay the main content or appear as modal dialogs
-            - Include containers with common popup/modal characteristics: fixed/absolute positioning, z-index layers, backdrop overlays
-            - If no popups are visible, return an empty list
+            - If no popups are found, return an empty list
 
             Output structure:
             {
@@ -166,8 +164,17 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
 
         // Remove non-visual/noise elements aggressively
         doc.select(
-            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed"
+            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
+            "img, video, audio, source, track, picture"
         ).remove()
+
+        // Remove comments and processing instructions
+        doc.select("*").forEach { element ->
+            val nodesToRemove = element.childNodes().filter { node -> 
+                node.nodeName() == "#comment" || node.nodeName() == "#pi" 
+            }
+            nodesToRemove.forEach { node -> node.remove() }
+        }
 
         // Define relevance for popup/modal related containers
         val relevanceSelector = (
@@ -189,66 +196,51 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
             el.parents().none { parent -> parent.`is`(relevanceSelector) }
         }
 
-        val sb = StringBuilder()
-        for (root in topLevelRelevant) {
-            appendSanitizedOutline(root, sb, 0)
+        // Remove all elements that are not top-level relevant or their descendants
+        doc.body().children().forEach { child ->
+            if (!topLevelRelevant.contains(child) && topLevelRelevant.none { it.contains(child) }) {
+                child.remove()
+            }
         }
 
-        return sb.toString()
-    }
-
-    private fun appendSanitizedOutline(element: Element, sb: StringBuilder, depth: Int) {
-        val MAX_DEPTH = 4
-        val MAX_CHILDREN = 30
-        if (depth > MAX_DEPTH) return
-
-        val allowedTags = setOf(
-            "dialog", "div", "section", "aside", "header", "footer", "nav", "ul", "li", "a", "button", "span", "p", "img"
-        )
-
-        val tagName = element.tagName()
-        if (depth > 0 && !allowedTags.contains(tagName)) {
-            return
+        // Strip all attributes except those essential for popup identification
+        doc.select("*").forEach { element ->
+            val essentialAttrs = setOf("id", "class", "role", "aria-modal", "aria-label", "aria-labelledby", "data-testid")
+            val attrsToKeep = element.attributes().filter { attr -> 
+                attr.key in essentialAttrs 
+            }
+            element.clearAttributes()
+            attrsToKeep.forEach { attr -> 
+                element.attr(attr.key, attr.value) 
+            }
         }
 
-        val indent = "  ".repeat(depth)
-        val id = element.attr("id").take(80)
-        val classAttr = element.attr("class").split(" ")
-            .filter { it.isNotBlank() }
-            .take(3)
-            .joinToString(" ")
-            .take(120)
-        val role = element.attr("role").take(40)
-        val ariaLabel = element.attr("aria-label").take(120)
-        val style = element.attr("style").lowercase()
-
-        // Keep a minimal hint from style to detect overlays without leaking big strings
-        val styleFlags = buildList {
-            if (style.contains("position:fixed") || style.contains("position: absolute")) add("pos")
-            if (style.contains("z-index")) add("z")
-            if (style.contains("backdrop") || style.contains("overlay")) add("overlay")
-        }.joinToString(",")
-
-        sb.append("$indent<${tagName}")
-        if (id.isNotEmpty()) sb.append(" id=\"$id\"")
-        if (classAttr.isNotEmpty()) sb.append(" class=\"$classAttr\"")
-        if (role.isNotEmpty()) sb.append(" role=\"$role\"")
-        if (ariaLabel.isNotEmpty()) sb.append(" aria-label=\"$ariaLabel\"")
-        if (styleFlags.isNotEmpty()) sb.append(" flags=\"$styleFlags\"")
-        sb.append(">\n")
-
-        val text = element.ownText().trim()
-        if (text.isNotEmpty() && text.length <= 160) {
-            sb.append("$indent  ${text}\n")
+        // Truncate text content to reduce size (popup identification doesn't need full text)
+        doc.select("*").forEach { element ->
+            element.textNodes().forEach { textNode ->
+                val text = textNode.text().trim()
+                if (text.length > 50) {
+                    textNode.text(text.take(50) + "...")
+                } else if (text.isNotEmpty()) {
+                    textNode.text(text)
+                }
+            }
         }
 
-        var count = 0
-        for (child in element.children()) {
-            if (count >= MAX_CHILDREN) break
-            appendSanitizedOutline(child, sb, depth + 1)
-            count++
+        // Remove empty elements iteratively
+        var changed = true
+        while (changed) {
+            changed = false
+            val emptyElements = doc.select("*").filter { element ->
+                element.children().isEmpty() && element.ownText().isBlank() &&
+                element.attr("id").isEmpty() && element.attr("class").isEmpty() && element.attr("role").isEmpty()
+            }
+            if (emptyElements.isNotEmpty()) {
+                emptyElements.forEach { it.remove() }
+                changed = true
+            }
         }
 
-        sb.append("$indent</${tagName}>\n")
+        return doc.outerHtml()
     }
 }

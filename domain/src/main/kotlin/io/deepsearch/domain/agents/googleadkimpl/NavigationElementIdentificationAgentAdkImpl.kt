@@ -185,8 +185,17 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
 
         // Remove non-visual/noise elements aggressively
         doc.select(
-            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed"
+            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
+            "img, video, audio, source, track, picture"
         ).remove()
+
+        // Remove comments and processing instructions
+        doc.select("*").forEach { element ->
+            val nodesToRemove = element.childNodes().filter { node -> 
+                node.nodeName() == "#comment" || node.nodeName() == "#pi" 
+            }
+            nodesToRemove.forEach { node -> node.remove() }
+        }
 
         // Define relevance for navigation-related containers
         val keywordRegex = "(?i)(header|navbar|nav|menu|topbar|toolbar|footer|foot|sidebar|sidenav|side-nav|aside|drawer|breadcrumb|breadcrumbs|sticky)"
@@ -212,59 +221,52 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             el.parents().none { parent -> parent.`is`(relevanceSelector) }
         }
 
-        val sb = StringBuilder()
-        for (root in topLevelRelevant) {
-            appendSanitizedOutline(root, sb, 0)
+        // Remove all elements that are not top-level relevant or their descendants
+        doc.body().children().forEach { child ->
+            if (!topLevelRelevant.contains(child) && topLevelRelevant.none { it.contains(child) }) {
+                child.remove()
+            }
         }
 
-        return sb.toString()
-    }
-
-    private fun appendSanitizedOutline(element: Element, sb: StringBuilder, depth: Int) {
-        val MAX_DEPTH = 4
-        val MAX_CHILDREN = 25
-        if (depth > MAX_DEPTH) return
-
-        val allowedTags = setOf(
-            "header", "nav", "footer", "aside", "div", "section", "ul", "li", "a", "button", "span", "img", "main", "article"
-        )
-
-        val tagName = element.tagName()
-        if (depth > 0 && !allowedTags.contains(tagName)) {
-            // Skip non-structural/noisy tags below root
-            return
+        // Strip all attributes except those essential for navigation identification
+        doc.select("*").forEach { element ->
+            val essentialAttrs = setOf("id", "class", "role", "aria-label", "aria-labelledby", "data-testid")
+            val attrsToKeep = element.attributes().filter { attr -> 
+                attr.key in essentialAttrs 
+            }
+            element.clearAttributes()
+            attrsToKeep.forEach { attr -> 
+                element.attr(attr.key, attr.value) 
+            }
         }
 
-        val indent = "  ".repeat(depth)
-        val id = element.attr("id").take(80)
-        val classAttr = element.attr("class").split(" ")
-            .filter { it.isNotBlank() }
-            .take(3)
-            .joinToString(" ")
-            .take(120)
-        val role = element.attr("role").take(40)
-        val ariaLabel = element.attr("aria-label").take(120)
-
-        sb.append("$indent<${tagName}")
-        if (id.isNotEmpty()) sb.append(" id=\"$id\"")
-        if (classAttr.isNotEmpty()) sb.append(" class=\"$classAttr\"")
-        if (role.isNotEmpty()) sb.append(" role=\"$role\"")
-        if (ariaLabel.isNotEmpty()) sb.append(" aria-label=\"$ariaLabel\"")
-        sb.append(">\n")
-
-        val text = element.ownText().trim()
-        if (text.isNotEmpty() && text.length <= 160) {
-            sb.append("$indent  ${text}\n")
+        // Truncate text content to reduce size (navigation identification doesn't need full text)
+        doc.select("*").forEach { element ->
+            element.textNodes().forEach { textNode ->
+                val text = textNode.text().trim()
+                if (text.length > 50) {
+                    textNode.text(text.take(50) + "...")
+                } else if (text.isNotEmpty()) {
+                    textNode.text(text)
+                }
+            }
         }
 
-        var count = 0
-        for (child in element.children()) {
-            if (count >= MAX_CHILDREN) break
-            appendSanitizedOutline(child, sb, depth + 1)
-            count++
+        // Remove empty elements iteratively
+        var changed = true
+        while (changed) {
+            changed = false
+            val emptyElements = doc.select("*").filter { element ->
+                element.children().isEmpty() && element.ownText().isBlank() &&
+                element.attr("id").isEmpty() && element.attr("class").isEmpty() && element.attr("role").isEmpty()
+            }
+            if (emptyElements.isNotEmpty()) {
+                emptyElements.forEach { it.remove() }
+                changed = true
+            }
         }
 
-        sb.append("$indent</${tagName}>\n")
+        return doc.outerHtml()
     }
 }
 
