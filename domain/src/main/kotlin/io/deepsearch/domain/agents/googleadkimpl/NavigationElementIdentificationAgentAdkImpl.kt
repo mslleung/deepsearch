@@ -8,6 +8,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.NavigationElementIdentificationInput
 import io.deepsearch.domain.agents.NavigationElementIdentificationOutput
@@ -144,7 +145,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             }
         }
 
-        val response = Json.decodeFromString<NavigationElementsResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<NavigationElementsResponse>(llmResponse)
 
         val normalized = response.elements.mapNotNull { item ->
             val x = item.xpath.trim().ifEmpty { null } ?: return@mapNotNull null

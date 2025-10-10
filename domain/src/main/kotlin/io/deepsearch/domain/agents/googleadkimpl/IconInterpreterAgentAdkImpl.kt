@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.agents.IconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -132,7 +133,7 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
             }
         }
 
-        val response = Json.decodeFromString<IconInterpretationResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<IconInterpretationResponse>(llmResponse)
 
         if (!response.label.isNullOrBlank()) {
             logger.debug("Icon interpreted: {}", response.label)

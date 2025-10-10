@@ -27,8 +27,25 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
-            query = "Does the standard body check package include testing Glomerular Filtration Rate - eGfr?",  // no
-            url = "https://www.otandp.com/"
+            query = "Does the standard body check package include testing \"Stool: Occult Blood?\"",  // no
+            url = "https://www.otandp.com/body-check"
+        )
+
+        // When
+        val result = agenticBrowserSearchStrategy.execute(searchQuery)
+
+        // Then
+        assertEquals(searchQuery, result.originalQuery)
+        assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
+        assertTrue(!result.sources.isEmpty(), "Sources should not be empty")
+    }
+
+    @Test
+    fun `test sample query on soschinmed`() = runTest(testCoroutineDispatcher) {
+        // Given
+        val searchQuery = SearchQuery(
+            query = "How much is a video consultation with 潘健燊醫師?",
+            url = "https://soschinmed.com/onlineconsultation/"
         )
 
         // When

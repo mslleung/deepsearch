@@ -9,6 +9,7 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -118,7 +119,7 @@ class BlinkTestAgentAdkImpl : IBlinkTestAgent {
             }
         }
 
-        val response = Json.decodeFromString<BlinkResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<BlinkResponse>(llmResponse)
         val decision = when (response.decision.uppercase()) {
             "RELEVANT" -> IBlinkTestAgent.Decision.RELEVANT
             "IRRELEVANT" -> IBlinkTestAgent.Decision.IRRELEVANT

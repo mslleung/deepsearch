@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -154,7 +155,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             }
         }
 
-        val response = Json.decodeFromString<TableIdentificationResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<TableIdentificationResponse>(llmResponse)
 
         logger.debug("Table identification found {} tables", response.tables.size)
 
@@ -164,41 +165,26 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
 
-        // Remove non-visual/noise elements aggressively
+        // Remove elements that are clearly irrelevant to table identification
         doc.select(
-            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed"
+            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
+            "head, title, base, form, input, button, select, textarea, " +
+            "nav, header, footer, aside, " +
+            "img, video, audio, source, track"
         ).remove()
 
-        // Define relevance for table-related containers
-        val keywordRegex = "(?i)(table|grid|data|chart|schedule|pricing|comparison|list|matrix|report)"
-        val roleRegex = "(?i)(table|grid|presentation|region)"
-        val relevanceSelector = listOf(
-            // Standard table elements
-            "table, thead, tbody, tfoot, tr, td, th",
-            // CSS-based table layouts
-            "[role~=$roleRegex]",
-            // Heuristic keywords in id/class/aria-label
-            "[id~=$keywordRegex]",
-            "[class~=$keywordRegex]",
-            "[aria-label~=(?i)(table|grid|data|chart|schedule|pricing|comparison)]",
-            // Common container tags that often hold tabular data
-            "div, section, article, main"
-        ).joinToString(", ")
-
-        val relevant = doc.select(relevanceSelector)
-        if (relevant.isEmpty()) {
-            return "" // Nothing obviously relevant
+        // Remove comments and processing instructions
+        doc.select("*").forEach { element ->
+            element.childNodes().removeIf { node -> 
+                node.nodeName() == "#comment" || node.nodeName() == "#pi" 
+            }
         }
 
-        // Keep only TOP-LEVEL relevant elements to avoid duplicates
-        val topLevelRelevant = relevant.filter { el ->
-            el.parents().none { parent -> parent.`is`(relevanceSelector) }
-        }
+        // Keep the body content, but limit depth to avoid overly complex structures
+        val body = doc.body()
 
         val sb = StringBuilder()
-        for (root in topLevelRelevant) {
-            appendSanitizedOutline(root, sb, 0)
-        }
+        appendSanitizedOutline(body, sb, 0)
 
         return sb.toString()
     }

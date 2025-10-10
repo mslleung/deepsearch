@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.IImageTextExtractionAgent
 import io.deepsearch.domain.agents.ImageTextExtractionInput
 import io.deepsearch.domain.agents.ImageTextExtractionOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -164,7 +165,7 @@ class ImageTextExtractionAgentAdkImpl : IImageTextExtractionAgent {
             }
         }
 
-        val response = Json.decodeFromString<ImageTextExtractionResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<ImageTextExtractionResponse>(llmResponse)
 
         if (!response.extractedText.isNullOrBlank()) {
             val transformed = transformHTMLTablesToMarkdown(response.extractedText)

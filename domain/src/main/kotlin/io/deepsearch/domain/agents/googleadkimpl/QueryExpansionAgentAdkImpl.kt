@@ -9,6 +9,7 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -152,7 +153,7 @@ class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
             }
         }
 
-        val response = Json.decodeFromString<QueryExpansionResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<QueryExpansionResponse>(llmResponse)
 
         val expandedQueries = response.queries.map { SearchQuery(it.query, input.searchQuery.url) }
 

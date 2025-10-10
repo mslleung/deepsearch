@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.AggregateSearchResultsInput
 import io.deepsearch.domain.agents.AggregateSearchResultsOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -152,7 +153,7 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
             }
         }
 
-        val response = Json.decodeFromString<AggregatedResultResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<AggregatedResultResponse>(llmResponse)
 
         val aggregated = SearchResult(
             originalQuery = input.searchQuery,

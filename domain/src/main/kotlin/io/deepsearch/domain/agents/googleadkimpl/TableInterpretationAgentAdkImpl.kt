@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.agents.TableInterpretationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -121,7 +122,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             }
         }
 
-        val response = Json.decodeFromString<TableInterpretationResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<TableInterpretationResponse>(llmResponse)
 
         val markdown = response.markdown.trim()
         logger.debug("Table interpreted to markdown ({} chars)", markdown.length)

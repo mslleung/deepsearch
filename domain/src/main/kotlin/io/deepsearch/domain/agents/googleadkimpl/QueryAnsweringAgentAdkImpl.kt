@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.IQueryAnsweringAgent
 import io.deepsearch.domain.agents.QueryAnsweringInput
 import io.deepsearch.domain.agents.QueryAnsweringOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -51,7 +52,7 @@ class QueryAnsweringAgentAdkImpl : IQueryAnsweringAgent {
         disallowTransferToParent(true)
         generateContentConfig(
             GenerateContentConfig.builder()
-                .temperature(0.1F)
+                .temperature(0F)
                 .build()
         )
         instruction(
@@ -62,11 +63,9 @@ class QueryAnsweringAgentAdkImpl : IQueryAnsweringAgent {
             Instructions:
             - Analyze both the screenshot and HTML content to understand the webpage
             - Focus on answering the specific search query provided
-            - Extract relevant information from both visual elements and text content
             - Provide a clear, accurate, and comprehensive answer
-            - If the information is not available on the page, state that clearly
             - Use specific details from the webpage to support your answer
-            - Format your answer in a clear and readable manner
+            - If the information is not available on the page, state that clearly
 
             Expected output shape:
             {
@@ -133,7 +132,7 @@ class QueryAnsweringAgentAdkImpl : IQueryAnsweringAgent {
             }
         }
 
-        val response = Json.decodeFromString<QueryAnsweringResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<QueryAnsweringResponse>(llmResponse)
 
         logger.debug("Query answered successfully")
         return QueryAnsweringOutput(answer = response.answer)

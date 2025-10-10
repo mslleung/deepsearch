@@ -8,6 +8,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
 import io.deepsearch.domain.agents.PopupContainerIdentificationInput
 import io.deepsearch.domain.agents.PopupContainerIdentificationOutput
@@ -130,7 +131,7 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
             }
         }
 
-        val response = Json.decodeFromString<PopupContainerIdentificationResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<PopupContainerIdentificationResponse>(llmResponse)
         val validXPaths = response.popupContainerXPaths
             .filter { it.isNotBlank() }
             .map { normalizeXPath(it) }

@@ -70,5 +70,4 @@ val infrastructureModule = module {
 }
 ```
 
-- **When changing lifecycles**: Reassess test modules to keep parity. Update `domainTestModule`/`applicationTestModule` accordingly to preserve integration coverage.
-
+Always check tests DI after changing DI in main code.
