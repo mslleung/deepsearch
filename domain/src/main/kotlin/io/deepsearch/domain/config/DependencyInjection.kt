@@ -28,7 +28,6 @@ val domainModule = module {
         scopedOf(::IconInterpreterAgentAdkImpl) bind IIconInterpreterAgent::class
         scopedOf(::ImageTextExtractionAgentAdkImpl) bind IImageTextExtractionAgent::class
         scopedOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
-        scopedOf(::QueryAnsweringAgentAdkImpl) bind IQueryAnsweringAgent::class
         scopedOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
     }
 }
