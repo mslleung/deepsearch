@@ -6,7 +6,6 @@ import io.deepsearch.application.searchstrategies.googlesearch.GoogleSearchStrat
 import io.deepsearch.application.searchstrategies.googlesearch.IGoogleSearchStrategy
 import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupContainerIdentificationService
-import io.deepsearch.application.services.IQueryAnsweringService
 import io.deepsearch.application.services.ISearchService
 import io.deepsearch.application.services.ITableIdentificationService
 import io.deepsearch.application.services.ITableInterpretationService
@@ -16,7 +15,6 @@ import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.application.services.NavigationElementRemovalService
 import io.deepsearch.application.services.PopupContainerIdentificationService
-import io.deepsearch.application.services.QueryAnsweringService
 import io.deepsearch.application.services.SearchService
 import io.deepsearch.application.services.TableIdentificationService
 import io.deepsearch.application.services.TableInterpretationService
@@ -48,7 +46,6 @@ val applicationTestModule = module {
     singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
     singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
-    singleOf(::QueryAnsweringService) bind IQueryAnsweringService::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 }

@@ -7,10 +7,10 @@ import io.deepsearch.domain.agents.IImageTextExtractionAgent
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.IIconInterpreterAgent
+import io.deepsearch.domain.agents.IDirectAnswerAgent
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
-import io.deepsearch.domain.agents.IQueryAnsweringAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.ITableInterpretationAgent
@@ -21,10 +21,10 @@ import io.deepsearch.domain.agents.googleadkimpl.ImageTextExtractionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.IconInterpreterAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.DirectAnswerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.NavigationElementIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PopupContainerIdentificationAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.QueryAnsweringAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableInterpretationAgentAdkImpl
@@ -53,7 +53,7 @@ val domainTestModule = module {
     singleOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
     singleOf(::ImageTextExtractionAgentAdkImpl) bind IImageTextExtractionAgent::class
-    singleOf(::QueryAnsweringAgentAdkImpl) bind IQueryAnsweringAgent::class
+    singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }

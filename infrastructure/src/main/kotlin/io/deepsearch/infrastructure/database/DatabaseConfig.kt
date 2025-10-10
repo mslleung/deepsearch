@@ -32,7 +32,6 @@ object DatabaseConfig {
                     WebpageTableTable,
                     WebpageTableInterpretationTable,
                     WebpageNavigationElementTable,
-                    QueryAnswerTable
                 )
             }
         }

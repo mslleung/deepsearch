@@ -7,9 +7,9 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
-import io.deepsearch.domain.agents.IQueryAnsweringAgent
-import io.deepsearch.domain.agents.QueryAnsweringInput
-import io.deepsearch.domain.agents.QueryAnsweringOutput
+import io.deepsearch.domain.agents.DirectAnswerInput
+import io.deepsearch.domain.agents.DirectAnswerOutput
+import io.deepsearch.domain.agents.IDirectAnswerAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import kotlinx.coroutines.reactive.asFlow
@@ -20,23 +20,24 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * Multimodal query answering agent.
+ * Direct answer agent for benchmarking purposes.
  *
  * Given a webpage screenshot, HTML content, and a search query, 
- * produce a comprehensive answer based on the visual and textual content.
+ * produce a direct answer based on the visual and textual content.
+ * This agent is designed for testing and benchmarking scenarios.
  */
-class QueryAnsweringAgentAdkImpl : IQueryAnsweringAgent {
+class DirectAnswerAgentAdkImpl : IDirectAnswerAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Answer to a search query based on webpage content")
+        .description("Direct answer to a search query based on webpage content")
         .properties(
             mapOf(
                 "answer" to Schema.builder()
                     .type("STRING")
-                    .description("Comprehensive answer to the search query based on the webpage content")
+                    .description("Direct answer to the search query based on the webpage content")
                     .build()
             )
         )
@@ -44,8 +45,8 @@ class QueryAnsweringAgentAdkImpl : IQueryAnsweringAgent {
         .build()
 
     private val agent: LlmAgent = LlmAgent.builder().run {
-        name("queryAnsweringAgent")
-        description("Answer search queries based on webpage screenshot and HTML content")
+        name("directAnswerAgent")
+        description("Provide direct answers to search queries based on webpage screenshot and HTML content")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -58,14 +59,15 @@ class QueryAnsweringAgentAdkImpl : IQueryAnsweringAgent {
         instruction(
             """
             You are given a webpage screenshot, HTML content, and a search query. 
-            Your task is to provide a comprehensive answer to the search query based on the visual and textual content of the webpage.
+            Your task is to provide a direct, accurate answer to the search query based on the visual and textual content of the webpage.
             
             Instructions:
             - Analyze both the screenshot and HTML content to understand the webpage
             - Focus on answering the specific search query provided
-            - Provide a clear, accurate, and comprehensive answer
+            - Provide a clear, direct, and accurate answer
             - Use specific details from the webpage to support your answer
             - If the information is not available on the page, state that clearly
+            - Keep the answer concise but comprehensive
 
             Expected output shape:
             {
@@ -79,12 +81,13 @@ class QueryAnsweringAgentAdkImpl : IQueryAnsweringAgent {
     private val runner = InMemoryRunner(agent)
 
     @Serializable
-    private data class QueryAnsweringResponse(
+    private data class DirectAnswerResponse(
         val answer: String
     )
 
-    override suspend fun generate(input: QueryAnsweringInput): QueryAnsweringOutput {
-        logger.debug("Answering query: '{}' for URL: {}", input.searchQuery.query, input.searchQuery.url)
+    override suspend fun generate(input: DirectAnswerInput): DirectAnswerOutput {
+        logger.debug("Generating direct answer for query: '{}' on URL: {}", 
+            input.searchQuery.query, input.searchQuery.url)
 
         val session = runner
             .sessionService()
@@ -132,9 +135,9 @@ class QueryAnsweringAgentAdkImpl : IQueryAnsweringAgent {
             }
         }
 
-        val response = Json.decodeFromStringWithCodeBlocks<QueryAnsweringResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<DirectAnswerResponse>(llmResponse)
 
-        logger.debug("Query answered successfully")
-        return QueryAnsweringOutput(answer = response.answer)
+        logger.debug("Direct answer generated successfully")
+        return DirectAnswerOutput(answer = response.answer)
     }
 }

@@ -20,3 +20,4 @@ Prefer using enums over free-form strings.
 
 Build guidelines:
 Never use tsc to compile ts files, use compileTypescript gradle task instead
+Do not add annotations for experimental apis unless they are necessary. (Omitting them would break the build etc.)
