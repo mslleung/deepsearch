@@ -7,6 +7,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
+import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
@@ -49,6 +50,11 @@ class BlinkTestAgentAdkImpl : IBlinkTestAgent {
         generateContentConfig(
             GenerateContentConfig.builder()
                 .temperature(0.1F)
+                .thinkingConfig(
+                    ThinkingConfig.builder()
+                        .thinkingBudget(0)
+                        .build()
+                )
                 .build()
         )
         instruction(

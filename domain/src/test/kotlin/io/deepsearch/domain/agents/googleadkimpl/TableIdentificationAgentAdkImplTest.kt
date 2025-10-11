@@ -43,8 +43,13 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
             val page = context.newPage()
             page.navigate(url)
             val html = page.getFullHtml()
+            val screenshot = page.takeFullPageScreenshot()
 
-            val input = TableIdentificationInput(html)
+            val input = TableIdentificationInput(
+                screenshotBytes = screenshot.bytes,
+                mimetype = screenshot.mimeType,
+                html = html
+            )
             val output = agent.generate(input)
 
             assertEquals(1, output.tables.size, "Should identify exactly one table")

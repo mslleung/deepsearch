@@ -43,8 +43,13 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
             val page = context.newPage()
             page.navigate(url)
             val html = page.getFullHtml()
+            val screenshot = page.takeFullPageScreenshot()
             val idOutput = tableIdentificationAgent.generate(
-                TableIdentificationInput(html)
+                TableIdentificationInput(
+                    screenshotBytes = screenshot.bytes,
+                    mimetype = screenshot.mimeType,
+                    html = html
+                )
             )
             // Take first table if any
             val first = idOutput.tables.firstOrNull() ?: return@runTest

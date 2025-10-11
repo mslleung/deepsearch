@@ -7,6 +7,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
+import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.agents.IconInterpreterOutput
@@ -57,6 +58,11 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
         generateContentConfig(
             GenerateContentConfig.builder()
                 .temperature(0.0F)
+                .thinkingConfig(
+                    ThinkingConfig.builder()
+                        .thinkingBudget(0)
+                        .build()
+                )
                 .build()
         )
         instruction(

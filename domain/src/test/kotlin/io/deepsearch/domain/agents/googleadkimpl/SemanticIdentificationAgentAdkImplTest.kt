@@ -1,7 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
-import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
-import io.deepsearch.domain.agents.NavigationElementIdentificationInput
+import io.deepsearch.domain.agents.ISemanticIdentificationAgent
+import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.constants.ImageMimeType
@@ -13,9 +13,8 @@ import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
-import kotlin.test.assertNotNull
 
-class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
+class SemanticIdentificationAgentAdkImplTest : KoinTest {
 
     @JvmField
     @RegisterExtension
@@ -33,51 +32,66 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
 
     // Loaded resources
     private val exampleHtml: String = resourceText("view-source_https___example.com.html")
+    private val exampleScreenshot: ByteArray = resourceBytes("example.com_.jpg")
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val agent by inject<INavigationElementIdentificationAgent>()
+    private val agent by inject<ISemanticIdentificationAgent>()
     private val browserPool by inject<IBrowserPool>()
 
     @Test
-    fun `should identify no navigation elements on example page`() = runTest(testCoroutineDispatcher) {
-        val input = NavigationElementIdentificationInput(
+    fun `should identify no semantic elements on simple example page`() = runTest(testCoroutineDispatcher) {
+        // Verify resources are loaded
+        assertTrue(exampleScreenshot.isNotEmpty(), "Screenshot should be loaded")
+        assertTrue(exampleHtml.isNotBlank(), "HTML should be loaded")
+        
+        val input = SemanticIdentificationInput(
+            screenshotBytes = exampleScreenshot,
+            mimetype = ImageMimeType.JPEG,
             html = exampleHtml
         )
         val output = agent.generate(input)
-        assertTrue(output.elements.isEmpty(), "Example page should not have navigation elements")
+        assertTrue(output.elements.isEmpty(), "Simple example page should not have semantic elements")
     }
 
     @Test
-    fun `should identify header and footer on OT&P webpage`() = runTest(testCoroutineDispatcher) {
+    fun `should identify navigation elements on OT&P webpage`() = runTest(testCoroutineDispatcher) {
         val browser = browserPool.acquireBrowser()
         val context = browser.createContext()
         try {
             val page = context.newPage()
             page.navigate("https://www.otandp.com/body-check")
 
-            val input = NavigationElementIdentificationInput(
+            val screenshot = page.takeFullPageScreenshot()
+            val input = SemanticIdentificationInput(
+                screenshotBytes = screenshot.bytes,
+                mimetype = screenshot.mimeType,
                 html = page.getFullHtml()
             )
             val output = agent.generate(input)
-            assertTrue(output.elements.isNotEmpty(), "Exposed doc webpage should have navigation elements")
+            
+            assertTrue(output.elements.isNotEmpty(), "OT&P webpage should have semantic elements")
         } finally {
             browser.close()
         }
     }
 
     @Test
-    fun `should identify header and footer on exposed doc page`() = runTest(testCoroutineDispatcher) {
+    fun `should identify header and footer on documentation page`() = runTest(testCoroutineDispatcher) {
         val browser = browserPool.acquireBrowser()
         val context = browser.createContext()
         try {
             val page = context.newPage()
             page.navigate("https://www.jetbrains.com/help/exposed/working-with-database.html")
 
-            val input = NavigationElementIdentificationInput(
+            val screenshot = page.takeFullPageScreenshot()
+            val input = SemanticIdentificationInput(
+                screenshotBytes = screenshot.bytes,
+                mimetype = screenshot.mimeType,
                 html = page.getFullHtml()
             )
             val output = agent.generate(input)
-            assertTrue(output.elements.isNotEmpty(), "Exposed doc webpage should have navigation elements")
+            
+            assertTrue(output.elements.isNotEmpty(), "Documentation page should have semantic elements")
         } finally {
             browser.close()
         }

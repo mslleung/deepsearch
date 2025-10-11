@@ -4,7 +4,7 @@ import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.NavigationElementIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageNavigationElement
-import io.deepsearch.domain.models.valueobjects.NavigationElementMatch
+import io.deepsearch.domain.models.valueobjects.SemanticElement
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -31,7 +31,7 @@ class NavigationElementRemovalService(
     }
 
     data class NavigationElements(
-        val elements: List<NavigationElementMatch>
+        val elements: List<SemanticElement>
     )
 
     private suspend fun extractNavigationalElements(webpage: IBrowserPage): NavigationElements {
@@ -60,7 +60,7 @@ class NavigationElementRemovalService(
             )
         )
         return NavigationElements(
-            elements = identificationResult.elements.map { NavigationElementMatch(xpath = it.xpath, type = it.type, note = it.note) }
+            elements = identificationResult.elements.map { SemanticElement(xpath = it.xpath, type = it.type, note = it.note) }
         )
     }
 

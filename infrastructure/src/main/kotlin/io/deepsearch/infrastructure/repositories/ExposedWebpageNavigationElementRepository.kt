@@ -1,7 +1,7 @@
 package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.WebpageNavigationElement
-import io.deepsearch.domain.models.valueobjects.NavigationElementMatch
+import io.deepsearch.domain.models.valueobjects.SemanticElement
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import io.deepsearch.infrastructure.database.WebpageNavigationElementTable
 import kotlinx.coroutines.flow.map
@@ -12,10 +12,8 @@ import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
 
 class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepository {
 
@@ -49,7 +47,7 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
             pageHash = Base64.decode(row[WebpageNavigationElementTable.pageHash]),
             elements = row[WebpageNavigationElementTable.elementsJson]?.let {
                 try {
-                    Json.decodeFromString<List<NavigationElementMatch>>(it)
+                    Json.decodeFromString<List<SemanticElement>>(it)
                 } catch (e: Exception) {
                     emptyList()
                 }

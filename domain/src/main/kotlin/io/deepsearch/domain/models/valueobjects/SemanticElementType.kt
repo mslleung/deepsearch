@@ -4,7 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class NavigationElementType {
+enum class SemanticElementType {
     @SerialName("HEADER")
     HEADER,
     @SerialName("FOOTER")
@@ -25,6 +25,10 @@ enum class NavigationElementType {
     COOKIE_BANNER,
     @SerialName("AD_BANNER")
     AD_BANNER,
+    @SerialName("POPUP")
+    POPUP,
+    @SerialName("MAIN_CONTENT")
+    MAIN_CONTENT,
     @SerialName("OTHER")
     OTHER
 }

@@ -7,6 +7,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
+import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.MarkdownConversionInput
 import io.deepsearch.domain.agents.MarkdownConversionOutput
@@ -56,6 +57,11 @@ class MarkdownConversionAgentAdkImpl : IMarkdownConversionAgent {
         generateContentConfig(
             GenerateContentConfig.builder()
                 .temperature(0F)
+                .thinkingConfig(
+                    ThinkingConfig.builder()
+                        .thinkingBudget(0)
+                        .build()
+                )
                 .build()
         )
         instruction(
@@ -144,45 +150,82 @@ class MarkdownConversionAgentAdkImpl : IMarkdownConversionAgent {
     /**
      * Cleans HTML by removing non-content elements that don't contribute to markdown conversion.
      * This includes scripts, styles, navigation elements, ads, and other noise.
-     * Performs aggressive cleaning to reduce token count while preserving content structure.
+     * Unlike other agents, this one preserves actual content text since markdown needs it.
      */
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
 
-        // Remove elements that are clearly irrelevant to markdown conversion
+        // Step 1: Remove obvious non-content elements (scripts, styles, etc.)
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
-            "head, title, base, form, input, button, select, textarea, " +
-            "nav, header, footer, aside, " +
-            "img, video, audio, source, track"
+            "head, title, base"
         ).remove()
 
-        // Remove comments and processing instructions
+        // Step 2: Remove navigation elements (these don't belong in main content)
+        doc.select(
+            "nav, header, footer, aside, " +
+            "[role=navigation], [role=banner], [role=contentinfo], [role=complementary]"
+        ).remove()
+
+        // Step 3: Remove form elements (not part of readable content)
+        doc.select("form, input, button, select, textarea").remove()
+
+        // Step 4: Remove comments and processing instructions
         doc.select("*").forEach { element ->
-            val nodesToRemove = element.childNodes().filter { node -> 
-                node.nodeName() == "#comment" || node.nodeName() == "#pi" 
+            val nodesToRemove = element.childNodes().filter { node ->
+                node.nodeName() == "#comment" || node.nodeName() == "#pi"
             }
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Strip all attributes except those essential for content structure
-        doc.select("*").forEach { element ->
-            val essentialAttrs = setOf("href", "src", "alt", "title", "colspan", "rowspan")
-            val attrsToKeep = element.attributes().filter { attr -> 
-                attr.key in essentialAttrs 
+        // Step 5: Convert media elements to text placeholders (preserve alt text)
+        doc.select("img, video, audio").forEach { media ->
+            val alt = media.attr("alt").take(100)
+            val title = media.attr("title").take(100)
+            val src = media.attr("src").take(50)
+            
+            val description = buildString {
+                if (alt.isNotEmpty()) append(alt)
+                else if (title.isNotEmpty()) append(title)
+                else if (src.isNotEmpty()) append("[media: $src]")
             }
-            element.clearAttributes()
-            attrsToKeep.forEach { attr -> 
-                element.attr(attr.key, attr.value) 
+            
+            if (description.isNotEmpty()) {
+                media.text("[$description]")
+                media.tagName("span") // Replace with span to preserve text flow
+            } else {
+                media.remove()
             }
         }
 
-        // Remove empty elements that don't contribute to content
+        // Step 6: Keep only content-relevant attributes (for links, etc.)
+        doc.select("*").forEach { element ->
+            val essentialAttrs = setOf("href", "src", "alt", "title", "colspan", "rowspan")
+            val attrsToKeep = element.attributes().filter { attr ->
+                attr.key in essentialAttrs
+            }
+            element.clearAttributes()
+            attrsToKeep.forEach { attr ->
+                element.attr(attr.key, attr.value)
+            }
+        }
+
+        // Step 7: Normalize whitespace in text nodes (but don't truncate - we need full content!)
+        doc.select("*").forEach { element ->
+            element.textNodes().forEach { textNode ->
+                val normalized = textNode.text().replace("\\s+".toRegex(), " ").trim()
+                textNode.text(normalized)
+            }
+        }
+
+        // Step 8: Remove empty elements that don't contribute to content
         var changed = true
         while (changed) {
             changed = false
             val emptyElements = doc.select("*").filter { element ->
-                element.children().isEmpty() && element.ownText().isBlank()
+                element.children().isEmpty() &&
+                element.ownText().isBlank() &&
+                element.tagName() !in setOf("br", "hr") // Keep structural breaks
             }
             if (emptyElements.isNotEmpty()) {
                 emptyElements.forEach { it.remove() }
@@ -190,14 +233,8 @@ class MarkdownConversionAgentAdkImpl : IMarkdownConversionAgent {
             }
         }
 
-        // Normalize whitespace in text nodes
-        doc.select("*").forEach { element ->
-            element.textNodes().forEach { textNode ->
-                val normalized = textNode.text().replace("\\s+".toRegex(), " ")
-                textNode.text(normalized)
-            }
-        }
-
-        return doc.outerHtml()
+        val cleanedHtml = doc.outerHtml()
+        logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
+        return cleanedHtml
     }
 }

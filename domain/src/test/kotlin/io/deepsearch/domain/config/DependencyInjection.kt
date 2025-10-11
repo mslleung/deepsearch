@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
+import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkImpl
@@ -26,6 +27,7 @@ import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.NavigationElementIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PopupContainerIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.SemanticIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableInterpretationAgentAdkImpl
 import io.deepsearch.domain.browser.BrowserPool
@@ -52,6 +54,7 @@ val domainTestModule = module {
     singleOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
     singleOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
+    singleOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
     singleOf(::ImageTextExtractionAgentAdkImpl) bind IImageTextExtractionAgent::class
     singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class

@@ -3,11 +3,15 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.models.valueobjects.SemanticElement
+import io.deepsearch.domain.models.valueobjects.SemanticElementType
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import kotlin.io.encoding.Base64
 
 interface IWebpageExtractionService {
@@ -19,10 +23,13 @@ class WebpageExtractionService(
     private val tableInterpretationService: ITableInterpretationService,
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
+    private val semanticIdentificationService: ISemanticIdentificationService,
     private val popupContainerIdentificationService: IPopupContainerIdentificationService,
     private val navigationElementRemovalService: INavigationElementRemovalService,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : IWebpageExtractionService {
+
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     /**
      * Converts a webpage into text for downstream LLM processing.
@@ -32,24 +39,25 @@ class WebpageExtractionService(
         val title = webpage.getTitle()
         val description = webpage.getDescription()
 
-        // Identify popup containers before any modifications
-        val popupContainerSelectors = popupContainerIdentificationService.identifyPopupContainers(webpage)
+        // Identify all semantic elements (navigation + popups) before any modifications
+        val semanticElements = semanticIdentificationService.identifySemanticElements(webpage)
 
-        // Extract popup text content and immediately remove popup containers
-        val popupText = if (popupContainerSelectors.isNotEmpty()) {
+        // Extract popup text content first (before removal)
+        val popupText = if (semanticElements.isNotEmpty()) {
             buildString {
-                popupContainerSelectors.forEach { selector ->
-                    val popupText = webpage.extractElementTextContent(selector)
-                    appendLine(popupText)
-                    webpage.removeElement(selector)
+                semanticElements.filter { it.type == SemanticElementType.POPUP }.forEach { popup ->
+                    val text = webpage.extractElementTextContent(popup.xpath)
+                    if (text.isNotBlank()) {
+                        appendLine(text)
+                    }
                 }
             }
         } else {
             null
         }
 
-        // Remove header and footer navigation elements
-        navigationElementRemovalService.removeNavigationElements(webpage)
+        // Remove all semantic elements (popups + navigation elements)
+        removeSemanticElements(webpage, semanticElements)
 
         replaceIconsWithTexts(webpage)
         replaceImagesWithTexts(webpage)
@@ -107,8 +115,13 @@ class WebpageExtractionService(
     private suspend fun replaceTablesWithTexts(webpage: IBrowserPage) = coroutineScope {
         // Table processing: identify tables from HTML and interpret them to markdown
         val fullHtml = webpage.getFullHtml()
+        val fullScreenshot = webpage.takeFullPageScreenshot()
         val tables = tableIdentificationService.identifyTables(
-            TableIdentificationInput(fullHtml)
+            TableIdentificationInput(
+                screenshotBytes = fullScreenshot.bytes,
+                mimetype = fullScreenshot.mimeType,
+                html = fullHtml
+            )
         )
 
         // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)
@@ -134,5 +147,19 @@ class WebpageExtractionService(
             .awaitAll()
 
         webpage.replaceElementsByXPathWithText(replacements)
+    }
+
+    private suspend fun removeSemanticElements(
+        webpage: IBrowserPage,
+        semanticElements: List<SemanticElement>
+    ) {
+        for (element in semanticElements) {
+            try {
+                logger.debug("Removing semantic element [{}] via XPath: {}", element.type, element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove semantic element [{}] at {}: {}", element.type, element.xpath, e.message)
+            }
+        }
     }
 }

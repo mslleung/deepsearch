@@ -3,9 +3,9 @@ package io.deepsearch.domain.models.valueobjects
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class NavigationElementMatch(
+data class SemanticElement(
     val xpath: String,
-    val type: NavigationElementType,
+    val type: SemanticElementType,
     val note: String
 )
 

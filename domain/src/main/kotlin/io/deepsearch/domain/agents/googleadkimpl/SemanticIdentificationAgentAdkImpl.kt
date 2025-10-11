@@ -10,10 +10,10 @@ import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
-import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
-import io.deepsearch.domain.agents.NavigationElementIdentificationInput
-import io.deepsearch.domain.agents.NavigationElementIdentificationOutput
-import io.deepsearch.domain.agents.IdentifiedNavigationElement
+import io.deepsearch.domain.agents.ISemanticIdentificationAgent
+import io.deepsearch.domain.agents.SemanticIdentificationInput
+import io.deepsearch.domain.agents.SemanticIdentificationOutput
+import io.deepsearch.domain.agents.IdentifiedSemanticElement
 import io.deepsearch.domain.models.valueobjects.SemanticElementType
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -24,17 +24,17 @@ import org.jsoup.nodes.Document
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentificationAgent {
+class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     private val elementSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("A navigation element XPath with type and note")
+        .description("A semantic element XPath with type and note")
         .properties(
             mapOf(
                 "xpath" to Schema.builder().type("STRING").description("XPath to the root container").build(),
-                "type" to Schema.builder().type("STRING").description("Type of navigation element").enum_(
+                "type" to Schema.builder().type("STRING").description("Type of semantic element").enum_(
                     SemanticElementType.entries.map { it.name }
                 ).build(),
                 "note" to Schema.builder().type("STRING").description("Brief note of what this element is").build()
@@ -43,21 +43,21 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Return a list of navigation elements with xpaths, types, and notes")
+        .description("Return a list of semantic elements with xpaths, types, and notes")
         .properties(
             mapOf(
                 "elements" to Schema.builder()
                     .type("ARRAY")
                     .items(elementSchema)
-                    .description("All detected navigation elements")
+                    .description("All detected semantic elements")
                     .build()
             )
         )
         .build()
 
     private val agent: LlmAgent = LlmAgent.builder().run {
-        name("navigationElementIdentificationAgent")
-        description("Identify and return XPath selectors of all navigation elements (header, footer, sidebars, navbars, sticky bars, etc.) using cleaned HTML")
+        name("semanticIdentificationAgent")
+        description("Identify and return XPath selectors of all semantic elements (navigation elements, popups, etc.) using screenshot and cleaned HTML")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -74,18 +74,20 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
         )
         instruction(
             """
-            Task: Identify ALL navigational elements on the page and provide their XPath, type, and a short note.
+            Task: Identify ALL semantic elements on the page and provide their XPath, type, and a short note.
 
             Inputs:
+            - A screenshot of the webpage (current viewport)
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
-            - Include: header, footer, left/right sidebars (including aside/complementary regions), top navbars, sticky toolbars/bars, breadcrumb bars, cookie banners, chat widgets, ad banners, other persistent nav-like regions.
-            - For each element, return the ROOT CONTAINER that wraps the entire navigation region.
+            - Include: header, footer, left/right sidebars (including aside/complementary regions), top navbars, sticky toolbars/bars, breadcrumb bars, cookie banners, chat widgets, ad banners, popups, modal dialogs, other persistent nav-like regions and the main content container.
+            - For each element, return the ROOT CONTAINER that wraps the entire semantic region.
             - Provide a relative XPath that is robust and targets the container.
             - Do not use positional predicates, use class attributes or other information to create unique XPaths.
-            - Classify each element with one of: HEADER, FOOTER, SIDEBAR_LEFT, SIDEBAR_RIGHT, NAVBAR, BREADCRUMB, STICKY_BAR, CHAT_WIDGET, COOKIE_BANNER, AD_BANNER, OTHER.
-            - Write a brief note describing why it is considered navigation (e.g., "Top navbar with logo and menu", "Left sidebar with category links").
+            - Classify each element with one of: HEADER, FOOTER, SIDEBAR_LEFT, SIDEBAR_RIGHT, NAVBAR, BREADCRUMB, STICKY_BAR, CHAT_WIDGET, COOKIE_BANNER, AD_BANNER, POPUP, MAIN_CONTENT, OTHER.
+            - Write a brief note describing why it is considered a semantic element (e.g., "Top navbar with logo and menu", "Left sidebar with category links", "Cookie consent popup").
+            - Use the screenshot to help identify visible popups and modal dialogs that interrupt the user experience.
             - Return an empty list if none found.
 
             Output structure:
@@ -100,15 +102,15 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
     private val runner = InMemoryRunner(agent)
 
     @Serializable
-    private data class NavigationElementsResponse(
-        val elements: List<IdentifiedNavigationElement> = emptyList()
+    private data class SemanticElementsResponse(
+        val elements: List<IdentifiedSemanticElement> = emptyList()
     )
 
-    override suspend fun generate(input: NavigationElementIdentificationInput): NavigationElementIdentificationOutput {
+    override suspend fun generate(input: SemanticIdentificationInput): SemanticIdentificationOutput {
         val cleanedHtml = cleanHtml(input.html)
 
         if (cleanedHtml.isEmpty()) {
-            return NavigationElementIdentificationOutput(
+            return SemanticIdentificationOutput(
                 elements = emptyList()
             )
         }
@@ -128,6 +130,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
         val eventsFlow = runner.runAsync(
             session,
             Content.fromParts(
+                Part.fromBytes(input.screenshotBytes, input.mimetype.value),
                 Part.fromText("CLEANED_HTML:\n$cleanedHtml")
             ),
             RunConfig.builder().apply {
@@ -150,7 +153,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             }
         }
 
-        val response = Json.decodeFromStringWithCodeBlocks<NavigationElementsResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<SemanticElementsResponse>(llmResponse)
 
         val normalized = response.elements.mapNotNull { item ->
             val x = item.xpath.trim().ifEmpty { null } ?: return@mapNotNull null
@@ -158,7 +161,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             item.copy(xpath = normalizedXPath)
         }
 
-        return NavigationElementIdentificationOutput(
+        return SemanticIdentificationOutput(
             elements = normalized
         )
     }
@@ -207,11 +210,11 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Step 2: Strip attributes to only essentials for navigation identification
-        // Keep FULL page structure - LLM needs context to distinguish navigation from content
+        // Step 2: Strip attributes to only essentials for semantic identification
+        // Keep FULL page structure - LLM needs context to distinguish semantic elements from content
         // Keep id, class, role for XPath uniqueness and semantic meaning
         doc.select("*").forEach { element ->
-            val essentialAttrs = setOf("id", "class", "role", "aria-label", "data-testid")
+            val essentialAttrs = setOf("id", "class", "role", "aria-label", "aria-modal", "data-testid")
             val attrsToKeep = element.attributes().filter { attr ->
                 attr.key in essentialAttrs
             }
@@ -228,8 +231,8 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
                 val text = textNode.text().trim()
                 if (text.isNotEmpty()) {
                     // Keep minimal text for context (helps LLM understand element purpose)
-                    // 10 chars is enough to understand "Home", "Login", "Products", etc.
-                    val shortened = if (text.length > 10) text.take(10) + "..." else text
+                    // 15 chars is enough to understand "Home", "Login", "Products", "Accept Cookies", etc.
+                    val shortened = if (text.length > 15) text.take(15) + "..." else text
                     textNode.text(shortened)
                 }
             }

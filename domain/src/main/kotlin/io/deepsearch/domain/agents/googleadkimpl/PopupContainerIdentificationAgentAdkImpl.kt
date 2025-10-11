@@ -7,6 +7,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
+import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
@@ -55,6 +56,11 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
         generateContentConfig(
             GenerateContentConfig.builder()
                 .temperature(0F)
+                .thinkingConfig(
+                    ThinkingConfig.builder()
+                        .thinkingBudget(0)
+                        .build()
+                )
                 .build()
         )
         instruction(
@@ -162,7 +168,70 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
 
-        // Remove non-visual/noise elements aggressively
+        // Step 1: Find popup/modal candidates using semantic and common patterns
+        val popupCandidates = doc.select(
+            // Semantic dialog elements
+            "dialog, " +
+            // ARIA dialog roles
+            "[role=dialog], [role=alertdialog], [role=alert], " +
+            // Common ID patterns for popups/modals (case variations)
+            "[id*=modal], [id*=Modal], [id*=MODAL], " +
+            "[id*=popup], [id*=Popup], [id*=POPUP], " +
+            "[id*=dialog], [id*=Dialog], [id*=DIALOG], " +
+            "[id*=overlay], [id*=Overlay], [id*=OVERLAY], " +
+            "[id*=banner], [id*=Banner], [id*=BANNER], " +
+            "[id*=cookie], [id*=Cookie], [id*=COOKIE], " +
+            "[id*=consent], [id*=Consent], [id*=CONSENT], " +
+            // Common class patterns for popups/modals
+            "[class*=modal], [class*=Modal], " +
+            "[class*=popup], [class*=Popup], " +
+            "[class*=dialog], [class*=Dialog], " +
+            "[class*=overlay], [class*=Overlay], " +
+            "[class*=banner], [class*=Banner], " +
+            "[class*=cookie], [class*=Cookie], " +
+            "[class*=consent], [class*=Consent], " +
+            // Overlays often have high z-index or fixed/absolute positioning
+            "[style*=z-index], [style*=fixed], [style*=absolute]"
+        )
+
+        logger.debug("Found {} popup candidates before filtering", popupCandidates.size)
+
+        if (popupCandidates.isEmpty()) {
+            logger.debug("No popup candidates found, returning empty HTML")
+            return ""
+        }
+
+        // Step 2: Keep only TOP-LEVEL popup candidates (avoid nested popups)
+        val topLevelCandidates = popupCandidates.filter { candidate ->
+            popupCandidates.none { other -> other != candidate && other.contains(candidate) }
+        }
+
+        logger.debug("Found {} top-level popup candidates", topLevelCandidates.size)
+
+        // Step 3: Build a set of elements to KEEP
+        val elementsToKeep = mutableSetOf<Element>()
+        topLevelCandidates.forEach { candidate ->
+            elementsToKeep.add(candidate)
+            // Keep all descendants (entire popup structure)
+            elementsToKeep.addAll(candidate.select("*"))
+            // Keep ancestors up to body for XPath structure
+            var parent = candidate.parent()
+            while (parent != null && parent.tagName() != "body") {
+                elementsToKeep.add(parent)
+                parent = parent.parent()
+            }
+        }
+
+        logger.debug("Keeping {} elements (candidates + descendants + ancestors)", elementsToKeep.size)
+
+        // Step 4: Remove everything NOT in the keep set
+        doc.body().select("*").toList().forEach { element ->
+            if (element !in elementsToKeep) {
+                element.remove()
+            }
+        }
+
+        // Step 5: Remove noise elements even from kept elements
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
             "img, video, audio, source, track, picture"
@@ -170,70 +239,46 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
 
         // Remove comments and processing instructions
         doc.select("*").forEach { element ->
-            val nodesToRemove = element.childNodes().filter { node -> 
-                node.nodeName() == "#comment" || node.nodeName() == "#pi" 
+            val nodesToRemove = element.childNodes().filter { node ->
+                node.nodeName() == "#comment" || node.nodeName() == "#pi"
             }
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Define relevance for popup/modal related containers
-        val relevanceSelector = (
-            "dialog, " +
-            "[role=dialog], [role=alertdialog], [role=alert], " +
-            "[id*~=modal|popup|dialog|overlay|banner|cookie|consent], " +
-            "[class*~=modal|popup|dialog|overlay|banner|cookie|consent], " +
-            // Common container tags that often hold overlays
-            "div, section, aside"
-        )
-
-        val relevant = doc.select(relevanceSelector)
-        if (relevant.isEmpty()) {
-            return ""
-        }
-
-        // Keep only TOP-LEVEL relevant elements to avoid duplicates
-        val topLevelRelevant = relevant.filter { el ->
-            el.parents().none { parent -> parent.`is`(relevanceSelector) }
-        }
-
-        // Remove all elements that are not top-level relevant or their descendants
-        doc.body().children().forEach { child ->
-            if (!topLevelRelevant.contains(child) && topLevelRelevant.none { it.contains(child) }) {
-                child.remove()
-            }
-        }
-
-        // Strip all attributes except those essential for popup identification
+        // Step 6: Keep only essential attributes for popup identification
         doc.select("*").forEach { element ->
-            val essentialAttrs = setOf("id", "class", "role", "aria-modal", "aria-label", "aria-labelledby", "data-testid")
-            val attrsToKeep = element.attributes().filter { attr -> 
-                attr.key in essentialAttrs 
+            val essentialAttrs = setOf("id", "class", "role", "aria-modal", "aria-label", "data-testid")
+            val attrsToKeep = element.attributes().filter { attr ->
+                attr.key in essentialAttrs
             }
             element.clearAttributes()
-            attrsToKeep.forEach { attr -> 
-                element.attr(attr.key, attr.value) 
+            attrsToKeep.forEach { attr ->
+                element.attr(attr.key, attr.value)
             }
         }
 
-        // Truncate text content to reduce size (popup identification doesn't need full text)
+        // Step 7: Aggressive text truncation (popup identification needs minimal text)
         doc.select("*").forEach { element ->
             element.textNodes().forEach { textNode ->
                 val text = textNode.text().trim()
-                if (text.length > 50) {
-                    textNode.text(text.take(50) + "...")
-                } else if (text.isNotEmpty()) {
-                    textNode.text(text)
+                if (text.isNotEmpty()) {
+                    // Keep minimal text for context (20 chars)
+                    val shortened = if (text.length > 20) text.take(20) + "..." else text
+                    textNode.text(shortened)
                 }
             }
         }
 
-        // Remove empty elements iteratively
+        // Step 8: Remove empty elements iteratively
         var changed = true
         while (changed) {
             changed = false
             val emptyElements = doc.select("*").filter { element ->
-                element.children().isEmpty() && element.ownText().isBlank() &&
-                element.attr("id").isEmpty() && element.attr("class").isEmpty() && element.attr("role").isEmpty()
+                element.children().isEmpty() &&
+                element.ownText().isBlank() &&
+                element.attr("id").isEmpty() &&
+                element.attr("class").isEmpty() &&
+                element.attr("role").isEmpty()
             }
             if (emptyElements.isNotEmpty()) {
                 emptyElements.forEach { it.remove() }
@@ -241,6 +286,8 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
             }
         }
 
-        return doc.outerHtml()
+        val cleanedHtml = doc.outerHtml()
+        logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
+        return cleanedHtml
     }
 }

@@ -7,6 +7,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
+import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableIdentificationInput
@@ -57,7 +58,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableIdentificationAgent")
-        description("Identify tables in cleaned HTML and return XPath selectors to their roots")
+        description("Identify tables in webpage using screenshot and cleaned HTML, return XPath selectors to their root containers")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -65,27 +66,29 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         generateContentConfig(
             GenerateContentConfig.builder()
                 .temperature(0F)
+                .thinkingConfig(
+                    ThinkingConfig.builder()
+                        .thinkingBudget(0)
+                        .build()
+                )
                 .build()
         )
         instruction(
             """
-            Your task is to identify all tables in the provided HTML and generate XPath queries to those tables.
+            Your task is to identify all tables in the provided webpage and generate XPath queries to their root containers.
 
-            Input:
-            Cleaned HTML structure of a webpage.
+            Inputs:
+            - A screenshot of the full webpage
+            - Cleaned HTML structure of the webpage
 
             Instructions:
-            - Scan the entire HTML and identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
+            - Analyze both the screenshot and HTML to identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
-            - For every table you find, create an XPath selector using words from within the table. Use the XPath "contains" operator to select words from multiple cells to ensure uniqueness.
-            - The selected words should include content from different parts of the table, and must include some words from the table's first and last rows.
-            - Each "contains" selector should match only one word with no spaces.
-            - The XPath selector should point to the lowest common ancestor element that contains the entire table.
-            - Do not make any assumption on the underlying HTML. Use * to match all possible tags that the table uses (e.g., <table>, <div>, <ul>). This is crucial for identifying tables not made with standard <table> tags.
-            - Each XPath selector should uniquely identify a single table in the webpage.
-            - Additionally, extract auxiliaryInfo using surrounding text such as a table header and caption to provide extra information for understanding the table.
+            - For every table you find, create an XPath selector that targets the ROOT CONTAINER element that wraps the entire table.
+            - Each XPath selector should uniquely identify a single table root container in the webpage.
+            - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
-            Example:
+            Example XPath (targets the root container of the table):
             //*[contains(., 'Standard') and contains(., '30mins') and contains(., 'Follow')]
 
             Expected output shape:
@@ -110,7 +113,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     )
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
-        logger.debug("Table identification for HTML")
+        logger.debug("Table identification for HTML (screenshot: {} bytes)", input.screenshotBytes.size)
 
         val cleanedHtml = cleanHtml(input.html)
 
@@ -133,6 +136,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         val eventsFlow = runner.runAsync(
             session,
             Content.fromParts(
+                Part.fromBytes(input.screenshotBytes, input.mimetype.value),
                 Part.fromText("CLEANED_HTML:\n$cleanedHtml")
             ),
             RunConfig.builder().apply {
@@ -165,7 +169,64 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
 
-        // Remove elements that are clearly irrelevant to table identification
+        // Step 1: Find all potential table elements
+        val tableCandidates = doc.select(
+            // HTML table elements
+            "table, " +
+            // ARIA table roles
+            "[role=table], [role=grid], " +
+            // Common table patterns in IDs (case variations)
+            "[id*=table], [id*=Table], [id*=TABLE], " +
+            "[id*=grid], [id*=Grid], [id*=data], [id*=Data], " +
+            // Common table patterns in classes
+            "[class*=table], [class*=Table], " +
+            "[class*=grid], [class*=Grid], " +
+            "[class*=data], [class*=Data], " +
+            // Divs that might be CSS-based tables (containers with grid-like structure)
+            // Look for divs with multiple child divs (potential grid layout)
+            "div:has(> div > div)"
+        )
+
+        logger.debug("Found {} table candidates before filtering", tableCandidates.size)
+
+        if (tableCandidates.isEmpty()) {
+            logger.debug("No table candidates found, returning empty HTML")
+            return ""
+        }
+
+        // Step 2: Build a set of elements to KEEP (candidates + their context)
+        val elementsToKeep = mutableSetOf<Element>()
+        tableCandidates.forEach { candidate ->
+            elementsToKeep.add(candidate)
+            // Keep all descendants of table candidates (entire table structure needed)
+            elementsToKeep.addAll(candidate.select("*"))
+            // Keep ancestors up to body for XPath structure
+            var parent = candidate.parent()
+            while (parent != null && parent.tagName() != "body") {
+                elementsToKeep.add(parent)
+                parent = parent.parent()
+            }
+            // Keep previous and next siblings for auxiliary context (captions, headers)
+            candidate.previousElementSibling()?.let { sibling ->
+                elementsToKeep.add(sibling)
+                elementsToKeep.addAll(sibling.select("*"))
+            }
+            candidate.nextElementSibling()?.let { sibling ->
+                elementsToKeep.add(sibling)
+                elementsToKeep.addAll(sibling.select("*"))
+            }
+        }
+
+        logger.debug("Keeping {} elements (candidates + descendants + ancestors + siblings)", elementsToKeep.size)
+
+        // Step 3: Remove everything NOT in the keep set
+        doc.body().select("*").toList().forEach { element ->
+            if (element !in elementsToKeep) {
+                element.remove()
+            }
+        }
+
+        // Step 4: Remove obvious non-table elements even from kept elements
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
             "head, title, base, form, input, button, select, textarea, " +
@@ -175,38 +236,46 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
         // Remove comments and processing instructions
         doc.select("*").forEach { element ->
-            element.childNodes().removeIf { node -> 
-                node.nodeName() == "#comment" || node.nodeName() == "#pi" 
+            val nodesToRemove = element.childNodes().filter { node ->
+                node.nodeName() == "#comment" || node.nodeName() == "#pi"
             }
+            nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Strip all attributes except those essential for table identification
+        // Step 5: Keep only structural attributes essential for table identification
         doc.select("*").forEach { element ->
             val essentialAttrs = setOf("id", "class", "role", "colspan", "rowspan", "scope")
-            val attrsToKeep = element.attributes().filter { attr -> 
-                attr.key in essentialAttrs 
+            val attrsToKeep = element.attributes().filter { attr ->
+                attr.key in essentialAttrs
             }
             element.clearAttributes()
-            attrsToKeep.forEach { attr -> 
-                element.attr(attr.key, attr.value) 
+            attrsToKeep.forEach { attr ->
+                element.attr(attr.key, attr.value)
             }
         }
 
-        // Normalize whitespace in text nodes to reduce size
+        // Step 6: Truncate text content but keep more than navigation (need context for auxiliary info)
         doc.select("*").forEach { element ->
             element.textNodes().forEach { textNode ->
-                val normalized = textNode.text().replace("\\s+".toRegex(), " ").trim()
-                textNode.text(normalized)
+                val text = textNode.text().replace("\\s+".toRegex(), " ").trim()
+                if (text.isNotEmpty()) {
+                    // Keep up to 40 chars per text node for context (table headers, captions)
+                    val shortened = if (text.length > 40) text.take(40) + "..." else text
+                    textNode.text(shortened)
+                }
             }
         }
 
-        // Remove empty elements iteratively
+        // Step 7: Remove empty elements iteratively
         var changed = true
         while (changed) {
             changed = false
             val emptyElements = doc.select("*").filter { element ->
-                element.children().isEmpty() && element.ownText().isBlank() &&
-                element.attr("id").isEmpty() && element.attr("class").isEmpty()
+                element.children().isEmpty() &&
+                element.ownText().isBlank() &&
+                element.attr("id").isEmpty() &&
+                element.attr("class").isEmpty() &&
+                element.attr("role").isEmpty()
             }
             if (emptyElements.isNotEmpty()) {
                 emptyElements.forEach { it.remove() }
@@ -214,6 +283,8 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             }
         }
 
-        return doc.outerHtml()
+        val cleanedHtml = doc.outerHtml()
+        logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
+        return cleanedHtml
     }
 }

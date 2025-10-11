@@ -1,6 +1,6 @@
 package io.deepsearch.domain.models.entities
 
-import io.deepsearch.domain.models.valueobjects.NavigationElementMatch
+import io.deepsearch.domain.models.valueobjects.SemanticElement
 
 /**
  * Domain entity representing cached navigation element identification results.
@@ -8,5 +8,5 @@ import io.deepsearch.domain.models.valueobjects.NavigationElementMatch
  */
 data class WebpageNavigationElement(
     val pageHash: ByteArray,
-    val elements: List<NavigationElementMatch> = emptyList()
+    val elements: List<SemanticElement> = emptyList()
 )
