@@ -1,7 +1,7 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
-import io.deepsearch.domain.models.valueobjects.SemanticElementType
+import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.serialization.Serializable
 
 data class NavigationElementIdentificationInput(
@@ -9,15 +9,8 @@ data class NavigationElementIdentificationInput(
 ) : IAgent.IAgentInput
 
 @Serializable
-data class IdentifiedNavigationElement(
-    val xpath: String,
-    val type: SemanticElementType,
-    val note: String
-)
-
-@Serializable
 data class NavigationElementIdentificationOutput(
-    val elements: List<IdentifiedNavigationElement>
+    val elements: SemanticElements
 ) : IAgent.IAgentOutput
 
 interface INavigationElementIdentificationAgent : IAgent<NavigationElementIdentificationInput, NavigationElementIdentificationOutput> {

@@ -13,8 +13,8 @@ import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.NavigationElementIdentificationInput
 import io.deepsearch.domain.agents.NavigationElementIdentificationOutput
-import io.deepsearch.domain.agents.IdentifiedNavigationElement
-import io.deepsearch.domain.models.valueobjects.SemanticElementType
+import io.deepsearch.domain.models.valueobjects.IdentifiedElement
+import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -28,29 +28,44 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    private val elementSchema: Schema = Schema.builder()
+    private val identifiedElementSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("A navigation element XPath with type and note")
+        .description("An identified element with XPath and note")
         .properties(
             mapOf(
-                "xpath" to Schema.builder().type("STRING").description("XPath to the root container").build(),
-                "type" to Schema.builder().type("STRING").description("Type of navigation element").enum_(
-                    SemanticElementType.entries.map { it.name }
-                ).build(),
+                "xpath" to Schema.builder().type("STRING").description("XPath to the container").build(),
                 "note" to Schema.builder().type("STRING").description("Brief note of what this element is").build()
             )
-        ).build()
+        )
+        .build()
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Return a list of navigation elements with xpaths, types, and notes")
+        .description("Structured collection of all semantic elements on the webpage")
         .properties(
             mapOf(
-                "elements" to Schema.builder()
-                    .type("ARRAY")
-                    .items(elementSchema)
-                    .description("All detected navigation elements")
-                    .build()
+                "header" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Navigation bar at the top of the page (optional)").nullable(true).build(),
+                "footer" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Footer at the bottom of the page (optional)").nullable(true).build(),
+                "navSidebar" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Navigation sidebar (optional)").nullable(true).build(),
+                "breadcrumb" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Breadcrumb navigation bar (optional)").nullable(true).build(),
+                "cookieBanner" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Cookie consent banner (optional)").nullable(true).build(),
+                "chatWidget" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Chat widget or support widget (optional)").nullable(true).build(),
+                "adBanners" to Schema.builder().type("ARRAY").items(identifiedElementSchema)
+                    .description("List of advertisement banners").build(),
+                "popups" to Schema.builder().type("ARRAY").items(identifiedElementSchema)
+                    .description("List of popups and modal dialogs").build()
             )
         )
         .build()
@@ -74,23 +89,30 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
         )
         instruction(
             """
-            Task: Identify ALL navigational elements on the page and provide their XPath, type, and a short note.
+            Task: Identify ALL navigational elements on the page and provide their XPath and a short note.
 
             Inputs:
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
-            - Include: header, footer, left/right sidebars (including aside/complementary regions), top navbars, sticky toolbars/bars, breadcrumb bars, cookie banners, chat widgets, ad banners, other persistent nav-like regions.
+            - Identify (if any): header/navigation bar, footer, navigation sidebar, breadcrumb bar, cookie banner, chat widget, ad banners and popups.
             - For each element, return the ROOT CONTAINER that wraps the entire navigation region.
             - Provide a relative XPath that is robust and targets the container.
             - Do not use positional predicates, use class attributes or other information to create unique XPaths.
-            - Classify each element with one of: HEADER, FOOTER, SIDEBAR_LEFT, SIDEBAR_RIGHT, NAVBAR, BREADCRUMB, STICKY_BAR, CHAT_WIDGET, COOKIE_BANNER, AD_BANNER, OTHER.
             - Write a brief note describing why it is considered navigation (e.g., "Top navbar with logo and menu", "Left sidebar with category links").
-            - Return an empty list if none found.
+            - Return null for optional single elements if not found.
+            - Return empty arrays for list elements if none found.
 
             Output structure:
             {
-              "elements": [ { "xpath": string, "type": string, "note": string }, ... ]
+              "header": { "xpath": string, "note": string } | null,
+              "footer": { "xpath": string, "note": string } | null,
+              "navSidebar": { "xpath": string, "note": string } | null,
+              "breadcrumb": { "xpath": string, "note": string } | null,
+              "cookieBanner": { "xpath": string, "note": string } | null,
+              "chatWidget": { "xpath": string, "note": string } | null,
+              "adBanners": [ { "xpath": string, "note": string }, ... ],
+              "popups": [ { "xpath": string, "note": string }, ... ]
             }
             """.trimIndent()
         )
@@ -99,17 +121,12 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
 
     private val runner = InMemoryRunner(agent)
 
-    @Serializable
-    private data class NavigationElementsResponse(
-        val elements: List<IdentifiedNavigationElement> = emptyList()
-    )
-
     override suspend fun generate(input: NavigationElementIdentificationInput): NavigationElementIdentificationOutput {
         val cleanedHtml = cleanHtml(input.html)
 
         if (cleanedHtml.isEmpty()) {
             return NavigationElementIdentificationOutput(
-                elements = emptyList()
+                elements = SemanticElements()
             )
         }
 
@@ -150,17 +167,33 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             }
         }
 
-        val response = Json.decodeFromStringWithCodeBlocks<NavigationElementsResponse>(llmResponse)
+        val response = Json.decodeFromStringWithCodeBlocks<SemanticElements>(llmResponse)
 
-        val normalized = response.elements.mapNotNull { item ->
-            val x = item.xpath.trim().ifEmpty { null } ?: return@mapNotNull null
-            val normalizedXPath = normalizeXPath(x)
-            item.copy(xpath = normalizedXPath)
-        }
+        // Normalize all XPaths in the response
+        val normalized = SemanticElements(
+            header = response.header?.let { normalizeElement(it) },
+            footer = response.footer?.let { normalizeElement(it) },
+            navSidebar = response.navSidebar?.let { normalizeElement(it) },
+            breadcrumb = response.breadcrumb?.let { normalizeElement(it) },
+            cookieBanner = response.cookieBanner?.let { normalizeElement(it) },
+            chatWidget = response.chatWidget?.let { normalizeElement(it) },
+            adBanners = response.adBanners.mapNotNull { normalizeElement(it) },
+            popups = response.popups.mapNotNull { normalizeElement(it) }
+        )
 
         return NavigationElementIdentificationOutput(
             elements = normalized
         )
+    }
+
+    /**
+     * Normalizes an identified element by normalizing its XPath.
+     * Returns null if the xpath is invalid or empty.
+     */
+    private fun normalizeElement(element: IdentifiedElement): IdentifiedElement? {
+        val xpath = element.xpath.trim().ifEmpty { return null }
+        val normalizedXPath = normalizeXPath(xpath)
+        return element.copy(xpath = normalizedXPath)
     }
 
     /**

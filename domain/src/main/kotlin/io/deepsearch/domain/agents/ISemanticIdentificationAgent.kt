@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.constants.ImageMimeType
-import io.deepsearch.domain.models.valueobjects.SemanticElementType
+import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.serialization.Serializable
 
 data class SemanticIdentificationInput(
@@ -12,15 +12,8 @@ data class SemanticIdentificationInput(
 ) : IAgent.IAgentInput
 
 @Serializable
-data class IdentifiedSemanticElement(
-    val xpath: String,
-    val type: SemanticElementType,
-    val note: String
-)
-
-@Serializable
 data class SemanticIdentificationOutput(
-    val elements: List<IdentifiedSemanticElement>
+    val elements: SemanticElements
 ) : IAgent.IAgentOutput
 
 interface ISemanticIdentificationAgent : IAgent<SemanticIdentificationInput, SemanticIdentificationOutput> {

@@ -13,8 +13,8 @@ import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.agents.SemanticIdentificationOutput
-import io.deepsearch.domain.agents.IdentifiedSemanticElement
-import io.deepsearch.domain.models.valueobjects.SemanticElementType
+import io.deepsearch.domain.models.valueobjects.IdentifiedElement
+import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -28,29 +28,44 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    private val elementSchema: Schema = Schema.builder()
+    private val identifiedElementSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("A semantic element XPath with type and note")
+        .description("An identified element with XPath and note")
         .properties(
             mapOf(
-                "xpath" to Schema.builder().type("STRING").description("XPath to the root container").build(),
-                "type" to Schema.builder().type("STRING").description("Type of semantic element").enum_(
-                    SemanticElementType.entries.map { it.name }
-                ).build(),
+                "xpath" to Schema.builder().type("STRING").description("XPath to the container").build(),
                 "note" to Schema.builder().type("STRING").description("Brief note of what this element is").build()
             )
-        ).build()
+        )
+        .build()
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Return a list of semantic elements with xpaths, types, and notes")
+        .description("Structured collection of all semantic elements on the webpage")
         .properties(
             mapOf(
-                "elements" to Schema.builder()
-                    .type("ARRAY")
-                    .items(elementSchema)
-                    .description("All detected semantic elements")
-                    .build()
+                "header" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Navigation bar at the top of the page (optional)").nullable(true).build(),
+                "footer" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Footer at the bottom of the page (optional)").nullable(true).build(),
+                "navSidebar" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Navigation sidebar (optional)").nullable(true).build(),
+                "breadcrumb" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Breadcrumb navigation bar (optional)").nullable(true).build(),
+                "cookieBanner" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Cookie consent banner (optional)").nullable(true).build(),
+                "chatWidget" to Schema.builder().type("OBJECT").properties(
+                    identifiedElementSchema.properties().orElse(emptyMap())
+                ).description("Chat widget or support widget (optional)").nullable(true).build(),
+                "adBanners" to Schema.builder().type("ARRAY").items(identifiedElementSchema)
+                    .description("List of advertisement banners").build(),
+                "popups" to Schema.builder().type("ARRAY").items(identifiedElementSchema)
+                    .description("List of popups and modal dialogs").build()
             )
         )
         .build()
@@ -74,25 +89,35 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
         )
         instruction(
             """
-            Task: Identify ALL semantic elements on the page and provide their XPath, type, and a short note.
+            Task: Identify ALL popup and navigational elements on the page and provide their XPath and a short note.
 
             Inputs:
             - A screenshot of the webpage (current viewport)
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
-            - Include: header, footer, left/right sidebars (including aside/complementary regions), top navbars, sticky toolbars/bars, breadcrumb bars, cookie banners, chat widgets, ad banners, popups, modal dialogs, other persistent nav-like regions and the main content container.
-            - For each element, return the ROOT CONTAINER that wraps the entire semantic region.
-            - Provide a relative XPath that is robust and targets the container.
-            - Do not use positional predicates, use class attributes or other information to create unique XPaths.
-            - Classify each element with one of: HEADER, FOOTER, SIDEBAR_LEFT, SIDEBAR_RIGHT, NAVBAR, BREADCRUMB, STICKY_BAR, CHAT_WIDGET, COOKIE_BANNER, AD_BANNER, POPUP, MAIN_CONTENT, OTHER.
+            - Identify (if any): header/navigation bar, footer, navigation sidebar, breadcrumb bar, cookie banner, chat widget, ad banners and popups.
+            - Do not include the main content of the webpage. Only include elements that contain no critical information in the webpage.
+            - For each region, return a relative xpath to the container that wraps the region. Make sure the regions are unique with no overlap.
+            - Do not use positional predicates in the XPaths.
             - Write a brief note describing why it is considered a semantic element (e.g., "Top navbar with logo and menu", "Left sidebar with category links", "Cookie consent popup").
             - Use the screenshot to help identify visible popups and modal dialogs that interrupt the user experience.
-            - Return an empty list if none found.
+            - Return null for optional single elements if not found.
+            - Return empty arrays for list elements if none found.
+            
+            Example XPath format:
+            //div[@class='nav-link']
 
             Output structure:
             {
-              "elements": [ { "xpath": string, "type": string, "note": string }, ... ]
+              "header": { "xpath": string, "note": string } | null,
+              "footer": { "xpath": string, "note": string } | null,
+              "navSidebar": { "xpath": string, "note": string } | null,
+              "breadcrumb": { "xpath": string, "note": string } | null,
+              "cookieBanner": { "xpath": string, "note": string } | null,
+              "chatWidget": { "xpath": string, "note": string } | null,
+              "adBanners": [ { "xpath": string, "note": string }, ... ],
+              "popups": [ { "xpath": string, "note": string }, ... ]
             }
             """.trimIndent()
         )
@@ -101,17 +126,12 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
     private val runner = InMemoryRunner(agent)
 
-    @Serializable
-    private data class SemanticElementsResponse(
-        val elements: List<IdentifiedSemanticElement> = emptyList()
-    )
-
     override suspend fun generate(input: SemanticIdentificationInput): SemanticIdentificationOutput {
         val cleanedHtml = cleanHtml(input.html)
 
         if (cleanedHtml.isEmpty()) {
             return SemanticIdentificationOutput(
-                elements = emptyList()
+                elements = SemanticElements()
             )
         }
 
@@ -153,39 +173,11 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
             }
         }
 
-        val response = Json.decodeFromStringWithCodeBlocks<SemanticElementsResponse>(llmResponse)
-
-        val normalized = response.elements.mapNotNull { item ->
-            val x = item.xpath.trim().ifEmpty { null } ?: return@mapNotNull null
-            val normalizedXPath = normalizeXPath(x)
-            item.copy(xpath = normalizedXPath)
-        }
+        val response = Json.decodeFromStringWithCodeBlocks<SemanticElements>(llmResponse)
 
         return SemanticIdentificationOutput(
-            elements = normalized
+            elements = response
         )
-    }
-
-    /**
-     * Normalizes XPath expressions to ensure they work correctly with Playwright.
-     *
-     * Common issues fixed:
-     * - Converts absolute paths like `/div[@id='x']` to relative paths `//div[@id='x']`
-     *   (since `/div` expects div to be a direct child of the document root, which is invalid for HTML)
-     * - Preserves valid absolute paths like `/html/body/div[@id='x']`
-     */
-    private fun normalizeXPath(xpath: String): String {
-        val trimmed = xpath.trim()
-
-        // If XPath starts with a single `/` followed by something other than `html`, convert to `//`
-        // This handles cases like `/div[@id='x']` -> `//div[@id='x']`
-        if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.startsWith("/html")) {
-            val normalized = "//$trimmed".replace("///", "//")
-            logger.debug("Normalized XPath from '{}' to '{}'", trimmed, normalized)
-            return normalized
-        }
-
-        return trimmed
     }
 
     private fun cleanHtml(rawHtml: String): String {
@@ -194,12 +186,11 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
         // Step 1: Remove carousel/slider clones first (major source of duplication)
         // Slick carousel, Swiper, and similar libraries clone slides for infinite scrolling
         doc.select(".slick-cloned, [class*=swiper-slide-duplicate], [data-cloned=true]").remove()
-        logger.debug("Removed carousel clones")
-        
+
         // Step 1.5: Remove noise elements that don't contribute to structure
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
-            "img, video, audio, source, track, picture"
+                    "img, video, audio, source, track, picture"
         ).remove()
 
         // Remove comments and processing instructions
@@ -237,7 +228,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
                 }
             }
         }
-        
+
         // Step 3.5: Remove duplicate navigation structures (mobile/desktop variations)
         // Many sites have separate mobile and desktop navigation with similar content
         val mobileNavSelectors = listOf(
@@ -248,7 +239,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
             ".desktop-nav", ".primary-nav", "[class*=desktop-nav]", "[class*=primary-nav]",
             ".nav-desktop", ".main-nav", "[id*=desktop-nav]", "[id*=primary-nav]"
         )
-        
+
         // If both mobile and desktop nav exist, remove mobile (desktop usually has better structure)
         val hasMobileNav = doc.select(mobileNavSelectors.joinToString(",")).isNotEmpty()
         val hasDesktopNav = doc.select(desktopNavSelectors.joinToString(",")).isNotEmpty()
@@ -256,7 +247,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
             doc.select(mobileNavSelectors.joinToString(",")).remove()
             logger.debug("Removed duplicate mobile navigation (desktop nav exists)")
         }
-        
+
         // Step 3.6: Prune deeply nested elements to reduce noise
         // Navigation elements are typically at higher levels of the DOM tree
         // Deep nesting (>12 levels) is usually content, not navigation structure
@@ -277,10 +268,10 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
             changed = false
             val emptyElements = doc.select("*").filter { element ->
                 element.children().isEmpty() &&
-                element.ownText().isBlank() &&
-                element.attr("id").isEmpty() &&
-                element.attr("class").isEmpty() &&
-                element.attr("role").isEmpty()
+                        element.ownText().isBlank() &&
+                        element.attr("id").isEmpty() &&
+                        element.attr("class").isEmpty() &&
+                        element.attr("role").isEmpty()
             }
             if (emptyElements.isNotEmpty()) {
                 emptyElements.forEach { it.remove() }

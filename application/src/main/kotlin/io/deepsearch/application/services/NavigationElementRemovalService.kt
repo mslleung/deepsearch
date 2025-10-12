@@ -3,8 +3,8 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.NavigationElementIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.models.entities.WebpageNavigationElement
-import io.deepsearch.domain.models.valueobjects.SemanticElement
+import io.deepsearch.domain.models.entities.WebpageSemanticElement
+import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -30,11 +30,7 @@ class NavigationElementRemovalService(
         removeElementsIfPresent(webpage, navigationElements)
     }
 
-    data class NavigationElements(
-        val elements: List<SemanticElement>
-    )
-
-    private suspend fun extractNavigationalElements(webpage: IBrowserPage): NavigationElements {
+    private suspend fun extractNavigationalElements(webpage: IBrowserPage): SemanticElements {
         val html = webpage.getFullHtml()
 
         val pageHash = MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
@@ -42,7 +38,7 @@ class NavigationElementRemovalService(
         val cached = webpageNavigationElementRepository.findByHash(pageHash)
         if (cached != null) {
             logger.debug("Using cached navigation elements")
-            return NavigationElements(elements = cached.elements)
+            return cached.elements
         }
 
         val navigationElements = identifyViaAgent(html)
@@ -53,39 +49,101 @@ class NavigationElementRemovalService(
 
     private suspend fun identifyViaAgent(
         html: String
-    ): NavigationElements {
+    ): SemanticElements {
         val identificationResult = navigationElementIdentificationAgent.generate(
             NavigationElementIdentificationInput(
                 html = html
             )
         )
-        return NavigationElements(
-            elements = identificationResult.elements.map { SemanticElement(xpath = it.xpath, type = it.type, note = it.note) }
-        )
+        return identificationResult.elements
     }
 
     private suspend fun cacheNavigationElements(
         pageHash: ByteArray,
-        elements: NavigationElements
+        elements: SemanticElements
     ) {
         webpageNavigationElementRepository.upsert(
-            WebpageNavigationElement(
+            WebpageSemanticElement(
                 pageHash = pageHash,
-                elements = elements.elements
+                elements = elements
             )
         )
     }
 
     private suspend fun removeElementsIfPresent(
         webpage: IBrowserPage,
-        elements: NavigationElements
+        elements: SemanticElements
     ) {
-        for (match in elements.elements) {
+        // Remove each navigation element individually
+        elements.header?.let { element ->
             try {
-                logger.debug("Removing navigation element [{}] via XPath: {}", match.type, match.xpath)
-                webpage.removeElement(match.xpath)
+                logger.debug("Removing header via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
             } catch (e: Exception) {
-                logger.warn("Failed to remove navigation element [{}] at {}: {}", match.type, match.xpath, e.message)
+                logger.warn("Failed to remove header at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        elements.footer?.let { element ->
+            try {
+                logger.debug("Removing footer via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove footer at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        elements.navSidebar?.let { element ->
+            try {
+                logger.debug("Removing navigation sidebar via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove navigation sidebar at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        elements.breadcrumb?.let { element ->
+            try {
+                logger.debug("Removing breadcrumb via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove breadcrumb at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        elements.cookieBanner?.let { element ->
+            try {
+                logger.debug("Removing cookie banner via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove cookie banner at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        elements.chatWidget?.let { element ->
+            try {
+                logger.debug("Removing chat widget via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove chat widget at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        elements.adBanners.forEach { element ->
+            try {
+                logger.debug("Removing ad banner via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove ad banner at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        elements.popups.forEach { element ->
+            try {
+                logger.debug("Removing popup via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove popup at {}: {}", element.xpath, e.message)
             }
         }
     }

@@ -44,7 +44,15 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
             html = exampleHtml
         )
         val output = agent.generate(input)
-        assertTrue(output.elements.isEmpty(), "Example page should not have navigation elements")
+        val hasElements = output.elements.header != null || 
+            output.elements.footer != null || 
+            output.elements.navSidebar != null || 
+            output.elements.breadcrumb != null ||
+            output.elements.cookieBanner != null ||
+            output.elements.chatWidget != null ||
+            output.elements.adBanners.isNotEmpty() ||
+            output.elements.popups.isNotEmpty()
+        assertTrue(!hasElements, "Example page should not have navigation elements")
     }
 
     @Test
@@ -59,7 +67,15 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
                 html = page.getFullHtml()
             )
             val output = agent.generate(input)
-            assertTrue(output.elements.isNotEmpty(), "Exposed doc webpage should have navigation elements")
+            val hasElements = output.elements.header != null || 
+                output.elements.footer != null || 
+                output.elements.navSidebar != null || 
+                output.elements.breadcrumb != null ||
+                output.elements.cookieBanner != null ||
+                output.elements.chatWidget != null ||
+                output.elements.adBanners.isNotEmpty() ||
+                output.elements.popups.isNotEmpty()
+            assertTrue(hasElements, "Exposed doc webpage should have navigation elements")
         } finally {
             browser.close()
         }
@@ -77,7 +93,15 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
                 html = page.getFullHtml()
             )
             val output = agent.generate(input)
-            assertTrue(output.elements.isNotEmpty(), "Exposed doc webpage should have navigation elements")
+            val hasElements = output.elements.header != null || 
+                output.elements.footer != null || 
+                output.elements.navSidebar != null || 
+                output.elements.breadcrumb != null ||
+                output.elements.cookieBanner != null ||
+                output.elements.chatWidget != null ||
+                output.elements.adBanners.isNotEmpty() ||
+                output.elements.popups.isNotEmpty()
+            assertTrue(hasElements, "Exposed doc webpage should have navigation elements")
         } finally {
             browser.close()
         }

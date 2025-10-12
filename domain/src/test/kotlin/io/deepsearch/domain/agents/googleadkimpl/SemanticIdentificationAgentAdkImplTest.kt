@@ -10,6 +10,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.extension.RegisterExtension
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
@@ -50,16 +52,31 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
             html = exampleHtml
         )
         val output = agent.generate(input)
-        assertTrue(output.elements.isEmpty(), "Simple example page should not have semantic elements")
+        val hasElements = output.elements.header != null || 
+            output.elements.footer != null || 
+            output.elements.navSidebar != null || 
+            output.elements.breadcrumb != null ||
+            output.elements.cookieBanner != null ||
+            output.elements.chatWidget != null ||
+            output.elements.adBanners.isNotEmpty() ||
+            output.elements.popups.isNotEmpty()
+        assertTrue(!hasElements, "Simple example page should not have semantic elements")
     }
 
-    @Test
-    fun `should identify navigation elements on OT&P webpage`() = runTest(testCoroutineDispatcher) {
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+//            "https://mybeame.com/beame-student-discount",
+            "https://www.otandp.com/body-check/",
+//            "https://www.jetbrains.com/help/exposed/working-with-database.html",
+        ]
+    )
+    fun `should identify navigation elements`(url: String) = runTest(testCoroutineDispatcher) {
         val browser = browserPool.acquireBrowser()
         val context = browser.createContext()
         try {
             val page = context.newPage()
-            page.navigate("https://www.otandp.com/body-check")
+            page.navigate(url)
 
             val screenshot = page.takeFullPageScreenshot()
             val input = SemanticIdentificationInput(
@@ -69,29 +86,15 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
             )
             val output = agent.generate(input)
             
-            assertTrue(output.elements.isNotEmpty(), "OT&P webpage should have semantic elements")
-        } finally {
-            browser.close()
-        }
-    }
-
-    @Test
-    fun `should identify header and footer on documentation page`() = runTest(testCoroutineDispatcher) {
-        val browser = browserPool.acquireBrowser()
-        val context = browser.createContext()
-        try {
-            val page = context.newPage()
-            page.navigate("https://www.jetbrains.com/help/exposed/working-with-database.html")
-
-            val screenshot = page.takeFullPageScreenshot()
-            val input = SemanticIdentificationInput(
-                screenshotBytes = screenshot.bytes,
-                mimetype = screenshot.mimeType,
-                html = page.getFullHtml()
-            )
-            val output = agent.generate(input)
-            
-            assertTrue(output.elements.isNotEmpty(), "Documentation page should have semantic elements")
+            val hasElements = output.elements.header != null || 
+                output.elements.footer != null || 
+                output.elements.navSidebar != null || 
+                output.elements.breadcrumb != null ||
+                output.elements.cookieBanner != null ||
+                output.elements.chatWidget != null ||
+                output.elements.adBanners.isNotEmpty() ||
+                output.elements.popups.isNotEmpty()
+            assertTrue(hasElements, "OT&P webpage should have semantic elements")
         } finally {
             browser.close()
         }

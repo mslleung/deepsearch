@@ -31,7 +31,7 @@ object DatabaseConfig {
                     WebpagePopupTable,
                     WebpageTableTable,
                     WebpageTableInterpretationTable,
-                    WebpageNavigationElementTable,
+                    WebpageSemanticElementTable,
                 )
             }
         }

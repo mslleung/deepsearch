@@ -3,8 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.models.valueobjects.SemanticElement
-import io.deepsearch.domain.models.valueobjects.SemanticElementType
+import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -43,9 +42,9 @@ class WebpageExtractionService(
         val semanticElements = semanticIdentificationService.identifySemanticElements(webpage)
 
         // Extract popup text content first (before removal)
-        val popupText = if (semanticElements.isNotEmpty()) {
+        val popupText = if (semanticElements.popups.isNotEmpty()) {
             buildString {
-                semanticElements.filter { it.type == SemanticElementType.POPUP }.forEach { popup ->
+                semanticElements.popups.forEach { popup ->
                     val text = webpage.extractElementTextContent(popup.xpath)
                     if (text.isNotBlank()) {
                         appendLine(text)
@@ -151,14 +150,78 @@ class WebpageExtractionService(
 
     private suspend fun removeSemanticElements(
         webpage: IBrowserPage,
-        semanticElements: List<SemanticElement>
+        semanticElements: SemanticElements
     ) {
-        for (element in semanticElements) {
+        // Remove each semantic element individually
+        semanticElements.header?.let { element ->
             try {
-                logger.debug("Removing semantic element [{}] via XPath: {}", element.type, element.xpath)
+                logger.debug("Removing header via XPath: {}", element.xpath)
                 webpage.removeElement(element.xpath)
             } catch (e: Exception) {
-                logger.warn("Failed to remove semantic element [{}] at {}: {}", element.type, element.xpath, e.message)
+                logger.warn("Failed to remove header at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        semanticElements.footer?.let { element ->
+            try {
+                logger.debug("Removing footer via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove footer at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        semanticElements.navSidebar?.let { element ->
+            try {
+                logger.debug("Removing navigation sidebar via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove navigation sidebar at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        semanticElements.breadcrumb?.let { element ->
+            try {
+                logger.debug("Removing breadcrumb via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove breadcrumb at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        semanticElements.cookieBanner?.let { element ->
+            try {
+                logger.debug("Removing cookie banner via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove cookie banner at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        semanticElements.chatWidget?.let { element ->
+            try {
+                logger.debug("Removing chat widget via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove chat widget at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        semanticElements.adBanners.forEach { element ->
+            try {
+                logger.debug("Removing ad banner via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove ad banner at {}: {}", element.xpath, e.message)
+            }
+        }
+
+        semanticElements.popups.forEach { element ->
+            try {
+                logger.debug("Removing popup via XPath: {}", element.xpath)
+                webpage.removeElement(element.xpath)
+            } catch (e: Exception) {
+                logger.warn("Failed to remove popup at {}: {}", element.xpath, e.message)
             }
         }
     }

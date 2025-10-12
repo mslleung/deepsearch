@@ -112,11 +112,11 @@ class PlaywrightBrowserPage(
         }
 
         if (count > 1) {
-            logger.warn("Multiple elements ({}) found at XPath: {}, removing first", count, xpath)
+            logger.warn("Multiple elements ({}) found at XPath: {}, removing last", count, xpath)
         }
 
         // Get the first matching element and remove it using JavaScript
-        val target = locator.first()
+        val target = locator.last()
         target.evaluate("element => element.remove()")
 
         logger.debug("Successfully removed element at XPath: {}", xpath)

@@ -1,9 +1,9 @@
 package io.deepsearch.infrastructure.repositories
 
-import io.deepsearch.domain.models.entities.WebpageNavigationElement
-import io.deepsearch.domain.models.valueobjects.SemanticElement
+import io.deepsearch.domain.models.entities.WebpageSemanticElement
+import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
-import io.deepsearch.infrastructure.database.WebpageNavigationElementTable
+import io.deepsearch.infrastructure.database.WebpageSemanticElementTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -17,41 +17,41 @@ import kotlin.io.encoding.Base64
 
 class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepository {
 
-    override suspend fun findByHash(pageHash: ByteArray): WebpageNavigationElement? = suspendTransaction {
+    override suspend fun findByHash(pageHash: ByteArray): WebpageSemanticElement? = suspendTransaction {
         val hashBase64 = Base64.encode(pageHash)
-        WebpageNavigationElementTable.selectAll()
-            .where { WebpageNavigationElementTable.pageHash eq hashBase64 }
-            .map { mapRowToWebpageNavigationElement(it) }
+        WebpageSemanticElementTable.selectAll()
+            .where { WebpageSemanticElementTable.pageHash eq hashBase64 }
+            .map { mapRowToWebpageSemanticElement(it) }
             .singleOrNull()
     }
 
-    override suspend fun upsert(webpageNavigationElement: WebpageNavigationElement): Unit = suspendTransaction {
-        val hashBase64 = Base64.encode(webpageNavigationElement.pageHash)
+    override suspend fun upsert(webpageSemanticElement: WebpageSemanticElement): Unit = suspendTransaction {
+        val hashBase64 = Base64.encode(webpageSemanticElement.pageHash)
         
         // Try update first; if nothing updated, insert
-        val updated = WebpageNavigationElementTable.update({ WebpageNavigationElementTable.pageHash eq hashBase64 }) {
-            it[elementsJson] = Json.encodeToString(webpageNavigationElement.elements)
+        val updated = WebpageSemanticElementTable.update({ WebpageSemanticElementTable.pageHash eq hashBase64 }) {
+            it[elementsJson] = Json.encodeToString(SemanticElements.serializer(), webpageSemanticElement.elements)
         }
 
         if (updated == 0) {
-            WebpageNavigationElementTable.insert {
+            WebpageSemanticElementTable.insert {
                 it[pageHash] = hashBase64
-                it[elementsJson] = Json.encodeToString(webpageNavigationElement.elements)
+                it[elementsJson] = Json.encodeToString(SemanticElements.serializer(), webpageSemanticElement.elements)
             }
         }
         Unit
     }
 
-    private fun mapRowToWebpageNavigationElement(row: ResultRow): WebpageNavigationElement {
-        return WebpageNavigationElement(
-            pageHash = Base64.decode(row[WebpageNavigationElementTable.pageHash]),
-            elements = row[WebpageNavigationElementTable.elementsJson]?.let {
+    private fun mapRowToWebpageSemanticElement(row: ResultRow): WebpageSemanticElement {
+        return WebpageSemanticElement(
+            pageHash = Base64.decode(row[WebpageSemanticElementTable.pageHash]),
+            elements = row[WebpageSemanticElementTable.elementsJson]?.let {
                 try {
-                    Json.decodeFromString<List<SemanticElement>>(it)
+                    Json.decodeFromString(SemanticElements.serializer(), it)
                 } catch (e: Exception) {
-                    emptyList()
+                    SemanticElements()
                 }
-            } ?: emptyList()
+            } ?: SemanticElements()
         )
     }
 }
