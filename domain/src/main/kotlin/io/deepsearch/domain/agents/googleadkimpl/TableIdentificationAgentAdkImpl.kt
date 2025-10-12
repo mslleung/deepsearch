@@ -89,7 +89,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
             Example XPath (targets the root container of the table):
-            //*[contains(., 'Standard') and contains(., '30mins') and contains(., 'Follow')]
+            //div[@class='tb-example']
 
             Expected output shape:
             {
@@ -169,69 +169,15 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
 
-        // Step 1: Find all potential table elements
-        val tableCandidates = doc.select(
-            // HTML table elements
-            "table, " +
-            // ARIA table roles
-            "[role=table], [role=grid], " +
-            // Common table patterns in IDs (case variations)
-            "[id*=table], [id*=Table], [id*=TABLE], " +
-            "[id*=grid], [id*=Grid], [id*=data], [id*=Data], " +
-            // Common table patterns in classes
-            "[class*=table], [class*=Table], " +
-            "[class*=grid], [class*=Grid], " +
-            "[class*=data], [class*=Data], " +
-            // Divs that might be CSS-based tables (containers with grid-like structure)
-            // Look for divs with multiple child divs (potential grid layout)
-            "div:has(> div > div)"
-        )
-
-        logger.debug("Found {} table candidates before filtering", tableCandidates.size)
-
-        if (tableCandidates.isEmpty()) {
-            logger.debug("No table candidates found, returning empty HTML")
-            return ""
-        }
-
-        // Step 2: Build a set of elements to KEEP (candidates + their context)
-        val elementsToKeep = mutableSetOf<Element>()
-        tableCandidates.forEach { candidate ->
-            elementsToKeep.add(candidate)
-            // Keep all descendants of table candidates (entire table structure needed)
-            elementsToKeep.addAll(candidate.select("*"))
-            // Keep ancestors up to body for XPath structure
-            var parent = candidate.parent()
-            while (parent != null && parent.tagName() != "body") {
-                elementsToKeep.add(parent)
-                parent = parent.parent()
-            }
-            // Keep previous and next siblings for auxiliary context (captions, headers)
-            candidate.previousElementSibling()?.let { sibling ->
-                elementsToKeep.add(sibling)
-                elementsToKeep.addAll(sibling.select("*"))
-            }
-            candidate.nextElementSibling()?.let { sibling ->
-                elementsToKeep.add(sibling)
-                elementsToKeep.addAll(sibling.select("*"))
-            }
-        }
-
-        logger.debug("Keeping {} elements (candidates + descendants + ancestors + siblings)", elementsToKeep.size)
-
-        // Step 3: Remove everything NOT in the keep set
-        doc.body().select("*").toList().forEach { element ->
-            if (element !in elementsToKeep) {
-                element.remove()
-            }
-        }
-
-        // Step 4: Remove obvious non-table elements even from kept elements
+        // Step 1: Remove noise elements that don't contribute to structure
+        // Keep full page structure - no heuristic pre-filtering for table candidates
+        // LLM + screenshot will identify tables from structure and visual patterns
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
-            "head, title, base, form, input, button, select, textarea, " +
-            "nav, header, footer, aside, " +
-            "img, video, audio, source, track, picture"
+                    "head, title, base, " +
+                    "form, input, button, select, textarea, label, fieldset, legend, " +
+                    "nav, header, footer, aside, " +
+                    "img, video, audio, source, track, picture"
         ).remove()
 
         // Remove comments and processing instructions
@@ -242,49 +188,117 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Step 5: Keep only structural attributes essential for table identification
+        // Step 2: Strip attributes to essentials for table identification
+        // Keep id, class, role for semantic meaning and XPath uniqueness
+        // Keep table-specific attributes (colspan, rowspan) for structure
+        // Keep data-* attributes as they often indicate structure
         doc.select("*").forEach { element ->
-            val essentialAttrs = setOf("id", "class", "role", "colspan", "rowspan", "scope")
-            val attrsToKeep = element.attributes().filter { attr ->
-                attr.key in essentialAttrs
+            val originalAttrs = element.attributes().asList()
+            val essentialAttrs = originalAttrs.filter { attr ->
+                attr.key == "id" || 
+                attr.key == "class" || 
+                attr.key == "role" || 
+                attr.key == "colspan" || 
+                attr.key == "rowspan" || 
+                attr.key == "scope" ||
+                attr.key.startsWith("data-")
             }
+            
             element.clearAttributes()
-            attrsToKeep.forEach { attr ->
-                element.attr(attr.key, attr.value)
+            
+            // Restore filtered attributes
+            essentialAttrs.forEach { attr ->
+                when (attr.key) {
+                    "id" -> {
+                        // Truncate very long IDs (generated IDs can be huge)
+                        val value = if (attr.value.length <= 50) {
+                            attr.value
+                        } else {
+                            attr.value.take(30) + "..."
+                        }
+                        element.attr("id", value)
+                    }
+                    "class" -> {
+                        // Keep all classes but limit to first 5 to reduce bloat
+                        val classes = attr.value.split("\\s+".toRegex()).take(5)
+                        if (classes.isNotEmpty()) {
+                            element.attr("class", classes.joinToString(" "))
+                        }
+                    }
+                    "data-testid", "data-test", "data-qa" -> {
+                        // Keep test IDs - they often indicate semantic structure
+                        element.attr(attr.key, attr.value)
+                    }
+                    else -> {
+                        // Keep other essential attributes as-is
+                        element.attr(attr.key, attr.value)
+                    }
+                }
             }
         }
 
-        // Step 6: Truncate text content but keep more than navigation (need context for auxiliary info)
+        // Step 3: Truncate text content but keep enough for pattern recognition
+        // Tables have distinct patterns: numbers, dates, structured text
+        // Keep more text than semantic identification (20 chars vs 15) to preserve data patterns
         doc.select("*").forEach { element ->
             element.textNodes().forEach { textNode ->
                 val text = textNode.text().replace("\\s+".toRegex(), " ").trim()
                 if (text.isNotEmpty()) {
-                    // Keep up to 40 chars per text node for context (table headers, captions)
-                    val shortened = if (text.length > 40) text.take(40) + "..." else text
+                    // 20 chars is enough to see patterns: "2024-01-15", "Price: $99.99", "Employee: John"
+                    val shortened = if (text.length > 20) text.take(20) + "..." else text
                     textNode.text(shortened)
                 }
             }
         }
 
-        // Step 7: Remove empty elements iteratively
+        // Step 4: Remove carousel/slider clones (major source of duplication)
+        doc.select(".slick-cloned, [class*=swiper-slide-duplicate], [data-cloned=true]").remove()
+
+        // Step 5: Remove duplicate mobile/desktop navigation structures
+        val mobileNavSelectors = listOf(
+            ".mobile-nav", ".mobile-menu", "[class*=mobile-nav]", "[class*=mobile-menu]",
+            ".nav-mobile", ".menu-mobile", "[id*=mobile-nav]", "[id*=mobile-menu]"
+        )
+        val desktopNavSelectors = listOf(
+            ".desktop-nav", ".primary-nav", "[class*=desktop-nav]", "[class*=primary-nav]",
+            ".nav-desktop", ".main-nav", "[id*=desktop-nav]", "[id*=primary-nav]"
+        )
+
+        val hasMobileNav = doc.select(mobileNavSelectors.joinToString(",")).isNotEmpty()
+        val hasDesktopNav = doc.select(desktopNavSelectors.joinToString(",")).isNotEmpty()
+        if (hasMobileNav && hasDesktopNav) {
+            doc.select(mobileNavSelectors.joinToString(",")).remove()
+            logger.debug("Removed duplicate mobile navigation")
+        }
+
+        // Step 6: Remove empty elements iteratively to compact structure
+        // This significantly reduces HTML size without losing meaningful structure
         var changed = true
-        while (changed) {
+        var iterations = 0
+        while (changed && iterations < 5) { // Limit iterations for performance
             changed = false
+            iterations++
+            
             val emptyElements = doc.select("*").filter { element ->
                 element.children().isEmpty() &&
                 element.ownText().isBlank() &&
                 element.attr("id").isEmpty() &&
                 element.attr("class").isEmpty() &&
-                element.attr("role").isEmpty()
+                element.attr("role").isEmpty() &&
+                element.attr("colspan").isEmpty() &&
+                element.attr("rowspan").isEmpty()
             }
+            
             if (emptyElements.isNotEmpty()) {
                 emptyElements.forEach { it.remove() }
                 changed = true
+                logger.debug("Iteration {}: Removed {} empty elements", iterations, emptyElements.size)
             }
         }
 
         val cleanedHtml = doc.outerHtml()
-        logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
+        logger.debug("Cleaned HTML: {} chars (original: ~{} chars)",
+            cleanedHtml.length, rawHtml.length)
         return cleanedHtml
     }
 }

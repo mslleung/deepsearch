@@ -59,9 +59,6 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
                 "cookieBanner" to Schema.builder().type("OBJECT").properties(
                     identifiedElementSchema.properties().orElse(emptyMap())
                 ).description("Cookie consent banner (optional)").nullable(true).build(),
-                "chatWidget" to Schema.builder().type("OBJECT").properties(
-                    identifiedElementSchema.properties().orElse(emptyMap())
-                ).description("Chat widget or support widget (optional)").nullable(true).build(),
                 "adBanners" to Schema.builder().type("ARRAY").items(identifiedElementSchema)
                     .description("List of advertisement banners").build(),
                 "popups" to Schema.builder().type("ARRAY").items(identifiedElementSchema)
@@ -95,7 +92,7 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
-            - Identify (if any): header/navigation bar, footer, navigation sidebar, breadcrumb bar, cookie banner, chat widget, ad banners and popups.
+            - Identify (if any): header/navigation bar, footer, navigation sidebar, breadcrumb bar, cookie banner, ad banners and popups.
             - For each element, return the ROOT CONTAINER that wraps the entire navigation region.
             - Provide a relative XPath that is robust and targets the container.
             - Do not use positional predicates, use class attributes or other information to create unique XPaths.
@@ -110,7 +107,6 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
               "navSidebar": { "xpath": string, "note": string } | null,
               "breadcrumb": { "xpath": string, "note": string } | null,
               "cookieBanner": { "xpath": string, "note": string } | null,
-              "chatWidget": { "xpath": string, "note": string } | null,
               "adBanners": [ { "xpath": string, "note": string }, ... ],
               "popups": [ { "xpath": string, "note": string }, ... ]
             }
@@ -176,7 +172,6 @@ class NavigationElementIdentificationAgentAdkImpl : INavigationElementIdentifica
             navSidebar = response.navSidebar?.let { normalizeElement(it) },
             breadcrumb = response.breadcrumb?.let { normalizeElement(it) },
             cookieBanner = response.cookieBanner?.let { normalizeElement(it) },
-            chatWidget = response.chatWidget?.let { normalizeElement(it) },
             adBanners = response.adBanners.mapNotNull { normalizeElement(it) },
             popups = response.popups.mapNotNull { normalizeElement(it) }
         )

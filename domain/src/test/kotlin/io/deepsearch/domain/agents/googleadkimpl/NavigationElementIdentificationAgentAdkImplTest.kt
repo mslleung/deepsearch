@@ -49,7 +49,6 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
             output.elements.navSidebar != null || 
             output.elements.breadcrumb != null ||
             output.elements.cookieBanner != null ||
-            output.elements.chatWidget != null ||
             output.elements.adBanners.isNotEmpty() ||
             output.elements.popups.isNotEmpty()
         assertTrue(!hasElements, "Example page should not have navigation elements")
@@ -72,7 +71,6 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
                 output.elements.navSidebar != null || 
                 output.elements.breadcrumb != null ||
                 output.elements.cookieBanner != null ||
-                output.elements.chatWidget != null ||
                 output.elements.adBanners.isNotEmpty() ||
                 output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "Exposed doc webpage should have navigation elements")
@@ -98,7 +96,6 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
                 output.elements.navSidebar != null || 
                 output.elements.breadcrumb != null ||
                 output.elements.cookieBanner != null ||
-                output.elements.chatWidget != null ||
                 output.elements.adBanners.isNotEmpty() ||
                 output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "Exposed doc webpage should have navigation elements")

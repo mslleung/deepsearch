@@ -57,7 +57,6 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
             output.elements.navSidebar != null || 
             output.elements.breadcrumb != null ||
             output.elements.cookieBanner != null ||
-            output.elements.chatWidget != null ||
             output.elements.adBanners.isNotEmpty() ||
             output.elements.popups.isNotEmpty()
         assertTrue(!hasElements, "Simple example page should not have semantic elements")
@@ -66,8 +65,8 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
     @ParameterizedTest
     @ValueSource(
         strings = [
-//            "https://mybeame.com/beame-student-discount",
-            "https://www.otandp.com/body-check/",
+            "https://mybeame.com/beame-student-discount",
+//            "https://www.otandp.com/body-check/",
 //            "https://www.jetbrains.com/help/exposed/working-with-database.html",
         ]
     )
@@ -91,7 +90,6 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
                 output.elements.navSidebar != null || 
                 output.elements.breadcrumb != null ||
                 output.elements.cookieBanner != null ||
-                output.elements.chatWidget != null ||
                 output.elements.adBanners.isNotEmpty() ||
                 output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "OT&P webpage should have semantic elements")

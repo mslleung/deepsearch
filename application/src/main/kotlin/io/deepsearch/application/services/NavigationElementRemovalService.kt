@@ -120,15 +120,6 @@ class NavigationElementRemovalService(
             }
         }
 
-        elements.chatWidget?.let { element ->
-            try {
-                logger.debug("Removing chat widget via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
-            } catch (e: Exception) {
-                logger.warn("Failed to remove chat widget at {}: {}", element.xpath, e.message)
-            }
-        }
-
         elements.adBanners.forEach { element ->
             try {
                 logger.debug("Removing ad banner via XPath: {}", element.xpath)

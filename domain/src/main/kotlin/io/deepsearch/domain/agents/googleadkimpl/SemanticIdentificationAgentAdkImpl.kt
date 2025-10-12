@@ -59,9 +59,6 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
                 "cookieBanner" to Schema.builder().type("OBJECT").properties(
                     identifiedElementSchema.properties().orElse(emptyMap())
                 ).description("Cookie consent banner (optional)").nullable(true).build(),
-                "chatWidget" to Schema.builder().type("OBJECT").properties(
-                    identifiedElementSchema.properties().orElse(emptyMap())
-                ).description("Chat widget or support widget (optional)").nullable(true).build(),
                 "adBanners" to Schema.builder().type("ARRAY").items(identifiedElementSchema)
                     .description("List of advertisement banners").build(),
                 "popups" to Schema.builder().type("ARRAY").items(identifiedElementSchema)
@@ -89,19 +86,25 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
         )
         instruction(
             """
-            Task: Identify ALL popup and navigational elements on the page and provide their XPath and a short note.
+            Task: Identify popup and navigational elements on the page and provide their XPath and a short note.
 
             Inputs:
             - A screenshot of the webpage (current viewport)
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
-            - Identify (if any): header/navigation bar, footer, navigation sidebar, breadcrumb bar, cookie banner, chat widget, ad banners and popups.
+            - Identify the following if any:
+                - header: The top header bar of the webpage, usually for navigation
+                - footer: The bottom footer bar of the webpage
+                - navSidebar: The navigational sidebar of the current main content
+                - breadcrumb: The navigational breadcrumb
+                - cookieBanner: The cookie banner dialog
+                - adBanners: Elements containing ads
+                - popups: Popup dialogs that cover the main content and are visually interrupting to the user
             - Do not include the main content of the webpage. Only include elements that contain no critical information in the webpage.
             - For each region, return a relative xpath to the container that wraps the region. Make sure the regions are unique with no overlap.
-            - Do not use positional predicates in the XPaths.
+            - Must not use positional predicates in the XPaths.
             - Write a brief note describing why it is considered a semantic element (e.g., "Top navbar with logo and menu", "Left sidebar with category links", "Cookie consent popup").
-            - Use the screenshot to help identify visible popups and modal dialogs that interrupt the user experience.
             - Return null for optional single elements if not found.
             - Return empty arrays for list elements if none found.
             
@@ -115,7 +118,6 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
               "navSidebar": { "xpath": string, "note": string } | null,
               "breadcrumb": { "xpath": string, "note": string } | null,
               "cookieBanner": { "xpath": string, "note": string } | null,
-              "chatWidget": { "xpath": string, "note": string } | null,
               "adBanners": [ { "xpath": string, "note": string }, ... ],
               "popups": [ { "xpath": string, "note": string }, ... ]
             }

@@ -112,14 +112,13 @@ class PlaywrightBrowserPage(
         }
 
         if (count > 1) {
-            logger.warn("Multiple elements ({}) found at XPath: {}, removing last", count, xpath)
+            logger.debug("Multiple elements ({}) found at XPath: {}, removing all", count, xpath)
         }
 
-        // Get the first matching element and remove it using JavaScript
-        val target = locator.last()
-        target.evaluate("element => element.remove()")
+        // Remove all matching elements using JavaScript
+        locator.evaluateAll("elements => elements.forEach(element => element.remove())")
 
-        logger.debug("Successfully removed element at XPath: {}", xpath)
+        logger.debug("Successfully removed {} element(s) at XPath: {}", count, xpath)
     }
 
     override suspend fun elementExists(xpath: String): Boolean {

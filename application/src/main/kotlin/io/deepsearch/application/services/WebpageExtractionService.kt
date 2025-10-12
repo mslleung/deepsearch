@@ -198,15 +198,6 @@ class WebpageExtractionService(
             }
         }
 
-        semanticElements.chatWidget?.let { element ->
-            try {
-                logger.debug("Removing chat widget via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
-            } catch (e: Exception) {
-                logger.warn("Failed to remove chat widget at {}: {}", element.xpath, e.message)
-            }
-        }
-
         semanticElements.adBanners.forEach { element ->
             try {
                 logger.debug("Removing ad banner via XPath: {}", element.xpath)

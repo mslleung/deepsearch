@@ -24,7 +24,6 @@ data class SemanticElements(
     val navSidebar: IdentifiedElement? = null,
     val breadcrumb: IdentifiedElement? = null,
     val cookieBanner: IdentifiedElement? = null,
-    val chatWidget: IdentifiedElement? = null,
     val adBanners: List<IdentifiedElement> = emptyList(),
     val popups: List<IdentifiedElement> = emptyList()
 )
