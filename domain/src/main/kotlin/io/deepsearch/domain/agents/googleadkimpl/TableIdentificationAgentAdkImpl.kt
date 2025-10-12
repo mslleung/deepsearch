@@ -86,6 +86,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
             - For every table you find, create an XPath selector that targets the ROOT CONTAINER element that wraps the entire table.
             - Each XPath selector should uniquely identify a single table root container in the webpage.
+            - Each XPath selector should be as simple as possible.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
             Example XPath (targets the root container of the table):
