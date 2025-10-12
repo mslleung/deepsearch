@@ -158,9 +158,6 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
      * Plain colour icons carry no semantic meaning for UI intent, so they are skipped.
      */
     private fun isPlainColourIcon(bytes: ByteArray, mimeType: ImageMimeType): Boolean {
-        // only deal with jpegs for now
-        if (mimeType != ImageMimeType.JPEG) return false
-
         return try {
             val bufferedImage = ImageIO.read(ByteArrayInputStream(bytes)) ?: return false
             val width = bufferedImage.width
@@ -186,7 +183,7 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
             }
             true
         } catch (e: Exception) {
-            logger.warn("Failed to inspect JPEG for uniform colour, proceeding with LLM", e)
+            logger.warn("Failed to inspect image for uniform colour, proceeding with LLM", e)
             false
         }
     }

@@ -88,8 +88,8 @@
     ctx.textBaseline = 'middle';
     ctx.fillText(glyph, width / 2, height / 2);
 
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-    const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+    const dataUrl = canvas.toDataURL('image/webp', 0.9);
+    const base64 = dataUrl.replace(/^data:image\/webp;base64,/, '');
     return base64;
   };
 
@@ -182,8 +182,8 @@
         
         ctx.drawImage(img, 0, 0, width, height);
         
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-        const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+        const dataUrl = canvas.toDataURL('image/webp', 0.9);
+        const base64 = dataUrl.replace(/^data:image\/webp;base64,/, '');
         resolve(base64);
       };
       img.onerror = () => resolve(null);

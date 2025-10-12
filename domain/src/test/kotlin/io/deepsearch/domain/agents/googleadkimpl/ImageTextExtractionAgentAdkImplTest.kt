@@ -36,46 +36,46 @@ class ImageTextExtractionAgentAdkImplTest : KoinTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `extracts text from beame_text image`() = runTest(testCoroutineDispatcher) {
-        val bytes = resourceBytes("beame_text.jpg")
+        val bytes = resourceBytes("beame_text.webp")
         val output = agent.generate(
             ImageTextExtractionInput(
                 bytes = bytes,
-                mimeType = ImageMimeType.JPEG
+                mimeType = ImageMimeType.WEBP
             )
         )
 
-        assertNotNull(output.extractedText, "extractedText should not be null for beame_text.jpg")
-        assertTrue(output.extractedText.isNotBlank(), "extractedText should not be blank for beame_text.jpg")
+        assertNotNull(output.extractedText, "extractedText should not be null for beame_text.webp")
+        assertTrue(output.extractedText.isNotBlank(), "extractedText should not be blank for beame_text.webp")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `extracts text from beame_table image`() = runTest(testCoroutineDispatcher) {
-        val bytes = resourceBytes("beame_table.jpg")
+        val bytes = resourceBytes("beame_table.webp")
         val output = agent.generate(
             ImageTextExtractionInput(
                 bytes = bytes,
-                mimeType = ImageMimeType.JPEG
+                mimeType = ImageMimeType.WEBP
             )
         )
 
-        assertNotNull(output.extractedText, "extractedText should not be null for beame_table.jpg")
-        assertTrue(output.extractedText.contains("|"), "table extraction should contain markdown pipes for beame_table.jpg")
+        assertNotNull(output.extractedText, "extractedText should not be null for beame_table.webp")
+        assertTrue(output.extractedText.contains("|"), "table extraction should contain markdown pipes for beame_table.webp")
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `extracts text or returns null for beame_icon image`() = runTest(testCoroutineDispatcher) {
-        val bytes = resourceBytes("beame_icon.png")
+        val bytes = resourceBytes("beame_icon.webp")
         val output = agent.generate(
             ImageTextExtractionInput(
                 bytes = bytes,
-                mimeType = ImageMimeType.PNG
+                mimeType = ImageMimeType.WEBP
             )
         )
 
         val text = output.extractedText
-        assertEquals(text, null, "extractedText should be null for beame_icon.png")
+        assertEquals(text, null, "extractedText should be null for beame_icon.webp")
     }
 }
 

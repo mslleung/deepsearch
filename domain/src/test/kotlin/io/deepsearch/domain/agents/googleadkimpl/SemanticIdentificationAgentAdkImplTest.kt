@@ -34,7 +34,7 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
 
     // Loaded resources
     private val exampleHtml: String = resourceText("view-source_https___example.com.html")
-    private val exampleScreenshot: ByteArray = resourceBytes("example.com_.jpg")
+    private val exampleScreenshot: ByteArray = resourceBytes("example.com_.webp")
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<ISemanticIdentificationAgent>()
@@ -48,7 +48,7 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
         
         val input = SemanticIdentificationInput(
             screenshotBytes = exampleScreenshot,
-            mimetype = ImageMimeType.JPEG,
+            mimetype = ImageMimeType.WEBP,
             html = exampleHtml
         )
         val output = agent.generate(input)

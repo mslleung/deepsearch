@@ -5,5 +5,8 @@
   "private": true,
   "devDependencies": {
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "sharp": "^0.34.4"
   }
 }

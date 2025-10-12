@@ -34,11 +34,11 @@ class PopupContainerIdentificationAgentAdkImplTest : KoinTest {
     private fun resourceText(name: String): String = resourceBytes(name).toString(Charsets.UTF_8)
 
     // Loaded resources
-    private val exampleScreenshot: ByteArray = resourceBytes("example.com_.jpg")
+    private val exampleScreenshot: ByteArray = resourceBytes("example.com_.webp")
     private val exampleHtml: String = resourceText("view-source_https___example.com.html")
 
     @OptIn(ExperimentalEncodingApi::class)
-    private val otandpBodyCheckScreenshot = Base64.encode(resourceBytes("www.otandp.com_body-check_.jpg"))
+    private val otandpBodyCheckScreenshot = Base64.encode(resourceBytes("www.otandp.com_body-check_.webp"))
     private val otandpBodyCheckHtml = resourceText("view-source_https___www.otandp.com_body-check_.html")
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
@@ -49,7 +49,7 @@ class PopupContainerIdentificationAgentAdkImplTest : KoinTest {
     fun `no popup should be detected on example`() = runTest(testCoroutineDispatcher) {
         val input = PopupContainerIdentificationInput(
             screenshotBytes = exampleScreenshot,
-            mimetype = ImageMimeType.JPEG,
+            mimetype = ImageMimeType.WEBP,
             html = exampleHtml
         )
         val output = agent.generate(input)
@@ -65,7 +65,7 @@ class PopupContainerIdentificationAgentAdkImplTest : KoinTest {
     fun `popup should be detected on otandp body check page`() = runTest(testCoroutineDispatcher) {
         val input = PopupContainerIdentificationInput(
             screenshotBytes = Base64.decode(otandpBodyCheckScreenshot),
-            mimetype = ImageMimeType.JPEG,
+            mimetype = ImageMimeType.WEBP,
             html = otandpBodyCheckHtml
         )
         val output = agent.generate(input)

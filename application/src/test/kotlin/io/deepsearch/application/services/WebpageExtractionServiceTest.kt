@@ -27,8 +27,8 @@ class WebpageExtractionServiceTest : KoinTest {
     @ParameterizedTest
     @ValueSource(
         strings = [
-            "https://mybeame.com/beame-student-discount",
-//            "https://www.otandp.com/body-check/"
+//            "https://mybeame.com/beame-student-discount",
+            "https://www.otandp.com/body-check/"
         ]
     )
     fun `extract webpage text`(url: String) = runTest(testCoroutineDispatcher) {

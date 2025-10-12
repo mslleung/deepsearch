@@ -140,7 +140,7 @@ class PlaywrightBrowserPage(
             val bytes = Base64.decode(result.base64)
             IBrowserPage.Icon(
                 bytes = bytes,
-                mimeType = ImageMimeType.JPEG,
+                mimeType = ImageMimeType.WEBP,
                 xPathSelectors = result.xPathSelectors
             )
         }
@@ -175,7 +175,7 @@ class PlaywrightBrowserPage(
             results.add(
                 IBrowserPage.WebImage(
                     bytes = bytes,
-                    mimeType = ImageMimeType.JPEG,
+                    mimeType = ImageMimeType.WEBP,
                     xPathSelectors = result.xPathSelectors
                 )
             )
