@@ -176,7 +176,7 @@ class ImageTextExtractionAgentAdkImpl : IImageTextExtractionAgent {
         if (!response.extractedText.isNullOrBlank()) {
             val transformed = transformHTMLTablesToMarkdown(response.extractedText)
             logger.debug("Text extracted from image: {} characters", transformed.length)
-            return ImageTextExtractionOutput(extractedText = transformed.trim())
+            return ImageTextExtractionOutput(extractedText = "[ ${transformed.trim()} ]")
         } else {
             logger.debug("No text found in image ({} bytes)", input.bytes.size)
             return ImageTextExtractionOutput(extractedText = null)
