@@ -32,9 +32,9 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
     @ValueSource(
         strings = [
 //            "https://example.com/",
-//            "https://www.otandp.com/body-check/",
+            "https://www.otandp.com/body-check/",
 //            "https://sleekflow.io/pricing",
-            "https://mybeame.com/beame-student-discount",
+//            "https://mybeame.com/beame-student-discount",
         ]
     )
     fun `identifies a single table from webpage HTML`(url: String) = runTest(testCoroutineDispatcher) {

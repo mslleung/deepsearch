@@ -171,8 +171,6 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         val doc: Document = Jsoup.parse(rawHtml)
 
         // Step 1: Remove noise elements that don't contribute to structure
-        // Keep full page structure - no heuristic pre-filtering for table candidates
-        // LLM + screenshot will identify tables from structure and visual patterns
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
                     "head, title, base, " +
@@ -272,7 +270,17 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             logger.debug("Removed duplicate mobile navigation")
         }
 
-        // Step 6: Remove empty elements iteratively to compact structure
+        // Step 6: Sample repeated sibling patterns (keep first 3, remove rest)
+        // Many sites have repeated elements (e.g., 50 blog post cards) - tables are unique structures
+        doc.body().children().forEach { parent ->
+            sampleRepeatedSiblings(parent)
+        }
+
+        // Step 7: Collapse single-child wrapper chains
+        // div > div > div > span with single children at each level adds no value
+        collapseSingleChildChains(doc.body())
+
+        // Step 8: Remove empty elements iteratively to compact structure
         // This significantly reduces HTML size without losing meaningful structure
         var changed = true
         var iterations = 0
@@ -301,5 +309,97 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         logger.debug("Cleaned HTML: {} chars (original: ~{} chars)",
             cleanedHtml.length, rawHtml.length)
         return cleanedHtml
+    }
+
+    /**
+     * Sample repeated sibling patterns: if many siblings have identical structure,
+     * keep only first 3 as examples and remove the rest to reduce HTML size.
+     * This preserves the pattern for LLM while removing redundancy.
+     */
+    private fun sampleRepeatedSiblings(parent: Element) {
+        if (parent.children().size < 5) return // Not worth analyzing small groups
+        
+        // Group siblings by structural signature (tag + classes)
+        val siblingGroups = mutableMapOf<String, MutableList<Element>>()
+        parent.children().forEach { child ->
+            val signature = "${child.tagName()}:${child.classNames().sorted().joinToString(",")}"
+            siblingGroups.getOrPut(signature) { mutableListOf() }.add(child)
+        }
+        
+        // For groups with many identical siblings, keep only first 3
+        var removedCount = 0
+        siblingGroups.forEach { (_, siblings) ->
+            if (siblings.size >= 5) {
+                // Keep first 3, remove the rest
+                siblings.drop(3).forEach { 
+                    it.remove()
+                    removedCount++
+                }
+            }
+        }
+        
+        if (removedCount > 0) {
+            logger.debug("Sampled repeated siblings: removed {} duplicate elements", removedCount)
+        }
+        
+        // Recurse into remaining children
+        parent.children().forEach { child ->
+            sampleRepeatedSiblings(child)
+        }
+    }
+
+    /**
+     * Collapse single-child wrapper chains: if a parent has only one child and no text,
+     * and the parent doesn't add semantic value (no meaningful id/class/role),
+     * replace the parent with the child to reduce nesting depth.
+     */
+    private fun collapseSingleChildChains(element: Element?) {
+        if (element == null) return
+        
+        var collapsedCount = 0
+        
+        // Process all children first (bottom-up)
+        element.children().toList().forEach { child ->
+            collapseSingleChildChains(child)
+        }
+        
+        // Now collapse chains in this subtree
+        val childrenToProcess = element.children().toList()
+        for (child in childrenToProcess) {
+            var node = child
+            while (node.children().size == 1 && 
+                   node.ownText().isBlank() &&
+                   !hasMeaningfulAttributes(node)) {
+                val onlyChild = node.children().first() ?: break
+                val parent = node.parent() ?: break
+                
+                // Replace node with its only child
+                val index = node.siblingIndex()
+                node.remove()
+                parent.insertChildren(index, onlyChild)
+                collapsedCount++
+                node = onlyChild
+            }
+        }
+        
+        if (collapsedCount > 0) {
+            logger.debug("Collapsed {} single-child wrapper chains", collapsedCount)
+        }
+    }
+
+    /**
+     * Check if an element has meaningful attributes that should prevent it from being collapsed.
+     */
+    private fun hasMeaningfulAttributes(element: Element): Boolean {
+        // Keep elements with meaningful IDs, specific classes, or semantic roles
+        val id = element.attr("id")
+        val classes = element.classNames()
+        val role = element.attr("role")
+        
+        return id.isNotBlank() || 
+               classes.isNotEmpty() ||
+               role.isNotBlank() ||
+               element.attr("colspan").isNotBlank() ||
+               element.attr("rowspan").isNotBlank()
     }
 }
