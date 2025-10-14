@@ -26,5 +26,6 @@ val applicationModule = module {
         scopedOf(::NavigationElementRemovalService) bind INavigationElementRemovalService::class
         scopedOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
         scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
+        scopedOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
     }
 }

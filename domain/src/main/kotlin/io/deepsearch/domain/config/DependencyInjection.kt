@@ -19,6 +19,7 @@ val domainModule = module {
         scopedOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
         scopedOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class
         scopedOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
+        scopedOf(::GoogleSearchLinkDiscoveryAgentAdkImpl) bind IGoogleSearchLinkDiscoveryAgent::class
         scopedOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
         scopedOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
         scopedOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
@@ -30,5 +31,6 @@ val domainModule = module {
         scopedOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
         scopedOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
         scopedOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
+        scopedOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
     }
 }

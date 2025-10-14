@@ -14,6 +14,7 @@ import io.deepsearch.application.services.IUserService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.IWebpageImageTextExtractionService
+import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.NavigationElementRemovalService
 import io.deepsearch.application.services.PopupContainerIdentificationService
 import io.deepsearch.application.services.SearchService
@@ -24,6 +25,7 @@ import io.deepsearch.application.services.UserService
 import io.deepsearch.application.services.WebpageExtractionService
 import io.deepsearch.application.services.WebpageIconInterpretationService
 import io.deepsearch.application.services.WebpageImageTextExtractionService
+import io.deepsearch.application.services.WebpageLinkDiscoveryService
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
 import kotlinx.coroutines.CoroutineDispatcher
@@ -51,6 +53,7 @@ val applicationTestModule = module {
     singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
     singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
+    singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
 
     single<CoroutineDispatcher> { UnconfinedTestDispatcher() }
 }

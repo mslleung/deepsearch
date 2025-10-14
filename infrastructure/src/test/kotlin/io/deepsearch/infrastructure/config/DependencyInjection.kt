@@ -14,12 +14,14 @@ val infrastructureTestModule = module {
     // Initialize database for tests
     single(createdAtStart = true) { DatabaseConfig.configureDatabase() }
     
+    singleOf(::ExposedUserRepository) bind IUserRepository::class
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
     singleOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
     singleOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
     singleOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class
     singleOf(::ExposedWebpageNavigationElementRepository) bind IWebpageNavigationElementRepository::class
+    singleOf(::ExposedWebpageExtractionRepository) bind IWebpageExtractionRepository::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 }

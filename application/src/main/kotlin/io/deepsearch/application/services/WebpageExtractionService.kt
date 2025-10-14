@@ -3,7 +3,9 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.models.entities.WebpageExtraction
 import io.deepsearch.domain.models.valueobjects.SemanticElements
+import io.deepsearch.domain.repositories.IWebpageExtractionRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -11,6 +13,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.security.MessageDigest
 import kotlin.io.encoding.Base64
 
 interface IWebpageExtractionService {
@@ -25,6 +28,7 @@ class WebpageExtractionService(
     private val semanticIdentificationService: ISemanticIdentificationService,
     private val popupContainerIdentificationService: IPopupContainerIdentificationService,
     private val navigationElementRemovalService: INavigationElementRemovalService,
+    private val webpageExtractionRepository: IWebpageExtractionRepository,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : IWebpageExtractionService {
 
@@ -33,8 +37,20 @@ class WebpageExtractionService(
     /**
      * Converts a webpage into text for downstream LLM processing.
      * The extracted text is primed for information retrieval on the current page.
+     * Results are cached in the database to prevent duplicate extractions.
      */
     override suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
+        // Check cache first using HTML hash
+        val fullHtml = webpage.getFullHtml()
+        val htmlHash = MessageDigest.getInstance("SHA-256").digest(fullHtml.toByteArray())
+        
+        val cached = webpageExtractionRepository.findByHash(htmlHash)
+        if (cached != null) {
+            logger.debug("Using cached extraction for webpage")
+            return@coroutineScope cached.extractedMarkdown
+        }
+
+        // Perform extraction
         val title = webpage.getTitle()
         val description = webpage.getDescription()
 
@@ -64,7 +80,7 @@ class WebpageExtractionService(
 
         val extractedText = webpage.extractTextContent()
 
-        buildString {
+        val result = buildString {
             appendLine("URL: ${webpage.getUrl()}")
             appendLine("Title: $title")
             if (!description.isNullOrBlank()) {
@@ -77,6 +93,16 @@ class WebpageExtractionService(
             appendLine()
             appendLine(extractedText)
         }.trim()
+
+        // Cache the result
+        webpageExtractionRepository.upsert(
+            WebpageExtraction(
+                webpageHtmlHash = htmlHash,
+                extractedMarkdown = result
+            )
+        )
+
+        result
     }
 
     private suspend fun replaceIconsWithTexts(webpage: IBrowserPage) = coroutineScope {

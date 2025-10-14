@@ -5,9 +5,11 @@ import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.agents.IImageTextExtractionAgent
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
+import io.deepsearch.domain.agents.IGoogleSearchLinkDiscoveryAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IDirectAnswerAgent
+import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
@@ -20,9 +22,11 @@ import io.deepsearch.domain.agents.googleadkimpl.BlinkTestAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.ImageTextExtractionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.GoogleSearchLinkDiscoveryAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.IconInterpreterAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.DirectAnswerAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.LinkRelevanceAnalysisAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.NavigationElementIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PopupContainerIdentificationAgentAdkImpl
@@ -46,6 +50,7 @@ val domainTestModule = module {
     singleOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
     singleOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class
     singleOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
+    singleOf(::GoogleSearchLinkDiscoveryAgentAdkImpl) bind IGoogleSearchLinkDiscoveryAgent::class
     singleOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
     singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
@@ -58,6 +63,7 @@ val domainTestModule = module {
     singleOf(::ImageTextExtractionAgentAdkImpl) bind IImageTextExtractionAgent::class
     singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
+    singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 }
