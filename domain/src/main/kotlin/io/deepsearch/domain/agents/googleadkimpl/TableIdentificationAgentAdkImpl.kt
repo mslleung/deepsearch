@@ -84,13 +84,9 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             Instructions:
             - Analyze both the screenshot and HTML to identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
-            - For every table you find, create an XPath selector that targets the ROOT CONTAINER element that wraps the entire table.
-            - The XPath selectors should be as simplistic and direct as possible.
-            - Each XPath selector should uniquely identify a single table root container in the webpage.
+            - For every table you find, create a XPath selector that targets the smallest ROOT CONTAINER element that wraps the entire table.
+            - The XPath selectors should be as simplistic and direct as possible. It should contain no more than the bare minimal to uniquely identify the table.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
-
-            Example XPath (targets the root container of the table):
-            //div[@class='tb-example']
 
             Expected output shape:
             {
@@ -270,17 +266,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             logger.debug("Removed duplicate mobile navigation")
         }
 
-        // Step 6: Sample repeated sibling patterns (keep first 3, remove rest)
-        // Many sites have repeated elements (e.g., 50 blog post cards) - tables are unique structures
-        doc.body().children().forEach { parent ->
-            sampleRepeatedSiblings(parent)
-        }
-
-        // Step 7: Collapse single-child wrapper chains
-        // div > div > div > span with single children at each level adds no value
-        collapseSingleChildChains(doc.body())
-
-        // Step 8: Remove empty elements iteratively to compact structure
+        // Step 6: Remove empty elements iteratively to compact structure
         // This significantly reduces HTML size without losing meaningful structure
         var changed = true
         var iterations = 0

@@ -8,6 +8,7 @@ import com.google.adk.tools.GoogleSearchTool
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
+import io.deepsearch.domain.agents.GoogleTextSearchOutput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.SearchResult
@@ -69,7 +70,7 @@ class GoogleTextSearchAgentAdkImpl :
 
     override suspend fun generate(
         input: io.deepsearch.domain.agents.GoogleTextSearchInput
-    ): io.deepsearch.domain.agents.GoogleTextSearchOutput = coroutineScope {
+    ): GoogleTextSearchOutput {
         val (query, url) = input.searchQuery
         logger.debug("Google text search: '{}' on site {}", query, url)
 
@@ -162,7 +163,7 @@ class GoogleTextSearchAgentAdkImpl :
 
         logger.debug("Google text search results: '{}' from sources {}", concatenatedText, sources)
 
-        io.deepsearch.domain.agents.GoogleTextSearchOutput(searchResult)
+        return GoogleTextSearchOutput(searchResult)
     }
 
     private suspend fun resolveRedirectSafely(url: String): String {
