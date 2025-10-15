@@ -10,6 +10,8 @@ import org.koin.dsl.module
 import org.koin.module.requestScope
 
 val domainModule = module {
+    single<DispatcherProvider> { DefaultDispatcherProvider() }
+
     requestScope {
         // domain services
 

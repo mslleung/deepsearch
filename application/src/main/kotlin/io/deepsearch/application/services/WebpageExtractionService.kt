@@ -3,9 +3,8 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.config.DispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SemanticElements
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -24,7 +23,7 @@ class WebpageExtractionService(
     private val semanticIdentificationService: ISemanticIdentificationService,
     private val popupContainerIdentificationService: IPopupContainerIdentificationService,
     private val navigationElementRemovalService: INavigationElementRemovalService,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val dispatchers: DispatcherProvider
 ) : IWebpageExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -84,7 +83,7 @@ class WebpageExtractionService(
 
         val replacements = icons
             .map { icon ->
-                async(ioDispatcher) {
+                async(dispatchers.io) {
                     val interpretedText = webpageIconInterpretationService.interpretIcon(icon)
                     icon.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, interpretedText) }
                 }
@@ -100,7 +99,7 @@ class WebpageExtractionService(
 
         val replacements = images
             .map { image ->
-                async(ioDispatcher) {
+                async(dispatchers.io) {
                     val extractedText = webpageImageTextExtractionService.extractTextFromImage(image)
                     image.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, extractedText) }
                 }
@@ -138,7 +137,7 @@ class WebpageExtractionService(
         // Interpret tables in parallel (LLM calls can be parallelized)
         val replacements = tableInputs
             .map { (xpath, input) ->
-                async(ioDispatcher) {
+                async(dispatchers.io) {
                     val markdown = tableInterpretationService.interpretTable(input)
                     IBrowserPage.XPathReplacementWithText(xpath, markdown)
                 }

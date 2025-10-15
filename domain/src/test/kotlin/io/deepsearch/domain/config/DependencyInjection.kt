@@ -38,12 +38,25 @@ import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
 val domainTestModule = module {
+    single<CoroutineDispatcher> { StandardTestDispatcher() }
+
+    single<DispatcherProvider> {
+        val testDispatcher = get<CoroutineDispatcher>()
+        object : DispatcherProvider {
+            override val io = testDispatcher
+            override val default = testDispatcher
+            override val main = testDispatcher
+            override val unconfined = testDispatcher
+        }
+    }
+
     singleOf(::BrowserPool) bind IBrowserPool::class
 
     // Google ADK agent has its own lifecycle management, so we make it singleton
@@ -64,8 +77,6 @@ val domainTestModule = module {
     singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
     singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
-
-    single<CoroutineDispatcher> { StandardTestDispatcher() }
 }
 
 

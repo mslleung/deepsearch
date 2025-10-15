@@ -2,7 +2,6 @@ package io.deepsearch.domain.browser.playwright
 
 import com.microsoft.playwright.Locator
 import com.microsoft.playwright.Page
-import kotlinx.coroutines.Dispatchers
 import com.microsoft.playwright.options.ScreenshotType
 import com.microsoft.playwright.options.LoadState
 import io.deepsearch.domain.browser.IBrowserPage
@@ -22,8 +21,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  * keeping ARIA and DOM details internal to this adapter.
  */
 class PlaywrightBrowserPage(
-    private val page: Page,
-    private val defaultDispatcher: CoroutineDispatcher = Dispatchers.Default
+    private val page: Page
 ) : IBrowserPage {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)

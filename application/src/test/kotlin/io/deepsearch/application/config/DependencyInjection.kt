@@ -28,14 +28,10 @@ import io.deepsearch.application.services.WebpageImageTextExtractionService
 import io.deepsearch.application.services.WebpageLinkDiscoveryService
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
-@OptIn(ExperimentalCoroutinesApi::class)
 val applicationTestModule = module {
     includes(domainTestModule)
     includes(infrastructureTestModule)
@@ -53,6 +49,4 @@ val applicationTestModule = module {
     singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
-
-    single<CoroutineDispatcher> { StandardTestDispatcher() }
 }

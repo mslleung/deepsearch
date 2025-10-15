@@ -5,11 +5,10 @@ import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.config.DispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -31,7 +30,7 @@ class AgenticBrowserSearchStrategy(
     private val browserPool: IBrowserPool,
     private val webpageExtractionService: IWebpageExtractionService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val dispatchers: DispatcherProvider
 ) : IAgenticBrowserSearchStrategy {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -89,7 +88,7 @@ class AgenticBrowserSearchStrategy(
     private suspend fun step1ProcessInitialUrl(
         searchQuery: SearchQuery,
         browser: IBrowser
-    ): Step1Result = withContext(ioDispatcher) {
+    ): Step1Result = withContext(dispatchers.io) {
         logger.debug("Step 1: Processing initial URL {} with Google search", searchQuery.url)
 
         val googleLinksDeferred = async {
@@ -114,7 +113,7 @@ class AgenticBrowserSearchStrategy(
         processedUrls: Set<String>,
         searchQuery: SearchQuery,
         browser: IBrowser
-    ): List<UrlProcessingResult> = withContext(ioDispatcher) {
+    ): List<UrlProcessingResult> = withContext(dispatchers.io) {
         val allResults = mutableListOf<UrlProcessingResult>()
         var visitedUrls = processedUrls
         var currentBatch = initialLinks

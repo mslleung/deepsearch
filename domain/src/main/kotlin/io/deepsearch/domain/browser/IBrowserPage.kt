@@ -1,7 +1,6 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.constants.ImageMimeType
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.leptonica.global.leptonica
