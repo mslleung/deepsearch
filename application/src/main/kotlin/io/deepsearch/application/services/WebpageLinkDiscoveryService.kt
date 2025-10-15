@@ -13,10 +13,15 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 interface IWebpageLinkDiscoveryService {
-    suspend fun discoverRelevantLinks(
-        searchQuery: SearchQuery,
-        webpage: IBrowserPage
-    ): List<WebpageLink>
+    /**
+     * Discovers relevant links using Google search
+     */
+    suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery): List<WebpageLink>
+
+    /**
+     * Discovers relevant links by analyzing links on the current webpage
+     */
+    suspend fun discoverRelevantLinksByAgent(query: String, webpage: IBrowserPage): List<WebpageLink>
 }
 
 class WebpageLinkDiscoveryService(
@@ -26,53 +31,29 @@ class WebpageLinkDiscoveryService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    /**
-     * Discovers relevant links using parallel Google search and on-page link analysis.
-     * Results are merged and deduplicated by URL.
-     */
-    override suspend fun discoverRelevantLinks(
-        searchQuery: SearchQuery,
-        webpage: IBrowserPage
-    ): List<WebpageLink> = coroutineScope {
-        logger.debug("Discovering links for query: '{}' on {}", searchQuery.query, searchQuery.url)
+    override suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery): List<WebpageLink> {
+        logger.debug("Discovering links via Google search for query: '{}' on {}", searchQuery.query, searchQuery.url)
 
-        // Run both discovery methods in parallel for speed
-        val googleSearchDeferred = async {
-            try {
-                googleSearchLinkDiscoveryAgent.generate(
-                    GoogleSearchLinkDiscoveryInput(searchQuery)
-                ).links
-            } catch (e: Exception) {
-                logger.warn("Google search link discovery failed: {}", e.message)
-                emptyList()
-            }
-        }
+        val links = googleSearchLinkDiscoveryAgent.generate(
+            GoogleSearchLinkDiscoveryInput(searchQuery)
+        ).links
 
-        val linkRelevanceDeferred = async {
-            try {
-                linkRelevanceAnalysisAgent.generate(
-                    LinkRelevanceAnalysisInput(
-                        html = webpage.getFullHtml(),
-                        query = searchQuery.query
-                    )
-                ).links
-            } catch (e: Exception) {
-                logger.warn("Link relevance analysis failed: {}", e.message)
-                emptyList()
-            }
-        }
+        logger.debug("Discovered {} links from Google search", links.size)
+        return links
+    }
 
-        val googleLinks = googleSearchDeferred.await()
-        val relevanceLinks = linkRelevanceDeferred.await()
+    override suspend fun discoverRelevantLinksByAgent(query: String, webpage: IBrowserPage): List<WebpageLink> {
+        logger.debug("Discovering links via on-page analysis for query: '{}'", query)
 
-        // Merge and deduplicate by URL, keeping first occurrence
-        val allLinks = (googleLinks + relevanceLinks)
-            .distinctBy { it.url }
+        val links = linkRelevanceAnalysisAgent.generate(
+            LinkRelevanceAnalysisInput(
+                html = webpage.getFullHtml(),
+                query = query
+            )
+        ).links
 
-        logger.debug("Discovered {} unique links ({} from Google, {} from relevance analysis)",
-            allLinks.size, googleLinks.size, relevanceLinks.size)
-
-        allLinks
+        logger.debug("Discovered {} links from on-page analysis", links.size)
+        return links
     }
 }
 

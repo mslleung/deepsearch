@@ -13,4 +13,8 @@ class PlaywrightBrowserContext(
         val page = context.newPage()
         return PlaywrightBrowserPage(page)
     }
+    
+    override fun close() {
+        context.close()
+    }
 }
