@@ -100,4 +100,30 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
             assertTrue(link.reason.isNotBlank(), "Reason should not be blank")
         }
     }
+
+    @Test
+    fun `finds relevant links for body check packages on OT&P homepage with very indirect query`() = runTest(testCoroutineDispatcher) {
+        // Given
+        val url = "https://www.otandp.com/otandp-digital-app"
+        val query = "what are the steps to delete my data on the OT&P Digital App?"
+
+        val browser = browserPool.acquireBrowser()
+        val browserContext = browser.createContext()
+        val browserPage = browserContext.newPage()
+
+        browserPage.navigate(url)
+        val html = browserPage.getFullHtml()
+
+        // When
+        val output = agent.generate(LinkRelevanceAnalysisInput(html, query))
+
+        // Then
+        // should access https://www.otandp.com/longevity-services
+        // answer: $2200
+        output.links.forEach { link ->
+            assertEquals(LinkSource.LINK_RELEVANCE, link.source)
+            assertTrue(link.url.isNotBlank(), "URL should not be blank")
+            assertTrue(link.reason.isNotBlank(), "Reason should not be blank")
+        }
+    }
 }
