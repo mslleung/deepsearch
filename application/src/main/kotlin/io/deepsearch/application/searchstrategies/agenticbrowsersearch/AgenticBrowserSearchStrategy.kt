@@ -1,6 +1,7 @@
 package io.deepsearch.application.searchstrategies.agenticbrowsersearch
 
 import io.deepsearch.application.searchstrategies.ISearchStrategy
+import io.deepsearch.application.services.INormalizeUrlService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.domain.browser.IBrowser
@@ -30,6 +31,7 @@ class AgenticBrowserSearchStrategy(
     private val browserPool: IBrowserPool,
     private val webpageExtractionService: IWebpageExtractionService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
+    private val normalizeUrlService: INormalizeUrlService,
     private val dispatchers: DispatcherProvider
 ) : IAgenticBrowserSearchStrategy {
 
@@ -66,9 +68,11 @@ class AgenticBrowserSearchStrategy(
             )
 
             // Step 2: Process all discovered links recursively, fanning out
+            // Normalize initial URL for deduplication tracking
+            val initialNormalizedUrl = normalizeUrlService.normalize(searchQuery.url) ?: searchQuery.url
             val allResults = step2ProcessLinksRecursively(
                 initialLinks = step1Result.googleLinks + step1Result.initialResult.discoveredLinks,
-                processedUrls = setOf(searchQuery.url),
+                processedNormalizedUrls = setOf(initialNormalizedUrl),
                 searchQuery = searchQuery,
                 browser = browser
             )
@@ -107,18 +111,22 @@ class AgenticBrowserSearchStrategy(
     /**
      * Step 2: Process discovered links recursively in parallel waves (breadth-first).
      * Returns all processing results from all waves.
+     * Uses normalized URLs for deduplication, but navigates to original URLs.
      */
     private suspend fun step2ProcessLinksRecursively(
         initialLinks: List<WebpageLink>,
-        processedUrls: Set<String>,
+        processedNormalizedUrls: Set<String>,
         searchQuery: SearchQuery,
         browser: IBrowser
     ): List<UrlProcessingResult> = withContext(dispatchers.io) {
         val allResults = mutableListOf<UrlProcessingResult>()
-        var visitedUrls = processedUrls
+        var visitedNormalizedUrls = processedNormalizedUrls
         var currentBatch = initialLinks
-            .distinctBy { it.url }
-            .filterNot { it.url in visitedUrls }
+            .distinctBy { normalizeUrlService.normalize(it.url) ?: it.url }
+            .filterNot { 
+                val normalized = normalizeUrlService.normalize(it.url) ?: it.url
+                normalized in visitedNormalizedUrls
+            }
 
         var waveNumber = 1
         while (currentBatch.isNotEmpty()) {
@@ -131,15 +139,21 @@ class AgenticBrowserSearchStrategy(
                 }
             }.awaitAll()
 
-            // Track visited URLs
-            visitedUrls = visitedUrls + batchResults.map { it.url }
+            // Track visited URLs using normalized form
+            val batchNormalizedUrls = batchResults.map { 
+                normalizeUrlService.normalize(it.url) ?: it.url
+            }
+            visitedNormalizedUrls = visitedNormalizedUrls + batchNormalizedUrls
             allResults.addAll(batchResults)
 
             // Collect new links for next wave
             val newLinks = batchResults
                 .flatMap { it.discoveredLinks }
-                .distinctBy { it.url }
-                .filterNot { it.url in visitedUrls }
+                .distinctBy { normalizeUrlService.normalize(it.url) ?: it.url }
+                .filterNot { 
+                    val normalized = normalizeUrlService.normalize(it.url) ?: it.url
+                    normalized in visitedNormalizedUrls
+                }
 
             logger.debug(
                 "Wave {} complete: {} pages processed, {} markdowns extracted, {} new links discovered",

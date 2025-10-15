@@ -27,5 +27,6 @@ val applicationModule = module {
         scopedOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
         scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
         scopedOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
+        scopedOf(::NormalizeUrlService) bind INormalizeUrlService::class
     }
 }
