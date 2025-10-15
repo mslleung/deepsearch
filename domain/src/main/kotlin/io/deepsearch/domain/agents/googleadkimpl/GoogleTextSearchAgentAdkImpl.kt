@@ -157,6 +157,7 @@ class GoogleTextSearchAgentAdkImpl :
 
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,
+            answer = "",
             content = concatenatedText,
             sources = sources
         )

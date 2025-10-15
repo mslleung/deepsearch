@@ -104,6 +104,7 @@ class GoogleCombinedSearchAgentImpl : IGoogleCombinedSearchAgent {
 
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,
+            answer = "",
             content = contentText,
             // Sources will be inferred from the model response or can be enhanced later
             sources = listOf(url)

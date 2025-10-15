@@ -9,6 +9,7 @@ import io.deepsearch.domain.agents.IGoogleSearchLinkDiscoveryAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IDirectAnswerAgent
+import io.deepsearch.domain.agents.IGenerateAnswerAgent
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
@@ -26,6 +27,7 @@ import io.deepsearch.domain.agents.googleadkimpl.GoogleSearchLinkDiscoveryAgentA
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.IconInterpreterAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.DirectAnswerAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.GenerateAnswerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.LinkRelevanceAnalysisAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.NavigationElementIdentificationAgentAdkImpl
@@ -75,6 +77,7 @@ val domainTestModule = module {
     singleOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
     singleOf(::ImageTextExtractionAgentAdkImpl) bind IImageTextExtractionAgent::class
     singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
+    singleOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
     singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
 }

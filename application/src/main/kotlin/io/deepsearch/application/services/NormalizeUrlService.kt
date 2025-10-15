@@ -3,7 +3,6 @@ package io.deepsearch.application.services
 import java.net.IDN
 import java.net.URI
 import java.net.URLDecoder
-import java.nio.charset.StandardCharsets
 
 /**
  * Configuration for URL normalization behavior.
@@ -47,17 +46,6 @@ interface INormalizeUrlService {
      * - Optionally normalizing www subdomain
      */
     fun normalize(url: String, config: UrlNormalizationConfig = UrlNormalizationConfig()): String?
-    
-    /**
-     * Extracts the locale from a URL path if present.
-     * Returns null if no locale is detected.
-     *
-     * Examples:
-     *   /en/about -> "en"
-     *   /fr-ca/products -> "fr-ca"
-     *   /about -> null
-     */
-    fun extractLocale(url: String): String?
 }
 
 class NormalizeUrlService : INormalizeUrlService {
@@ -164,21 +152,6 @@ class NormalizeUrlService : INormalizeUrlService {
         }
     }
     
-    override fun extractLocale(url: String): String? {
-        return try {
-            val uri = URI(url.trim())
-            val path = uri.path ?: return null
-            val segments = path.split("/").filter { it.isNotEmpty() }
-            
-            if (segments.isEmpty()) return null
-            
-            val firstSegment = segments.first().lowercase()
-            if (firstSegment in LOCALE_PATTERNS) firstSegment else null
-        } catch (e: Exception) {
-            null
-        }
-    }
-    
     private fun isDefaultPort(scheme: String, port: Int): Boolean {
         return (scheme == "http" && port == 80) || (scheme == "https" && port == 443)
     }
@@ -270,7 +243,7 @@ class NormalizeUrlService : INormalizeUrlService {
     
     private fun percentDecode(str: String): String {
         return try {
-            URLDecoder.decode(str, StandardCharsets.UTF_8.name())
+            URLDecoder.decode(str, Charsets.UTF_8)
         } catch (e: Exception) {
             str
         }

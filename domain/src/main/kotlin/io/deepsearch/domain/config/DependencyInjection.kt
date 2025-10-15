@@ -34,5 +34,6 @@ val domainModule = module {
         scopedOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
         scopedOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
         scopedOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
+        scopedOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
     }
 }

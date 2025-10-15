@@ -5,6 +5,7 @@ package io.deepsearch.domain.models.valueobjects
  */
 data class SearchResult(
     val originalQuery: SearchQuery,
+    val answer: String,
     val content: String,
     val sources: List<String>
 )

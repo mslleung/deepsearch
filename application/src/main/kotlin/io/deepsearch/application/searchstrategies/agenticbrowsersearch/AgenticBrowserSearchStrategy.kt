@@ -4,6 +4,8 @@ import io.deepsearch.application.searchstrategies.ISearchStrategy
 import io.deepsearch.application.services.INormalizeUrlService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
+import io.deepsearch.domain.agents.GenerateAnswerInput
+import io.deepsearch.domain.agents.IGenerateAnswerAgent
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.DispatcherProvider
@@ -32,6 +34,7 @@ class AgenticBrowserSearchStrategy(
     private val webpageExtractionService: IWebpageExtractionService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
+    private val generateAnswerAgent: IGenerateAnswerAgent,
     private val dispatchers: DispatcherProvider
 ) : IAgenticBrowserSearchStrategy {
 
@@ -55,6 +58,7 @@ class AgenticBrowserSearchStrategy(
     )
 
     override suspend fun execute(searchQuery: SearchQuery): SearchResult {
+        // TODO query expansion
         val browser = browserPool.acquireBrowser()
         try {
             // Step 1: Run Google link discovery and processUrl on input URL in parallel
@@ -77,9 +81,10 @@ class AgenticBrowserSearchStrategy(
                 browser = browser
             )
 
-            // Step 3: Collect all markdowns and return
+            // Step 3: Collect all markdowns and generate answer
+            val allUrls = listOfNotNull(step1Result.initialResult.url) + allResults.map { it.url }
             val allMarkdowns = listOfNotNull(step1Result.initialResult.markdown) + allResults.mapNotNull { it.markdown }
-            return step3AggregateResults(searchQuery, step1Result.initialResult, allResults, allMarkdowns)
+            return step3GenerateAnswer(searchQuery, allUrls, allMarkdowns)
         } finally {
             browser.close()
         }
@@ -171,25 +176,38 @@ class AgenticBrowserSearchStrategy(
     }
 
     /**
-     * Step 3: Aggregate all markdowns into a single SearchResult.
+     * Step 3: Generate answer from all markdowns using GenerateAnswerAgent.
      */
-    private fun step3AggregateResults(
+    private suspend fun step3GenerateAnswer(
         searchQuery: SearchQuery,
-        initialResult: UrlProcessingResult,
-        allResults: List<UrlProcessingResult>,
+        allUrls: List<String>,
         allMarkdowns: List<String>
     ): SearchResult {
         val aggregatedContent = allMarkdowns.joinToString("\n\n---\n\n")
-        val allUrls = listOf(initialResult.url) + allResults.map { it.url }
 
         logger.info(
-            "Step 3 complete: Visited {} pages, total content: {} chars",
+            "Step 3: Generating answer from {} pages, total content: {} chars",
             allUrls.size,
             aggregatedContent.length
         )
 
+        // Generate answer using the agent
+        val answerOutput = generateAnswerAgent.generate(
+            GenerateAnswerInput(
+                query = searchQuery.query,
+                markdowns = aggregatedContent
+            )
+        )
+
+        logger.info(
+            "Step 3 complete: Generated answer ({} chars) from {} pages",
+            answerOutput.answer.length,
+            allUrls.size
+        )
+
         return SearchResult(
             originalQuery = searchQuery,
+            answer = answerOutput.answer,
             content = aggregatedContent,
             sources = allUrls
         )

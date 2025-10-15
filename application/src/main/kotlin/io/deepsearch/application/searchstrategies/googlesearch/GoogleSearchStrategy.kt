@@ -76,6 +76,7 @@ class GoogleSearchStrategy(
         //    to the original URL to maintain existing expectations.
         return SearchResult(
             originalQuery = searchQuery,
+            answer = "",
             content = urlContextOutput.content,
             sources = urlContextOutput.sources
         )

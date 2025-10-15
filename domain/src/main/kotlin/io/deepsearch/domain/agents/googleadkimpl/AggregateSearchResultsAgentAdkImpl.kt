@@ -163,6 +163,7 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
 
         val aggregated = SearchResult(
             originalQuery = input.searchQuery,
+            answer = "",
             content = response.content,
             sources = response.sources
         )

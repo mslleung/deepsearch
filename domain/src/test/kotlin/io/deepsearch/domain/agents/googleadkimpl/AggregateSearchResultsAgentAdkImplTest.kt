@@ -33,6 +33,7 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val result = SearchResult(
             originalQuery = originalQuery,
+            answer = "",
             content = "The website https://www.example.com is a special domain name reserved for documentation and example purposes.",
             sources = listOf("https://www.example.com/")
         )
@@ -51,11 +52,13 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val result1 = SearchResult(
             originalQuery = originalQuery,
+            answer = "",
             content = "Example Domain is an illustrative domain reserved for use in documentation and examples.",
             sources = listOf("https://www.example.com/")
         )
         val result2 = SearchResult(
             originalQuery = originalQuery,
+            answer = "",
             content = "The site explains that example.com is reserved and provides a simple sample page.",
             sources = listOf("https://www.iana.org/domains/example")
         )
@@ -74,11 +77,13 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val irrelevant1 = SearchResult(
             originalQuery = originalQuery,
+            answer = "",
             content = "Cats are popular pets known for their independence and agility.",
             sources = listOf("https://www.cats.com/")
         )
         val irrelevant2 = SearchResult(
             originalQuery = originalQuery,
+            answer = "",
             content = "The capital of France is Paris, a major European city.",
             sources = listOf("https://en.wikipedia.org/wiki/Paris")
         )
@@ -97,11 +102,13 @@ class AggregateSearchResultsAgentAdkImplTest : KoinTest {
         val originalQuery = SearchQuery("Tell me about this website", "https://www.example.com/")
         val relevant = SearchResult(
             originalQuery = originalQuery,
+            answer = "",
             content = "Example Domain is reserved for documentation and examples.",
             sources = listOf("https://www.example.com/")
         )
         val irrelevant = SearchResult(
             originalQuery = originalQuery,
+            answer = "",
             content = "Cats purr and are often kept as indoor pets.",
             sources = listOf("https://www.cats.com/")
         )

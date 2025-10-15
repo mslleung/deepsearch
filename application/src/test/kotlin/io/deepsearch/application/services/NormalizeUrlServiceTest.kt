@@ -208,24 +208,6 @@ class NormalizeUrlServiceTest {
             val result = service.normalize("https://example.com/en", config)
             assertEquals("https://example.com/en", result)
         }
-
-        @Test
-        fun `should extract locale from path`() {
-            val locale = service.extractLocale("https://example.com/en/about")
-            assertEquals("en", locale)
-        }
-
-        @Test
-        fun `should extract regional locale from path`() {
-            val locale = service.extractLocale("https://example.com/fr-ca/about")
-            assertEquals("fr-ca", locale)
-        }
-
-        @Test
-        fun `should return null if no locale in path`() {
-            val locale = service.extractLocale("https://example.com/about")
-            assertNull(locale)
-        }
     }
 
     @Nested
