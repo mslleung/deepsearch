@@ -58,6 +58,7 @@ class GoogleSearchLinkDiscoveryAgentAdkImpl : IGoogleSearchLinkDiscoveryAgent {
 
     private val runner = InMemoryRunner(agent)
 
+    // Shared Ktor HTTP client with redirects disabled; we resolve redirects manually
     private val httpClient: HttpClient by lazy {
         HttpClient(OkHttp) {
             engine {

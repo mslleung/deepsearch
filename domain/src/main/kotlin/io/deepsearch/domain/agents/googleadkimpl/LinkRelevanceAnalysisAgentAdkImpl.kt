@@ -17,6 +17,8 @@ import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -39,11 +41,6 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         val links: List<RelevantLinkJson>
     )
 
-    private val json = Json { 
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
-
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("linkRelevanceAnalysisAgent")
         description("Agent to identify relevant links in HTML")
@@ -64,10 +61,9 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
                 You are a link relevance analysis agent. Your task is to:
                 1. Extract all <a href> links from the provided HTML
                 2. Analyze which links are most relevant to the user's query
-                3. Return the top relevant links with reasons why they are relevant
+                3. Return all relevant links with reasons why they are relevant
                 
                 Focus on links that would help answer the user's query or provide more detailed information.
-                Ignore navigation links, headers, footers, and other irrelevant links.
                 
                 Return your response in JSON format:
                 {
@@ -90,11 +86,13 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
     override suspend fun generate(input: LinkRelevanceAnalysisInput): LinkRelevanceAnalysisOutput {
         logger.debug("Analyzing link relevance for query: '{}'", input.query)
 
+        val cleanedHtml = cleanHtml(input.html)
+
         val userPrompt = buildString {
             appendLine("Query: ${input.query}")
             appendLine()
-            appendLine("HTML:")
-            appendLine(input.html)
+            appendLine("Cleaned html:")
+            appendLine(cleanedHtml)
         }
 
         val session = runner
@@ -134,7 +132,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         }
 
         val links = try {
-            val response = json.decodeFromString<LinkAnalysisResponse>(responseText)
+            val response = Json.decodeFromString<LinkAnalysisResponse>(responseText)
             response.links.map { linkJson ->
                 WebpageLink(
                     url = linkJson.url,
@@ -151,6 +149,90 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         logger.debug("Link relevance analysis found {} relevant links", links.size)
 
         return LinkRelevanceAnalysisOutput(links)
+    }
+
+    /**
+     * Cleans HTML by removing non-content elements that don't contribute to link analysis.
+     * Preserves anchor tags and their surrounding context for better link relevance analysis.
+     */
+    private fun cleanHtml(rawHtml: String): String {
+        val doc: Document = Jsoup.parse(rawHtml)
+
+        // Step 1: Remove obvious non-content elements (scripts, styles, etc.)
+        doc.select(
+            "script, style, noscript, template, svg, canvas, meta, link[rel], iframe, object, embed, " +
+            "head, title, base"
+        ).remove()
+
+        // Step 2: Remove form elements (not part of navigational content)
+        doc.select("form, input, button, select, textarea").remove()
+
+        // Step 3: Remove comments and processing instructions
+        doc.select("*").forEach { element ->
+            val nodesToRemove = element.childNodes().filter { node ->
+                node.nodeName() == "#comment" || node.nodeName() == "#pi"
+            }
+            nodesToRemove.forEach { node -> node.remove() }
+        }
+
+        // Step 4: Strip attributes except those useful for link relevance analysis
+        // For anchors: keep href (critical) and aria-label (provides context)
+        // For other elements: keep only semantic role attributes that indicate navigation structure
+        val semanticRoles = setOf(
+            "navigation", "menu", "menuitem", "main", 
+            "complementary", "contentinfo", "banner"
+        )
+        
+        doc.select("*").forEach { element ->
+            val attrsToKeep = when {
+                element.tagName() == "a" -> {
+                    // For anchors: href is critical, aria-label can provide additional context
+                    element.attributes().filter { attr ->
+                        attr.key in setOf("href", "aria-label")
+                    }
+                }
+                else -> {
+                    // For other elements: keep only semantic role attributes
+                    element.attributes().filter { attr ->
+                        attr.key == "role" && attr.value in semanticRoles
+                    }
+                }
+            }
+            element.clearAttributes()
+            attrsToKeep.forEach { attr ->
+                element.attr(attr.key, attr.value)
+            }
+        }
+
+        // Step 5: Truncate text content to reduce token usage while preserving context
+        doc.select("*").forEach { element ->
+            element.textNodes().forEach { textNode ->
+                val text = textNode.text().trim()
+                if (text.isNotEmpty() && text.length > 100) {
+                    textNode.text(text.take(100) + "...")
+                }
+            }
+        }
+
+        // Step 6: Remove empty elements iteratively (but keep anchors even if empty)
+        var changed = true
+        while (changed) {
+            changed = false
+            val emptyElements = doc.select("*").filter { element ->
+                element.tagName() != "a" && // Keep all anchor tags
+                element.children().isEmpty() &&
+                element.ownText().isBlank() &&
+                element.tagName() !in setOf("br", "hr")
+            }
+            if (emptyElements.isNotEmpty()) {
+                emptyElements.forEach { it.remove() }
+                changed = true
+            }
+        }
+
+        val cleanedHtml = doc.outerHtml()
+        logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
+        return cleanedHtml
     }
 }
 

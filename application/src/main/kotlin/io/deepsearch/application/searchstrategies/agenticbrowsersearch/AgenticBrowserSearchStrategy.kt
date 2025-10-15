@@ -60,13 +60,10 @@ class AgenticBrowserSearchStrategy(
                     val extractedText = webpageExtractionService.extractWebpage(page)
                     extractedContent.add(extractedText)
 
-                    // Get cleaned HTML for link discovery
-                    val cleanedHtml = page.getFullHtml()
-
                     // Discover relevant links
                     val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinks(
                         searchQuery = searchQuery,
-                        cleanedHtml = cleanedHtml
+                        webpage = page
                     )
 
                     // Add new links to visit queue (filter out already visited)

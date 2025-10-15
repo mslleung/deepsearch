@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory
 interface IWebpageLinkDiscoveryService {
     suspend fun discoverRelevantLinks(
         searchQuery: SearchQuery,
-        cleanedHtml: String
+        webpage: IBrowserPage
     ): List<WebpageLink>
 }
 
@@ -32,7 +32,7 @@ class WebpageLinkDiscoveryService(
      */
     override suspend fun discoverRelevantLinks(
         searchQuery: SearchQuery,
-        cleanedHtml: String
+        webpage: IBrowserPage
     ): List<WebpageLink> = coroutineScope {
         logger.debug("Discovering links for query: '{}' on {}", searchQuery.query, searchQuery.url)
 
@@ -52,7 +52,7 @@ class WebpageLinkDiscoveryService(
             try {
                 linkRelevanceAnalysisAgent.generate(
                     LinkRelevanceAnalysisInput(
-                        html = cleanedHtml,
+                        html = webpage.getFullHtml(),
                         query = searchQuery.query
                     )
                 ).links
