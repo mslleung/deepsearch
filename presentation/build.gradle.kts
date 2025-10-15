@@ -35,6 +35,8 @@ dependencies {
     implementation(libs.logback.classic)
     
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.content.negotiation)
+    testImplementation(libs.ktor.serialization.kotlinx.json)
     testImplementation(libs.kotlin.test.junit5)
     testRuntimeOnly(libs.junit.jupiter.engine)
 }

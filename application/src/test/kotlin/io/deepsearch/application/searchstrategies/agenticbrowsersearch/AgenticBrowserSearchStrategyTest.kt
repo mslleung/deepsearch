@@ -28,7 +28,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         // Given
         val searchQuery = SearchQuery(
             query = "Does the standard body check package include testing \"Stool: Occult Blood?\"",  // no
-            url = "https://www.otandp.com/body-check"
+            url = "https://www.otandp.com/"
         )
 
         // When

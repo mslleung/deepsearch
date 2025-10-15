@@ -1,9 +1,9 @@
-package io.deepsearch
+package io.deepsearch.io.deepsearch.presentation
 
 import io.deepsearch.presentation.module
-import io.ktor.client.request.*
-import io.ktor.http.*
-import io.ktor.server.testing.*
+import io.ktor.client.request.get
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -15,7 +15,7 @@ class ApplicationTest {
             module()
         }
         client.get("/users").apply {
-            assertEquals(HttpStatusCode.OK, status)
+            assertEquals(HttpStatusCode.Companion.OK, status)
         }
     }
 

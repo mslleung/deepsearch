@@ -31,7 +31,6 @@ import io.deepsearch.infrastructure.config.infrastructureTestModule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -55,5 +54,5 @@ val applicationTestModule = module {
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
 
-    single<CoroutineDispatcher> { UnconfinedTestDispatcher() }
+    single<CoroutineDispatcher> { StandardTestDispatcher() }
 }
