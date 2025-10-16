@@ -7,7 +7,6 @@ DeepSearch is a production-ready web intelligence system that grounds Large Lang
 **Give it a URL and a query → Get an accurate, sourced answer in seconds.**
 
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.0-7F52FF?logo=kotlin)](https://kotlinlang.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ### Why DeepSearch?
 
@@ -39,7 +38,6 @@ Traditional web scraping misses the full picture. DeepSearch goes beyond simple 
 - **Pluggable search strategies**: Choose between agentic crawling or Google Search benchmarking
 - **Flexible extraction pipeline**: Enable/disable extractors based on content type
 - **Customizable crawl depth**: Balance thoroughness vs. speed for your use case
-- **DDD architecture**: Clean separation of concerns makes extending functionality straightforward
 
 ---
 
@@ -76,131 +74,6 @@ Extract meaning from every element of modern web pages:
 - **Configurable Extraction**: Enable/disable extractors based on your content needs
 - **Request-Scoped Components**: Efficient resource management with Koin DI
 
-## 🚀 The Search Pipeline
-
-DeepSearch implements a **three-stage pipeline** optimized for speed and accuracy:
-
-### Stage 1: Parallel Discovery ⚡
-**Speed optimization: Concurrent execution**
-
-```
-Input URL + Query
-    ├─→ [Thread 1] Extract initial page content
-    └─→ [Thread 2] Google search for related pages
-            ↓
-    Combined link pool (deduplicated)
-```
-
-### Stage 2: Recursive Exploration 🔍
-**Accuracy optimization: AI-guided traversal**
-
-```
-Wave 1: Process initial links in parallel
-  ├─→ [Browser Context 1] Page A → Extract + Discover links
-  ├─→ [Browser Context 2] Page B → Extract + Discover links
-  └─→ [Browser Context N] Page N → Extract + Discover links
-        ↓
-Wave 2: Process newly discovered links
-  ├─→ [Browser Context 1] New Page 1 → ...
-  └─→ [Browser Context N] New Page N → ...
-        ↓
-Continue until no new relevant links (AI-filtered)
-
-### Stage 3: Answer Synthesis 🎯
-**Accuracy optimization: Structured generation**
-
-```
-All Extracted Content
-    ↓
-[Aggregate Markdown]
-    ↓
-[GenerateAnswerAgent (Gemini 2.5)]
-    ↓
-Comprehensive Answer + Source Citations
-```
-
-### Content Extraction Pipeline (Per Page)
-**Configuration: Enable/disable extractors as needed**
-
-```
-Web Page (Playwright Browser)
-    ↓
-[Accessibility Tree + DOM Analysis]
-    ↓
-[Parallel Multi-Modal Extraction] ⚡
-    ├─→ Text → Markdown Conversion
-    ├─→ Tables → AI Identification → Structured Data
-    ├─→ Images → OCR + Vision Analysis → Text Content
-    ├─→ Icons → Semantic Interpretation
-    └─→ Links → AI Relevance Filtering → Navigation Queue
-    ↓
-[Unified Markdown] + [Discovered Links]
-```
-
-**Configurable extractors** allow you to optimize for your content type and performance requirements.
-
----
-
-## 📦 Getting Started
-
-### Prerequisites
-
-- JDK 21 or higher
-- Gradle 8.x (wrapper included)
-- Google ADK API credentials (for Gemini access)
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/deepsearch.git
-cd deepsearch
-
-# Build the project
-./gradlew build
-
-# Run tests
-./gradlew test
-
-# Start the server
-./gradlew :presentation:run
-```
-
-### Quick Start
-
-**1. Query a website:**
-```bash
-curl -X POST http://localhost:8080/api/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "What are the pricing plans?",
-    "url": "https://example.com"
-  }'
-```
-
-**2. Get structured results:**
-```json
-{
-  "originalQuery": {
-    "query": "What are the pricing plans?",
-    "url": "https://example.com"
-  },
-  "answer": "Based on the website content, there are three pricing plans: Basic ($9/month), Professional ($29/month), and Enterprise (custom pricing). The Basic plan includes up to 10 users and 50GB storage...",
-  "content": "# Pricing\n\n## Basic Plan\n$9/month\n- Up to 10 users...",
-  "sources": [
-    "https://example.com/pricing",
-    "https://example.com/plans/basic",
-    "https://example.com/plans/pro"
-  ]
-}
-```
-
-**That's it!** DeepSearch handles:
-- Finding relevant pages on the target site
-- Extracting text, tables, and images
-- Following links to gather comprehensive information
-- Synthesizing an accurate, grounded answer
-
 ---
 
 ## 🗺️ Roadmap
@@ -234,34 +107,6 @@ curl -X POST http://localhost:8080/api/search \
 
 ---
 
-## 🤝 Contributing
-
-DeepSearch is built to be extended and customized. We welcome contributions that enhance **speed**, **accuracy**, or **configurability**!
-
-### Priority Areas
-- **Performance optimizations**: Faster crawling, smarter caching, parallel extraction improvements
-- **New extractors**: Specialized content types (PDFs, videos, audio transcripts, etc.)
-- **Configuration options**: More knobs to tune behavior for specific use cases
-- **Additional strategies**: Alternative approaches to crawling and extraction
-- **Benchmarking**: Real-world comparisons and performance metrics
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **Google Gemini 2.5**: Powering our AI agent orchestra
-- **Playwright**: Enabling robust browser automation
-- **Domain-Driven Design**: Framework by Eric Evans and Vaughn Vernon
-- **Kotlin & Coroutines**: Making concurrent code elegant
-
----
-
 ## 📧 Contact
 
 For questions, suggestions, or collaborations, please open an issue or reach out through GitHub.
@@ -274,6 +119,6 @@ For questions, suggestions, or collaborations, please open an issue or reach out
 
 **DeepSearch: Fast • Accurate • Configurable**
 
-Built with 💙 using Kotlin | Powered by Google Gemini 2.5 | Production-ready architecture
+Built with 💙 using Kotlin | Powered by Google Gemini 2.5
 
 </div>
