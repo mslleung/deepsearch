@@ -16,9 +16,21 @@ import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import java.io.ByteArrayOutputStream
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
+/**
+ * Tests for PdfToMarkdownAgentAdkImpl.
+ * 
+ * Testing strategy:
+ * - Small PDFs (<20MB): Use inline data approach (tested)
+ * - Large PDFs (>20MB, <=50MB): Use Files API upload (implicitly tested when using real large PDFs)
+ * - Oversized PDFs (>50MB): Validate rejection (tested)
+ * 
+ * Note: The Files API upload path for PDFs >20MB is tested when running with real PDFs
+ * that exceed the inline threshold. The agent automatically routes to the appropriate method.
+ */
 class PdfToMarkdownAgentAdkImplTest : KoinTest {
 
     @JvmField
@@ -72,6 +84,16 @@ class PdfToMarkdownAgentAdkImplTest : KoinTest {
 
         assertNotNull(output.markdown, "Markdown output should not be null")
         assertTrue(output.markdown.isNotBlank(), "Markdown output should not be blank")
+    }
+    
+    @Test
+    fun `reject PDF larger than 50MB`() = runTest(testCoroutineDispatcher) {
+        // Create a byte array representing a 51MB PDF (just dummy bytes for size validation)
+        val oversizedPdf = ByteArray(51 * 1024 * 1024) { 0 }
+
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            agent.generate(PdfToMarkdownInput(oversizedPdf))
+        }
     }
 
     /**
