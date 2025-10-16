@@ -4,14 +4,15 @@ import io.deepsearch.application.searchstrategies.ISearchStrategy
 import io.deepsearch.application.services.INormalizeUrlService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
-import io.deepsearch.domain.agents.GenerateAnswerInput
-import io.deepsearch.domain.agents.IGenerateAnswerAgent
+import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.DispatcherProvider
+import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.WebpageLink
+import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -35,17 +36,24 @@ class AgenticBrowserSearchStrategy(
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
     private val generateAnswerAgent: IGenerateAnswerAgent,
+    private val queryExpansionAgent: IQueryExpansionAgent,
+    private val aggregateSearchResultsAgent: IAggregateSearchResultsAgent,
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository,
     private val dispatchers: DispatcherProvider
 ) : IAgenticBrowserSearchStrategy {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+    
+    companion object {
+        private const val CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000L // 7 days
+    }
 
     /**
      * Result of processing a single URL: extracted markdown and discovered links.
      */
     private data class UrlProcessingResult(
         val url: String,
-        val markdown: String?,
+        val markdown: String,
         val discoveredLinks: List<WebpageLink>
     )
 
@@ -58,15 +66,56 @@ class AgenticBrowserSearchStrategy(
     )
 
     override suspend fun execute(searchQuery: SearchQuery): SearchResult {
-        // TODO query expansion
+        // Expand the query into multiple sub-queries
+        logger.info("Expanding query: {}", searchQuery.query)
+        val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
+        val expandedQueries = expansionOutput.expandedQueries
+        
+        logger.info("Query expanded into {} sub-queries", expandedQueries.size)
+        
+        // If only one query, execute directly without aggregation
+        if (expandedQueries.size == 1) {
+            logger.info("Single query after expansion, executing directly")
+            return executeSearchForQuery(expandedQueries[0])
+        }
+        
+        // Execute all expanded queries in parallel
+        logger.info("Executing {} queries in parallel", expandedQueries.size)
+        val searchResults = withContext(dispatchers.io) {
+            expandedQueries.map { query ->
+                async {
+                    executeSearchForQuery(query)
+                }
+            }.awaitAll()
+        }
+        
+        // Aggregate results from all sub-queries
+        logger.info("Aggregating results from {} sub-queries", searchResults.size)
+        val aggregationOutput = aggregateSearchResultsAgent.generate(
+            AggregateSearchResultsInput(
+                searchQuery = searchQuery,
+                searchResults = searchResults
+            )
+        )
+        
+        return aggregationOutput.aggregatedResult
+    }
+    
+    /**
+     * Execute the full search workflow for a single query.
+     */
+    private suspend fun executeSearchForQuery(searchQuery: SearchQuery): SearchResult {
         val browser = browserPool.acquireBrowser()
         try {
+            logger.debug("Executing search for query: {}", searchQuery.query)
+            
             // Step 1: Run Google link discovery and processUrl on input URL in parallel
             val step1Result = step1ProcessInitialUrl(searchQuery, browser)
 
-            logger.info(
-                "Step 1 complete: Extracted {} chars from initial URL, discovered {} Google links + {} on-page links",
-                step1Result.initialResult.markdown?.length ?: 0,
+            logger.debug(
+                "Step 1 complete for '{}': Extracted {} chars from initial URL, discovered {} Google links + {} on-page links",
+                searchQuery.query,
+                step1Result.initialResult.markdown.length,
                 step1Result.googleLinks.size,
                 step1Result.initialResult.discoveredLinks.size
             )
@@ -83,8 +132,11 @@ class AgenticBrowserSearchStrategy(
 
             // Step 3: Collect all markdowns and generate answer
             val allUrls = listOfNotNull(step1Result.initialResult.url) + allResults.map { it.url }
-            val allMarkdowns = listOfNotNull(step1Result.initialResult.markdown) + allResults.mapNotNull { it.markdown }
+            val allMarkdowns = listOfNotNull(step1Result.initialResult.markdown) + allResults.map { it.markdown }
             return step3GenerateAnswer(searchQuery, allUrls, allMarkdowns)
+        } catch (e: Exception) {
+            logger.error("Error in executeSearchForQuery for '{}': {}", searchQuery.query, e.message)
+            throw e
         } finally {
             browser.close()
         }
@@ -128,7 +180,7 @@ class AgenticBrowserSearchStrategy(
         var visitedNormalizedUrls = processedNormalizedUrls
         var currentBatch = initialLinks
             .distinctBy { normalizeUrlService.normalize(it.url) ?: it.url }
-            .filterNot { 
+            .filterNot {
                 val normalized = normalizeUrlService.normalize(it.url) ?: it.url
                 normalized in visitedNormalizedUrls
             }
@@ -145,7 +197,7 @@ class AgenticBrowserSearchStrategy(
             }.awaitAll()
 
             // Track visited URLs using normalized form
-            val batchNormalizedUrls = batchResults.map { 
+            val batchNormalizedUrls = batchResults.map {
                 normalizeUrlService.normalize(it.url) ?: it.url
             }
             visitedNormalizedUrls = visitedNormalizedUrls + batchNormalizedUrls
@@ -155,7 +207,7 @@ class AgenticBrowserSearchStrategy(
             val newLinks = batchResults
                 .flatMap { it.discoveredLinks }
                 .distinctBy { normalizeUrlService.normalize(it.url) ?: it.url }
-                .filterNot { 
+                .filterNot {
                     val normalized = normalizeUrlService.normalize(it.url) ?: it.url
                     normalized in visitedNormalizedUrls
                 }
@@ -164,7 +216,7 @@ class AgenticBrowserSearchStrategy(
                 "Wave {} complete: {} pages processed, {} markdowns extracted, {} new links discovered",
                 waveNumber,
                 batchResults.size,
-                batchResults.count { it.markdown != null },
+                batchResults.count(),
                 newLinks.size
             )
 
@@ -215,6 +267,7 @@ class AgenticBrowserSearchStrategy(
 
     /**
      * Pure function that processes a single URL: extracts markdown and discovers links in parallel.
+     * Uses cache to avoid repeated navigation to the same URLs.
      * Does not mutate any state - returns results as data.
      */
     private suspend fun processUrl(
@@ -223,44 +276,56 @@ class AgenticBrowserSearchStrategy(
         browser: IBrowser
     ): UrlProcessingResult = coroutineScope {
         logger.debug("Processing URL: {}", url)
-
-        val context = browser.createContext()
-        try {
+        
+        // Normalize URL for cache lookup
+        val normalizedUrl = normalizeUrlService.normalize(url) ?: url
+        
+        // Check cache first
+        val cached = webpageMarkdownRepository.findByUrl(normalizedUrl)
+        val currentTime = System.currentTimeMillis()
+        
+        val (markdown, html) = if (cached != null && (currentTime - cached.updatedAtEpochMs) < CACHE_TTL_MS) {
+            logger.debug("Cache hit for URL: {} (age: {} ms)", url, currentTime - cached.updatedAtEpochMs)
+            cached.markdown to cached.html
+        } else {
+            if (cached != null) {
+                logger.debug("Cache expired for URL: {} (age: {} ms)", url, currentTime - cached.updatedAtEpochMs)
+            } else {
+                logger.debug("Cache miss for URL: {}", url)
+            }
+            
+            // Navigate and extract
+            val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
 
-            // Run markdown extraction and link discovery in parallel
-            val markdownDeferred = async {
-                try {
-                    webpageExtractionService.extractWebpage(page)
-                } catch (e: Exception) {
-                    logger.warn("Failed to extract markdown from {}: {}", url, e.message)
-                    null
-                }
-            }
+            // webpageExtractionService.extractWebpage modifies the webpage, so we get the html first
+            val extractedHtml = page.getFullHtml()
 
-            val linksDeferred = async {
-                try {
-                    webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, page)
-                } catch (e: Exception) {
-                    logger.warn("Failed to discover links from {}: {}", url, e.message)
-                    emptyList()
-                }
-            }
-
-            val markdown = markdownDeferred.await()
-            val links = linksDeferred.await()
-
-            if (markdown != null) {
-                logger.debug("Extracted {} chars from {}, discovered {} links", markdown.length, url, links.size)
-            }
-
-            UrlProcessingResult(url, markdown, links)
-        } catch (e: Exception) {
-            logger.warn("Failed to process URL {}: {}", url, e.message)
-            UrlProcessingResult(url, null, emptyList())
-        } finally {
-            context.close()
+            // Extract markdown
+            val extractedMarkdown = webpageExtractionService.extractWebpage(page)
+            
+            // Cache the result
+            webpageMarkdownRepository.upsert(
+                WebpageMarkdown(
+                    url = normalizedUrl,
+                    markdown = extractedMarkdown,
+                    html = extractedHtml,
+                    createdAtEpochMs = cached?.createdAtEpochMs ?: currentTime,
+                    updatedAtEpochMs = currentTime
+                )
+            )
+            
+            logger.debug("Cached markdown for URL: {}", url)
+            
+            extractedMarkdown to extractedHtml
         }
+
+        // Discover links using the html
+        val links = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html)
+
+        logger.debug("Extracted {} chars from {}, discovered {} links", markdown.length, url, links.size)
+
+        UrlProcessingResult(url, markdown, links)
     }
 }

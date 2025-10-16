@@ -27,29 +27,16 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
 
     private val outputSchema = Schema.builder()
         .type("OBJECT")
-        .description("Aggregated search result for the user's query")
+        .description("Aggregated answer for the user's query")
         .properties(
             mapOf(
-                "originalQuery" to Schema.builder()
+                "answer" to Schema.builder()
                     .type("STRING")
-                    .description("The original search query text")
-                    .build(),
-                "content" to Schema.builder()
-                    .type("STRING")
-                    .description("Concise, faithful response that answers the query")
-                    .build(),
-                "sources" to Schema.builder()
-                    .type("ARRAY")
-                    .description("List of cited sources used in the response")
-                    .items(
-                        Schema.builder()
-                            .type("STRING")
-                            .build()
-                    )
-                    .build(),
+                    .description("Concise, faithful response that answers the original query by aggregating information from multiple search results")
+                    .build()
             )
         )
-        .required(listOf("originalQuery", "content", "sources"))
+        .required(listOf("answer"))
         .build()
 
     private val agent = LlmAgent.builder().run {
@@ -61,7 +48,7 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
         disallowTransferToParent(true)
         generateContentConfig(
             GenerateContentConfig.builder()
-                .temperature(0.1F)
+                .temperature(0F)
                 .thinkingConfig(
                     ThinkingConfig.builder()
                         .thinkingBudget(0)
@@ -71,36 +58,36 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
         )
         instruction(
             ("""
-                You are the Aggregate Search Results agent. Given the user's original query and a set of search results (each with text and sources), produce a single, coherent answer that:
-                - Is faithful to the provided results only (do not invent facts)
+                You are the Aggregate Search Results agent. Given the user's original query and a set of search results (each with sub-query and answer), produce a single, coherent answer that:
+
+                Instructions:
                 - Directly addresses the user's original query
-                - Do not include irrelevant results
-                - If information conflicts, note the discrepancy comprehensively with reference to the source.
-                - If the results are insufficient to answer, just say no relevant information found and return empty source.
-                - Preserve important figures, names, and exact quotes where relevant
-                - Cite only the sources of the input search results that are included in the final aggregated search result
+                - Is faithful to the provided results only (do not invent facts)
+                - If information conflicts, note the discrepancy comprehensively
+                - Do not include or mention irrelevant results
+                - If the results are insufficient to answer, state that no relevant information was found
 
                 Output format:
-                - Return ONLY a valid JSON object exactly matching the output schema fields: {"originalQuery", "content", "sources"}.
+                - Return ONLY a valid JSON object with a single field "answer": {"answer": "your aggregated answer text"}
 
                 Example (input and output):
                 **Input:**
                 Original query: "Tell me about your company" for site https://www.google.com
-                Search results to aggregate (JSON-like list):
-                - Result 1:
-                  subquery: "company description"
-                  content: "Google is a global technology company most famous for its dominant internet search engine, which organizes the world's information."
-                  sources: ["https://www.google.com"]
-                - Result 2:
-                  subquery: "company description"
-                  content: "Google is an American multinational technology company that was founded in 1998 by Larry Page and Sergey Brin while they were students at Stanford University. In 2015, Google became a subsidiary of the holding company Alphabet Inc., and it continues to serve as the umbrella for Alphabet's internet-related interests."
-                  sources: ["https://www.google.com"]
+                Search results to aggregate (JSON):
+                [
+                  {
+                    "subquery": "company description",
+                    "answer": "Google is a global technology company most famous for its dominant internet search engine, which organizes the world's information.",
+                  },
+                  {
+                    "subquery": "company history",
+                    "answer": "Google is an American multinational technology company that was founded in 1998 by Larry Page and Sergey Brin while they were students at Stanford University. In 2015, Google became a subsidiary of the holding company Alphabet Inc., and it continues to serve as the umbrella for Alphabet's internet-related interests.",
+                  }
+                ]
 
                 **Output:**
                 {
-                  "originalQuery": "Tell me about your company",
-                  "content": "The page is an illustrative example site explaining that example.com is reserved for documentation and examples.",
-                  "sources": ["https://www.google.com"]
+                  "answer": "Google is a global technology company most famous for its dominant internet search engine, which organizes the world's information. It was founded in 1998 by Larry Page and Sergey Brin while they were students at Stanford University. In 2015, Google became a subsidiary of the holding company Alphabet Inc., and it continues to serve as the umbrella for Alphabet's internet-related interests."
                 }
                 """).trimIndent()
         )
@@ -115,13 +102,16 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
         val userPrompt = buildString {
             appendLine("Original query: \"${input.searchQuery.query}\" for site ${input.searchQuery.url}")
             appendLine()
-            appendLine("Search results to aggregate (JSON-like list):")
-            input.searchResults.forEachIndexed { index, searchResult ->
-                appendLine("- Result ${index + 1}:")
-                appendLine("  subquery: \"${searchResult.originalQuery.query}\"")
-                appendLine("  content: \"" + searchResult.content.replace("\n", " ").replace("\"", "\\\"") + "\"")
-                appendLine("  sources: [" + searchResult.sources.joinToString(", ") { "\"" + it + "\"" } + "]")
+            appendLine("Search results to aggregate (JSON):")
+            
+            // Build proper JSON array
+            val jsonResults = input.searchResults.map { searchResult ->
+                SearchResultForPrompt(
+                    subquery = searchResult.originalQuery.query,
+                    answer = searchResult.answer
+                )
             }
+            appendLine(Json.encodeToString(jsonResults))
         }
 
         val session = runner
@@ -161,25 +151,35 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
 
         val response = Json.decodeFromStringWithCodeBlocks<AggregatedResultResponse>(llmResponse)
 
+        // Collect all unique sources from input search results
+        val allSources = input.searchResults.flatMap { it.sources }.distinct()
+        
+        // Combine all content from input search results
+        val allContent = input.searchResults.joinToString("\n\n---\n\n") { it.content }
+
         val aggregated = SearchResult(
             originalQuery = input.searchQuery,
-            answer = "",
-            content = response.content,
-            sources = response.sources
+            answer = response.answer,
+            content = allContent,
+            sources = allSources
         )
         logger.debug(
-            "Aggregated content length: {} sources: {}",
-            aggregated.content,
-            aggregated.sources
+            "Aggregated answer length: {} chars, sources: {}",
+            aggregated.answer.length,
+            aggregated.sources.size
         )
         return AggregateSearchResultsOutput(aggregatedResult = aggregated)
     }
 
     @Serializable
+    private data class SearchResultForPrompt(
+        val subquery: String,
+        val answer: String,
+    )
+
+    @Serializable
     private data class AggregatedResultResponse(
-        val originalQuery: String,
-        val content: String,
-        val sources: List<String>
+        val answer: String
     )
 }
 

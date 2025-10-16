@@ -57,7 +57,7 @@ class SearchEndpointTest {
             searchResponse.response.isNotBlank(),
             "Response content should not be blank"
         )
-//        println("Search response: ${searchResponse.response}")
+        println("Search response: ${searchResponse.response}")
     }
 }
 

@@ -29,7 +29,7 @@ class SearchController(private val searchService: ISearchService) {
         } catch (e: AiInterpretationException) {
             call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to e.message))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }
 } 

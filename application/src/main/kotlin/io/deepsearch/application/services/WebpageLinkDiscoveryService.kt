@@ -21,7 +21,7 @@ interface IWebpageLinkDiscoveryService {
     /**
      * Discovers relevant links by analyzing links on the current webpage
      */
-    suspend fun discoverRelevantLinksByAgent(query: String, webpage: IBrowserPage): List<WebpageLink>
+    suspend fun discoverRelevantLinksByAgent(query: String, html: String): List<WebpageLink>
 }
 
 class WebpageLinkDiscoveryService(
@@ -42,12 +42,12 @@ class WebpageLinkDiscoveryService(
         return links
     }
 
-    override suspend fun discoverRelevantLinksByAgent(query: String, webpage: IBrowserPage): List<WebpageLink> {
+    override suspend fun discoverRelevantLinksByAgent(query: String, html: String): List<WebpageLink> {
         logger.debug("Discovering links via on-page analysis for query: '{}'", query)
 
         val links = linkRelevanceAnalysisAgent.generate(
             LinkRelevanceAnalysisInput(
-                html = webpage.getFullHtml(),
+                html = html,
                 query = query
             )
         ).links
