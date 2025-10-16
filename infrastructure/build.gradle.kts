@@ -26,6 +26,7 @@ dependencies {
     // Serialization
     implementation(libs.kotlinx.serialization.json)
     
+    testImplementation(libs.koin.test.junit5)
     testImplementation(libs.kotlin.test.junit5)
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.jupiter.engine)

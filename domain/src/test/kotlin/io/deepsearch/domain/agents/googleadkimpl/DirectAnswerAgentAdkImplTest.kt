@@ -6,7 +6,6 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
@@ -49,7 +48,6 @@ class DirectAnswerAgentAdkImplTest : KoinTest {
         )
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @ParameterizedTest
     @MethodSource("testCases")
     fun `generates direct answer for webpage query`(url: String, query: String) = runTest(testCoroutineDispatcher) {

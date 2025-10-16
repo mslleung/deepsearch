@@ -4,7 +4,6 @@ import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.config.domainTestModule
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -24,7 +23,6 @@ class GoogleUrlContextSearchAgentAdkImplTest : KoinTest {
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IGoogleUrlContextSearchAgent>()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `url-context search returns content and at least one source`() = runTest(testCoroutineDispatcher) {
         // Given
@@ -44,7 +42,6 @@ class GoogleUrlContextSearchAgentAdkImplTest : KoinTest {
         assertTrue(result.sources.isNotEmpty(), "should include at least one cited source")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `url-context search clearly state conflicting sources`() = runTest(testCoroutineDispatcher) {
         // Given

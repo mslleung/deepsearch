@@ -12,11 +12,9 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
 import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
 
 class ExposedWebpageTableRepository : IWebpageTableRepository {
 
-    @OptIn(ExperimentalEncodingApi::class)
     override suspend fun upsert(table: WebpageTable) = suspendTransaction {
         val hashBase64 = Base64.encode(table.webpageHtmlHash)
 
@@ -36,7 +34,6 @@ class ExposedWebpageTableRepository : IWebpageTableRepository {
         }
     }
 
-    @OptIn(ExperimentalEncodingApi::class)
     override suspend fun findByHash(webpageHtmlHash: ByteArray): WebpageTable? = suspendTransaction {
         val hashBase64 = Base64.encode(webpageHtmlHash)
         WebpageTableTable.selectAll()
@@ -45,7 +42,6 @@ class ExposedWebpageTableRepository : IWebpageTableRepository {
             .singleOrNull()
     }
 
-    @OptIn(ExperimentalEncodingApi::class)
     private fun mapRowToWebpageTable(row: ResultRow): WebpageTable {
         return WebpageTable(
             webpageHtmlHash = Base64.decode(row[WebpageTableTable.webpageHtmlHash]),

@@ -5,7 +5,6 @@ import io.deepsearch.domain.agents.PopupContainerIdentificationInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -13,7 +12,6 @@ import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -37,14 +35,12 @@ class PopupContainerIdentificationAgentAdkImplTest : KoinTest {
     private val exampleScreenshot: ByteArray = resourceBytes("example.com_.webp")
     private val exampleHtml: String = resourceText("view-source_https___example.com.html")
 
-    @OptIn(ExperimentalEncodingApi::class)
     private val otandpBodyCheckScreenshot = Base64.encode(resourceBytes("www.otandp.com_body-check_.webp"))
     private val otandpBodyCheckHtml = resourceText("view-source_https___www.otandp.com_body-check_.html")
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IPopupContainerIdentificationAgent>()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `no popup should be detected on example`() = runTest(testCoroutineDispatcher) {
         val input = PopupContainerIdentificationInput(
@@ -60,7 +56,6 @@ class PopupContainerIdentificationAgentAdkImplTest : KoinTest {
         )
     }
 
-    @OptIn(ExperimentalEncodingApi::class)
     @Test
     fun `popup should be detected on otandp body check page`() = runTest(testCoroutineDispatcher) {
         val input = PopupContainerIdentificationInput(

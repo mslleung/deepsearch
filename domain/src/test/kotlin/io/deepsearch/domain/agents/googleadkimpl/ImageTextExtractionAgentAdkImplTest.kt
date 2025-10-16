@@ -5,7 +5,6 @@ import io.deepsearch.domain.agents.ImageTextExtractionInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -33,7 +32,6 @@ class ImageTextExtractionAgentAdkImplTest : KoinTest {
             "Missing test resource: $name"
         }.use { it.readBytes() }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `extracts text from beame_text image`() = runTest(testCoroutineDispatcher) {
         val bytes = resourceBytes("beame_text.webp")
@@ -48,7 +46,6 @@ class ImageTextExtractionAgentAdkImplTest : KoinTest {
         assertTrue(output.extractedText.isNotBlank(), "extractedText should not be blank for beame_text.webp")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `extracts text from beame_table image`() = runTest(testCoroutineDispatcher) {
         val bytes = resourceBytes("beame_table.webp")
@@ -63,7 +60,6 @@ class ImageTextExtractionAgentAdkImplTest : KoinTest {
         assertTrue(output.extractedText.contains("|"), "table extraction should contain markdown pipes for beame_table.webp")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `extracts text or returns null for beame_icon image`() = runTest(testCoroutineDispatcher) {
         val bytes = resourceBytes("beame_icon.webp")

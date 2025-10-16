@@ -3,12 +3,8 @@ package io.deepsearch.domain.agents.googleadkimpl
 import io.deepsearch.domain.agents.GenerateAnswerInput
 import io.deepsearch.domain.agents.IGenerateAnswerAgent
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assumptions.assumeTrue
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest

@@ -5,7 +5,6 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -26,7 +25,6 @@ class BlinkTestAgentAdkImplTest : KoinTest {
     private val browserPool by inject<IBrowserPool>()
     private val agent by inject<IBlinkTestAgent>()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `blink test should pass for clearly related query`() = runTest(testCoroutineDispatcher) {
         // Given
@@ -54,7 +52,6 @@ class BlinkTestAgentAdkImplTest : KoinTest {
         assertTrue(output.rationale.isNotBlank(), "rationale should not be blank")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `blink test should fail for clearly unrelated query`() = runTest(testCoroutineDispatcher) {
 

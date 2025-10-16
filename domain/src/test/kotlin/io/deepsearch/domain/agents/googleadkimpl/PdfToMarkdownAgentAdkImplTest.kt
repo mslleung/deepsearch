@@ -1,0 +1,117 @@
+package io.deepsearch.domain.agents.googleadkimpl
+
+import io.deepsearch.domain.agents.IPdfToMarkdownAgent
+import io.deepsearch.domain.agents.PdfToMarkdownInput
+import io.deepsearch.domain.config.domainTestModule
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.test.runTest
+import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.PDPage
+import org.apache.pdfbox.pdmodel.PDPageContentStream
+import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.RegisterExtension
+import org.koin.test.KoinTest
+import org.koin.test.inject
+import org.koin.test.junit5.KoinTestExtension
+import java.io.ByteArrayOutputStream
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class PdfToMarkdownAgentAdkImplTest : KoinTest {
+
+    @JvmField
+    @RegisterExtension
+    val koinTestExtension = KoinTestExtension.create {
+        modules(domainTestModule)
+    }
+
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
+    private val agent by inject<IPdfToMarkdownAgent>()
+
+    @Test
+    fun `convert simple PDF to markdown`() = runTest(testCoroutineDispatcher) {
+        // Create a simple test PDF
+        val pdfBytes = createSimplePdf(
+            title = "Test Document",
+            content = listOf(
+                "This is a test PDF document.",
+                "It contains multiple paragraphs.",
+                "The agent should convert this to markdown format."
+            )
+        )
+
+        val output = agent.generate(PdfToMarkdownInput(pdfBytes))
+
+        assertNotNull(output.markdown, "Markdown output should not be null")
+        assertTrue(output.markdown.isNotBlank(), "Markdown output should not be blank")
+    }
+
+    @Test
+    fun `convert PDF with structured content to markdown`() = runTest(testCoroutineDispatcher) {
+        // Create a PDF with more structured content
+        val pdfBytes = createSimplePdf(
+            title = "Structured Document",
+            content = listOf(
+                "Introduction",
+                "This document has a clear structure.",
+                "",
+                "Section 1: Overview",
+                "This is the first section with important information.",
+                "",
+                "Section 2: Details", 
+                "This section contains detailed explanations.",
+                "",
+                "Conclusion",
+                "This concludes our structured document."
+            )
+        )
+
+        val output = agent.generate(PdfToMarkdownInput(pdfBytes))
+
+        assertNotNull(output.markdown, "Markdown output should not be null")
+        assertTrue(output.markdown.isNotBlank(), "Markdown output should not be blank")
+    }
+
+    /**
+     * Helper function to create a simple PDF for testing.
+     */
+    private fun createSimplePdf(title: String, content: List<String>): ByteArray {
+        val document = PDDocument()
+        try {
+            val page = PDPage()
+            document.addPage(page)
+
+            val contentStream = PDPageContentStream(document, page)
+            try {
+                contentStream.beginText()
+                contentStream.setFont(PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), 16f)
+                contentStream.newLineAtOffset(50f, 750f)
+                contentStream.showText(title)
+                contentStream.endText()
+
+                contentStream.beginText()
+                contentStream.setFont(PDType1Font(Standard14Fonts.FontName.HELVETICA), 12f)
+                contentStream.newLineAtOffset(50f, 720f)
+                contentStream.setLeading(14.5f)
+
+                content.forEach { line ->
+                    contentStream.showText(line)
+                    contentStream.newLine()
+                }
+
+                contentStream.endText()
+            } finally {
+                contentStream.close()
+            }
+
+            val outputStream = ByteArrayOutputStream()
+            document.save(outputStream)
+            return outputStream.toByteArray()
+        } finally {
+            document.close()
+        }
+    }
+}
+

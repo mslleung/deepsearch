@@ -12,7 +12,6 @@ import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * Playwright-backed implementation of a browser page.
@@ -128,7 +127,6 @@ class PlaywrightBrowserPage(
     @Serializable
     private data class IconResult(val base64: String, val xPathSelectors: List<String>)
 
-    @OptIn(ExperimentalEncodingApi::class)
     override suspend fun extractIcons(): List<IBrowserPage.Icon> {
         logger.debug("Extracting icons via evaluate()")
         val extractIconJsonRaw = page.evaluate(loadScript("out/extractIcons.js")) as String
@@ -159,7 +157,6 @@ class PlaywrightBrowserPage(
         val failed: List<FailedImage>
     )
 
-    @OptIn(ExperimentalEncodingApi::class)
     override suspend fun extractImages(): List<IBrowserPage.WebImage> {
         logger.debug("Extracting images via evaluate()")
         val extractImageJsonRaw = page.evaluate(loadScript("out/extractImages.js")) as String

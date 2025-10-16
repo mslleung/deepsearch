@@ -5,7 +5,6 @@ import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -25,7 +24,6 @@ class GoogleTextSearchAgentAdkImplTest : KoinTest {
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IGoogleTextSearchAgent>()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `basic site-restricted search returns content and at least one source`() = runTest(testCoroutineDispatcher) {
         // Given

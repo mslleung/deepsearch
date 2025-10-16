@@ -13,7 +13,6 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
 import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
 
 class ExposedWebpagePopupRepository : IWebpagePopupRepository {
 
@@ -44,7 +43,6 @@ class ExposedWebpagePopupRepository : IWebpagePopupRepository {
         Unit
     }
 
-    @OptIn(ExperimentalEncodingApi::class)
     private fun mapRowToWebpagePopup(row: ResultRow): WebpagePopup {
         return WebpagePopup(
             pageHash = Base64.decode(row[WebpagePopupTable.pageHash]),

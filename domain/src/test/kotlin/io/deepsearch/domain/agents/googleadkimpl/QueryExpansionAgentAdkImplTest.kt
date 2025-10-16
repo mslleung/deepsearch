@@ -5,7 +5,6 @@ import io.deepsearch.domain.agents.QueryExpansionAgentInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -26,7 +25,6 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IQueryExpansionAgent>()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `url-context search returns content and at least one source`() = runTest(testCoroutineDispatcher) {
         // Given
@@ -59,7 +57,6 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
         assertEquals(output.expandedQueries.size, 2, "Should expand into 2")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `breakdown into 3 requests`() = runTest(testCoroutineDispatcher) {
         // Given
@@ -77,7 +74,6 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
         assertEquals(output.expandedQueries.size, 3, "Should expand into 3")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `overly board query`() = runTest(testCoroutineDispatcher) {
         // Given
@@ -94,7 +90,6 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
         assertEquals(output.expandedQueries.size, 1, "Should replace board query with simpler query")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `natural query`() = runTest(testCoroutineDispatcher) {
         // Given
@@ -111,7 +106,6 @@ class QueryExpansionAgentAdkImplTest : KoinTest {
         assertTrue(output.expandedQueries.size <= 2, "natural query should expand minimally")
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun `non retrieval queries`() = runTest(testCoroutineDispatcher) {
         // Given

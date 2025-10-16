@@ -5,7 +5,6 @@ import io.deepsearch.domain.agents.MarkdownConversionInput
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
@@ -33,7 +32,6 @@ class MarkdownConversionAgentAdkImplTest : KoinTest {
             "Missing test resource: $name"
         }.use { it.readBytes() }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @ParameterizedTest
     @ValueSource(
         strings = [

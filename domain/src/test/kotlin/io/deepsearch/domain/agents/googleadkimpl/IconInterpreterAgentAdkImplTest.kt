@@ -5,7 +5,6 @@ import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertNotNull
@@ -14,8 +13,6 @@ import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
-import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class IconInterpreterAgentAdkImplTest : KoinTest {
