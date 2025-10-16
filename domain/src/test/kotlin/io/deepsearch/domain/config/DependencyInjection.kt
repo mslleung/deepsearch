@@ -13,6 +13,7 @@ import io.deepsearch.domain.agents.IGenerateAnswerAgent
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
+import io.deepsearch.domain.agents.IPdfToMarkdownAgent
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
@@ -31,6 +32,7 @@ import io.deepsearch.domain.agents.googleadkimpl.GenerateAnswerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.LinkRelevanceAnalysisAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.NavigationElementIdentificationAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PopupContainerIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.SemanticIdentificationAgentAdkImpl
@@ -80,6 +82,7 @@ val domainTestModule = module {
     singleOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
     singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
+    singleOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
 }
 
 

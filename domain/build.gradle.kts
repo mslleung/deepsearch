@@ -16,6 +16,8 @@ dependencies {
 
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
+    
+    implementation(libs.apache.pdfbox)
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.jsoup)

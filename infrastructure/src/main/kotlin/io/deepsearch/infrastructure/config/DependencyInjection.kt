@@ -20,5 +20,6 @@ val infrastructureModule = module {
         scopedOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class
         scopedOf(::ExposedWebpageNavigationElementRepository) bind IWebpageNavigationElementRepository::class
         scopedOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
+        scopedOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
     }
 }

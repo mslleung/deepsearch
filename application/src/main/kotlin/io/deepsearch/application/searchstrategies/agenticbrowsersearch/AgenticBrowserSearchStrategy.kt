@@ -1,7 +1,10 @@
 package io.deepsearch.application.searchstrategies.agenticbrowsersearch
 
 import io.deepsearch.application.searchstrategies.ISearchStrategy
+import io.deepsearch.application.services.ContentTypeResult
+import io.deepsearch.application.services.IHttpContentTypeResolutionService
 import io.deepsearch.application.services.INormalizeUrlService
+import io.deepsearch.application.services.IPdfConversionService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.domain.agents.*
@@ -39,6 +42,8 @@ class AgenticBrowserSearchStrategy(
     private val queryExpansionAgent: IQueryExpansionAgent,
     private val aggregateSearchResultsAgent: IAggregateSearchResultsAgent,
     private val webpageMarkdownRepository: IWebpageMarkdownRepository,
+    private val pdfConversionService: IPdfConversionService,
+    private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
     private val dispatchers: DispatcherProvider
 ) : IAgenticBrowserSearchStrategy {
 
@@ -267,7 +272,7 @@ class AgenticBrowserSearchStrategy(
 
     /**
      * Pure function that processes a single URL: extracts markdown and discovers links in parallel.
-     * Uses cache to avoid repeated navigation to the same URLs.
+     * Routes based on content type (HTML, PDF, etc.) and uses cache to avoid repeated navigation.
      * Does not mutate any state - returns results as data.
      */
     private suspend fun processUrl(
@@ -284,48 +289,169 @@ class AgenticBrowserSearchStrategy(
         val cached = webpageMarkdownRepository.findByUrl(normalizedUrl)
         val currentTime = System.currentTimeMillis()
         
-        val (markdown, html) = if (cached != null && (currentTime - cached.updatedAtEpochMs) < CACHE_TTL_MS) {
+        // If cached and not expired, return cached result
+        if (cached != null && (currentTime - cached.updatedAtEpochMs) < CACHE_TTL_MS) {
             logger.debug("Cache hit for URL: {} (age: {} ms)", url, currentTime - cached.updatedAtEpochMs)
-            cached.markdown to cached.html
-        } else {
-            if (cached != null) {
-                logger.debug("Cache expired for URL: {} (age: {} ms)", url, currentTime - cached.updatedAtEpochMs)
-            } else {
-                logger.debug("Cache miss for URL: {}", url)
+            
+            // Check if it's a failure
+            if (cached.httpStatus != null && cached.httpStatus !in 200..299) {
+                logger.debug("Cached failure for URL: {} (status: {})", url, cached.httpStatus)
+                return@coroutineScope UrlProcessingResult(url, "", emptyList())
             }
             
-            // Navigate and extract
-            val context = browser.createContext()
-            val page = context.newPage()
-            page.navigate(url)
-
-            // webpageExtractionService.extractWebpage modifies the webpage, so we get the html first
-            val extractedHtml = page.getFullHtml()
-
-            // Extract markdown
-            val extractedMarkdown = webpageExtractionService.extractWebpage(page)
+            // For cached HTML, perform link discovery
+            val cachedHtml = cached.html
+            val links = if (cachedHtml != null) {
+                webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, cachedHtml)
+            } else {
+                emptyList()
+            }
             
-            // Cache the result
-            webpageMarkdownRepository.upsert(
-                WebpageMarkdown(
-                    url = normalizedUrl,
-                    markdown = extractedMarkdown,
-                    html = extractedHtml,
-                    createdAtEpochMs = cached?.createdAtEpochMs ?: currentTime,
-                    updatedAtEpochMs = currentTime
-                )
-            )
-            
-            logger.debug("Cached markdown for URL: {}", url)
-            
-            extractedMarkdown to extractedHtml
+            return@coroutineScope UrlProcessingResult(url, cached.markdown ?: "", links)
         }
+        
+        if (cached != null) {
+            logger.debug("Cache expired for URL: {} (age: {} ms)", url, currentTime - cached.updatedAtEpochMs)
+        } else {
+            logger.debug("Cache miss for URL: {}", url)
+        }
+        
+        // Resolve content type
+        when (val result = httpContentTypeResolutionService.resolve(url)) {
+            is ContentTypeResult.Html -> {
+                logger.debug("Detected HTML content for: {}", url)
+                processHtmlUrl(url, normalizedUrl, query, browser, cached, currentTime)
+            }
+            is ContentTypeResult.Pdf -> {
+                logger.debug("Detected PDF content for: {} ({} bytes)", url, result.bytes.size)
+                processPdfUrl(url, normalizedUrl, result, cached, currentTime)
+            }
+            is ContentTypeResult.Unsupported -> {
+                logger.debug("Unsupported content type for {}: {}", url, result.contentType)
+                cacheUnsupportedContent(normalizedUrl, result, cached, currentTime)
+                UrlProcessingResult(url, "", emptyList())
+            }
+            is ContentTypeResult.Failed -> {
+                logger.debug("Failed to resolve content type for {}: {} {}", url, result.statusCode, result.reasonPhrase)
+                cacheFailedRequest(normalizedUrl, result, cached, currentTime)
+                UrlProcessingResult(url, "", emptyList())
+            }
+        }
+    }
+    
+    private suspend fun processHtmlUrl(
+        url: String,
+        normalizedUrl: String,
+        query: String,
+        browser: IBrowser,
+        cached: WebpageMarkdown?,
+        currentTime: Long
+    ): UrlProcessingResult = coroutineScope {
+        // Navigate and extract
+        val context = browser.createContext()
+        val page = context.newPage()
+        page.navigate(url)
 
-        // Discover links using the html
-        val links = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html)
+        // webpageExtractionService.extractWebpage modifies the webpage, so we get the html first
+        val extractedHtml = page.getFullHtml()
 
-        logger.debug("Extracted {} chars from {}, discovered {} links", markdown.length, url, links.size)
-
-        UrlProcessingResult(url, markdown, links)
+        // Extract markdown and discover links in parallel
+        val markdownDeferred = async {
+            webpageExtractionService.extractWebpage(page)
+        }
+        val linksDeferred = async {
+            webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, extractedHtml)
+        }
+        
+        val extractedMarkdown = markdownDeferred.await()
+        val discoveredLinks = linksDeferred.await()
+        
+        // Cache the result
+        webpageMarkdownRepository.upsert(
+            WebpageMarkdown(
+                url = normalizedUrl,
+                markdown = extractedMarkdown,
+                html = extractedHtml,
+                httpStatus = 200,
+                httpReason = "OK",
+                mimeType = "text/html",
+                createdAtEpochMs = cached?.createdAtEpochMs ?: currentTime,
+                updatedAtEpochMs = currentTime
+            )
+        )
+        
+        logger.debug("Cached HTML markdown for URL: {} ({} chars, {} links)", url, extractedMarkdown.length, discoveredLinks.size)
+        
+        UrlProcessingResult(url, extractedMarkdown, discoveredLinks)
+    }
+    
+    private suspend fun processPdfUrl(
+        url: String,
+        normalizedUrl: String,
+        result: ContentTypeResult.Pdf,
+        cached: WebpageMarkdown?,
+        currentTime: Long
+    ): UrlProcessingResult {
+        // Convert PDF to markdown
+        val markdown = pdfConversionService.convertPdfToMarkdown(result.bytes)
+        
+        // Cache the result
+        webpageMarkdownRepository.upsert(
+            WebpageMarkdown(
+                url = normalizedUrl,
+                markdown = markdown,
+                html = null, // PDFs don't have HTML
+                httpStatus = result.statusCode,
+                httpReason = result.reasonPhrase,
+                mimeType = result.mimeType,
+                createdAtEpochMs = cached?.createdAtEpochMs ?: currentTime,
+                updatedAtEpochMs = currentTime
+            )
+        )
+        
+        logger.debug("Cached PDF markdown for URL: {} ({} chars)", url, markdown.length)
+        
+        // PDFs are terminal - no link discovery
+        return UrlProcessingResult(url, markdown, emptyList())
+    }
+    
+    private suspend fun cacheUnsupportedContent(
+        normalizedUrl: String,
+        result: ContentTypeResult.Unsupported,
+        cached: WebpageMarkdown?,
+        currentTime: Long
+    ) {
+        webpageMarkdownRepository.upsert(
+            WebpageMarkdown(
+                url = normalizedUrl,
+                markdown = null,
+                html = null,
+                httpStatus = result.statusCode,
+                httpReason = result.reasonPhrase,
+                mimeType = result.contentType,
+                createdAtEpochMs = cached?.createdAtEpochMs ?: currentTime,
+                updatedAtEpochMs = currentTime
+            )
+        )
+    }
+    
+    private suspend fun cacheFailedRequest(
+        normalizedUrl: String,
+        result: ContentTypeResult.Failed,
+        cached: WebpageMarkdown?,
+        currentTime: Long
+    ) {
+        webpageMarkdownRepository.upsert(
+            WebpageMarkdown(
+                url = normalizedUrl,
+                markdown = null,
+                html = null,
+                httpStatus = result.statusCode,
+                httpReason = result.reasonPhrase,
+                mimeType = null,
+                createdAtEpochMs = cached?.createdAtEpochMs ?: currentTime,
+                updatedAtEpochMs = currentTime
+            )
+        )
     }
 }

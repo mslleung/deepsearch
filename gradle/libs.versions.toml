@@ -16,6 +16,7 @@ playwright-version = "1.55.0"
 playwright-axe-core-version = "4.10.1"
 tesserect-version = "5.5.1-1.5.12"
 google-adk-version = "0.3.0"
+apache-pdfbox-version = "3.0.5"
 apache-httpclient5-version = "5.5"
 apache-httpcore5-version = "5.3.4"
 r2dbc-h2-version = "1.0.0.RELEASE"
@@ -58,6 +59,7 @@ playwright-axe-core = { module = "com.deque.html.axe-core:playwright", version.r
 tesserect = { module = "org.bytedeco:tesseract-platform", version.ref = "tesserect-version" }
 google-adk = { module = "com.google.adk:google-adk", version.ref = "google-adk-version" }
 google-adk-dev = { module = "com.google.adk:google-adk-dev", version.ref = "google-adk-version" }
+apache-pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "apache-pdfbox-version" }
 apache-httpclient5 = { module = "org.apache.httpcomponents.client5:httpclient5", version.ref = "apache-httpclient5-version" }
 apache-httpcore5 = { module = "org.apache.httpcomponents.core5:httpcore5", version.ref = "apache-httpcore5-version" }
 apache-httpcore5-h2 = { module = "org.apache.httpcomponents.core5:httpcore5-h2", version.ref = "apache-httpcore5-version" }

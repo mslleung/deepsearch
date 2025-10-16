@@ -20,7 +20,14 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.jsoup)
 
+    // Ktor HTTP Client for content type resolution
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+
     implementation(libs.playwright)
+    
+    // PDF processing
+    implementation(libs.apache.pdfbox)
 
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)

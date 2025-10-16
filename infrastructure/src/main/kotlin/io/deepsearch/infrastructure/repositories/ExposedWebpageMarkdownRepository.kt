@@ -26,6 +26,9 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
         val updated = WebpageMarkdownTable.update({ WebpageMarkdownTable.url eq webpage.url }) {
             it[markdown] = webpage.markdown
             it[html] = webpage.html
+            it[httpStatus] = webpage.httpStatus
+            it[httpReason] = webpage.httpReason
+            it[mimeType] = webpage.mimeType
             it[updatedAtEpochMs] = webpage.updatedAtEpochMs
         }
 
@@ -34,6 +37,9 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
                 it[url] = webpage.url
                 it[markdown] = webpage.markdown
                 it[html] = webpage.html
+                it[httpStatus] = webpage.httpStatus
+                it[httpReason] = webpage.httpReason
+                it[mimeType] = webpage.mimeType
                 it[createdAtEpochMs] = webpage.createdAtEpochMs
                 it[updatedAtEpochMs] = webpage.updatedAtEpochMs
             }
@@ -45,6 +51,9 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
             url = row[WebpageMarkdownTable.url],
             markdown = row[WebpageMarkdownTable.markdown],
             html = row[WebpageMarkdownTable.html],
+            httpStatus = row[WebpageMarkdownTable.httpStatus],
+            httpReason = row[WebpageMarkdownTable.httpReason],
+            mimeType = row[WebpageMarkdownTable.mimeType],
             createdAtEpochMs = row[WebpageMarkdownTable.createdAtEpochMs],
             updatedAtEpochMs = row[WebpageMarkdownTable.updatedAtEpochMs]
         )

@@ -2,6 +2,7 @@ package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googleadkimpl.*
+import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
 import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
 import org.koin.core.module.dsl.scopedOf
@@ -35,5 +36,6 @@ val domainModule = module {
         scopedOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
         scopedOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
         scopedOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
+        scopedOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
     }
 }

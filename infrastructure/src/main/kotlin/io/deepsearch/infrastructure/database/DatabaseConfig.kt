@@ -33,6 +33,7 @@ object DatabaseConfig {
                     WebpageTableInterpretationTable,
                     WebpageSemanticElementTable,
                     WebpageMarkdownTable,
+                    PdfMarkdownTable,
                 )
             }
         }

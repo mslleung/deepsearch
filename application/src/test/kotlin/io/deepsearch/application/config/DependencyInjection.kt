@@ -13,10 +13,14 @@ import io.deepsearch.application.services.ITableIdentificationService
 import io.deepsearch.application.services.ITableInterpretationService
 import io.deepsearch.application.services.IUserService
 import io.deepsearch.application.services.IWebpageExtractionService
+import io.deepsearch.application.services.HttpContentTypeResolutionService
+import io.deepsearch.application.services.IHttpContentTypeResolutionService
+import io.deepsearch.application.services.IPdfConversionService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.NavigationElementRemovalService
+import io.deepsearch.application.services.PdfConversionService
 import io.deepsearch.application.services.NormalizeUrlService
 import io.deepsearch.application.services.PopupContainerIdentificationService
 import io.deepsearch.application.services.SearchService
@@ -52,4 +56,6 @@ val applicationTestModule = module {
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
     singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
+    singleOf(::PdfConversionService) bind IPdfConversionService::class
+    singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
 }
