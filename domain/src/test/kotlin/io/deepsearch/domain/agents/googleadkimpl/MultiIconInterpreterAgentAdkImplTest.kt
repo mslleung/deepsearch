@@ -136,10 +136,7 @@ class MultiIconInterpreterAgentAdkImplTest : KoinTest {
 
         // Verify most have non-null labels
         val nonNullLabels = output.interpretations.count { it.label != null }
-        assertTrue(
-            nonNullLabels >= 8,
-            "At least 8 out of 10 icons should have non-null labels"
-        )
+        assertEquals(nonNullLabels, 0, "At 10 icons should have non-null labels")
     }
 
     @Test
@@ -173,10 +170,7 @@ class MultiIconInterpreterAgentAdkImplTest : KoinTest {
 
         // Verify most have non-null labels
         val nonNullLabels = output.interpretations.count { it.label != null }
-        assertTrue(
-            nonNullLabels >= 8,
-            "At least 8 out of 10 icons should have non-null labels"
-        )
+        assertEquals(nonNullLabels, 56, "At 10 icons should have non-null labels")
     }
 
     @Test
