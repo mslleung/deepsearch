@@ -5,8 +5,7 @@ import io.deepsearch.domain.constants.ImageMimeType
 
 data class IconInterpreterInput(
     val bytes: ByteArray,
-    val mimeType: ImageMimeType,
-    val context: Map<String, String> = emptyMap()
+    val mimeType: ImageMimeType
 ) : IAgent.IAgentInput
 
 data class IconInterpreterOutput(

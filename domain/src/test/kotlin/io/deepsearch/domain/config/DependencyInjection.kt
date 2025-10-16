@@ -7,11 +7,11 @@ import io.deepsearch.domain.agents.IImageTextExtractionAgent
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleSearchLinkDiscoveryAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
-import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IDirectAnswerAgent
 import io.deepsearch.domain.agents.IGenerateAnswerAgent
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
+import io.deepsearch.domain.agents.IMultiIconInterpreterAgent
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.IPdfToMarkdownAgent
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
@@ -26,11 +26,11 @@ import io.deepsearch.domain.agents.googleadkimpl.ImageTextExtractionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleSearchLinkDiscoveryAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
-import io.deepsearch.domain.agents.googleadkimpl.IconInterpreterAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.DirectAnswerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GenerateAnswerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.LinkRelevanceAnalysisAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.MultiIconInterpreterAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.NavigationElementIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PopupContainerIdentificationAgentAdkImpl
@@ -72,7 +72,6 @@ val domainTestModule = module {
     singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
     singleOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
-    singleOf(::IconInterpreterAgentAdkImpl) bind IIconInterpreterAgent::class
     singleOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
     singleOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
@@ -83,6 +82,8 @@ val domainTestModule = module {
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
     singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
+    singleOf(::MultiIconInterpreterAgentAdkImpl) bind IMultiIconInterpreterAgent::class
+
 }
 
 
