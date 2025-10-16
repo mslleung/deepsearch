@@ -76,6 +76,74 @@ Extract meaning from every element of modern web pages:
 
 ---
 
+## 🚀 Getting Started
+
+### Prerequisites
+
+- JDK 17 or higher
+- Gradle 8.x (included via wrapper)
+- Google AI API Key (for Gemini/ADK agents)
+
+### Environment Setup
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd deepsearch
+   ```
+
+2. **Configure environment variables**
+   
+   Copy the example file and add your API key:
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Edit `.env` and set your Google API key:
+   ```bash
+   # Get your API key from: https://aistudio.google.com/app/apikey
+   GOOGLE_API_KEY=your_actual_api_key_here
+   ```
+   
+   **For Cursor users**: Make sure your environment variables are set in your shell profile (e.g., `~/.zshrc` or `~/.bash_profile`):
+   ```bash
+   export GOOGLE_API_KEY="your_actual_api_key_here"
+   ```
+   
+   Then reload your shell or restart Cursor for the changes to take effect.
+
+3. **Build the project**
+   ```bash
+   ./gradlew build
+   ```
+
+4. **Run tests**
+   ```bash
+   ./gradlew test
+   ```
+
+5. **Start the server**
+   ```bash
+   ./gradlew :presentation:run
+   ```
+   
+   The API will be available at `http://localhost:8080`
+
+### API Usage
+
+Send a POST request to `/api/search`:
+
+```bash
+curl -X POST http://localhost:8080/api/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the key features?",
+    "url": "https://example.com"
+  }'
+```
+
+---
+
 ## 🗺️ Roadmap
 
 ### ✅ Current Capabilities (v0.1)

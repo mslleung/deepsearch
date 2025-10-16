@@ -52,6 +52,9 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    
+    // Pass environment variables to tests
+    environment("GOOGLE_API_KEY", System.getenv("GOOGLE_API_KEY") ?: "")
 }
 
 // Create a test JAR to allow other modules to depend on test classes
