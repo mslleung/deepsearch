@@ -3,7 +3,7 @@ package io.deepsearch.domain.config
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
-import io.deepsearch.domain.agents.IImageTextExtractionAgent
+import io.deepsearch.domain.agents.IMultiImageTextExtractionAgent
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleSearchLinkDiscoveryAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
@@ -22,7 +22,7 @@ import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.BlinkTestAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
-import io.deepsearch.domain.agents.googleadkimpl.ImageTextExtractionAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.MultiImageTextExtractionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleSearchLinkDiscoveryAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
@@ -76,7 +76,7 @@ val domainTestModule = module {
     singleOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
     singleOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
-    singleOf(::ImageTextExtractionAgentAdkImpl) bind IImageTextExtractionAgent::class
+    singleOf(::MultiImageTextExtractionAgentAdkImpl) bind IMultiImageTextExtractionAgent::class
     singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
     singleOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class

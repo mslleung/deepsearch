@@ -97,15 +97,13 @@ class WebpageExtractionService(
     private suspend fun replaceImagesWithTexts(webpage: IBrowserPage) = coroutineScope {
         val images = webpage.extractImages()
 
-        val replacements = images
-            .map { image ->
-                async(dispatchers.io) {
-                    val extractedText = webpageImageTextExtractionService.extractTextFromImage(image)
-                    image.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, extractedText) }
-                }
-            }
-            .awaitAll()
-            .flatten()
+        // Extract text from all images in batch for efficiency
+        val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images)
+
+        // Build replacements for each XPath
+        val replacements = images.zip(extractedTexts).flatMap { (image, extractedText) ->
+            image.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, extractedText) }
+        }
 
         webpage.replaceElementsByXPathWithText(replacements)
     }

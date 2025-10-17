@@ -30,7 +30,7 @@ val domainModule = module {
         scopedOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
         scopedOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
         scopedOf(::MultiIconInterpreterAgentAdkImpl) bind IMultiIconInterpreterAgent::class
-        scopedOf(::ImageTextExtractionAgentAdkImpl) bind IImageTextExtractionAgent::class
+        scopedOf(::MultiImageTextExtractionAgentAdkImpl) bind IMultiImageTextExtractionAgent::class
         scopedOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
         scopedOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
         scopedOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class

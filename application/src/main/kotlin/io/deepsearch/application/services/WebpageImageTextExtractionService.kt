@@ -1,21 +1,21 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.agents.IImageTextExtractionAgent
-import io.deepsearch.domain.agents.ImageTextExtractionInput
+import io.deepsearch.domain.agents.IMultiImageTextExtractionAgent
+import io.deepsearch.domain.agents.MultiImageTextExtractionInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageImage
 import io.deepsearch.domain.repositories.IWebpageImageRepository
  
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.security.MessageDigest
 
 interface IWebpageImageTextExtractionService {
     suspend fun extractTextFromImage(image: IBrowserPage.WebImage): String?
+    suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>): List<String?>
 }
 
 class WebpageImageTextExtractionService(
-    private val imageTextExtractionAgent: IImageTextExtractionAgent,
+    private val multiImageTextExtractionAgent: IMultiImageTextExtractionAgent,
     private val webpageImageRepository: IWebpageImageRepository
 ) : IWebpageImageTextExtractionService {
 
@@ -28,43 +28,94 @@ class WebpageImageTextExtractionService(
      * Results are cached to avoid reprocessing the same image.
      */
     override suspend fun extractTextFromImage(image: IBrowserPage.WebImage): String? {
-        // Check cache first
-        val existing = webpageImageRepository.findByHash(image.bytesHash)
-        if (existing != null) {
-            logger.debug("Found cached result for image")
-            return existing.extractedText?.takeIf { it.isNotBlank() }
+        return extractTextFromImages(listOf(image)).firstOrNull()
+    }
+
+    /**
+     * Extract text from multiple images in batch using Tesseract OCR + LLM.
+     * Efficiently processes multiple images by:
+     * - Checking cache first for all images
+     * - Batching uncached images for LLM processing
+     * - Using multi-image agent that processes up to 50 images per LLM call
+     * Results are cached to avoid reprocessing the same images.
+     */
+    override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>): List<String?> {
+        if (images.isEmpty()) {
+            return emptyList()
         }
 
-        val hasText = image.containsText()
+        // Helper to convert ByteArray to hex string for map keys
+        fun ByteArray.toHexString() = joinToString("") { "%02x".format(it) }
+
+        // Check cache for all images
+        val cachedResults = mutableMapOf<String, String?>()
+        val uncachedImages = mutableListOf<IBrowserPage.WebImage>()
         
-        if (!hasText) {
-            logger.debug("No text detected in image by OCR, skipping LLM")
-            // Cache the result as having no text
-            webpageImageRepository.upsert(
-                WebpageImage(
-                    imageBytesHash = image.bytesHash,
-                    extractedText = null
+        images.forEach { image ->
+            val existing = webpageImageRepository.findByHash(image.bytesHash)
+            if (existing != null) {
+                logger.debug("Found cached result for image")
+                cachedResults[image.bytesHash.toHexString()] = existing.extractedText?.takeIf { it.isNotBlank() }
+            } else {
+                uncachedImages.add(image)
+            }
+        }
+
+        // Process uncached images
+        if (uncachedImages.isNotEmpty()) {
+            logger.debug("Processing {} uncached images", uncachedImages.size)
+            
+            // Filter images by OCR text detection
+            val imagesWithText = mutableListOf<IBrowserPage.WebImage>()
+            val imagesWithoutText = mutableListOf<IBrowserPage.WebImage>()
+            
+            uncachedImages.forEach { image ->
+                if (image.containsText()) {
+                    imagesWithText.add(image)
+                } else {
+                    logger.debug("No text detected in image by OCR, skipping LLM")
+                    imagesWithoutText.add(image)
+                    // Cache as having no text
+                    webpageImageRepository.upsert(
+                        WebpageImage(
+                            imageBytesHash = image.bytesHash,
+                            extractedText = null
+                        )
+                    )
+                    cachedResults[image.bytesHash.toHexString()] = null
+                }
+            }
+
+            // Process images with text using multi-image agent
+            if (imagesWithText.isNotEmpty()) {
+                logger.debug("Text detected by OCR in {} images, using LLM for extraction", imagesWithText.size)
+                
+                val extractionOutput = multiImageTextExtractionAgent.generate(
+                    MultiImageTextExtractionInput(
+                        images = imagesWithText.map { image ->
+                            MultiImageTextExtractionInput.ImageItem(
+                                bytes = image.bytes,
+                                mimeType = image.mimeType
+                            )
+                        }
+                    )
                 )
-            )
-            return null
+
+                // Cache results
+                imagesWithText.forEachIndexed { index, image ->
+                    val extractedText = extractionOutput.extractions[index].extractedText?.takeIf { it.isNotBlank() }
+                    webpageImageRepository.upsert(
+                        WebpageImage(
+                            imageBytesHash = image.bytesHash,
+                            extractedText = extractedText
+                        )
+                    )
+                    cachedResults[image.bytesHash.toHexString()] = extractedText
+                }
+            }
         }
 
-        logger.debug("Text detected by OCR, using LLM for extraction")
-        
-        // Use LLM to extract text with proper formatting
-        val extractionOutput = imageTextExtractionAgent.generate(
-            ImageTextExtractionInput(bytes = image.bytes, mimeType = image.mimeType)
-        )
-        val extractedText = extractionOutput.extractedText?.takeIf { it.isNotBlank() }
-
-        // Cache the result
-        webpageImageRepository.upsert(
-            WebpageImage(
-                imageBytesHash = image.bytesHash,
-                extractedText = extractedText
-            )
-        )
-
-        return extractedText
+        // Return results in original order
+        return images.map { image -> cachedResults[image.bytesHash.toHexString()] }
     }
 }
