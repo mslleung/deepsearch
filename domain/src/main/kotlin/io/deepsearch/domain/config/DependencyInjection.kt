@@ -14,8 +14,6 @@ val domainModule = module {
     single<DispatcherProvider> { DefaultDispatcherProvider() }
 
     requestScope {
-        // domain services
-
         scopedOf(::BrowserPool) bind IBrowserPool::class
 
         // domain agents (request scoped)
@@ -36,6 +34,7 @@ val domainModule = module {
         scopedOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
         scopedOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
         scopedOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
+        scopedOf(::StreamingAnswerAgentAdkImpl) bind IStreamingAnswerAgent::class
         scopedOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
     }
 }

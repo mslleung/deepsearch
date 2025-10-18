@@ -1,37 +1,37 @@
-package io.deepsearch.application.searchstrategies.googlesearch
+package io.deepsearch.application.searchorchestrators.googlesearch
 
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
-import io.deepsearch.application.searchstrategies.ISearchStrategy
+import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.domain.agents.GoogleTextSearchInput
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-interface IGoogleSearchStrategy : ISearchStrategy {
+interface IGoogleSearchOrchestrator : ISearchOrchestrator {
     override suspend fun execute(searchQuery: SearchQuery): SearchResult
 }
 
 /**
- * Performs a Google search + Url Context, powered by Google Gemini.
+ * Orchestrates Google search + URL Context, powered by Google Gemini.
  *
  * This is currently the best and most powerful offering from Google.
  *
  * Google has a long history of being the best search engine in the world, so we will leverage it.
  * Use this as a benchmark.
  */
-class GoogleSearchStrategy(
+class GoogleSearchOrchestrator(
     // private val googleCombinedSearchAgent: IGoogleCombinedSearchAgent
     private val googleTextSearchAgent: IGoogleTextSearchAgent,
     private val googleUrlContextSearchAgent: IGoogleUrlContextSearchAgent
-) : IGoogleSearchStrategy {
+) : IGoogleSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun execute(searchQuery: SearchQuery): SearchResult {
-        logger.debug("GoogleSearchStrategy.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
+        logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
         // Previous implementation using the combined search agent (not supported yet):
         // val output = googleCombinedSearchAgent.generate(
         //     IGoogleCombinedSearchAgent.GoogleCombinedSearchInput(searchQuery)
@@ -72,8 +72,7 @@ class GoogleSearchStrategy(
             urlContextOutput.sources
         )
 
-        // 4) Return the results, preserving the original query and normalizing sources
-        //    to the original URL to maintain existing expectations.
+        // 4) Return the results, preserving the original query
         return SearchResult(
             originalQuery = searchQuery,
             answer = "",

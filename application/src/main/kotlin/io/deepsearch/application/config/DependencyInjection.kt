@@ -1,7 +1,7 @@
 package io.deepsearch.application.config
 
-import io.deepsearch.application.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
-import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.AgenticBrowserSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
 import io.deepsearch.application.services.*
 import io.deepsearch.domain.config.domainModule
 import io.deepsearch.infrastructure.config.infrastructureModule
@@ -15,7 +15,7 @@ val applicationModule = module {
     includes(infrastructureModule)
 
     requestScope {
-        scopedOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
+        scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
         scopedOf(::UserService) bind IUserService::class
         scopedOf(::SearchService) bind ISearchService::class
         scopedOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
@@ -30,5 +30,10 @@ val applicationModule = module {
         scopedOf(::NormalizeUrlService) bind INormalizeUrlService::class
         scopedOf(::PdfConversionService) bind IPdfConversionService::class
         scopedOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
+        scopedOf(::WebpageCacheService) bind IWebpageCacheService::class
+        scopedOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
+        scopedOf(::RecursiveLinkTraversalService) bind IRecursiveLinkTraversalService::class
+        scopedOf(::StreamingAnswerGenerationService) bind IStreamingAnswerGenerationService::class
+        scopedOf(::QuerySessionService) bind IQuerySessionService::class
     }
 }

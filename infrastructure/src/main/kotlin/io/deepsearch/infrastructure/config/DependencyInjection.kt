@@ -21,5 +21,6 @@ val infrastructureModule = module {
         scopedOf(::ExposedWebpageNavigationElementRepository) bind IWebpageNavigationElementRepository::class
         scopedOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
         scopedOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
+        scopedOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
     }
 }

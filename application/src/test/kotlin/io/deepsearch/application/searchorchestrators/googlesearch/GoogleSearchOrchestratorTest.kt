@@ -1,4 +1,4 @@
-package io.deepsearch.application.searchstrategies.googlesearch
+package io.deepsearch.application.searchorchestrators.googlesearch
 
 import io.deepsearch.application.config.applicationTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -12,7 +12,7 @@ import org.koin.test.junit5.KoinTestExtension
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-class GoogleSearchStrategyTest : KoinTest {
+class GoogleSearchOrchestratorTest : KoinTest {
 
     @JvmField
     @RegisterExtension
@@ -21,7 +21,7 @@ class GoogleSearchStrategyTest : KoinTest {
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val googleSearchStrategy by inject<IGoogleSearchStrategy>()
+    private val googleSearchOrchestrator by inject<IGoogleSearchOrchestrator>()
 
     @Test
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
@@ -32,7 +32,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -50,7 +50,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -68,7 +68,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -86,7 +86,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -104,7 +104,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -123,7 +123,7 @@ class GoogleSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = googleSearchStrategy.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -131,5 +131,6 @@ class GoogleSearchStrategyTest : KoinTest {
         assertTrue(result.sources.contains(url), "Sources should include the target URL")
     }
 }
+
 
 

@@ -9,6 +9,7 @@ import io.deepsearch.domain.agents.IGoogleSearchLinkDiscoveryAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.IDirectAnswerAgent
 import io.deepsearch.domain.agents.IGenerateAnswerAgent
+import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.IMultiIconInterpreterAgent
@@ -28,6 +29,7 @@ import io.deepsearch.domain.agents.googleadkimpl.GoogleSearchLinkDiscoveryAgentA
 import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.DirectAnswerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GenerateAnswerAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.StreamingAnswerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.LinkRelevanceAnalysisAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MultiIconInterpreterAgentAdkImpl
@@ -79,6 +81,7 @@ val domainTestModule = module {
     singleOf(::MultiImageTextExtractionAgentAdkImpl) bind IMultiImageTextExtractionAgent::class
     singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
     singleOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
+    singleOf(::StreamingAnswerAgentAdkImpl) bind IStreamingAnswerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
     singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class

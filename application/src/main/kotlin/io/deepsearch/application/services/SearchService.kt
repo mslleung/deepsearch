@@ -1,6 +1,6 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import org.slf4j.Logger
@@ -11,12 +11,12 @@ interface ISearchService {
 }
 
 class SearchService(
-    private val agenticBrowserSearchStrategy: IAgenticBrowserSearchStrategy
+    private val agenticBrowserSearchOrchestrator: IAgenticBrowserSearchOrchestrator
 ) : ISearchService {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun searchWebsite(query: String, url: String): SearchResult {
         val searchQuery = SearchQuery(query, url)
-        return agenticBrowserSearchStrategy.execute(searchQuery)
+        return agenticBrowserSearchOrchestrator.execute(searchQuery)
     }
 }

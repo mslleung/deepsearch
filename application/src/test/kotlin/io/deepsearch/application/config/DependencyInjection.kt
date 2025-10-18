@@ -1,9 +1,9 @@
 package io.deepsearch.application.config
 
-import io.deepsearch.application.searchstrategies.agenticbrowsersearch.AgenticBrowserSearchStrategy
-import io.deepsearch.application.searchstrategies.agenticbrowsersearch.IAgenticBrowserSearchStrategy
-import io.deepsearch.application.searchstrategies.googlesearch.GoogleSearchStrategy
-import io.deepsearch.application.searchstrategies.googlesearch.IGoogleSearchStrategy
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.AgenticBrowserSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.application.services.INormalizeUrlService
 import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupContainerIdentificationService
@@ -32,6 +32,14 @@ import io.deepsearch.application.services.WebpageExtractionService
 import io.deepsearch.application.services.WebpageIconInterpretationService
 import io.deepsearch.application.services.WebpageImageTextExtractionService
 import io.deepsearch.application.services.WebpageLinkDiscoveryService
+import io.deepsearch.application.services.WebpageCacheService
+import io.deepsearch.application.services.IWebpageCacheService
+import io.deepsearch.application.services.UrlContentProcessingService
+import io.deepsearch.application.services.IUrlContentProcessingService
+import io.deepsearch.application.services.RecursiveLinkTraversalService
+import io.deepsearch.application.services.IRecursiveLinkTraversalService
+import io.deepsearch.application.services.StreamingAnswerGenerationService
+import io.deepsearch.application.services.IStreamingAnswerGenerationService
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
 import org.koin.core.module.dsl.singleOf
@@ -51,8 +59,12 @@ val applicationTestModule = module {
     singleOf(::TableInterpretationService) bind ITableInterpretationService::class
     singleOf(::NavigationElementRemovalService) bind INavigationElementRemovalService::class
     singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
-    singleOf(::AgenticBrowserSearchStrategy) bind IAgenticBrowserSearchStrategy::class
-    singleOf(::GoogleSearchStrategy) bind IGoogleSearchStrategy::class
+    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
+    singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
+    singleOf(::RecursiveLinkTraversalService) bind IRecursiveLinkTraversalService::class
+    singleOf(::StreamingAnswerGenerationService) bind IStreamingAnswerGenerationService::class
+    singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
+    singleOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
     singleOf(::NormalizeUrlService) bind INormalizeUrlService::class

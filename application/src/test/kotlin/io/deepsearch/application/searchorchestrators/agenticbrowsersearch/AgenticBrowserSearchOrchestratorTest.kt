@@ -1,4 +1,4 @@
-package io.deepsearch.application.searchstrategies.agenticbrowsersearch
+package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.config.applicationTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -12,7 +12,7 @@ import org.koin.test.junit5.KoinTestExtension
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-class AgenticBrowserSearchStrategyTest : KoinTest {
+class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
     @JvmField
     @RegisterExtension
@@ -21,7 +21,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val agenticBrowserSearchStrategy by inject<IAgenticBrowserSearchStrategy>()
+    private val agenticBrowserSearchOrchestrator by inject<IAgenticBrowserSearchOrchestrator>()
 
     @Test
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
@@ -32,7 +32,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -49,7 +49,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -67,7 +67,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -85,7 +85,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -103,7 +103,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -121,7 +121,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -140,7 +140,7 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchStrategy.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -148,5 +148,6 @@ class AgenticBrowserSearchStrategyTest : KoinTest {
         assertTrue(result.sources.contains(url), "Sources should include the target URL")
     }
 }
+
 
 

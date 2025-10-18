@@ -34,6 +34,7 @@ object DatabaseConfig {
                     WebpageSemanticElementTable,
                     WebpageMarkdownTable,
                     PdfMarkdownTable,
+                    QuerySessionTable,
                 )
             }
         }
