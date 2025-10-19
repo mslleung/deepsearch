@@ -1,5 +1,7 @@
 package io.deepsearch.domain.models.entities
 
+import io.deepsearch.domain.models.valueobjects.SearchBudget
+
 /**
  * Represents a search query session with state tracking for coordinating
  * background link traversal and foreground answer generation.
@@ -12,6 +14,7 @@ class QuerySession(
     val query: String,
     val url: String,
     var state: QuerySessionState,
+    var searchBudget: SearchBudget,
     var finishReason: FinishReason?,
     var answerComplete: Boolean,
     var answer: String?,
@@ -26,6 +29,7 @@ class QuerySession(
         query = query,
         url = url,
         state = QuerySessionState.EXPANDING_QUERY,
+        searchBudget = SearchBudget(),
         finishReason = null,
         answerComplete = false,
         answer = null,
@@ -98,6 +102,19 @@ class QuerySession(
         finishReason = reason
         updatedAtEpochMs = System.currentTimeMillis()
         return this
+    }
+
+    /**
+     * Check whether the search budget has been exceeded at this moment.
+     * Returns the corresponding FinishReason if exceeded, or null otherwise.
+     */
+    fun checkSearchBudget(budget: SearchBudget = searchBudget): FinishReason? {
+        val elapsedMs = System.currentTimeMillis() - createdAtEpochMs
+        return when {
+            elapsedMs >= budget.timeLimitMs -> FinishReason.TIME_EXCEEDED
+            traversedUrls.size >= budget.maxLinks -> FinishReason.MAX_LINKS_EXCEEDED
+            else -> null
+        }
     }
 
     companion object {

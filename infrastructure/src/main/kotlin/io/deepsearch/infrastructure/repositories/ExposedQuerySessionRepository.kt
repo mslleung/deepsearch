@@ -4,6 +4,7 @@ import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.entities.QuerySessionState
 import io.deepsearch.domain.repositories.IQuerySessionRepository
+import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.infrastructure.database.QuerySessionTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -26,6 +27,8 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             it[url] = session.url
             it[state] = session.state.name
             it[finishReason] = session.finishReason?.name
+            it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
+            it[budgetMaxLinks] = session.searchBudget.maxLinks
             it[answerComplete] = session.answerComplete
             it[answer] = session.answer
             it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
@@ -49,6 +52,8 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             it[url] = session.url
             it[state] = session.state.name
             it[finishReason] = session.finishReason?.name
+            it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
+            it[budgetMaxLinks] = session.searchBudget.maxLinks
             it[answerComplete] = session.answerComplete
             it[answer] = session.answer
             it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
@@ -64,6 +69,10 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             query = row[QuerySessionTable.query],
             url = row[QuerySessionTable.url],
             state = QuerySessionState.valueOf(row[QuerySessionTable.state]),
+            searchBudget = SearchBudget(
+                timeLimitMs = row[QuerySessionTable.budgetTimeLimitMs],
+                maxLinks = row[QuerySessionTable.budgetMaxLinks]
+            ),
             finishReason = row[QuerySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
             answerComplete = row[QuerySessionTable.answerComplete],
             answer = row[QuerySessionTable.answer],

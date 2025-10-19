@@ -123,23 +123,14 @@ class RecursiveLinkTraversalService(
 
                 var waveNumber = 1
                 while (currentBatch.isNotEmpty()) {
-                    // Enforce time and link budgets before each wave
+                    // Enforce search budget before each wave via domain check
                     val session = querySessionService.getSession(sessionId)
-                    val elapsedMs = System.currentTimeMillis() - session.createdAtEpochMs
-                    if (elapsedMs >= budget.timeLimitMs) {
-                        logger.info("[{}] Time budget exceeded ({} ms >= {} ms)", sessionId, elapsedMs, budget.timeLimitMs)
-                        querySessionService.setFinishReason(sessionId, FinishReason.TIME_EXCEEDED)
+                    session.checkSearchBudget(budget)?.let { exceededReason ->
+                        logger.info("[{}] Budget exceeded: {}", sessionId, exceededReason)
+                        querySessionService.setFinishReason(sessionId, exceededReason)
                         querySessionService.transitionToTrailingTraversal(sessionId)
-                        querySessionService.finish(sessionId)
-                        break
                     }
-                    if (session.traversedUrls.size >= budget.maxLinks) {
-                        logger.info("[{}] Link budget exceeded ({} >= {})", sessionId, session.traversedUrls.size, budget.maxLinks)
-                        querySessionService.setFinishReason(sessionId, FinishReason.MAX_LINKS_EXCEEDED)
-                        querySessionService.transitionToTrailingTraversal(sessionId)
-                        querySessionService.finish(sessionId)
-                        break
-                    }
+
                     // Check session state before each wave
                     val sessionState = querySessionService.getState(sessionId)
                     logWaveProgress(sessionId, waveNumber, sessionState, currentBatch.size)
@@ -166,7 +157,7 @@ class RecursiveLinkTraversalService(
                         batchResults.size
                     )
 
-                    // If answer was complete before this wave, stop now
+                    // If trailing traversal (answer complete or budget exceeded), stop after completing this wave
                     if (sessionState == QuerySessionState.TRAILING_LINK_TRAVERSAL) {
                         logger.info("[{}] Final wave complete, marking session as FINISHED", sessionId)
                         querySessionService.finish(sessionId)

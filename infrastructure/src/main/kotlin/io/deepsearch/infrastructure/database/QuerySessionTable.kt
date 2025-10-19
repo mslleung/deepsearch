@@ -8,6 +8,8 @@ object QuerySessionTable : Table("query_sessions") {
     val url = varchar("url", 2048)
     val state = varchar("state", 50)
     val finishReason = varchar("finish_reason", 50).nullable()
+    val budgetTimeLimitMs = long("budget_time_limit_ms")
+    val budgetMaxLinks = integer("budget_max_links")
     val answerComplete = bool("answer_complete")
     val answer = text("answer").nullable()
     val traversedUrls = text("traversed_urls")  // JSON array
