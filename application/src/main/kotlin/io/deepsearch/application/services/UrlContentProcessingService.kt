@@ -4,8 +4,11 @@ import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Result of processing a single URL: extracted markdown and discovered links.
@@ -42,64 +45,97 @@ class UrlContentProcessingService(
 ) : IUrlContentProcessingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+    
+    /**
+     * Per-URL mutexes to prevent concurrent processing of the same URL.
+     * Ensures only one request processes a given URL at a time, while others wait
+     * and then benefit from the cache populated by the first request.
+     */
+    private val urlMutexes = ConcurrentHashMap<String, Mutex>()
 
     override suspend fun processUrl(
         url: String,
         query: String,
         browser: IBrowser
-    ): UrlProcessingResult = coroutineScope {
+    ): UrlProcessingResult {
         logger.debug("Processing URL: {}", url)
 
-        // Normalize URL for cache lookup
+        // Normalize URL for deduplication and cache lookup
         val normalizedUrl = normalizeUrlService.normalize(url) ?: url
+        
+        // Get or create mutex for this URL to prevent concurrent processing
+        val mutex = urlMutexes.computeIfAbsent(normalizedUrl) { Mutex() }
+        
+        return mutex.withLock {
+            try {
+                // Double-check cache after acquiring lock (another request may have completed)
+                when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl)) {
+                    is CachedWebpageResult.Hit -> {
+                        logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
+                        return@withLock handleCachedResult(url, query, cacheResult.webpageMarkdown)
+                    }
+                    is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
+                        // Cache miss or expired - proceed with processing
+                        logger.debug("Cache miss/expired for URL, proceeding with processing: {}", normalizedUrl)
+                    }
+                }
 
-        // Check cache first
-        when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl)) {
-            is CachedWebpageResult.Hit -> {
-                val cached = cacheResult.webpageMarkdown
+                // Resolve content type and process accordingly
+                val result = when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
+                    is ContentTypeResult.Html -> {
+                        logger.debug("Detected HTML content for: {}", normalizedUrl)
+                        processHtmlUrl(normalizedUrl, query, browser)
+                    }
+                    is ContentTypeResult.Pdf -> {
+                        logger.debug("Detected PDF content for: {} ({} bytes)", normalizedUrl, contentTypeResult.bytes.size)
+                        processPdfUrl(normalizedUrl, contentTypeResult)
+                    }
+                    is ContentTypeResult.Unsupported -> {
+                        logger.debug("Unsupported content type for {}: {}", normalizedUrl, contentTypeResult.contentType)
+                        cacheUnsupportedContent(normalizedUrl, contentTypeResult)
+                        UrlProcessingResult(normalizedUrl, "", emptyList())
+                    }
+                    is ContentTypeResult.Failed -> {
+                        logger.debug("Failed to resolve content type for {}: {} {}", normalizedUrl, contentTypeResult.statusCode, contentTypeResult.reasonPhrase)
+                        cacheFailedRequest(normalizedUrl, contentTypeResult)
+                        UrlProcessingResult(normalizedUrl, "", emptyList())
+                    }
+                }
                 
-                // Check if it's a failure
-                if (cached.httpStatus != null && cached.httpStatus !in 200..299) {
-                    logger.debug("Cached failure for URL: {} (status: {})", url, cached.httpStatus)
-                    return@coroutineScope UrlProcessingResult(url, "", emptyList())
+                result
+            } finally {
+                // Clean up mutex if no one is waiting (best-effort to prevent memory leak)
+                // Note: This is safe because ConcurrentHashMap.remove with predicate is atomic
+                if (!mutex.isLocked) {
+                    urlMutexes.remove(normalizedUrl, mutex)
                 }
-
-                // For cached HTML, perform link discovery
-                val cachedHtml = cached.html
-                val links = if (cachedHtml != null) {
-                    webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, cachedHtml)
-                } else {
-                    emptyList()
-                }
-
-                return@coroutineScope UrlProcessingResult(url, cached.markdown ?: "", links)
-            }
-            is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
-                // Cache miss or expired - fetch fresh content
             }
         }
-
-        // Resolve content type and process accordingly
-        when (val result = httpContentTypeResolutionService.resolve(normalizedUrl)) {
-            is ContentTypeResult.Html -> {
-                logger.debug("Detected HTML content for: {}", normalizedUrl)
-                processHtmlUrl(normalizedUrl, query, browser)
-            }
-            is ContentTypeResult.Pdf -> {
-                logger.debug("Detected PDF content for: {} ({} bytes)", normalizedUrl, result.bytes.size)
-                processPdfUrl(normalizedUrl, result)
-            }
-            is ContentTypeResult.Unsupported -> {
-                logger.debug("Unsupported content type for {}: {}", normalizedUrl, result.contentType)
-                cacheUnsupportedContent(normalizedUrl, result)
-                UrlProcessingResult(normalizedUrl, "", emptyList())
-            }
-            is ContentTypeResult.Failed -> {
-                logger.debug("Failed to resolve content type for {}: {} {}", normalizedUrl, result.statusCode, result.reasonPhrase)
-                cacheFailedRequest(normalizedUrl, result)
-                UrlProcessingResult(normalizedUrl, "", emptyList())
-            }
+    }
+    
+    /**
+     * Handle cached result: extract markdown and perform link discovery if needed.
+     */
+    private suspend fun handleCachedResult(
+        originalUrl: String,
+        query: String,
+        cached: io.deepsearch.domain.models.entities.WebpageMarkdown
+    ): UrlProcessingResult {
+        // Check if it's a cached failure
+        if (cached.httpStatus != null && cached.httpStatus !in 200..299) {
+            logger.debug("Cached failure for URL: {} (status: {})", originalUrl, cached.httpStatus)
+            return UrlProcessingResult(originalUrl, "", emptyList())
         }
+
+        // For cached HTML, perform link discovery
+        val cachedHtml = cached.html
+        val links = if (cachedHtml != null) {
+            webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, cachedHtml)
+        } else {
+            emptyList()
+        }
+
+        return UrlProcessingResult(originalUrl, cached.markdown ?: "", links)
     }
 
     private suspend fun processHtmlUrl(
