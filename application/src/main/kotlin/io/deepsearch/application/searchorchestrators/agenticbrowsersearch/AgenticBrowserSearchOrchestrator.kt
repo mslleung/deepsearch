@@ -16,9 +16,12 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.DispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.valueobjects.SearchBudget
+import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -124,12 +127,26 @@ class AgenticBrowserSearchOrchestrator(
             // Step 2: Process all discovered links recursively in BACKGROUND (returns Flow)
             // Normalize initial URL for deduplication tracking
             val initialNormalizedUrl = normalizeUrlService.normalize(searchQuery.url) ?: searchQuery.url
-            val resultsFlow = recursiveLinkTraversalService.traverseLinksRecursively(
+            // Count the initial URL as traversed
+            querySessionService.addTraversedUrl(sessionId, initialNormalizedUrl)
+
+            // Prepare search budget (hardcoded defaults for now)
+            val budget = SearchBudget()
+
+            // Early time budget check
+            val elapsedMs = System.currentTimeMillis() - session.createdAtEpochMs
+            val resultsFlow = if (elapsedMs >= budget.timeLimitMs) {
+                logger.info("[{}] Time budget exceeded before traversal start", sessionId)
+                querySessionService.setFinishReason(sessionId, FinishReason.TIME_EXCEEDED)
+                querySessionService.transitionToTrailingTraversal(sessionId)
+                emptyFlow()
+            } else recursiveLinkTraversalService.traverseLinksRecursively(
                 sessionId = sessionId,
                 initialLinks = step1Result.googleLinks + step1Result.initialResult.discoveredLinks,
                 processedNormalizedUrls = setOf(initialNormalizedUrl),
                 searchQuery = searchQuery,
-                browser = browser
+                browser = browser,
+                budget = budget
             )
 
             // Step 3: Generate answer in FOREGROUND (returns early when complete, signals background to stop)

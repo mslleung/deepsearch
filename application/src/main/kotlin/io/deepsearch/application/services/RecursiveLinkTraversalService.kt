@@ -3,7 +3,9 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.config.DispatcherProvider
 import io.deepsearch.domain.models.entities.QuerySessionState
+import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -35,7 +37,8 @@ interface IRecursiveLinkTraversalService {
         initialLinks: List<WebpageLink>,
         processedNormalizedUrls: Set<String>,
         searchQuery: SearchQuery,
-        browser: IBrowser
+        browser: IBrowser,
+        budget: SearchBudget
     ): Flow<UrlProcessingResult>
 }
 
@@ -109,7 +112,8 @@ class RecursiveLinkTraversalService(
         initialLinks: List<WebpageLink>,
         processedNormalizedUrls: Set<String>,
         searchQuery: SearchQuery,
-        browser: IBrowser
+        browser: IBrowser,
+        budget: SearchBudget
     ): Flow<UrlProcessingResult> = channelFlow {
         // Launch traversal in background scope - continues even after answer is complete
         backgroundScope.launch {
@@ -119,6 +123,23 @@ class RecursiveLinkTraversalService(
 
                 var waveNumber = 1
                 while (currentBatch.isNotEmpty()) {
+                    // Enforce time and link budgets before each wave
+                    val session = querySessionService.getSession(sessionId)
+                    val elapsedMs = System.currentTimeMillis() - session.createdAtEpochMs
+                    if (elapsedMs >= budget.timeLimitMs) {
+                        logger.info("[{}] Time budget exceeded ({} ms >= {} ms)", sessionId, elapsedMs, budget.timeLimitMs)
+                        querySessionService.setFinishReason(sessionId, FinishReason.TIME_EXCEEDED)
+                        querySessionService.transitionToTrailingTraversal(sessionId)
+                        querySessionService.finish(sessionId)
+                        break
+                    }
+                    if (session.traversedUrls.size >= budget.maxLinks) {
+                        logger.info("[{}] Link budget exceeded ({} >= {})", sessionId, session.traversedUrls.size, budget.maxLinks)
+                        querySessionService.setFinishReason(sessionId, FinishReason.MAX_LINKS_EXCEEDED)
+                        querySessionService.transitionToTrailingTraversal(sessionId)
+                        querySessionService.finish(sessionId)
+                        break
+                    }
                     // Check session state before each wave
                     val sessionState = querySessionService.getState(sessionId)
                     logWaveProgress(sessionId, waveNumber, sessionState, currentBatch.size)
@@ -171,6 +192,7 @@ class RecursiveLinkTraversalService(
                 if (finalState == QuerySessionState.LINK_TRAVERSAL) {
                     // Links exhausted before answer complete
                     logger.info("[{}] Links exhausted before answer complete, marking as FINISHED", sessionId)
+                    querySessionService.setFinishReason(sessionId, FinishReason.LINKS_EXHAUSTED)
                     querySessionService.finish(sessionId)
                 }
 

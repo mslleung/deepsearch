@@ -1,7 +1,5 @@
 package io.deepsearch.domain.models.entities
 
-import kotlin.collections.emptySet
-
 /**
  * Represents a search query session with state tracking for coordinating
  * background link traversal and foreground answer generation.
@@ -14,12 +12,13 @@ class QuerySession(
     val query: String,
     val url: String,
     var state: QuerySessionState,
+    var finishReason: FinishReason?,
     var answerComplete: Boolean,
     var answer: String?,
     val traversedUrls: MutableSet<String>,
     var sourcesDiscovered: MutableList<String>,
     val createdAtEpochMs: Long,
-    var updatedAtEpochMs: Long
+    var updatedAtEpochMs: Long,
 ) {
 
     constructor(id: String, query: String, url: String) : this(
@@ -27,12 +26,13 @@ class QuerySession(
         query = query,
         url = url,
         state = QuerySessionState.EXPANDING_QUERY,
+        finishReason = null,
         answerComplete = false,
         answer = null,
         traversedUrls = mutableSetOf(),
         sourcesDiscovered = mutableListOf(),
         createdAtEpochMs = System.currentTimeMillis(),
-        updatedAtEpochMs = System.currentTimeMillis()
+        updatedAtEpochMs = System.currentTimeMillis(),
     )
 
     /**
@@ -86,6 +86,16 @@ class QuerySession(
      */
     fun markFailed(): QuerySession {
         state = QuerySessionState.FAILED
+        updatedAtEpochMs = System.currentTimeMillis()
+        return this
+    }
+
+    /**
+     * Set the finish reason if it hasn't been set already.
+     * Idempotent: does nothing if a reason is already present.
+     */
+    fun setFinishReason(reason: FinishReason): QuerySession {
+        finishReason = reason
         updatedAtEpochMs = System.currentTimeMillis()
         return this
     }
@@ -150,6 +160,16 @@ enum class QuerySessionState {
 
     /** Session failed due to error */
     FAILED
+}
+
+/**
+ * Reason why a session finished.
+ */
+enum class FinishReason {
+    TIME_EXCEEDED,
+    MAX_LINKS_EXCEEDED,
+    ANSWER_COMPLETE,
+    LINKS_EXHAUSTED
 }
 
 /**

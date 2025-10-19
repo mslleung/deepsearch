@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.StreamingAnswerInput
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.entities.FinishReason
 import kotlinx.coroutines.flow.Flow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -104,6 +105,7 @@ class StreamingAnswerGenerationService(
                         
                         val answer = currentAnswer ?: "No information found"
                         querySessionService.markAnswerComplete(sessionId, answer, allUrls.toList())
+                        querySessionService.setFinishReason(sessionId, FinishReason.ANSWER_COMPLETE)
                         querySessionService.transitionToTrailingTraversal(sessionId)
                         
                         answerCompleteEarly = true

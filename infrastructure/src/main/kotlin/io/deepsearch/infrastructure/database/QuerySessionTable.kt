@@ -7,6 +7,7 @@ object QuerySessionTable : Table("query_sessions") {
     val query = text("query")
     val url = varchar("url", 2048)
     val state = varchar("state", 50)
+    val finishReason = varchar("finish_reason", 50).nullable()
     val answerComplete = bool("answer_complete")
     val answer = text("answer").nullable()
     val traversedUrls = text("traversed_urls")  // JSON array

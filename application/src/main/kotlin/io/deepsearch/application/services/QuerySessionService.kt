@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.QuerySessionState
+import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -44,6 +45,9 @@ interface IQuerySessionService {
 
     /** Get complete session. */
     suspend fun getSession(sessionId: String): QuerySession
+
+    /** Set finish reason if not already set. */
+    suspend fun setFinishReason(sessionId: String, reason: FinishReason)
 }
 
 /**
@@ -127,6 +131,13 @@ class QuerySessionService(
 
     override suspend fun getSession(sessionId: String): QuerySession {
         return getSessionOrThrow(sessionId)
+    }
+
+    override suspend fun setFinishReason(sessionId: String, reason: FinishReason) {
+        val session = getSessionOrThrow(sessionId)
+        val updated = session.setFinishReason(reason)
+        querySessionRepository.update(updated)
+        logger.info("[{}] Finish reason set: {}", sessionId, reason)
     }
 
     private suspend fun getSessionOrThrow(sessionId: String): QuerySession {

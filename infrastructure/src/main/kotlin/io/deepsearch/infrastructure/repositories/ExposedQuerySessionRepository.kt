@@ -1,12 +1,12 @@
 package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.QuerySession
+import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.entities.QuerySessionState
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.infrastructure.database.QuerySessionTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
@@ -25,6 +25,7 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             it[query] = session.query
             it[url] = session.url
             it[state] = session.state.name
+            it[finishReason] = session.finishReason?.name
             it[answerComplete] = session.answerComplete
             it[answer] = session.answer
             it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
@@ -47,6 +48,7 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             it[query] = session.query
             it[url] = session.url
             it[state] = session.state.name
+            it[finishReason] = session.finishReason?.name
             it[answerComplete] = session.answerComplete
             it[answer] = session.answer
             it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
@@ -62,13 +64,14 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             query = row[QuerySessionTable.query],
             url = row[QuerySessionTable.url],
             state = QuerySessionState.valueOf(row[QuerySessionTable.state]),
+            finishReason = row[QuerySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
             answerComplete = row[QuerySessionTable.answerComplete],
             answer = row[QuerySessionTable.answer],
             traversedUrls = json.decodeFromString<List<String>>(row[QuerySessionTable.traversedUrls]).toMutableSet(),
             sourcesDiscovered = json.decodeFromString<List<String>>(row[QuerySessionTable.sourcesDiscovered])
                 .toMutableList(),
             createdAtEpochMs = row[QuerySessionTable.createdAtEpochMs],
-            updatedAtEpochMs = row[QuerySessionTable.updatedAtEpochMs]
+            updatedAtEpochMs = row[QuerySessionTable.updatedAtEpochMs],
         )
     }
 }
