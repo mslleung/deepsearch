@@ -12,6 +12,7 @@ val infrastructureModule = module {
     single(createdAtStart = true) { DatabaseConfig.configureDatabase() }
 
     requestScope {
+        scopedOf(::ExposedPrecacheJobRepository) bind IPrecacheJobRepository::class
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
         scopedOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class

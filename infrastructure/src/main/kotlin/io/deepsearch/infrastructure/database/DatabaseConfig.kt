@@ -35,6 +35,7 @@ object DatabaseConfig {
                     WebpageMarkdownTable,
                     PdfMarkdownTable,
                     QuerySessionTable,
+                    PrecacheJobTable,
                 )
             }
         }

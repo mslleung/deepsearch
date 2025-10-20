@@ -10,9 +10,23 @@ fun Application.configurePrecacheRoutes() {
 
     routing {
         route("/api") {
-            sse("/precache") {
-                val controller = call.scope.get<PrecacheController>()
-                controller.stream(call, this)
+            route("/precache/jobs") {
+                post {
+                    val controller = call.scope.get<PrecacheController>()
+                    controller.start(call)
+                }
+                get {
+                    val controller = call.scope.get<PrecacheController>()
+                    controller.list(call)
+                }
+                sse("/{id}/stream") {
+                    val controller = call.scope.get<PrecacheController>()
+                    controller.stream(call, this)
+                }
+                post("/{id}/stop") {
+                    val controller = call.scope.get<PrecacheController>()
+                    controller.stop(call)
+                }
             }
         }
     }

@@ -22,6 +22,11 @@ interface IWebpageLinkDiscoveryService {
      * Discovers relevant links by analyzing links on the current webpage
      */
     suspend fun discoverRelevantLinksByAgent(query: String, html: String): List<WebpageLink>
+
+    /**
+     * Discovers all links on the page regardless of relevance.
+     */
+    suspend fun discoverAllLinks(html: String, baseUrlForReason: String? = null): List<WebpageLink>
 }
 
 class WebpageLinkDiscoveryService(
@@ -53,6 +58,20 @@ class WebpageLinkDiscoveryService(
         ).links
 
         logger.debug("Discovered {} links from on-page analysis", links.size)
+        return links
+    }
+
+    override suspend fun discoverAllLinks(html: String, baseUrlForReason: String?): List<WebpageLink> {
+        val doc = org.jsoup.Jsoup.parse(html)
+        val anchors = doc.select("a[href]")
+        val links = anchors.mapNotNull { a ->
+            val href = a.attr("href").trim()
+            if (href.isBlank()) null else WebpageLink(
+                url = href,
+                source = io.deepsearch.domain.models.valueobjects.LinkSource.ALL_LINKS,
+                reason = baseUrlForReason ?: (a.text().takeIf { it.isNotBlank() } ?: "anchor")
+            )
+        }
         return links
     }
 }

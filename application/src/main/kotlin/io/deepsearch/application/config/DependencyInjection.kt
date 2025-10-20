@@ -17,6 +17,7 @@ val applicationModule = module {
 
     // Shared across requests
     singleOf(::UrlProcessingLockRegistry)
+    singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
 
     requestScope {
         scopedOf(::PrecacheService) bind IPrecacheService::class
