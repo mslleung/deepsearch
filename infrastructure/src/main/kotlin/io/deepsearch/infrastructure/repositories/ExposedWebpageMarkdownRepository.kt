@@ -5,8 +5,10 @@ import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.infrastructure.database.WebpageMarkdownTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
@@ -44,6 +46,38 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
                 it[updatedAtEpochMs] = webpage.updatedAtEpochMs
             }
         }
+    }
+
+    override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = suspendTransaction {
+        WebpageMarkdownTable.selectAll()
+            .where { WebpageMarkdownTable.url like ("$prefix%") }
+            .limit(limit)
+            .offset(offset.toLong())
+            .map { mapRowToWebpageMarkdown(it) }
+            .toList()
+    }
+
+    override suspend fun countByDomainPrefix(prefix: String): Long = suspendTransaction {
+        WebpageMarkdownTable.selectAll()
+            .where { WebpageMarkdownTable.url like ("$prefix%") }
+            .count().toLong()
+    }
+
+    override suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown> = suspendTransaction {
+        val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
+        WebpageMarkdownTable.selectAll()
+            .where { WebpageMarkdownTable.url like pattern }
+            .limit(limit)
+            .offset(offset.toLong())
+            .map { mapRowToWebpageMarkdown(it) }
+            .toList()
+    }
+
+    override suspend fun countSearchByUrl(query: String): Long = suspendTransaction {
+        val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
+        WebpageMarkdownTable.selectAll()
+            .where { WebpageMarkdownTable.url like pattern }
+            .count().toLong()
     }
 
     private fun mapRowToWebpageMarkdown(row: ResultRow): WebpageMarkdown {

@@ -25,6 +25,7 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.ktor.server.content.negotiation)
     implementation(libs.ktor.server.websockets)
+    implementation(libs.ktor.server.sse)
     implementation(libs.ktor.server.config.yaml)
     
     // Dependency injection

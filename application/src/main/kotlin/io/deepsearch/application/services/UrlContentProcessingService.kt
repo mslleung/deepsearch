@@ -41,18 +41,12 @@ class UrlContentProcessingService(
     private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
     private val webpageExtractionService: IWebpageExtractionService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
-    private val pdfConversionService: IPdfConversionService
+    private val pdfConversionService: IPdfConversionService,
+    private val urlProcessingLockRegistry: UrlProcessingLockRegistry
 ) : IUrlContentProcessingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     
-    /**
-     * Per-URL mutexes to prevent concurrent processing of the same URL.
-     * Ensures only one request processes a given URL at a time, while others wait
-     * and then benefit from the cache populated by the first request.
-     */
-    private val urlMutexes = ConcurrentHashMap<String, Mutex>()
-
     override suspend fun processUrl(
         url: String,
         query: String,
@@ -63,51 +57,39 @@ class UrlContentProcessingService(
         // Normalize URL for deduplication and cache lookup
         val normalizedUrl = normalizeUrlService.normalize(url) ?: url
         
-        // Get or create mutex for this URL to prevent concurrent processing
-        val mutex = urlMutexes.computeIfAbsent(normalizedUrl) { Mutex() }
-        
-        return mutex.withLock {
-            try {
-                // Double-check cache after acquiring lock (another request may have completed)
-                when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl)) {
-                    is CachedWebpageResult.Hit -> {
-                        logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
-                        return@withLock handleCachedResult(url, query, cacheResult.webpageMarkdown)
-                    }
-                    is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
-                        // Cache miss or expired - proceed with processing
-                        logger.debug("Cache miss/expired for URL, proceeding with processing: {}", normalizedUrl)
-                    }
+        // Use shared registry to deduplicate concurrent processing across requests
+        return urlProcessingLockRegistry.withKeyLock(normalizedUrl) {
+            // Double-check cache after acquiring lock (another request may have completed)
+            when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl)) {
+                is CachedWebpageResult.Hit -> {
+                    logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
+                    return@withKeyLock handleCachedResult(url, query, cacheResult.webpageMarkdown)
                 }
+                is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
+                    // Cache miss or expired - proceed with processing
+                    logger.debug("Cache miss/expired for URL, proceeding with processing: {}", normalizedUrl)
+                }
+            }
 
-                // Resolve content type and process accordingly
-                val result = when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
-                    is ContentTypeResult.Html -> {
-                        logger.debug("Detected HTML content for: {}", normalizedUrl)
-                        processHtmlUrl(normalizedUrl, query, browser)
-                    }
-                    is ContentTypeResult.Pdf -> {
-                        logger.debug("Detected PDF content for: {} ({} bytes)", normalizedUrl, contentTypeResult.bytes.size)
-                        processPdfUrl(normalizedUrl, contentTypeResult)
-                    }
-                    is ContentTypeResult.Unsupported -> {
-                        logger.debug("Unsupported content type for {}: {}", normalizedUrl, contentTypeResult.contentType)
-                        cacheUnsupportedContent(normalizedUrl, contentTypeResult)
-                        UrlProcessingResult(normalizedUrl, "", emptyList())
-                    }
-                    is ContentTypeResult.Failed -> {
-                        logger.debug("Failed to resolve content type for {}: {} {}", normalizedUrl, contentTypeResult.statusCode, contentTypeResult.reasonPhrase)
-                        cacheFailedRequest(normalizedUrl, contentTypeResult)
-                        UrlProcessingResult(normalizedUrl, "", emptyList())
-                    }
+            // Resolve content type and process accordingly
+            when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
+                is ContentTypeResult.Html -> {
+                    logger.debug("Detected HTML content for: {}", normalizedUrl)
+                    processHtmlUrl(normalizedUrl, query, browser)
                 }
-                
-                result
-            } finally {
-                // Clean up mutex if no one is waiting (best-effort to prevent memory leak)
-                // Note: This is safe because ConcurrentHashMap.remove with predicate is atomic
-                if (!mutex.isLocked) {
-                    urlMutexes.remove(normalizedUrl, mutex)
+                is ContentTypeResult.Pdf -> {
+                    logger.debug("Detected PDF content for: {} ({} bytes)", normalizedUrl, contentTypeResult.bytes.size)
+                    processPdfUrl(normalizedUrl, contentTypeResult)
+                }
+                is ContentTypeResult.Unsupported -> {
+                    logger.debug("Unsupported content type for {}: {}", normalizedUrl, contentTypeResult.contentType)
+                    cacheUnsupportedContent(normalizedUrl, contentTypeResult)
+                    UrlProcessingResult(normalizedUrl, "", emptyList())
+                }
+                is ContentTypeResult.Failed -> {
+                    logger.debug("Failed to resolve content type for {}: {} {}", normalizedUrl, contentTypeResult.statusCode, contentTypeResult.reasonPhrase)
+                    cacheFailedRequest(normalizedUrl, contentTypeResult)
+                    UrlProcessingResult(normalizedUrl, "", emptyList())
                 }
             }
         }

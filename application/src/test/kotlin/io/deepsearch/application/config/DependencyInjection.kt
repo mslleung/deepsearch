@@ -40,6 +40,7 @@ import io.deepsearch.application.services.RecursiveLinkTraversalService
 import io.deepsearch.application.services.IRecursiveLinkTraversalService
 import io.deepsearch.application.services.StreamingAnswerGenerationService
 import io.deepsearch.application.services.IStreamingAnswerGenerationService
+import io.deepsearch.application.services.UrlProcessingLockRegistry
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
 import org.koin.core.module.dsl.singleOf
@@ -49,6 +50,9 @@ import org.koin.dsl.module
 val applicationTestModule = module {
     includes(domainTestModule)
     includes(infrastructureTestModule)
+
+    // Shared across test components
+    singleOf(::UrlProcessingLockRegistry)
 
     singleOf(::UserService) bind IUserService::class
     singleOf(::SearchService) bind ISearchService::class

@@ -2,7 +2,10 @@ package io.deepsearch.presentation
 
 import io.deepsearch.presentation.config.presentationModule
 import io.deepsearch.presentation.routes.configureUserRoutes
-import io.deepsearch.presentation.routes.configureWebScrapeRoutes
+import io.deepsearch.presentation.routes.configureSearchRoutes
+import io.deepsearch.presentation.routes.configurePrecacheRoutes
+import io.deepsearch.presentation.routes.configureCacheRoutes
+import io.ktor.server.sse.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.netty.*
@@ -21,10 +24,13 @@ fun Application.module() {
     configureSerialization()
     configureDependencyInjection()
     configureWebSockets()
+    configureSSE()
     configureRequestValidation()
 
     configureUserRoutes()
-    configureWebScrapeRoutes()
+    configureSearchRoutes()
+    configurePrecacheRoutes()
+    configureCacheRoutes()
 }
 
 private fun Application.configureSerialization() {
@@ -46,6 +52,11 @@ private fun Application.configureWebSockets() {
         timeout = 15.seconds
         maxFrameSize = Long.MAX_VALUE
         masking = false
+    }
+}
+
+private fun Application.configureSSE() {
+    install(SSE) {
     }
 }
 
