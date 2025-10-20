@@ -8,6 +8,7 @@ import io.deepsearch.domain.models.entities.FinishReason
 import kotlinx.coroutines.flow.Flow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import io.deepsearch.application.services.IUrlContentProcessingService.UrlProcessingResult
 
 interface IStreamingAnswerGenerationService {
     /**

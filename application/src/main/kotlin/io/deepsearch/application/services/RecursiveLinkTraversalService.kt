@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import io.deepsearch.application.services.IUrlContentProcessingService.UrlProcessingResult
 
 interface IRecursiveLinkTraversalService {
     /**

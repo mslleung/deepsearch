@@ -10,16 +10,16 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Result of processing a single URL: extracted markdown and discovered links.
- */
-data class UrlProcessingResult(
-    val url: String,
-    val markdown: String,
-    val discoveredLinks: List<WebpageLink>
-)
-
 interface IUrlContentProcessingService {
+    /**
+     * Result of processing a single URL: extracted markdown and discovered links.
+     */
+    data class UrlProcessingResult(
+        val url: String,
+        val markdown: String,
+        val discoveredLinks: List<WebpageLink>
+    )
+
     /**
      * Process a URL: extract markdown and discover links.
      * Routes based on content type (HTML, PDF, etc.) and uses cache to avoid repeated navigation.
@@ -51,7 +51,7 @@ class UrlContentProcessingService(
         url: String,
         query: String,
         browser: IBrowser
-    ): UrlProcessingResult {
+    ): IUrlContentProcessingService.UrlProcessingResult {
         logger.debug("Processing URL: {}", url)
 
         // Normalize URL for deduplication and cache lookup
@@ -84,12 +84,12 @@ class UrlContentProcessingService(
                 is ContentTypeResult.Unsupported -> {
                     logger.debug("Unsupported content type for {}: {}", normalizedUrl, contentTypeResult.contentType)
                     cacheUnsupportedContent(normalizedUrl, contentTypeResult)
-                    UrlProcessingResult(normalizedUrl, "", emptyList())
+                    IUrlContentProcessingService.UrlProcessingResult(normalizedUrl, "", emptyList())
                 }
                 is ContentTypeResult.Failed -> {
                     logger.debug("Failed to resolve content type for {}: {} {}", normalizedUrl, contentTypeResult.statusCode, contentTypeResult.reasonPhrase)
                     cacheFailedRequest(normalizedUrl, contentTypeResult)
-                    UrlProcessingResult(normalizedUrl, "", emptyList())
+                    IUrlContentProcessingService.UrlProcessingResult(normalizedUrl, "", emptyList())
                 }
             }
         }
@@ -102,11 +102,11 @@ class UrlContentProcessingService(
         originalUrl: String,
         query: String,
         cached: io.deepsearch.domain.models.entities.WebpageMarkdown
-    ): UrlProcessingResult {
+    ): IUrlContentProcessingService.UrlProcessingResult {
         // Check if it's a cached failure
         if (cached.httpStatus != null && cached.httpStatus !in 200..299) {
             logger.debug("Cached failure for URL: {} (status: {})", originalUrl, cached.httpStatus)
-            return UrlProcessingResult(originalUrl, "", emptyList())
+            return IUrlContentProcessingService.UrlProcessingResult(originalUrl, "", emptyList())
         }
 
         // For cached HTML, perform link discovery
@@ -117,14 +117,14 @@ class UrlContentProcessingService(
             emptyList()
         }
 
-        return UrlProcessingResult(originalUrl, cached.markdown ?: "", links)
+        return IUrlContentProcessingService.UrlProcessingResult(originalUrl, cached.markdown ?: "", links)
     }
 
     private suspend fun processHtmlUrl(
         normalizedUrl: String,
         query: String,
         browser: IBrowser
-    ): UrlProcessingResult = coroutineScope {
+    ): IUrlContentProcessingService.UrlProcessingResult = coroutineScope {
         // Navigate and extract
         val context = browser.createContext()
         val page = context.newPage()
@@ -156,13 +156,13 @@ class UrlContentProcessingService(
 
         logger.debug("Processed HTML for URL: {} ({} chars, {} links)", normalizedUrl, extractedMarkdown.length, discoveredLinks.size)
 
-        UrlProcessingResult(normalizedUrl, extractedMarkdown, discoveredLinks)
+        IUrlContentProcessingService.UrlProcessingResult(normalizedUrl, extractedMarkdown, discoveredLinks)
     }
 
     private suspend fun processPdfUrl(
         normalizedUrl: String,
         result: ContentTypeResult.Pdf
-    ): UrlProcessingResult {
+    ): IUrlContentProcessingService.UrlProcessingResult {
         // Convert PDF to markdown
         val markdown = pdfConversionService.convertPdfToMarkdown(result.bytes)
 
@@ -179,7 +179,7 @@ class UrlContentProcessingService(
         logger.debug("Processed PDF for URL: {} ({} chars)", normalizedUrl, markdown.length)
 
         // PDFs are terminal - no link discovery
-        return UrlProcessingResult(normalizedUrl, markdown, emptyList())
+        return IUrlContentProcessingService.UrlProcessingResult(normalizedUrl, markdown, emptyList())
     }
 
     private suspend fun cacheUnsupportedContent(

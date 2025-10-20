@@ -6,7 +6,7 @@ import io.deepsearch.application.services.IRecursiveLinkTraversalService
 import io.deepsearch.application.services.IStreamingAnswerGenerationService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
-import io.deepsearch.application.services.UrlProcessingResult
+import io.deepsearch.application.services.IUrlContentProcessingService.UrlProcessingResult
 import io.deepsearch.domain.agents.AggregateSearchResultsInput
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
