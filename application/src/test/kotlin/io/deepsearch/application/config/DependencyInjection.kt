@@ -16,6 +16,8 @@ import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.HttpContentTypeResolutionService
 import io.deepsearch.application.services.IHttpContentTypeResolutionService
 import io.deepsearch.application.services.IPdfConversionService
+import io.deepsearch.application.services.IPrecacheJobRegistry
+import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
@@ -40,9 +42,13 @@ import io.deepsearch.application.services.RecursiveLinkTraversalService
 import io.deepsearch.application.services.IRecursiveLinkTraversalService
 import io.deepsearch.application.services.StreamingAnswerGenerationService
 import io.deepsearch.application.services.IStreamingAnswerGenerationService
+import io.deepsearch.application.services.IUrlProcessingLockRegistry
+import io.deepsearch.application.services.PrecacheJobRegistry
+import io.deepsearch.application.services.QuerySessionService
 import io.deepsearch.application.services.UrlProcessingLockRegistry
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
+import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -52,7 +58,8 @@ val applicationTestModule = module {
     includes(infrastructureTestModule)
 
     // Shared across test components
-    singleOf(::UrlProcessingLockRegistry)
+    singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
+    singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
 
     singleOf(::UserService) bind IUserService::class
     singleOf(::SearchService) bind ISearchService::class
@@ -74,4 +81,5 @@ val applicationTestModule = module {
     singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
     singleOf(::PdfConversionService) bind IPdfConversionService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
+    singleOf(::QuerySessionService) bind IQuerySessionService::class
 }

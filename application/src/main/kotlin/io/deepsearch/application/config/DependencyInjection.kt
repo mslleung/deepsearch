@@ -16,7 +16,7 @@ val applicationModule = module {
     includes(infrastructureModule)
 
     // Shared across requests
-    singleOf(::UrlProcessingLockRegistry)
+    singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
 
     requestScope {
