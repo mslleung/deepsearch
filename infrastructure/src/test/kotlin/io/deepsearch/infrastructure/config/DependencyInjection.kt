@@ -23,6 +23,7 @@ val infrastructureTestModule = module {
     singleOf(::ExposedWebpageNavigationElementRepository) bind IWebpageNavigationElementRepository::class
     singleOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
     singleOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
+    singleOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
 
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 }
