@@ -6,12 +6,14 @@ import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
 import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
 import org.koin.core.module.dsl.scopedOf
+import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.koin.module.requestScope
 
 val domainModule = module {
-    single<DispatcherProvider> { DefaultDispatcherProvider() }
+    singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
+    singleOf(::DefaultDispatcherProvider) bind IDispatcherProvider::class
 
     requestScope {
         scopedOf(::BrowserPool) bind IBrowserPool::class

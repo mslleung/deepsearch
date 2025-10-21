@@ -7,6 +7,7 @@ import io.deepsearch.domain.exceptions.InvalidUrlException
 import io.deepsearch.domain.exceptions.WebScrapeException
 import io.deepsearch.domain.exceptions.WebScrapeTimeoutException
 import io.deepsearch.presentation.dto.SearchResponse
+import io.deepsearch.presentation.dto.toResponse
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
@@ -17,7 +18,7 @@ class SearchController(private val searchService: ISearchService) {
         try {
             val request = call.receive<SearchRequest>()
             val searchResult = searchService.searchWebsite(request.query, request.url)
-            call.respond(HttpStatusCode.OK, SearchResponse(searchResult.content))
+            call.respond(HttpStatusCode.OK, searchResult.toResponse())
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
         } catch (e: InvalidUrlException) {

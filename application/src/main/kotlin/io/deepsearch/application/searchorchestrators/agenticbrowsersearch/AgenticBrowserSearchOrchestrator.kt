@@ -2,6 +2,7 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.application.services.INormalizeUrlService
+import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IRecursiveLinkTraversalService
 import io.deepsearch.application.services.IStreamingAnswerGenerationService
 import io.deepsearch.application.services.IUrlContentProcessingService
@@ -13,7 +14,7 @@ import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.QueryExpansionAgentInput
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserPool
-import io.deepsearch.domain.config.DispatcherProvider
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.SearchBudget
@@ -45,8 +46,8 @@ class AgenticBrowserSearchOrchestrator(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val recursiveLinkTraversalService: IRecursiveLinkTraversalService,
     private val streamingAnswerGenerationService: IStreamingAnswerGenerationService,
-    private val querySessionService: io.deepsearch.application.services.IQuerySessionService,
-    private val dispatchers: DispatcherProvider
+    private val querySessionService: IQuerySessionService,
+    private val dispatchers: IDispatcherProvider
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)

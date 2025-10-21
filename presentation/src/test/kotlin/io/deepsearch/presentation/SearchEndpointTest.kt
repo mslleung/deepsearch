@@ -35,7 +35,7 @@ class SearchEndpointTest {
 
         // Prepare the search request
         val request = SearchRequest(
-            query = "Does the standard body check package include testing \"Stool: Occult Blood?\"",
+            query = "the standard body check package",
             url = "https://www.otandp.com/"
         )
 
@@ -52,12 +52,12 @@ class SearchEndpointTest {
         val searchResponse = response.body<SearchResponse>()
         
         // Assert response is not null and contains meaningful content
-        assertNotNull(searchResponse.response, "Response content should not be null")
+        assertTrue(searchResponse.answer.isNotBlank(), "Response content should not be null")
         assertTrue(
-            searchResponse.response.isNotBlank(),
+            searchResponse.content.isNotBlank(),
             "Response content should not be blank"
         )
-        println("Search response: ${searchResponse.response}")
+        println("Search response: ${searchResponse.answer}")
     }
 }
 

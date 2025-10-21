@@ -58,10 +58,11 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
         )
         instruction(
             ("""
-                You are the Aggregate Search Results agent. Given the user's original query and a set of search results (each with sub-query and answer), produce a single, coherent answer that:
+                You are the Aggregate Search Results agent. Given the user's original query and a set of search results (each with sub-query and answer), produce a single, coherent answer that answers the user's query.
 
                 Instructions:
-                - Directly addresses the user's original query
+                - Directly address the user's original query
+                - Be succinct, focus on a brief and complete answer.
                 - Is faithful to the provided results only (do not invent facts)
                 - If information conflicts, note the discrepancy comprehensively
                 - Do not include or mention irrelevant results

@@ -1,14 +1,12 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.browser.IBrowser
-import io.deepsearch.domain.config.DispatcherProvider
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.entities.QuerySessionState
 import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.Flow
@@ -18,6 +16,10 @@ import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.IUrlContentProcessingService.UrlProcessingResult
+import io.deepsearch.domain.config.IApplicationCoroutineScope
+import kotlinx.coroutines.channels.ClosedSendChannelException
+import kotlinx.coroutines.channels.awaitClose
+ 
 
 interface IRecursiveLinkTraversalService {
     /**
@@ -47,14 +49,11 @@ class RecursiveLinkTraversalService(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val normalizeUrlService: INormalizeUrlService,
     private val querySessionService: IQuerySessionService,
-    private val dispatchers: DispatcherProvider
+    private val dispatchers: IDispatcherProvider,
+    private val applicationScope: IApplicationCoroutineScope
 ) : IRecursiveLinkTraversalService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    
-    // Background scope for continuing link processing after answer is complete
-    // Uses SupervisorJob so failures in background processing don't cancel parent
-    private val backgroundScope = CoroutineScope(SupervisorJob() + dispatchers.io)
 
     private fun normalize(url: String): String = normalizeUrlService.normalize(url) ?: url
 
@@ -116,8 +115,8 @@ class RecursiveLinkTraversalService(
         browser: IBrowser,
         budget: SearchBudget
     ): Flow<UrlProcessingResult> = channelFlow {
-        // Launch traversal in background scope - continues even after answer is complete
-        backgroundScope.launch {
+        // Launch traversal in application scope - continues even after request scope ends
+        applicationScope.scope.launch {
             try {
                 var visitedNormalizedUrls = processedNormalizedUrls
                 var currentBatch = filterAndDistinctLinks(initialLinks, visitedNormalizedUrls)
@@ -192,7 +191,6 @@ class RecursiveLinkTraversalService(
             } catch (e: Exception) {
                 logger.error("[{}] Error during link traversal: {}", sessionId, e.message, e)
                 querySessionService.fail(sessionId, e.message ?: "Unknown error during link traversal")
-                close(e)
                 // Continue emitting any results we have - don't rethrow, background processing is best-effort
             }
         }

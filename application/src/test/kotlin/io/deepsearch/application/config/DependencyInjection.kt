@@ -48,7 +48,6 @@ import io.deepsearch.application.services.QuerySessionService
 import io.deepsearch.application.services.UrlProcessingLockRegistry
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
-import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module

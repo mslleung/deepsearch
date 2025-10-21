@@ -1,7 +1,8 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.browser.IBrowserPool
-import io.deepsearch.domain.config.DispatcherProvider
+import io.deepsearch.domain.config.IApplicationCoroutineScope
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.entities.PrecacheJob
 import io.deepsearch.domain.models.entities.PrecacheJobState
 import io.deepsearch.domain.models.valueobjects.LinkSource
@@ -36,7 +37,8 @@ class PrecacheJobRegistry(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val jobRepository: IPrecacheJobRepository,
-    private val dispatchers: DispatcherProvider
+    private val dispatchers: IDispatcherProvider,
+    private val applicationScope: IApplicationCoroutineScope
 ) : IPrecacheJobRegistry {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -47,11 +49,10 @@ class PrecacheJobRegistry(
     )
 
     private val runs = ConcurrentHashMap<Long, Run>()
-    private val scope = CoroutineScope(SupervisorJob() + dispatchers.io)
 
     init {
         // Resume all in-progress jobs at startup
-        scope.launch {
+        applicationScope.scope.launch {
             val active = jobRepository.listAll(PrecacheJobState.IN_PROGRESS)
             active.forEach { job ->
                 ensureRunning(job)
@@ -67,7 +68,7 @@ class PrecacheJobRegistry(
         runs.compute(id) { _, existing ->
             if (existing == null || existing.job.isCompleted) {
                 val flow = MutableSharedFlow<IPrecacheService.PrecacheEvent>(replay = 1)
-                val coroutine = scope.launch { runPrecache(job, flow) }
+                val coroutine = applicationScope.scope.launch { runPrecache(job, flow) }
                 Run(flow, coroutine)
             } else existing
         }

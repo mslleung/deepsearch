@@ -24,6 +24,23 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
     private val agenticBrowserSearchOrchestrator by inject<IAgenticBrowserSearchOrchestrator>()
 
     @Test
+    fun `test simple sample query on OT&P`() = runTest(testCoroutineDispatcher) {
+        // Given
+        val searchQuery = SearchQuery(
+            query = "Tell me about the standard body check package",
+            url = "https://www.otandp.com/"
+        )
+
+        // When
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+
+        // Then
+        assertEquals(searchQuery, result.originalQuery)
+        assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
+        assertTrue(!result.sources.isEmpty(), "Sources should not be empty")
+    }
+
+    @Test
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(

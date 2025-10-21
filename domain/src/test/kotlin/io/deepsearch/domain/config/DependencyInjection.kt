@@ -44,18 +44,17 @@ import io.deepsearch.domain.browser.BrowserPool
 import io.deepsearch.domain.browser.IBrowserPool
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestCoroutineScheduler
-import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
 val domainTestModule = module {
+    singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
     single<CoroutineDispatcher> { StandardTestDispatcher() }
 
-    single<DispatcherProvider> {
+    single<IDispatcherProvider> {
         val testDispatcher = get<CoroutineDispatcher>()
-        object : DispatcherProvider {
+        object : IDispatcherProvider {
             override val io = testDispatcher
             override val default = testDispatcher
             override val main = testDispatcher

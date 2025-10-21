@@ -3,7 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.config.DispatcherProvider
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -23,7 +23,7 @@ class WebpageExtractionService(
     private val semanticIdentificationService: ISemanticIdentificationService,
     private val popupContainerIdentificationService: IPopupContainerIdentificationService,
     private val navigationElementRemovalService: INavigationElementRemovalService,
-    private val dispatchers: DispatcherProvider
+    private val dispatchers: IDispatcherProvider
 ) : IWebpageExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
