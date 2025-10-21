@@ -5,6 +5,9 @@ import io.deepsearch.domain.agents.MultiImageTextExtractionInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageImage
 import io.deepsearch.domain.repositories.IWebpageImageRepository
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
  
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -69,22 +72,28 @@ class WebpageImageTextExtractionService(
             val imagesWithText = mutableListOf<IBrowserPage.WebImage>()
             val imagesWithoutText = mutableListOf<IBrowserPage.WebImage>()
             
-            uncachedImages.forEach { image ->
-                if (image.containsText()) {
-                    imagesWithText.add(image)
-                } else {
-                    logger.debug("No text detected in image by OCR, skipping LLM")
-                    imagesWithoutText.add(image)
-                    // Cache as having no text
-                    webpageImageRepository.upsert(
-                        WebpageImage(
-                            imageBytesHash = image.bytesHash,
-                            extractedText = null
-                        )
-                    )
-                    cachedResults[image.bytesHash.toHexString()] = null
-                }
-            }
+			coroutineScope {
+				val ocrResults = uncachedImages.map { image ->
+					async { image to image.containsText() }
+				}.awaitAll()
+
+				ocrResults.forEach { (image, hasText) ->
+					if (hasText) {
+						imagesWithText.add(image)
+					} else {
+						logger.debug("No text detected in image by OCR, skipping LLM")
+						imagesWithoutText.add(image)
+						// Cache as having no text
+						webpageImageRepository.upsert(
+							WebpageImage(
+								imageBytesHash = image.bytesHash,
+								extractedText = null
+							)
+						)
+						cachedResults[image.bytesHash.toHexString()] = null
+					}
+				}
+			}
 
             // Process images with text using multi-image agent
             if (imagesWithText.isNotEmpty()) {
