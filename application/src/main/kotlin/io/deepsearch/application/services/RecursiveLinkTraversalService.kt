@@ -116,7 +116,7 @@ class RecursiveLinkTraversalService(
         budget: SearchBudget
     ): Flow<UrlProcessingResult> = channelFlow {
         // Launch traversal in application scope - continues even after request scope ends
-        applicationScope.scope.launch {
+        val producer = applicationScope.scope.launch {
             try {
                 var visitedNormalizedUrls = processedNormalizedUrls
                 var currentBatch = filterAndDistinctLinks(initialLinks, visitedNormalizedUrls)
@@ -147,7 +147,12 @@ class RecursiveLinkTraversalService(
 
                     // Emit each result as it's processed
                     batchResults.forEach { result ->
-                        send(result)
+                        try {
+                            send(result)
+                        } catch (e: ClosedSendChannelException) {
+                            logger.debug("[{}] Channel closed, stopping emission", sessionId)
+                            return@launch
+                        }
                     }
 
                     logger.debug(
@@ -193,6 +198,19 @@ class RecursiveLinkTraversalService(
                 querySessionService.fail(sessionId, e.message ?: "Unknown error during link traversal")
                 // Continue emitting any results we have - don't rethrow, background processing is best-effort
             }
+        }
+
+        // Close the channel when producer completes, or propagate failure; cancel producer when the collector stops
+        producer.invokeOnCompletion { cause ->
+            if (cause == null) {
+                close()
+            } else {
+                close(cause)
+            }
+        }
+
+        awaitClose {
+            producer.cancel()
         }
     }
 }
