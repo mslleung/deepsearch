@@ -5,7 +5,8 @@ import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Playwright
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserContext
-import io.deepsearch.domain.agents.ITableIdentificationAgent
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class PlaywrightBrowser() : IBrowser {
     private val playwright: Playwright = Playwright.create()
@@ -13,23 +14,18 @@ class PlaywrightBrowser() : IBrowser {
         BrowserType.LaunchOptions()
             .setHeadless(true)
     )
+    private val apiMutex: Mutex = Mutex()
 
-    override fun createContext(): IBrowserContext {
-        val context = browser.newContext()
-        return PlaywrightBrowserContext(context)
+    override suspend fun createContext(): IBrowserContext {
+        val context = apiMutex.withLock { browser.newContext() }
+        return PlaywrightBrowserContext(context, apiMutex)
     }
 
     override suspend fun close() {
         try {
-            browser.contexts().forEach { context ->
-                context.pages().forEach { page ->
-                    page.close()
-                }
-                context.close()
-            }
-            browser.close()
+            apiMutex.withLock { browser.close() }
         } finally {
-            playwright.close()
+            apiMutex.withLock { playwright.close() }
         }
     }
 }

@@ -6,7 +6,8 @@ import com.microsoft.playwright.options.ScreenshotType
 import com.microsoft.playwright.options.LoadState
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
-import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
@@ -20,7 +21,8 @@ import kotlin.io.encoding.Base64
  * keeping ARIA and DOM details internal to this adapter.
  */
 class PlaywrightBrowserPage(
-    private val page: Page
+    private val page: Page,
+    private val apiMutex: Mutex
 ) : IBrowserPage {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -38,70 +40,85 @@ class PlaywrightBrowserPage(
         }
     }
 
-    override suspend fun getUrl(): String = page.url()
+    override suspend fun getUrl(): String = apiMutex.withLock { page.url() }
 
     /**
      * Navigate to a new URL and wait for default load state.
      */
     override suspend fun navigate(url: String) {
         logger.debug("Navigate to {}", url)
-        page.navigate(url)
-        // Ensure baseline document readiness before any parsing calls
-        page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+        apiMutex.withLock {
+            page.navigate(url)
+            // Ensure baseline document readiness before any parsing calls
+            page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+        }
     }
 
     override suspend fun takeScreenshot(): IBrowserPage.Screenshot {
         logger.debug("Taking screenshot ...")
-        val bytes = page.screenshot(
-            Page.ScreenshotOptions().apply {
-                type = ScreenshotType.JPEG
-            })
+        val bytes = apiMutex.withLock {
+            page.screenshot(
+                Page.ScreenshotOptions().apply {
+                    type = ScreenshotType.JPEG
+                })
+        }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
     }
 
     override suspend fun takeFullPageScreenshot(): IBrowserPage.Screenshot {
         logger.debug("Taking full-page screenshot ...")
-        val bytes = page.screenshot(
-            Page.ScreenshotOptions().apply {
-                type = ScreenshotType.JPEG
-                fullPage = true
-            })
+        val bytes = apiMutex.withLock {
+            page.screenshot(
+                Page.ScreenshotOptions().apply {
+                    type = ScreenshotType.JPEG
+                    fullPage = true
+                })
+        }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
     }
 
     override suspend fun getFullHtml(): String {
-        return page.content()
+        return apiMutex.withLock { page.content() }
     }
 
     override suspend fun getElementScreenshotByXPath(xpath: String): IBrowserPage.Screenshot {
         logger.debug("Taking element screenshot by XPath: {}", xpath)
-        val locator = page.locator("xpath=$xpath")
-        // When XPath matches a chain (target + ancestors), select the leaf-most node
-        val target = locator.last()
-        val bytes = target.screenshot(
-            Locator.ScreenshotOptions().apply { type = ScreenshotType.JPEG }
-        )
+        val bytes = apiMutex.withLock {
+            val locator = page.locator("xpath=$xpath")
+            // When XPath matches a chain (target + ancestors), select the leaf-most node
+            val target = locator.last()
+            target.screenshot(
+                Locator.ScreenshotOptions().apply { type = ScreenshotType.JPEG }
+            )
+        }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
     }
 
     override suspend fun getElementHtmlByXPath(xpath: String): String {
         logger.debug("Getting element outerHTML by XPath: {}", xpath)
-        val locator = page.locator("xpath=$xpath")
-        val target = locator.last()
-        return target.evaluate("el => el.outerHTML") as String
+        return apiMutex.withLock {
+            val locator = page.locator("xpath=$xpath")
+            val target = locator.last()
+            target.evaluate("el => el.outerHTML") as String
+        }
     }
 
     override suspend fun clickByXPathSelector(xpath: String) {
         logger.debug("Click by XPath selector: {}", xpath)
-        val locator = page.locator("xpath=$xpath")
-        val target = locator.last()
-        target.click()
+        apiMutex.withLock {
+            val locator = page.locator("xpath=$xpath")
+            val target = locator.last()
+            target.click()
+        }
     }
 
     override suspend fun removeElement(xpath: String) {
         logger.debug("Remove element by XPath: {}", xpath)
-        val locator = page.locator("xpath=$xpath")
-        val count = locator.count()
+        val (locator, count) = apiMutex.withLock {
+            val loc = page.locator("xpath=$xpath")
+            val c = loc.count()
+            loc to c
+        }
 
         if (count == 0) {
             logger.warn("No element found at XPath: {}", xpath)
@@ -113,15 +130,19 @@ class PlaywrightBrowserPage(
         }
 
         // Remove all matching elements using JavaScript
-        locator.evaluateAll("elements => elements.forEach(element => element.remove())")
+        apiMutex.withLock {
+            locator.evaluateAll("elements => elements.forEach(element => element.remove())")
+        }
 
         logger.debug("Successfully removed {} element(s) at XPath: {}", count, xpath)
     }
 
     override suspend fun elementExists(xpath: String): Boolean {
-        val locator = page.locator("xpath=$xpath")
-        val count = locator.count()
-        return count > 0
+        return apiMutex.withLock {
+            val locator = page.locator("xpath=$xpath")
+            val count = locator.count()
+            count > 0
+        }
     }
 
     @Serializable
@@ -129,7 +150,7 @@ class PlaywrightBrowserPage(
 
     override suspend fun extractIcons(): List<IBrowserPage.Icon> {
         logger.debug("Extracting icons via evaluate()")
-        val extractIconJsonRaw = page.evaluate(loadScript("out/extractIcons.js")) as String
+        val extractIconJsonRaw = apiMutex.withLock { page.evaluate(loadScript("out/extractIcons.js")) } as String
 
         val decoded = Json.decodeFromString<List<IconResult>>(extractIconJsonRaw)
         val results = decoded.map { result ->
@@ -147,10 +168,10 @@ class PlaywrightBrowserPage(
 
     @Serializable
     private data class ImageResult(val base64: String, val xPathSelectors: List<String>)
-    
+
     @Serializable
     private data class FailedImage(val xPath: String, val reason: String)
-    
+
     @Serializable
     private data class ImageExtractionResult(
         val successful: List<ImageResult>,
@@ -159,11 +180,11 @@ class PlaywrightBrowserPage(
 
     override suspend fun extractImages(): List<IBrowserPage.WebImage> {
         logger.debug("Extracting images via evaluate()")
-        val extractImageJsonRaw = page.evaluate(loadScript("out/extractImages.js")) as String
+        val extractImageJsonRaw = apiMutex.withLock { page.evaluate(loadScript("out/extractImages.js")) } as String
         val decoded = Json.decodeFromString<ImageExtractionResult>(extractImageJsonRaw)
-        
+
         val results = mutableListOf<IBrowserPage.WebImage>()
-        
+
         // Process successful canvas-based extractions
         decoded.successful.forEach { result ->
             val bytes = Base64.decode(result.base64)
@@ -175,7 +196,7 @@ class PlaywrightBrowserPage(
                 )
             )
         }
-        
+
         // Process failed images using screenshot fallback
         if (decoded.failed.isNotEmpty()) {
             logger.info("Processing {} failed images using screenshot fallback", decoded.failed.size)
@@ -196,29 +217,34 @@ class PlaywrightBrowserPage(
             }
         }
 
-        logger.debug("extractImages produced {} unique images ({} canvas-based, {} screenshot-based)", 
-            results.size, decoded.successful.size, decoded.failed.size)
+        logger.debug(
+            "extractImages produced {} unique images ({} canvas-based, {} screenshot-based)",
+            results.size, decoded.successful.size, decoded.failed.size
+        )
         return results
     }
 
 
     override suspend fun getTitle(): String {
-        return page.title()
+        return apiMutex.withLock { page.title() }
     }
 
     override suspend fun getDescription(): String? {
-        val descriptionMeta = page.locator("meta[name=description], meta[property='og:description']")
-        val description =
-            if (descriptionMeta.count() > 0) descriptionMeta.first().getAttribute("content")?.trim() else null
-        return description
+        return apiMutex.withLock {
+            val descriptionMeta = page.locator("meta[name=description], meta[property='og:description']")
+            val description =
+                if (descriptionMeta.count() > 0) descriptionMeta.first().getAttribute("content")?.trim() else null
+            description
+        }
     }
 
     override suspend fun replaceElementsWithText(cssSelector: String, text: String?) {
         logger.debug("Replace elements by CSS selector: {} with text: {}", cssSelector, text)
 
         if (text != null) {
-            page.evaluate(
-                """
+            apiMutex.withLock {
+                page.evaluate(
+                    """
                 (selector, replacement) => {
                     const elements = document.querySelectorAll(selector);
                     elements.forEach(el => {
@@ -227,16 +253,19 @@ class PlaywrightBrowserPage(
                     });
                 }
             """, mapOf("selector" to cssSelector, "replacement" to text)
-            )
+                )
+            }
         } else {
-            page.evaluate(
-                """
+            apiMutex.withLock {
+                page.evaluate(
+                    """
                 (selector) => {
                     const elements = document.querySelectorAll(selector);
                     elements.forEach(el => el.remove());
                 }
             """, cssSelector
-            )
+                )
+            }
         }
     }
 
@@ -248,13 +277,14 @@ class PlaywrightBrowserPage(
         logger.debug("Replace {} XPath elements with text", replacements.size)
 
         // Convert replacements to a format that can be serialized for JavaScript
-        val replacementsData = replacements.map { 
+        val replacementsData = replacements.map {
             mapOf("xpath" to it.xpath, "text" to it.text)
         }
 
         // Perform all replacements in a single evaluate call for optimal performance
-        page.evaluate(
-            """
+        apiMutex.withLock {
+            page.evaluate(
+                """
             (replacements) => {
                 for (const replacement of replacements) {
                     const xpath = replacement.xpath;
@@ -293,14 +323,16 @@ class PlaywrightBrowserPage(
                 }
             }
             """, replacementsData
-        )
+            )
+        }
     }
 
     override suspend fun extractTextContent(): String {
         logger.debug("Extracting text content from page")
 
-        return page.evaluate(
-            """
+        return apiMutex.withLock {
+            page.evaluate(
+                """
             () => {
                 const result = [];
                 const stack = [document.body];
@@ -333,14 +365,16 @@ class PlaywrightBrowserPage(
                 return result.join('\n');
             }
         """
-        ) as String
+            )
+        } as String
     }
 
     override suspend fun extractElementTextContent(elementXPath: String): String {
         logger.debug("Extracting text content from {}", elementXPath)
 
-        return page.evaluate(
-            """
+        return apiMutex.withLock {
+            page.evaluate(
+                """
             (xpath) => {
                 const collectText = (root) => {
                     const result = [];
@@ -389,8 +423,9 @@ class PlaywrightBrowserPage(
                 return result.join('\n');
             }
             """,
-            elementXPath
-        ) as String
+                elementXPath
+            )
+        } as String
     }
 
     private fun loadScript(path: String): String {

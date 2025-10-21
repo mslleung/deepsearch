@@ -250,7 +250,7 @@ class BrowserPool() : IBrowserPool {
         private val pool: BrowserPool,
         private val pooled: PooledBrowser
     ) : IBrowser {
-        override fun createContext(): IBrowserContext = pooled.browser.createContext()
+        override suspend fun createContext(): IBrowserContext = pooled.browser.createContext()
 
         override suspend fun close() {
             pool.release(pooled)
