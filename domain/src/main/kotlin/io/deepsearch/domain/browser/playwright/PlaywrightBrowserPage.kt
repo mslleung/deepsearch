@@ -153,13 +153,19 @@ class PlaywrightBrowserPage(
         val extractIconJsonRaw = apiMutex.withLock { page.evaluate(loadScript("out/extractIcons.js")) } as String
 
         val decoded = Json.decodeFromString<List<IconResult>>(extractIconJsonRaw)
-        val results = decoded.map { result ->
-            val bytes = Base64.decode(result.base64)
-            IBrowserPage.Icon(
-                bytes = bytes,
-                mimeType = ImageMimeType.WEBP,
-                xPathSelectors = result.xPathSelectors
-            )
+        val results = decoded.mapNotNull { result ->
+            val cleaned = sanitizeBase64(result.base64)
+            try {
+                val bytes = Base64.decode(cleaned)
+                IBrowserPage.Icon(
+                    bytes = bytes,
+                    mimeType = ImageMimeType.WEBP,
+                    xPathSelectors = result.xPathSelectors
+                )
+            } catch (e: IllegalArgumentException) {
+                logger.warn("Skipping invalid icon base64 ({} chars): {}", cleaned.length, e.message)
+                null
+            }
         }
 
         logger.debug("extractIcons produced {} unique icons", results.size)
@@ -432,5 +438,11 @@ class PlaywrightBrowserPage(
         val stream = this::class.java.classLoader.getResourceAsStream(path)
             ?: throw IllegalStateException("Resource not found: $path")
         return stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+    }
+
+    private fun sanitizeBase64(input: String): String {
+        // Trim and strip any data URL prefix like: data:image/webp;base64,....
+        val trimmed = input.trim()
+        return trimmed.replace(Regex("^data:[^,]+,"), "")
     }
 }

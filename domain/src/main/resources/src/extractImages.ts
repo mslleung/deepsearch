@@ -107,7 +107,7 @@
         }
         
         const dataUrl = canvas.toDataURL('image/webp', 0.9);
-        const base64 = dataUrl.replace(/^data:image\/webp;base64,/, '');
+        const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         
         const xPathSelector = uniqueXPathFor(img);
         if (!imagesToXPathSelectors.has(base64)) {
@@ -180,7 +180,7 @@
           ctx.drawImage(tempImg, 0, 0, width, height);
           
           const dataUrl = canvas.toDataURL('image/webp', 0.9);
-          const base64 = dataUrl.replace(/^data:image\/webp;base64,/, '');
+          const base64 = dataUrl.replace(/^data:[^,]+,/, '');
           
           const xPathSelector = uniqueXPathFor(element);
           if (!imagesToXPathSelectors.has(base64)) {
