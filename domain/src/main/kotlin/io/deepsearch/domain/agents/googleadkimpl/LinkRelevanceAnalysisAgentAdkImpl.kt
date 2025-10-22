@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.reactive.asFlow
@@ -132,7 +133,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         }
 
         val links = try {
-            val response = Json.decodeFromString<LinkAnalysisResponse>(responseText)
+            val response = Json.decodeFromStringWithCodeBlocks<LinkAnalysisResponse>(responseText)
             response.links.map { linkJson ->
                 WebpageLink(
                     url = linkJson.url,
