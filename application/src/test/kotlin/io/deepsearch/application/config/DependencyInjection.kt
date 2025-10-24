@@ -38,10 +38,6 @@ import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.application.services.IWebpageCacheService
 import io.deepsearch.application.services.UrlContentProcessingService
 import io.deepsearch.application.services.IUrlContentProcessingService
-import io.deepsearch.application.services.RecursiveLinkTraversalService
-import io.deepsearch.application.services.IRecursiveLinkTraversalService
-import io.deepsearch.application.services.StreamingAnswerGenerationService
-import io.deepsearch.application.services.IStreamingAnswerGenerationService
 import io.deepsearch.application.services.IUrlProcessingLockRegistry
 import io.deepsearch.application.services.PrecacheJobRegistry
 import io.deepsearch.application.services.QuerySessionService
@@ -71,8 +67,6 @@ val applicationTestModule = module {
     singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
-    singleOf(::RecursiveLinkTraversalService) bind IRecursiveLinkTraversalService::class
-    singleOf(::StreamingAnswerGenerationService) bind IStreamingAnswerGenerationService::class
     singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
     singleOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class

@@ -39,8 +39,6 @@ val applicationModule = module {
         scopedOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
         scopedOf(::WebpageCacheService) bind IWebpageCacheService::class
         scopedOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
-        scopedOf(::RecursiveLinkTraversalService) bind IRecursiveLinkTraversalService::class
-        scopedOf(::StreamingAnswerGenerationService) bind IStreamingAnswerGenerationService::class
         scopedOf(::QuerySessionService) bind IQuerySessionService::class
     }
 }

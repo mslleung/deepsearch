@@ -43,65 +43,59 @@ class QuerySession(
      * Transition to a new state with validation.
      * Throws InvalidStateTransitionException if transition is not valid.
      */
-    fun transitionTo(newState: QuerySessionState): QuerySession {
+    fun transitionTo(newState: QuerySessionState) {
         if (!isValidTransition(state, newState)) {
             throw InvalidStateTransitionException(id, state, newState)
         }
         state = newState
         updatedAtEpochMs = System.currentTimeMillis()
-        return this
     }
 
     /**
      * Mark answer as complete with the generated answer and sources.
      * Does not change state - state transition should be done separately.
      */
-    fun markAnswerComplete(answer: String, sources: List<String>): QuerySession {
+    fun markAnswerComplete(answer: String, sources: List<String>) {
         this.answerComplete = true
         this.answer = answer
         sourcesDiscovered.clear()
         sourcesDiscovered.addAll(sources)
         updatedAtEpochMs = System.currentTimeMillis()
-        return this
     }
 
     /**
      * Add a single traversed URL to the session.
      */
-    fun addTraversedUrl(url: String): QuerySession {
+    fun addTraversedUrl(url: String) {
         traversedUrls.add(url)
         updatedAtEpochMs = System.currentTimeMillis()
-        return this
     }
 
     /**
      * Add multiple traversed URLs to the session.
      */
-    fun addTraversedUrls(urls: Collection<String>): QuerySession {
-        if (urls.isEmpty()) return this
+    fun addTraversedUrls(urls: Collection<String>) {
+        if (urls.isEmpty()) return
         traversedUrls.addAll(urls)
         updatedAtEpochMs = System.currentTimeMillis()
-        return this
     }
 
     /**
      * Mark session as failed.
      * This transition is valid from any state.
      */
-    fun markFailed(): QuerySession {
+    fun markFailed() {
         state = QuerySessionState.FAILED
         updatedAtEpochMs = System.currentTimeMillis()
-        return this
     }
 
     /**
      * Set the finish reason if it hasn't been set already.
      * Idempotent: does nothing if a reason is already present.
      */
-    fun setFinishReason(reason: FinishReason): QuerySession {
+    fun setFinishReason(reason: FinishReason) {
         finishReason = reason
         updatedAtEpochMs = System.currentTimeMillis()
-        return this
     }
 
     /**
@@ -130,15 +124,9 @@ class QuerySession(
 
             return when (from) {
                 QuerySessionState.EXPANDING_QUERY ->
-                    to == QuerySessionState.INITIAL_LINK_DISCOVERY
-
-                QuerySessionState.INITIAL_LINK_DISCOVERY ->
                     to == QuerySessionState.LINK_TRAVERSAL
 
                 QuerySessionState.LINK_TRAVERSAL ->
-                    to == QuerySessionState.TRAILING_LINK_TRAVERSAL || to == QuerySessionState.FINISHED
-
-                QuerySessionState.TRAILING_LINK_TRAVERSAL ->
                     to == QuerySessionState.FINISHED
 
                 QuerySessionState.FINISHED, QuerySessionState.FAILED ->
@@ -152,25 +140,16 @@ class QuerySession(
  * State machine for query session lifecycle.
  *
  * Valid transitions:
- * - EXPANDING_QUERY → INITIAL_LINK_DISCOVERY
- * - INITIAL_LINK_DISCOVERY → LINK_TRAVERSAL
- * - LINK_TRAVERSAL → TRAILING_LINK_TRAVERSAL (when answer completes)
- * - LINK_TRAVERSAL → FINISHED (when links exhausted before answer)
- * - TRAILING_LINK_TRAVERSAL → FINISHED
+ * - EXPANDING_QUERY → LINK_TRAVERSAL
+ * - LINK_TRAVERSAL → FINISHED
  * - Any state → FAILED
  */
 enum class QuerySessionState {
     /** Query is being expanded into sub-queries */
     EXPANDING_QUERY,
 
-    /** Initial link discovery via Google search and initial URL processing */
-    INITIAL_LINK_DISCOVERY,
-
     /** Link traversal and answer generation happening concurrently */
     LINK_TRAVERSAL,
-
-    /** Answer is complete, finishing current wave of link traversal */
-    TRAILING_LINK_TRAVERSAL,
 
     /** Session completed successfully */
     FINISHED,

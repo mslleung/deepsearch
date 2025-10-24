@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.QuerySessionState
 import io.deepsearch.domain.models.entities.FinishReason
+import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -16,26 +17,34 @@ interface IQuerySessionService {
     /** Create a new query session in EXPANDING_QUERY state. */
     suspend fun createSession(query: String, url: String): QuerySession
 
-    /** Transition session to INITIAL_LINK_DISCOVERY (from EXPANDING_QUERY). */
-    suspend fun transitionToInitialDiscovery(sessionId: String)
-
-    /** Transition session to LINK_TRAVERSAL (from INITIAL_LINK_DISCOVERY). */
+    /** Transition session to LINK_TRAVERSAL (from EXPANDING_QUERY). */
     suspend fun transitionToLinkTraversal(sessionId: String)
 
-    /** Mark answer as complete and update answer content; state change handled separately. */
-    suspend fun markAnswerComplete(sessionId: String, answer: String, sources: List<String>)
+    /** 
+     * Complete the session with a final answer and sources.
+     * This marks the answer as complete, sets the finish reason, and transitions to FINISHED state.
+     */
+    suspend fun completeSessionWithAnswer(
+        sessionId: String, 
+        answer: String, 
+        sources: List<String>, 
+        finishReason: FinishReason
+    )
 
-    /** Transition session to TRAILING_LINK_TRAVERSAL (from LINK_TRAVERSAL). */
-    suspend fun transitionToTrailingTraversal(sessionId: String)
+    /**
+     * Check if the search budget has been exceeded and mark the session accordingly.
+     * Returns true if budget was exceeded (and finish reason was set), false otherwise.
+     */
+    suspend fun checkBudgetAndMarkIfExceeded(sessionId: String, budget: SearchBudget): Boolean
+
+    /** Mark answer as complete and update answer content (without finishing the session). */
+    suspend fun markAnswerComplete(sessionId: String, answer: String, sources: List<String>)
 
     /** Add a traversed URL to the session. */
     suspend fun addTraversedUrl(sessionId: String, url: String)
 
     /** Add multiple traversed URLs to the session. */
     suspend fun addTraversedUrls(sessionId: String, urls: Collection<String>)
-
-    /** Transition session to FINISHED (from LINK_TRAVERSAL or TRAILING_LINK_TRAVERSAL). */
-    suspend fun finish(sessionId: String)
 
     /** Transition session to FAILED with an error message (from any state). */
     suspend fun fail(sessionId: String, error: String)
@@ -45,9 +54,6 @@ interface IQuerySessionService {
 
     /** Get complete session. */
     suspend fun getSession(sessionId: String): QuerySession
-
-    /** Set finish reason if not already set. */
-    suspend fun setFinishReason(sessionId: String, reason: FinishReason)
 }
 
 /**
@@ -68,60 +74,78 @@ class QuerySessionService(
         return saved
     }
 
-    override suspend fun transitionToInitialDiscovery(sessionId: String) {
-        val session = getSessionOrThrow(sessionId)
-        val updated = session.transitionTo(QuerySessionState.INITIAL_LINK_DISCOVERY)
-        querySessionRepository.update(updated)
-        logger.info("[{}] State transition: {} → {}", sessionId, session.state, QuerySessionState.INITIAL_LINK_DISCOVERY)
-    }
-
     override suspend fun transitionToLinkTraversal(sessionId: String) {
         val session = getSessionOrThrow(sessionId)
-        val updated = session.transitionTo(QuerySessionState.LINK_TRAVERSAL)
-        querySessionRepository.update(updated)
+        session.transitionTo(QuerySessionState.LINK_TRAVERSAL)
+        querySessionRepository.update(session)
         logger.info("[{}] State transition: {} → {}", sessionId, session.state, QuerySessionState.LINK_TRAVERSAL)
+    }
+
+    override suspend fun completeSessionWithAnswer(
+        sessionId: String,
+        answer: String,
+        sources: List<String>,
+        finishReason: FinishReason
+    ) {
+        val session = getSessionOrThrow(sessionId)
+
+        session.markAnswerComplete(answer, sources)
+        session.setFinishReason(finishReason)
+        session.transitionTo(QuerySessionState.FINISHED)
+
+        querySessionRepository.update(session)
+        logger.info(
+            "[{}] Session completed: {} chars, {} sources, reason: {}",
+            sessionId,
+            answer.length,
+            sources.size,
+            finishReason
+        )
+    }
+
+    override suspend fun checkBudgetAndMarkIfExceeded(
+        sessionId: String,
+        budget: io.deepsearch.domain.models.valueobjects.SearchBudget
+    ): Boolean {
+        val session = getSessionOrThrow(sessionId)
+        val exceededReason = session.checkSearchBudget(budget)
+        
+        return if (exceededReason != null) {
+            session.setFinishReason(exceededReason)
+            querySessionRepository.update(session)
+            logger.info("[{}] Budget exceeded: {}", sessionId, exceededReason)
+            true
+        } else {
+            false
+        }
     }
 
     override suspend fun markAnswerComplete(sessionId: String, answer: String, sources: List<String>) {
         val session = getSessionOrThrow(sessionId)
-        val updated = session.markAnswerComplete(answer, sources)
-        querySessionRepository.update(updated)
+        session.markAnswerComplete(answer, sources)
+        querySessionRepository.update(session)
         logger.info("[{}] Answer completed: {} chars, {} sources", sessionId, answer.length, sources.size)
-    }
-
-    override suspend fun transitionToTrailingTraversal(sessionId: String) {
-        val session = getSessionOrThrow(sessionId)
-        val updated = session.transitionTo(QuerySessionState.TRAILING_LINK_TRAVERSAL)
-        querySessionRepository.update(updated)
-        logger.info("[{}] State transition: {} → {}", sessionId, session.state, QuerySessionState.TRAILING_LINK_TRAVERSAL)
     }
 
     override suspend fun addTraversedUrl(sessionId: String, url: String) {
         val session = getSessionOrThrow(sessionId)
-        val updated = session.addTraversedUrl(url)
-        querySessionRepository.update(updated)
-        logger.debug("[{}] Added traversed URL: {} (total: {})", sessionId, url, updated.traversedUrls.size)
+        session.addTraversedUrl(url)
+        querySessionRepository.update(session)
+        logger.debug("[{}] Added traversed URL: {} (total: {})", sessionId, url, session.traversedUrls.size)
     }
 
     override suspend fun addTraversedUrls(sessionId: String, urls: Collection<String>) {
         if (urls.isEmpty()) return
         val session = getSessionOrThrow(sessionId)
-        val updated = session.addTraversedUrls(urls)
-        querySessionRepository.update(updated)
-        logger.debug("[{}] Added {} traversed URLs (total: {})", sessionId, urls.size, updated.traversedUrls.size)
-    }
-
-    override suspend fun finish(sessionId: String) {
-        val session = getSessionOrThrow(sessionId)
-        val updated = session.transitionTo(QuerySessionState.FINISHED)
-        querySessionRepository.update(updated)
-        logger.info("[{}] Session finished successfully (from state: {})", sessionId, session.state)
+        session.addTraversedUrls(urls)
+        querySessionRepository.update(session)
+        logger.debug("[{}] Added {} traversed URLs (total: {})", sessionId, urls.size, session.traversedUrls.size)
     }
 
     override suspend fun fail(sessionId: String, error: String) {
         val session = getSessionOrThrow(sessionId)
-        val updated = session.markFailed()
-        querySessionRepository.update(updated)
+        session.markFailed()
+        querySessionRepository.update(session)
         logger.error("[{}] Session failed: {} (from state: {})", sessionId, error, session.state)
     }
 
@@ -131,13 +155,6 @@ class QuerySessionService(
 
     override suspend fun getSession(sessionId: String): QuerySession {
         return getSessionOrThrow(sessionId)
-    }
-
-    override suspend fun setFinishReason(sessionId: String, reason: FinishReason) {
-        val session = getSessionOrThrow(sessionId)
-        val updated = session.setFinishReason(reason)
-        querySessionRepository.update(updated)
-        logger.info("[{}] Finish reason set: {}", sessionId, reason)
     }
 
     private suspend fun getSessionOrThrow(sessionId: String): QuerySession {
