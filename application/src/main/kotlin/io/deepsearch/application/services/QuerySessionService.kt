@@ -76,9 +76,10 @@ class QuerySessionService(
 
     override suspend fun transitionToLinkTraversal(sessionId: String) {
         val session = getSessionOrThrow(sessionId)
-        session.transitionTo(QuerySessionState.LINK_TRAVERSAL)
+        val previousState = session.state
+        session.startLinkTraversal()
         querySessionRepository.update(session)
-        logger.info("[{}] State transition: {} → {}", sessionId, session.state, QuerySessionState.LINK_TRAVERSAL)
+        logger.info("[{}] State transition: {} → {}", sessionId, previousState, session.state)
     }
 
     override suspend fun completeSessionWithAnswer(
@@ -88,11 +89,7 @@ class QuerySessionService(
         finishReason: FinishReason
     ) {
         val session = getSessionOrThrow(sessionId)
-
-        session.markAnswerComplete(answer, sources)
-        session.setFinishReason(finishReason)
-        session.transitionTo(QuerySessionState.FINISHED)
-
+        session.completeWithAnswer(answer, sources, finishReason)
         querySessionRepository.update(session)
         logger.info(
             "[{}] Session completed: {} chars, {} sources, reason: {}",
@@ -108,16 +105,14 @@ class QuerySessionService(
         budget: io.deepsearch.domain.models.valueobjects.SearchBudget
     ): Boolean {
         val session = getSessionOrThrow(sessionId)
-        val exceededReason = session.checkSearchBudget(budget)
+        val exceeded = session.checkAndApplyBudgetExceeded(budget)
         
-        return if (exceededReason != null) {
-            session.setFinishReason(exceededReason)
+        if (exceeded) {
             querySessionRepository.update(session)
-            logger.info("[{}] Budget exceeded: {}", sessionId, exceededReason)
-            true
-        } else {
-            false
+            logger.info("[{}] Budget exceeded: {}", sessionId, session.finishReason)
         }
+        
+        return exceeded
     }
 
     override suspend fun markAnswerComplete(sessionId: String, answer: String, sources: List<String>) {

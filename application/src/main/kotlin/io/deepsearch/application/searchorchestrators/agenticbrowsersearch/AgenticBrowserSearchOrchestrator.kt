@@ -24,16 +24,11 @@ import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
-import kotlinx.coroutines.sync.Semaphore
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator {
     override suspend fun execute(searchQuery: SearchQuery): SearchResult
@@ -131,11 +126,11 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Reactive flow that produces markdown results as links are discovered.
      *
-     * This function orchestrates parallel link discovery and processing:
-     * 1. Seeds the initial URL into the work queue
-     * 2. Launches Google search to discover additional links
-     * 3. Processes links concurrently, discovering more links as pages are visited (fanout pattern)
-     * 4. Terminates when all work is complete (queue empty + no in-flight processing)
+     * This function orchestrates parallel link discovery and processing using flow composition:
+     * 1. Initial URL flow (seed)
+     * 2. Google search flow (Flow A)
+     * 3. Discovered links feedback flow (Flow B)
+     * 4. All flows merge and process concurrently (Flow C)
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun extractRelevantMarkdowns(
@@ -143,164 +138,95 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         browser: IBrowser,
         budget: SearchBudget
-    ): Flow<UrlProcessingResult> = channelFlow {
-        // Shared state for coordinating parallel work
+    ): Flow<UrlProcessingResult> {
         val visitedUrls = ConcurrentHashMap.newKeySet<String>()
-        val linkQueue = ConcurrentLinkedQueue<WebpageLink>()
-        val inFlightCount = AtomicInteger(0)
-
-        // Initialize work queue with the starting URL
-        seedInitialUrl(linkQueue, searchQuery)
-
-        // Start Google search in parallel to feed more links
-        launchGoogleSearchDiscovery(sessionId, searchQuery, linkQueue, inFlightCount)
-
-        // Main processing loop: consume and process links until all work is done
-        processPendingLinks(
-            sessionId = sessionId,
-            searchQuery = searchQuery,
-            browser = browser,
-            budget = budget,
-            visitedUrls = visitedUrls,
-            linkQueue = linkQueue,
-            inFlightCount = inFlightCount
+        val discoveredLinksFlow = MutableSharedFlow<WebpageLink>(
+            extraBufferCapacity = Int.MAX_VALUE
         )
 
-        logger.info("[{}] Link discovery complete", sessionId)
-    }
-
-    private fun seedInitialUrl(linkQueue: ConcurrentLinkedQueue<WebpageLink>, searchQuery: SearchQuery) {
-        linkQueue.offer(
+        val initialLinkFlow = flowOf(
             WebpageLink(
                 url = searchQuery.url,
                 source = LinkSource.LINK_RELEVANCE,
                 reason = "Initial URL"
             )
         )
-    }
 
-    private fun ProducerScope<UrlProcessingResult>.launchGoogleSearchDiscovery(
-        sessionId: String,
-        searchQuery: SearchQuery,
-        linkQueue: ConcurrentLinkedQueue<WebpageLink>,
-        inFlightCount: AtomicInteger
-    ) {
-        inFlightCount.incrementAndGet()
-        launch {
-            try {
-                val googleLinks = webpageLinkDiscoveryService.discoverRelevantLinksByGoogleSearch(searchQuery)
-                logger.debug("[{}] Google search discovered {} links", sessionId, googleLinks.size)
-                googleLinks.forEach { linkQueue.offer(it) }
-            } catch (e: Exception) {
-                logger.error("[{}] Failed Google search: {}", sessionId, e.message, e)
-            } finally {
-                inFlightCount.decrementAndGet()
-            }
-        }
-    }
+        val googleSearchFlow = createGoogleSearchLinkFlow(sessionId, searchQuery)
 
-    private suspend fun ProducerScope<UrlProcessingResult>.processPendingLinks(
-        sessionId: String,
-        searchQuery: SearchQuery,
-        browser: IBrowser,
-        budget: SearchBudget,
-        visitedUrls: MutableSet<String>,
-        linkQueue: ConcurrentLinkedQueue<WebpageLink>,
-        inFlightCount: AtomicInteger
-    ) {
-        while (true) {
-            val link = linkQueue.poll()
-
-            if (link == null) {
-                if (isWorkComplete(inFlightCount)) {
-                    break
-                }
-                // Work still in flight, yield and retry
-                kotlinx.coroutines.delay(10)
-                continue
-            }
-
-            processLinkAsync(
+        return merge(initialLinkFlow, googleSearchFlow, discoveredLinksFlow)
+            .processLinksToMarkdown(
                 sessionId = sessionId,
-                link = link,
                 searchQuery = searchQuery,
                 browser = browser,
                 budget = budget,
                 visitedUrls = visitedUrls,
-                linkQueue = linkQueue,
-                inFlightCount = inFlightCount
+                discoveredLinksFlow = discoveredLinksFlow
             )
+            .onCompletion {
+                logger.info("[{}] Link discovery complete", sessionId)
+            }
+    }
+
+    /**
+     * Flow A: Google search link discovery
+     */
+    private fun createGoogleSearchLinkFlow(
+        sessionId: String,
+        searchQuery: SearchQuery
+    ): Flow<WebpageLink> = flow {
+        try {
+            val googleLinks = webpageLinkDiscoveryService.discoverRelevantLinksByGoogleSearch(searchQuery)
+            logger.debug("[{}] Google search discovered {} links", sessionId, googleLinks.size)
+            googleLinks.forEach { emit(it) }
+        } catch (e: Exception) {
+            logger.error("[{}] Failed Google search: {}", sessionId, e.message, e)
         }
     }
 
-    private fun isWorkComplete(inFlightCount: AtomicInteger): Boolean {
-        return inFlightCount.get() == 0
-    }
-
-    private fun ProducerScope<UrlProcessingResult>.processLinkAsync(
+    /**
+     * Flow C: Link processing with markdown conversion and discovered link feedback (Flow B)
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun Flow<WebpageLink>.processLinksToMarkdown(
         sessionId: String,
-        link: WebpageLink,
         searchQuery: SearchQuery,
         browser: IBrowser,
         budget: SearchBudget,
         visitedUrls: MutableSet<String>,
-        linkQueue: ConcurrentLinkedQueue<WebpageLink>,
-        inFlightCount: AtomicInteger
-    ) {
-        inFlightCount.incrementAndGet()
-
-        launch {
+        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
+    ): Flow<UrlProcessingResult> = flatMapMerge(concurrency = 10) { link ->
+        flow {
             try {
-                processAndEmitLink(
-                    sessionId = sessionId,
-                    link = link,
-                    searchQuery = searchQuery,
-                    browser = browser,
-                    budget = budget,
-                    visitedUrls = visitedUrls,
-                    linkQueue = linkQueue
+                val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+
+                if (shouldSkipUrl(sessionId, normalizedUrl, visitedUrls)) {
+                    return@flow
+                }
+
+                if (isBudgetExceeded(sessionId, budget)) {
+                    return@flow
+                }
+
+                val result = urlContentProcessingService.processUrl(link.url, searchQuery.query, browser)
+                querySessionService.addTraversedUrl(sessionId, normalizedUrl)
+
+                emit(result)
+
+                // Feed discovered links back into the merged flow (Flow B)
+                emitDiscoveredLinks(result, discoveredLinksFlow)
+
+                logger.debug(
+                    "[{}] Processed {}: {} chars, {} new links discovered",
+                    sessionId,
+                    normalizedUrl,
+                    result.markdown.length,
+                    result.discoveredLinks.size
                 )
             } catch (e: Exception) {
                 logger.warn("[{}] Failed to process {}: {}", sessionId, link.url, e.message)
-            } finally {
-                inFlightCount.decrementAndGet()
             }
         }
-    }
-
-    private suspend fun ProducerScope<UrlProcessingResult>.processAndEmitLink(
-        sessionId: String,
-        link: WebpageLink,
-        searchQuery: SearchQuery,
-        browser: IBrowser,
-        budget: SearchBudget,
-        visitedUrls: MutableSet<String>,
-        linkQueue: ConcurrentLinkedQueue<WebpageLink>
-    ) {
-        val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-
-        if (shouldSkipUrl(sessionId, normalizedUrl, visitedUrls)) {
-            return
-        }
-
-        if (isBudgetExceeded(sessionId, budget)) {
-            return
-        }
-
-        val result = urlContentProcessingService.processUrl(link.url, searchQuery.query, browser)
-        querySessionService.addTraversedUrl(sessionId, normalizedUrl)
-
-        send(result)
-
-        enqueueDiscoveredLinks(result, linkQueue)
-
-        logger.debug(
-            "[{}] Processed {}: {} chars, {} new links discovered",
-            sessionId,
-            normalizedUrl,
-            result.markdown.length,
-            result.discoveredLinks.size
-        )
     }
 
     private fun shouldSkipUrl(
@@ -319,12 +245,12 @@ class AgenticBrowserSearchOrchestrator(
         return querySessionService.checkBudgetAndMarkIfExceeded(sessionId, budget)
     }
 
-    private fun enqueueDiscoveredLinks(
+    private suspend fun emitDiscoveredLinks(
         result: UrlProcessingResult,
-        linkQueue: ConcurrentLinkedQueue<WebpageLink>
+        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
     ) {
         result.discoveredLinks.forEach { discoveredLink ->
-            linkQueue.offer(discoveredLink)
+            discoveredLinksFlow.emit(discoveredLink)
         }
     }
 

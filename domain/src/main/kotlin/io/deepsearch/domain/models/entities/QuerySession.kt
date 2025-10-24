@@ -93,7 +93,7 @@ class QuerySession(
      * Set the finish reason if it hasn't been set already.
      * Idempotent: does nothing if a reason is already present.
      */
-    fun setFinishReason(reason: FinishReason) {
+    fun finish(reason: FinishReason) {
         finishReason = reason
         updatedAtEpochMs = System.currentTimeMillis()
     }
@@ -109,6 +109,37 @@ class QuerySession(
             traversedUrls.size >= budget.maxLinks -> FinishReason.MAX_LINKS_EXCEEDED
             else -> null
         }
+    }
+
+    /**
+     * Check if the search budget has been exceeded and apply the finish reason if so.
+     * Returns true if budget was exceeded, false otherwise.
+     */
+    fun checkAndApplyBudgetExceeded(budget: SearchBudget = searchBudget): Boolean {
+        val exceededReason = checkSearchBudget(budget)
+        return if (exceededReason != null) {
+            finish(exceededReason)
+            true
+        } else {
+            false
+        }
+    }
+
+    /**
+     * Complete the session with a final answer and sources.
+     * This marks the answer as complete, sets the finish reason, and transitions to FINISHED state.
+     */
+    fun completeWithAnswer(answer: String, sources: List<String>, finishReason: FinishReason) {
+        markAnswerComplete(answer, sources)
+        finish(finishReason)
+        transitionTo(QuerySessionState.FINISHED)
+    }
+
+    /**
+     * Transition to LINK_TRAVERSAL state (from EXPANDING_QUERY).
+     */
+    fun startLinkTraversal() {
+        transitionTo(QuerySessionState.LINK_TRAVERSAL)
     }
 
     companion object {
