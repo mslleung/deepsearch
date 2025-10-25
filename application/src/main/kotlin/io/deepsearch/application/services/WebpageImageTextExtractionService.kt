@@ -8,9 +8,9 @@ import io.deepsearch.domain.repositories.IWebpageImageRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
- 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.io.encoding.Base64
 
 interface IWebpageImageTextExtractionService {
     suspend fun extractTextFromImage(image: IBrowserPage.WebImage): String?
@@ -47,9 +47,6 @@ class WebpageImageTextExtractionService(
             return emptyList()
         }
 
-        // Helper to convert ByteArray to hex string for map keys
-        fun ByteArray.toHexString() = joinToString("") { "%02x".format(it) }
-
         // Check cache for all images
         val cachedResults = mutableMapOf<String, String?>()
         val uncachedImages = mutableListOf<IBrowserPage.WebImage>()
@@ -58,7 +55,7 @@ class WebpageImageTextExtractionService(
             val existing = webpageImageRepository.findByHash(image.bytesHash)
             if (existing != null) {
                 logger.debug("Found cached result for image")
-                cachedResults[image.bytesHash.toHexString()] = existing.extractedText?.takeIf { it.isNotBlank() }
+                cachedResults[Base64.encode(image.bytesHash)] = existing.extractedText?.takeIf { it.isNotBlank() }
             } else {
                 uncachedImages.add(image)
             }
@@ -90,7 +87,7 @@ class WebpageImageTextExtractionService(
 								extractedText = null
 							)
 						)
-						cachedResults[image.bytesHash.toHexString()] = null
+						cachedResults[Base64.encode(image.bytesHash)] = null
 					}
 				}
 			}
@@ -119,12 +116,12 @@ class WebpageImageTextExtractionService(
                             extractedText = extractedText
                         )
                     )
-                    cachedResults[image.bytesHash.toHexString()] = extractedText
+                    cachedResults[Base64.encode(image.bytesHash)] = extractedText
                 }
             }
         }
 
         // Return results in original order
-        return images.map { image -> cachedResults[image.bytesHash.toHexString()] }
+        return images.map { image -> cachedResults[Base64.encode(image.bytesHash)] }
     }
 }

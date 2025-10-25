@@ -44,17 +44,6 @@
     
     // Extract regular img elements
     const images = Array.from(document.querySelectorAll('img'));
-    
-    // Wait for all images to load
-    await Promise.all(images.map(img => {
-      if (img.complete) return Promise.resolve();
-      return new Promise<void>((resolve) => {
-        img.onload = () => resolve();
-        img.onerror = () => resolve(); // Continue even if image fails to load
-        // Timeout after 5 seconds
-        setTimeout(() => resolve(), 5000);
-      });
-    }));
 
     console.log(`Found ${images.length} img elements to process`);
     

@@ -81,15 +81,13 @@ class WebpageExtractionService(
     private suspend fun replaceIconsWithTexts(webpage: IBrowserPage) = coroutineScope {
         val icons = webpage.extractIcons()
 
-        val replacements = icons
-            .map { icon ->
-                async(dispatchers.io) {
-                    val interpretedText = webpageIconInterpretationService.interpretIcon(icon)
-                    icon.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, interpretedText) }
-                }
-            }
-            .awaitAll()
-            .flatten()
+        // Interpret all icons in batch for efficiency
+        val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons)
+
+        // Build replacements for each XPath
+        val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
+            icon.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, interpretedText) }
+        }
 
         webpage.replaceElementsByXPathWithText(replacements)
     }
