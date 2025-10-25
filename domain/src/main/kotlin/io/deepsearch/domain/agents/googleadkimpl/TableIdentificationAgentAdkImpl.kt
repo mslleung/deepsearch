@@ -87,6 +87,9 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             - For every table you find, create a XPath selector that targets the smallest ROOT CONTAINER element that wraps the entire table.
             - The XPath selectors should be as simplistic and direct as possible. It should contain no more than the bare minimal to uniquely identify the table.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
+            
+            Example XPath:
+            //div[@class='example-table']
 
             Expected output shape:
             {

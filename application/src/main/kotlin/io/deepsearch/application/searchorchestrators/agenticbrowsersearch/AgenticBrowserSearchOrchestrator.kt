@@ -5,7 +5,6 @@ import io.deepsearch.application.services.INormalizeUrlService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
-import io.deepsearch.application.services.IUrlContentProcessingService.UrlProcessingResult
 import io.deepsearch.domain.agents.AggregateSearchResultsInput
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
@@ -138,7 +137,7 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         browser: IBrowser,
         budget: SearchBudget
-    ): Flow<UrlProcessingResult> {
+    ): Flow<MarkdownResult> {
         val visitedUrls = ConcurrentHashMap.newKeySet<String>()
         val discoveredLinksFlow = MutableSharedFlow<WebpageLink>(
             extraBufferCapacity = Int.MAX_VALUE
@@ -186,6 +185,7 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Flow C: Link processing with markdown conversion and discovered link feedback (Flow B)
+     * Now emits markdown data separately from link discovery for reactive processing.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun Flow<WebpageLink>.processLinksToMarkdown(
@@ -195,7 +195,7 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         visitedUrls: MutableSet<String>,
         discoveredLinksFlow: MutableSharedFlow<WebpageLink>
-    ): Flow<UrlProcessingResult> = flatMapMerge(concurrency = 10) { link ->
+    ): Flow<MarkdownResult> = flatMapMerge(concurrency = 10) { link ->
         flow {
             try {
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
@@ -208,26 +208,48 @@ class AgenticBrowserSearchOrchestrator(
                     return@flow
                 }
 
-                val result = urlContentProcessingService.processUrl(link.url, searchQuery.query, browser)
-                querySessionService.addTraversedUrl(sessionId, normalizedUrl)
-
-                emit(result)
-
-                // Feed discovered links back into the merged flow (Flow B)
-                emitDiscoveredLinks(result, discoveredLinksFlow)
-
-                logger.debug(
-                    "[{}] Processed {}: {} chars, {} new links discovered",
-                    sessionId,
-                    normalizedUrl,
-                    result.markdown.length,
-                    result.discoveredLinks.size
-                )
+                // Process URL and collect events as they're emitted
+                urlContentProcessingService.processUrlAsFlow(link.url, searchQuery.query, browser)
+                    .collect { event ->
+                        when (event) {
+                            is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                // Emit discovered links immediately (~5 seconds)
+                                logger.debug(
+                                    "[{}] Links discovered for {}: {} links",
+                                    sessionId,
+                                    event.url,
+                                    event.discoveredLinks.size
+                                )
+                                event.discoveredLinks.forEach { discoveredLink ->
+                                    discoveredLinksFlow.emit(discoveredLink)
+                                }
+                            }
+                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                // Emit markdown for batching (~1 minute)
+                                querySessionService.addTraversedUrl(sessionId, normalizedUrl)
+                                logger.debug(
+                                    "[{}] Markdown extracted for {}: {} chars",
+                                    sessionId,
+                                    event.url,
+                                    event.markdown.length
+                                )
+                                emit(MarkdownResult(event.url, event.markdown))
+                            }
+                        }
+                    }
             } catch (e: Exception) {
                 logger.warn("[{}] Failed to process {}: {}", sessionId, link.url, e.message)
             }
         }
     }
+
+    /**
+     * Result containing only markdown data for downstream processing.
+     */
+    private data class MarkdownResult(
+        val url: String,
+        val markdown: String
+    )
 
     private fun shouldSkipUrl(
         sessionId: String,
@@ -245,22 +267,13 @@ class AgenticBrowserSearchOrchestrator(
         return querySessionService.checkBudgetAndMarkIfExceeded(sessionId, budget)
     }
 
-    private suspend fun emitDiscoveredLinks(
-        result: UrlProcessingResult,
-        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
-    ) {
-        result.discoveredLinks.forEach { discoveredLink ->
-            discoveredLinksFlow.emit(discoveredLink)
-        }
-    }
-
     /**
      * Batch markdowns into groups of BATCH_SIZE.
      */
-    private fun Flow<UrlProcessingResult>.batchMarkdowns(
+    private fun Flow<MarkdownResult>.batchMarkdowns(
         batchSize: Int
-    ): Flow<List<UrlProcessingResult>> = flow {
-        val batch = mutableListOf<UrlProcessingResult>()
+    ): Flow<List<MarkdownResult>> = flow {
+        val batch = mutableListOf<MarkdownResult>()
 
         collect { result ->
             if (result.markdown.isNotBlank()) {
@@ -282,7 +295,7 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Generate answer from batches of markdowns, terminating early when complete.
      */
-    private fun Flow<List<UrlProcessingResult>>.generateAnswerFromBatches(
+    private fun Flow<List<MarkdownResult>>.generateAnswerFromBatches(
         sessionId: String,
         searchQuery: SearchQuery
     ): Flow<SearchResult> = flow {

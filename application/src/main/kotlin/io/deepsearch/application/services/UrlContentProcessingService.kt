@@ -2,37 +2,51 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import io.deepsearch.application.services.IUrlContentProcessingService.*
 
 interface IUrlContentProcessingService {
     /**
-     * Result of processing a single URL: extracted markdown and discovered links.
+     * Events emitted during URL processing.
+     * Links are discovered first (~5s), then markdown is extracted (~1min).
      */
-    data class UrlProcessingResult(
-        val url: String,
-        val markdown: String,
-        val discoveredLinks: List<WebpageLink>
-    )
+    sealed interface UrlProcessingEvent {
+        val url: String
+
+        data class LinkDiscoveryComplete(
+            override val url: String,
+            val discoveredLinks: List<WebpageLink>
+        ) : UrlProcessingEvent
+
+        data class MarkdownExtractionComplete(
+            override val url: String,
+            val markdown: String
+        ) : UrlProcessingEvent
+    }
 
     /**
      * Process a URL and discover links relevant to the provided query.
+     * Emits LinkDiscoveryComplete event first, then MarkdownExtractionComplete event.
      */
-    suspend fun processUrl(
+    fun processUrlAsFlow(
         url: String,
         query: String,
         browser: IBrowser
-    ): UrlProcessingResult
+    ): Flow<UrlProcessingEvent>
 
     /**
      * Process a URL and discover all links on the page (query-agnostic).
+     * Emits LinkDiscoveryComplete event first, then MarkdownExtractionComplete event.
      */
-    suspend fun processUrl(
+    fun processUrlAsFlow(
         url: String,
         browser: IBrowser
-    ): UrlProcessingResult
+    ): Flow<UrlProcessingEvent>
 }
 
 class UrlContentProcessingService(
@@ -47,39 +61,41 @@ class UrlContentProcessingService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun processUrl(
+    override fun processUrlAsFlow(
         url: String,
         query: String,
         browser: IBrowser
-    ): IUrlContentProcessingService.UrlProcessingResult {
-        return processInternal(url, browser) { html ->
+    ): Flow<UrlProcessingEvent> {
+        return processInternalAsFlow(url, browser) { html ->
             webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html)
         }
     }
 
-    override suspend fun processUrl(
+    override fun processUrlAsFlow(
         url: String,
         browser: IBrowser
-    ): IUrlContentProcessingService.UrlProcessingResult {
-        return processInternal(url, browser) { html ->
+    ): Flow<UrlProcessingEvent> {
+        return processInternalAsFlow(url, browser) { html ->
             webpageLinkDiscoveryService.discoverAllLinks(html, url)
         }
     }
 
-    private suspend fun processInternal(
+    private fun processInternalAsFlow(
         url: String,
         browser: IBrowser,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
-    ): IUrlContentProcessingService.UrlProcessingResult {
+    ): Flow<UrlProcessingEvent> = flow {
         logger.debug("Processing URL: {}", url)
 
         val normalizedUrl = normalizeUrlService.normalize(url) ?: url
 
-        return urlProcessingLockRegistry.withKeyLock(normalizedUrl) {
+        urlProcessingLockRegistry.withKeyLock(normalizedUrl) {
             when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl)) {
                 is CachedWebpageResult.Hit -> {
                     logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
-                    return@withKeyLock handleCachedResult(url, cacheResult.webpageMarkdown, discoverLinks)
+                    handleCachedResultAsFlow(url, cacheResult.webpageMarkdown, discoverLinks)
+                        .collect { event -> emit(event) }
+                    return@withKeyLock
                 }
                 is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
                     logger.debug("Cache miss/expired for URL, proceeding with processing: {}", normalizedUrl)
@@ -89,81 +105,88 @@ class UrlContentProcessingService(
             when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
                 is ContentTypeResult.Html -> {
                     logger.debug("Detected HTML content for: {}", normalizedUrl)
-                    processHtmlUrl(normalizedUrl, browser, discoverLinks)
+                    processHtmlUrlAsFlow(normalizedUrl, browser, discoverLinks)
+                        .collect { event -> emit(event) }
                 }
                 is ContentTypeResult.Pdf -> {
                     logger.debug("Detected PDF content for: {} ({} bytes)", normalizedUrl, contentTypeResult.bytes.size)
-                    processPdfUrl(normalizedUrl, contentTypeResult)
+                    processPdfUrlAsFlow(normalizedUrl, contentTypeResult)
+                        .collect { event -> emit(event) }
                 }
                 is ContentTypeResult.Unsupported -> {
                     logger.debug("Unsupported content type for {}: {}", normalizedUrl, contentTypeResult.contentType)
                     cacheUnsupportedContent(normalizedUrl, contentTypeResult)
-                    IUrlContentProcessingService.UrlProcessingResult(normalizedUrl, "", emptyList())
                 }
                 is ContentTypeResult.Failed -> {
                     logger.debug("Failed to resolve content type for {}: {} {}", normalizedUrl, contentTypeResult.statusCode, contentTypeResult.reasonPhrase)
                     cacheFailedRequest(normalizedUrl, contentTypeResult)
-                    IUrlContentProcessingService.UrlProcessingResult(normalizedUrl, "", emptyList())
                 }
             }
         }
     }
 
-    private suspend fun handleCachedResult(
+    private fun handleCachedResultAsFlow(
         originalUrl: String,
         cached: io.deepsearch.domain.models.entities.WebpageMarkdown,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
-    ): IUrlContentProcessingService.UrlProcessingResult {
+    ): Flow<UrlProcessingEvent> = flow {
         if (cached.httpStatus != null && cached.httpStatus !in 200..299) {
             logger.debug("Cached failure for URL: {} (status: {})", originalUrl, cached.httpStatus)
-            return IUrlContentProcessingService.UrlProcessingResult(originalUrl, "", emptyList())
+            emit(UrlProcessingEvent.MarkdownExtractionComplete(originalUrl, ""))
+            return@flow
         }
 
         val cachedHtml = cached.html
         val links = if (cachedHtml != null) discoverLinks(cachedHtml) else emptyList()
 
-        return IUrlContentProcessingService.UrlProcessingResult(originalUrl, cached.markdown ?: "", links)
+        // Emit links first, then markdown (consistent with non-cached flow)
+        logger.debug("Emitting {} cached links for URL: {}", links.size, originalUrl)
+        emit(UrlProcessingEvent.LinkDiscoveryComplete(originalUrl, links))
+        
+        logger.debug("Emitting cached markdown for URL: {} ({} chars)", originalUrl, cached.markdown?.length ?: 0)
+        emit(UrlProcessingEvent.MarkdownExtractionComplete(originalUrl, cached.markdown ?: ""))
     }
 
-    private suspend fun processHtmlUrl(
+    private fun processHtmlUrlAsFlow(
         normalizedUrl: String,
         browser: IBrowser,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
-    ): IUrlContentProcessingService.UrlProcessingResult = coroutineScope {
+    ): Flow<UrlProcessingEvent> = channelFlow {
         val context = browser.createContext()
         val page = context.newPage()
         page.navigate(normalizedUrl)
 
         val extractedHtml = page.getFullHtml()
 
-        val markdownDeferred = async {
-            webpageExtractionService.extractWebpage(page)
+        // Launch link discovery concurrently
+        launch {
+            val discoveredLinks = discoverLinks(extractedHtml)
+            logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
+            send(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
         }
-        val linksDeferred = async {
-            discoverLinks(extractedHtml)
+
+        // Launch markdown extraction concurrently
+        launch {
+            val extractedMarkdown = webpageExtractionService.extractWebpage(page)
+            logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractedMarkdown.length)
+
+            webpageCacheService.cacheWebpage(
+                url = normalizedUrl,
+                markdown = extractedMarkdown,
+                html = extractedHtml,
+                httpStatus = 200,
+                httpReason = "OK",
+                mimeType = "text/html"
+            )
+
+            send(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown))
         }
-
-        val extractedMarkdown = markdownDeferred.await()
-        val discoveredLinks = linksDeferred.await()
-
-        webpageCacheService.cacheWebpage(
-            url = normalizedUrl,
-            markdown = extractedMarkdown,
-            html = extractedHtml,
-            httpStatus = 200,
-            httpReason = "OK",
-            mimeType = "text/html"
-        )
-
-        logger.debug("Processed HTML for URL: {} ({} chars, {} links)", normalizedUrl, extractedMarkdown.length, discoveredLinks.size)
-
-        IUrlContentProcessingService.UrlProcessingResult(normalizedUrl, extractedMarkdown, discoveredLinks)
     }
 
-    private suspend fun processPdfUrl(
+    private fun processPdfUrlAsFlow(
         normalizedUrl: String,
         result: ContentTypeResult.Pdf
-    ): IUrlContentProcessingService.UrlProcessingResult {
+    ): Flow<UrlProcessingEvent> = flow {
         val markdown = pdfConversionService.convertPdfToMarkdown(result.bytes)
 
         webpageCacheService.cacheWebpage(
@@ -177,7 +200,8 @@ class UrlContentProcessingService(
 
         logger.debug("Processed PDF for URL: {} ({} chars)", normalizedUrl, markdown.length)
 
-        return IUrlContentProcessingService.UrlProcessingResult(normalizedUrl, markdown, emptyList())
+        // PDFs don't have discoverable links, only markdown
+        emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, markdown))
     }
 
     private suspend fun cacheUnsupportedContent(

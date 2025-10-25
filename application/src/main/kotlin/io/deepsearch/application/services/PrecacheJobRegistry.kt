@@ -1,28 +1,31 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.entities.PrecacheJob
 import io.deepsearch.domain.models.entities.PrecacheJobState
-import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.IPrecacheJobRepository
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.flatMapMerge
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.util.ArrayDeque
-import java.util.LinkedHashSet
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 interface IPrecacheJobRegistry {
     fun events(jobId: Long): SharedFlow<IPrecacheService.PrecacheEvent>
@@ -66,7 +69,7 @@ class PrecacheJobRegistry(
     override suspend fun ensureRunning(job: PrecacheJob) {
         val id = requireNotNull(job.id) { "Job must have an id" }
         runs.compute(id) { _, existing ->
-            if (existing == null || existing.job.isCompleted) {
+            if (existing == null) {
                 val flow = MutableSharedFlow<IPrecacheService.PrecacheEvent>(replay = 1)
                 val coroutine = applicationScope.scope.launch { runPrecache(job, flow) }
                 Run(flow, coroutine)
@@ -101,77 +104,12 @@ class PrecacheJobRegistry(
 
         val browser = browserPool.acquireBrowser()
         try {
-            val seeds = discoverSeeds(job.baseUrl)
-            val initial = buildList {
-                add(WebpageLink(url = job.baseUrl, source = LinkSource.LINK_RELEVANCE, reason = "base"))
-                addAll(seeds)
-            }
-
-            val queue: ArrayDeque<String> = ArrayDeque(
-                initial
-                    .map { normalize(it.url) }
-                    .filter { it.startsWith(job.baseUrl) }
-                    .distinct()
+            extractAndCacheLinks(
+                jobId = jobId,
+                job = job,
+                browser = browser,
+                eventFlow = flow
             )
-
-            val visited: MutableSet<String> = LinkedHashSet()
-            var processed = job.processedCount
-
-            while (queue.isNotEmpty() && processed < job.maxUrlCount) {
-                val remainingBudget = job.maxUrlCount - processed
-
-                val currentBatch = buildList {
-                    while (isNotEmpty(queue) && size < remainingBudget) {
-                        val next = queue.removeFirst()
-                        val normalized = normalize(next)
-                        if (normalized.startsWith(job.baseUrl) && !visited.contains(normalized) && !any { it == normalized }) {
-                            add(normalized)
-                        }
-                    }
-                }
-
-                if (currentBatch.isEmpty()) break
-
-                val results = coroutineScope {
-                    currentBatch.map { url ->
-                        async(dispatchers.io) {
-                            when (val cacheResult = webpageCacheService.getCachedMarkdown(url)) {
-                                is CachedWebpageResult.Hit -> {
-                                    val cachedHtml = cacheResult.webpageMarkdown.html
-                                    val discovered = if (cachedHtml != null) {
-                                        webpageLinkDiscoveryService.discoverAllLinks(cachedHtml, job.baseUrl)
-                                    } else emptyList()
-                                    PrecacheStepResult(url = url, cachedHit = true, discoveredLinks = discovered)
-                                }
-                                is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
-                                    val processingResult = urlContentProcessingService.processUrl(url, browser)
-                                    PrecacheStepResult(url = url, cachedHit = false, discoveredLinks = processingResult.discoveredLinks)
-                                }
-                            }
-                        }
-                    }.awaitAll()
-                }
-
-                results.forEach { result ->
-                    visited.add(result.url)
-                    enqueue(queue, job.baseUrl, visited, result.discoveredLinks)
-                    processed += 1
-                    job.incrementProcessed(System.currentTimeMillis())
-                    jobRepository.update(job)
-                    flow.emit(
-                        IPrecacheService.PrecacheEvent(
-                            jobId = jobId,
-                            baseUrl = job.baseUrl,
-                            url = result.url,
-                            processedCount = processed,
-                            maxUrlCount = job.maxUrlCount,
-                            cachedHit = result.cachedHit,
-                            totalQueued = queue.size,
-                            state = job.state
-                        )
-                    )
-                }
-            }
 
             job.markCompleted(System.currentTimeMillis())
             jobRepository.update(job)
@@ -180,7 +118,7 @@ class PrecacheJobRegistry(
                     jobId = jobId,
                     baseUrl = job.baseUrl,
                     url = null,
-                    processedCount = processed,
+                    processedCount = job.processedCount,
                     maxUrlCount = job.maxUrlCount,
                     cachedHit = null,
                     totalQueued = 0,
@@ -211,17 +149,159 @@ class PrecacheJobRegistry(
         }
     }
 
-    private fun enqueue(
-        queue: ArrayDeque<String>,
-        baseUrl: String,
-        visited: Set<String>,
-        links: List<WebpageLink>
+    /**
+     * Reactive flow orchestration for precaching links.
+     * Similar to AgenticBrowserSearchOrchestrator but without query filtering.
+     */
+    private suspend fun extractAndCacheLinks(
+        jobId: Long,
+        job: PrecacheJob,
+        browser: IBrowser,
+        eventFlow: MutableSharedFlow<IPrecacheService.PrecacheEvent>
     ) {
-        links.forEach { link ->
-            val n = normalize(link.url)
-            if (n.startsWith(baseUrl) && !visited.contains(n)) {
-                queue.addLast(n)
+        val visitedUrls = ConcurrentHashMap.newKeySet<String>()
+        val processedCount = AtomicInteger(job.processedCount)
+        val discoveredLinksFlow = MutableSharedFlow<String>(
+            extraBufferCapacity = Int.MAX_VALUE
+        )
+
+        // Initial link flow: base URL
+        val initialLinkFlow = flowOf(normalize(job.baseUrl))
+
+        // Seed link flow: Google search results
+        val seedLinkFlow = createSeedLinkFlow(job.baseUrl)
+
+        // Merge all link sources and process
+        merge(initialLinkFlow, seedLinkFlow, discoveredLinksFlow)
+            .filterByBaseUrl(job.baseUrl)
+            .processLinks(
+                jobId = jobId,
+                job = job,
+                browser = browser,
+                visitedUrls = visitedUrls,
+                processedCount = processedCount,
+                discoveredLinksFlow = discoveredLinksFlow
+            )
+            .takeWhile { processedCount.get() < job.maxUrlCount }
+            .onEach { result ->
+                // Emit progress event
+                eventFlow.emit(
+                    IPrecacheService.PrecacheEvent(
+                        jobId = jobId,
+                        baseUrl = job.baseUrl,
+                        url = result.url,
+                        processedCount = processedCount.get(),
+                        maxUrlCount = job.maxUrlCount,
+                        cachedHit = result.cachedHit,
+                        totalQueued = 0,
+                        state = job.state
+                    )
+                )
             }
+            .onCompletion {
+                logger.info("[{}] Precache complete: {} pages processed", jobId, processedCount.get())
+            }
+            .collect { /* Terminal operator */ }
+    }
+
+    /**
+     * Flow extension: filter URLs to only include those under the base URL.
+     */
+    private fun Flow<String>.filterByBaseUrl(baseUrl: String): Flow<String> = flow {
+        collect { url ->
+            if (url.startsWith(baseUrl)) {
+                emit(url)
+            }
+        }
+    }
+
+    /**
+     * Flow extension: process links to extract content and discover new links.
+     * Similar to AgenticBrowserSearchOrchestrator.processLinksToMarkdown but for precaching.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun Flow<String>.processLinks(
+        jobId: Long,
+        job: PrecacheJob,
+        browser: IBrowser,
+        visitedUrls: MutableSet<String>,
+        processedCount: AtomicInteger,
+        discoveredLinksFlow: MutableSharedFlow<String>
+    ): Flow<PrecacheStepResult> = flatMapMerge(concurrency = 10) { url ->
+        flow {
+            try {
+                val normalizedUrl = normalize(url)
+
+                // Skip if already visited
+                if (!visitedUrls.add(normalizedUrl)) {
+                    logger.debug("[{}] Skipping already visited URL: {}", jobId, normalizedUrl)
+                    return@flow
+                }
+
+                // Check budget
+                if (processedCount.get() >= job.maxUrlCount) {
+                    logger.debug("[{}] Budget exceeded, skipping: {}", jobId, normalizedUrl)
+                    return@flow
+                }
+
+                // Process URL and collect events
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, browser)
+                    .collect { event ->
+                        when (event) {
+                            is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                // Emit discovered links to the feedback flow
+                                logger.debug(
+                                    "[{}] Links discovered for {}: {} links",
+                                    jobId,
+                                    normalizedUrl,
+                                    event.discoveredLinks.size
+                                )
+                                event.discoveredLinks.forEach { link ->
+                                    val normalizedLink = normalize(link.url)
+                                    if (normalizedLink.startsWith(job.baseUrl)) {
+                                        discoveredLinksFlow.emit(normalizedLink)
+                                    }
+                                }
+                            }
+                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                // Markdown extraction complete, increment counter and emit result
+                                val count = processedCount.incrementAndGet()
+                                job.incrementProcessed(System.currentTimeMillis())
+                                jobRepository.update(job)
+                                
+                                logger.debug(
+                                    "[{}] Markdown cached for {}: {} chars (progress: {}/{})",
+                                    jobId,
+                                    normalizedUrl,
+                                    event.markdown.length,
+                                    count,
+                                    job.maxUrlCount
+                                )
+                                
+                                // Determine if this was a cache hit by checking if markdown was already cached
+                                val cachedHit = event.markdown.isNotEmpty()
+                                emit(PrecacheStepResult(url = normalizedUrl, cachedHit = cachedHit))
+                            }
+                        }
+                    }
+            } catch (e: Exception) {
+                logger.warn("[{}] Failed to process {}: {}", jobId, url, e.message)
+            }
+        }
+    }
+
+    /**
+     * Create a flow of seed links from Google search.
+     */
+    private fun createSeedLinkFlow(baseUrl: String): Flow<String> = flow {
+        try {
+            val seeds = discoverSeeds(baseUrl)
+            logger.debug("Discovered {} seed links for base URL: {}", seeds.size, baseUrl)
+            seeds.forEach { link ->
+                emit(normalize(link.url))
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to discover seeds for {}: {}", baseUrl, e.message, e)
         }
     }
 
@@ -236,11 +316,8 @@ class PrecacheJobRegistry(
 
     private data class PrecacheStepResult(
         val url: String,
-        val cachedHit: Boolean,
-        val discoveredLinks: List<WebpageLink>
+        val cachedHit: Boolean
     )
-
-    private fun isNotEmpty(queue: ArrayDeque<String>): Boolean = queue.isNotEmpty()
 }
 
 
