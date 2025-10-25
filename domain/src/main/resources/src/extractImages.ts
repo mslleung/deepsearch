@@ -45,13 +45,24 @@
     // Extract regular img elements
     const images = Array.from(document.querySelectorAll('img'));
 
+    // Wait for all images to load
+    await Promise.all(images.map(img => {
+      if (img.complete) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        img.onload = () => resolve();
+        img.onerror = () => resolve(); // Continue even if image fails to load
+        // Timeout after 1 seconds
+        setTimeout(() => resolve(), 1000);
+      });
+    }));
+
     console.log(`Found ${images.length} img elements to process`);
     
-    // Process img elements
-    for (const img of images) {
+    // Process img elements in parallel
+    const imgResults = await Promise.all(images.map(async (img) => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
-      if (!ctx) continue;
+      if (!ctx) return null;
       
       // Get displayed dimensions
       const rect = img.getBoundingClientRect();
@@ -67,7 +78,7 @@
       }
       
       // Skip if still no valid dimensions
-      if (width === 0 || height === 0) continue;
+      if (width === 0 || height === 0) return null;
       
       const scale = 2;
       canvas.width = Math.max(1, Math.floor(width * scale));
@@ -89,7 +100,7 @@
             tempImg.onload = () => resolve();
             tempImg.onerror = () => reject(new Error('Failed to load image with crossOrigin'));
             tempImg.src = imageSrc;
-            setTimeout(() => reject(new Error('Timeout loading image with crossOrigin')), 3000);
+            setTimeout(() => reject(new Error('Timeout loading image with crossOrigin')), 1000);
           });
           
           ctx.drawImage(tempImg, 0, 0, width, height);
@@ -99,20 +110,34 @@
         const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         
         const xPathSelector = uniqueXPathFor(img);
-        if (!imagesToXPathSelectors.has(base64)) {
-          imagesToXPathSelectors.set(base64, new Set());
-        }
-        imagesToXPathSelectors.get(base64)!.add(xPathSelector);
+        return { base64, xPathSelector, failed: null };
       } catch (e) {
         // Store failed images for fallback processing
         const errorMsg = e instanceof Error ? e.message : String(e);
         console.warn(`Failed to extract image at ${uniqueXPathFor(img)}: ${errorMsg}`);
-        failedImages.push({
-          element: img,
-          xPath: uniqueXPathFor(img),
-          reason: errorMsg
-        });
-        continue;
+        return {
+          base64: null,
+          xPathSelector: null,
+          failed: {
+            element: img,
+            xPath: uniqueXPathFor(img),
+            reason: errorMsg
+          }
+        };
+      }
+    }));
+    
+    // Aggregate results from parallel processing
+    for (const result of imgResults) {
+      if (!result) continue;
+      
+      if (result.failed) {
+        failedImages.push(result.failed);
+      } else if (result.base64 && result.xPathSelector) {
+        if (!imagesToXPathSelectors.has(result.base64)) {
+          imagesToXPathSelectors.set(result.base64, new Set());
+        }
+        imagesToXPathSelectors.get(result.base64)!.add(result.xPathSelector);
       }
     }
     
@@ -124,21 +149,23 @@
     });
     
     console.log(`Found ${elementsWithBackgrounds.length} elements with backgrounds to process`);
-    for (const element of elementsWithBackgrounds) {
+    
+    // Process background images in parallel
+    const bgResults = await Promise.all(elementsWithBackgrounds.map(async (element) => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
-      if (!ctx) continue;
+      if (!ctx) return null;
       
       const rect = element.getBoundingClientRect();
       const computedStyle = window.getComputedStyle(element);
       
       // Skip elements that are completely hidden
       if (computedStyle.display === 'none' || computedStyle.visibility === 'hidden' || computedStyle.opacity === '0') {
-        continue;
+        return null;
       }
       
       // Skip if no valid dimensions
-      if (rect.width === 0 || rect.height === 0) continue;
+      if (rect.width === 0 || rect.height === 0) return null;
       
       const width = Math.ceil(rect.width);
       const height = Math.ceil(rect.height);
@@ -163,7 +190,7 @@
             tempImg.onload = () => resolve();
             tempImg.onerror = () => reject(new Error('Failed to load background image with crossOrigin'));
             tempImg.src = imageUrl;
-            setTimeout(() => reject(new Error('Timeout loading background image with crossOrigin')), 3000);
+            setTimeout(() => reject(new Error('Timeout loading background image with crossOrigin')), 1000);
           });
           
           ctx.drawImage(tempImg, 0, 0, width, height);
@@ -172,21 +199,36 @@
           const base64 = dataUrl.replace(/^data:[^,]+,/, '');
           
           const xPathSelector = uniqueXPathFor(element);
-          if (!imagesToXPathSelectors.has(base64)) {
-            imagesToXPathSelectors.set(base64, new Set());
-          }
-          imagesToXPathSelectors.get(base64)!.add(xPathSelector);
+          return { base64, xPathSelector, failed: null };
         }
+        return null;
       } catch (e) {
         // Store failed background images for fallback processing
         const errorMsg = e instanceof Error ? e.message : String(e);
         console.warn(`Failed to extract background image at ${uniqueXPathFor(element)}: ${errorMsg}`);
-        failedImages.push({
-          element: element,
-          xPath: uniqueXPathFor(element),
-          reason: errorMsg
-        });
-        continue;
+        return {
+          base64: null,
+          xPathSelector: null,
+          failed: {
+            element: element,
+            xPath: uniqueXPathFor(element),
+            reason: errorMsg
+          }
+        };
+      }
+    }));
+    
+    // Aggregate results from parallel background processing
+    for (const result of bgResults) {
+      if (!result) continue;
+      
+      if (result.failed) {
+        failedImages.push(result.failed);
+      } else if (result.base64 && result.xPathSelector) {
+        if (!imagesToXPathSelectors.has(result.base64)) {
+          imagesToXPathSelectors.set(result.base64, new Set());
+        }
+        imagesToXPathSelectors.get(result.base64)!.add(result.xPathSelector);
       }
     }
     
