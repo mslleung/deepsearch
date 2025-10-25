@@ -4,10 +4,14 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -33,36 +37,49 @@ class WebpageExtractionService(
      * The extracted text is primed for information retrieval on the current page.
      */
     override suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
-        // Perform extraction
         val title = webpage.getTitle()
         val description = webpage.getDescription()
 
-        // Identify all semantic elements (navigation + popups) before any modifications
-        val semanticElements = semanticIdentificationService.identifySemanticElements(webpage)
+        // Step 1: Take screenshot and html (browser operations)
+        val screenshot = webpage.takeFullPageScreenshot()
+        val html = webpage.getFullHtml()
 
-        // Extract popup text content first (before removal)
-        val popupText = if (semanticElements.popups.isNotEmpty()) {
-            buildString {
-                semanticElements.popups.forEach { popup ->
-                    val text = webpage.extractElementTextContent(popup.xpath)
-                    if (text.isNotBlank()) {
-                        appendLine(text)
-                    }
-                }
-            }
-        } else {
-            null
-        }
+        // Step 2: Extract icons (sequential, browser interaction)
+        val icons = webpage.extractIcons()
 
-        // Remove all semantic elements (popups + navigation elements)
+        // Step 3: Extract images (sequential, browser interaction)
+        val images = webpage.extractImages()
+
+        // Step 4: Run LLM operations concurrently using Flow
+        val semanticElementsFlow = identifySemanticElementsFlow(
+            screenshot.bytes, screenshot.mimeType, html
+        )
+        val iconReplacementsFlow = interpretIconsFlow(icons)
+        val imageReplacementsFlow = interpretImagesFlow(images)
+
+        // Combine all three flows and collect
+        val (semanticElements, iconReplacements, imageReplacements) = combine(
+            semanticElementsFlow,
+            iconReplacementsFlow,
+            imageReplacementsFlow
+        ) { semantic, iconRep, imageRep ->
+            Triple(semantic, iconRep, imageRep)
+        }.first()
+
+        // Step 5: Replace icons and images
+        webpage.replaceElementsByXPathWithText(iconReplacements + imageReplacements)
+
+        // Step 6: Extract popup text (before removal)
+        val popupText = extractPopupText(webpage, semanticElements)
+
+        // Step 7: Remove semantic elements
         removeSemanticElements(webpage, semanticElements)
 
-        replaceIconsWithTexts(webpage)
-        replaceImagesWithTexts(webpage)
+        // Step 8: Process tables (unchanged)
         replaceTablesWithTexts(webpage)
 
+        // Step 9: Extract final text and build result
         val extractedText = webpage.extractTextContent()
-
         buildString {
             appendLine("URL: ${webpage.getUrl()}")
             appendLine("Title: $title")
@@ -78,32 +95,54 @@ class WebpageExtractionService(
         }.trim()
     }
 
-    private suspend fun replaceIconsWithTexts(webpage: IBrowserPage) = coroutineScope {
-        val icons = webpage.extractIcons()
 
-        // Interpret all icons in batch for efficiency
-        val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons)
-
-        // Build replacements for each XPath
-        val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
-            icon.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, interpretedText) }
-        }
-
-        webpage.replaceElementsByXPathWithText(replacements)
+    private fun identifySemanticElementsFlow(
+        screenshotBytes: ByteArray,
+        mimeType: ImageMimeType,
+        html: String
+    ) = flow {
+        val semanticElements = semanticIdentificationService.identifySemanticElements(
+            screenshotBytes, mimeType, html
+        )
+        emit(semanticElements)
     }
 
-    private suspend fun replaceImagesWithTexts(webpage: IBrowserPage) = coroutineScope {
-        val images = webpage.extractImages()
-
-        // Extract text from all images in batch for efficiency
-        val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images)
-
-        // Build replacements for each XPath
-        val replacements = images.zip(extractedTexts).flatMap { (image, extractedText) ->
-            image.xPathSelectors.map { xpath -> IBrowserPage.XPathReplacementWithText(xpath, extractedText) }
+    private fun interpretIconsFlow(icons: List<IBrowserPage.Icon>) = flow {
+        val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons)
+        val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
+            icon.xPathSelectors.map { xpath ->
+                IBrowserPage.XPathReplacementWithText(xpath, interpretedText)
+            }
         }
+        emit(replacements)
+    }
 
-        webpage.replaceElementsByXPathWithText(replacements)
+    private fun interpretImagesFlow(images: List<IBrowserPage.WebImage>) = flow {
+        val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images)
+        val replacements = images.zip(extractedTexts).flatMap { (image, extractedText) ->
+            image.xPathSelectors.map { xpath ->
+                IBrowserPage.XPathReplacementWithText(xpath, extractedText)
+            }
+        }
+        emit(replacements)
+    }
+
+    private suspend fun extractPopupText(
+        webpage: IBrowserPage,
+        semanticElements: SemanticElements
+    ): String? {
+        return if (semanticElements.popups.isNotEmpty()) {
+            buildString {
+                semanticElements.popups.forEach { popup ->
+                    val text = webpage.extractElementTextContent(popup.xpath)
+                    if (text.isNotBlank()) {
+                        appendLine(text)
+                    }
+                }
+            }
+        } else {
+            null
+        }
     }
 
     private suspend fun replaceTablesWithTexts(webpage: IBrowserPage) = coroutineScope {

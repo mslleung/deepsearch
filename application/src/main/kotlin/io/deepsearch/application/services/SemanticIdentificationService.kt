@@ -2,7 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.SemanticIdentificationInput
-import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.entities.WebpageSemanticElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
@@ -15,9 +15,16 @@ interface ISemanticIdentificationService {
      * Identifies all semantic elements (navigation elements + popups) on a webpage.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
      * 
+     * @param screenshotBytes The screenshot of the webpage
+     * @param mimeType The MIME type of the screenshot
+     * @param html The full HTML of the webpage
      * @return SemanticElements containing all identified semantic elements grouped by type
      */
-    suspend fun identifySemanticElements(webpage: IBrowserPage): SemanticElements
+    suspend fun identifySemanticElements(
+        screenshotBytes: ByteArray,
+        mimeType: ImageMimeType,
+        html: String
+    ): SemanticElements
 }
 
 class SemanticIdentificationService(
@@ -27,12 +34,13 @@ class SemanticIdentificationService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun identifySemanticElements(webpage: IBrowserPage): SemanticElements {
-        val screenshot = webpage.takeScreenshot()
-        val html = webpage.getFullHtml()
-
+    override suspend fun identifySemanticElements(
+        screenshotBytes: ByteArray,
+        mimeType: ImageMimeType,
+        html: String
+    ): SemanticElements {
         // Use screenshot hash for caching (more reliable than HTML for popup detection)
-        val pageHash = MessageDigest.getInstance("SHA-256").digest(screenshot.bytes)
+        val pageHash = MessageDigest.getInstance("SHA-256").digest(screenshotBytes)
 
         val cached = webpageSemanticElementRepository.findByHash(pageHash)
         if (cached != null) {
@@ -42,8 +50,8 @@ class SemanticIdentificationService(
 
         val identificationResult = semanticIdentificationAgent.generate(
             SemanticIdentificationInput(
-                screenshotBytes = screenshot.bytes,
-                mimetype = screenshot.mimeType,
+                screenshotBytes = screenshotBytes,
+                mimetype = mimeType,
                 html = html
             )
         )
