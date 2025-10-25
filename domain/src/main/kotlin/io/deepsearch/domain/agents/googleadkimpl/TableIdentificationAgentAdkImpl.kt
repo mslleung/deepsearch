@@ -30,24 +30,24 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("List of XPath selectors for table roots")
+        .description("List of CSS selectors for table roots")
         .properties(
             mapOf(
                 "tables" to Schema.builder()
                     .type("ARRAY")
-                    .description("Array of XPath strings pointing to table roots and captions")
+                    .description("Array of CSS selector strings pointing to table roots and captions")
                     .items(
                         Schema.builder()
                             .type("OBJECT")
                             .properties(
                                 mapOf(
-                                    "xpath" to Schema.builder().type("STRING").description("The XPath to the table.")
+                                    "cssSelector" to Schema.builder().type("STRING").description("The CSS selector to the table.")
                                         .build(),
                                     "auxiliaryInfo" to Schema.builder().type("STRING")
                                         .description("The auxiliary info for the table.").build()
                                 )
                             )
-                            .required(listOf("xpath", "auxiliaryInfo"))
+                            .required(listOf("cssSelector", "auxiliaryInfo"))
                             .build()
                     )
                     .build()
@@ -58,7 +58,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableIdentificationAgent")
-        description("Identify tables in webpage using screenshot and cleaned HTML, return XPath selectors to their root containers")
+        description("Identify tables in webpage using screenshot and cleaned HTML, return CSS selectors to their root containers")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -75,7 +75,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         )
         instruction(
             """
-            Your task is to identify all tables in the provided webpage and generate XPath queries to their root containers.
+            Your task is to identify all tables in the provided webpage and generate CSS selectors to their root containers.
 
             Inputs:
             - A screenshot of the full webpage
@@ -84,18 +84,16 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             Instructions:
             - Analyze both the screenshot and HTML to identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
-            - For every table you find, create a XPath selector that targets the smallest ROOT CONTAINER element that wraps the entire table.
-            - The XPath selectors should be as simplistic and direct as possible. It should contain no more than the bare minimal to uniquely identify the table.
+            - For every table you find, create a CSS selector that targets the smallest ROOT CONTAINER element that wraps the entire table.
+            - The CSS selectors should be as simplistic and direct as possible. It should contain no more than the bare minimal to uniquely identify the table.
+            - Prefer using IDs when available (e.g., "#tableId"), then classes (e.g., ".table-class"), then element type with nth-child if needed (e.g., "table:nth-child(2)").
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
-            
-            Example XPath:
-            //div[@class='example-table']
 
             Expected output shape:
             {
                 "tables": [
                     {
-                        "xpath": "string",
+                        "cssSelector": "string",
                         "auxiliaryInfo": "string"
                     }
                 ]

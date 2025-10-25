@@ -91,9 +91,19 @@ interface IBrowserPage {
     suspend fun getElementScreenshotByXPath(xpath: String): Screenshot
 
     /**
+     * Takes a screenshot of the element matched by the provided CSS selector.
+     */
+    suspend fun getElementScreenshotByCssSelector(cssSelector: String): Screenshot
+
+    /**
      * Returns the outer HTML of the element matched by the provided XPath expression.
      */
     suspend fun getElementHtmlByXPath(xpath: String): String
+
+    /**
+     * Returns the outer HTML of the element matched by the provided CSS selector.
+     */
+    suspend fun getElementHtmlByCssSelector(cssSelector: String): String
 
     /**
      * Click the first element matching the provided XPath selector.
@@ -199,14 +209,6 @@ interface IBrowserPage {
     suspend fun getDescription(): String?
 
     /**
-     * Replace all elements matching the given CSS selector with a text node.
-     * If text is null, remove the elements entirely.
-     * @param cssSelector CSS selector to match elements
-     * @param text Replacement text, or null to remove elements
-     */
-    suspend fun replaceElementsWithText(cssSelector: String, text: String?)
-
-    /**
      * Replacement instruction for XPath-targeted nodes.
      */
     data class XPathReplacementWithText(
@@ -215,10 +217,24 @@ interface IBrowserPage {
     )
 
     /**
+     * Replacement instruction for CSS selector-targeted nodes.
+     */
+    data class CssSelectorReplacementWithText(
+        val cssSelector: String,
+        val text: String?
+    )
+
+    /**
      * Replace multiple elements by XPath with text nodes in a single batch operation.
      * @param replacements List of XPathReplacement. If text is null, removes the elements.
      */
     suspend fun replaceElementsByXPathWithText(replacements: List<XPathReplacementWithText>)
+
+    /**
+     * Replace multiple elements by CSS selector with text nodes in a single batch operation.
+     * @param replacements List of CssSelectorReplacementWithText. If text is null, removes the elements.
+     */
+    suspend fun replaceElementsByCssSelectorWithText(replacements: List<CssSelectorReplacementWithText>)
 
     /**
      * Extract text content from the page, excluding script and style tags.

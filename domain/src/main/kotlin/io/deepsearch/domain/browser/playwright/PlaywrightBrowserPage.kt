@@ -94,10 +94,32 @@ class PlaywrightBrowserPage(
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
     }
 
+    override suspend fun getElementScreenshotByCssSelector(cssSelector: String): IBrowserPage.Screenshot {
+        logger.debug("Taking element screenshot by CSS selector: {}", cssSelector)
+        val bytes = apiMutex.withLock {
+            val locator = page.locator(cssSelector)
+            // When CSS selector matches multiple elements, select the last one
+            val target = locator.last()
+            target.screenshot(
+                Locator.ScreenshotOptions().apply { type = ScreenshotType.JPEG }
+            )
+        }
+        return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
+    }
+
     override suspend fun getElementHtmlByXPath(xpath: String): String {
         logger.debug("Getting element outerHTML by XPath: {}", xpath)
         return apiMutex.withLock {
             val locator = page.locator("xpath=$xpath")
+            val target = locator.last()
+            target.evaluate("el => el.outerHTML") as String
+        }
+    }
+
+    override suspend fun getElementHtmlByCssSelector(cssSelector: String): String {
+        logger.debug("Getting element outerHTML by CSS selector: {}", cssSelector)
+        return apiMutex.withLock {
+            val locator = page.locator(cssSelector)
             val target = locator.last()
             target.evaluate("el => el.outerHTML") as String
         }
@@ -244,37 +266,6 @@ class PlaywrightBrowserPage(
         }
     }
 
-    override suspend fun replaceElementsWithText(cssSelector: String, text: String?) {
-        logger.debug("Replace elements by CSS selector: {} with text: {}", cssSelector, text)
-
-        if (text != null) {
-            apiMutex.withLock {
-                page.evaluate(
-                    """
-                (selector, replacement) => {
-                    const elements = document.querySelectorAll(selector);
-                    elements.forEach(el => {
-                        const textNode = document.createTextNode(replacement);
-                        el.replaceWith(textNode);
-                    });
-                }
-            """, mapOf("selector" to cssSelector, "replacement" to text)
-                )
-            }
-        } else {
-            apiMutex.withLock {
-                page.evaluate(
-                    """
-                (selector) => {
-                    const elements = document.querySelectorAll(selector);
-                    elements.forEach(el => el.remove());
-                }
-            """, cssSelector
-                )
-            }
-        }
-    }
-
     override suspend fun replaceElementsByXPathWithText(replacements: List<IBrowserPage.XPathReplacementWithText>) {
         if (replacements.isEmpty()) {
             return
@@ -313,6 +304,56 @@ class PlaywrightBrowserPage(
                     
                     // When XPath matches multiple nodes (target + ancestors), select the leaf-most node
                     const target = xpathResult.snapshotItem(count - 1);
+                    
+                    if (text !== null && text !== undefined) {
+                        // Replace element with text node
+                        const parent = target.parentNode;
+                        if (!parent || parent.nodeType === Node.DOCUMENT_NODE) {
+                            continue;
+                        }
+                        const textNode = document.createTextNode(text);
+                        parent.replaceChild(textNode, target);
+                    } else {
+                        // Remove element
+                        target.remove();
+                    }
+                }
+            }
+            """, replacementsData
+            )
+        }
+    }
+
+    override suspend fun replaceElementsByCssSelectorWithText(replacements: List<IBrowserPage.CssSelectorReplacementWithText>) {
+        if (replacements.isEmpty()) {
+            return
+        }
+
+        logger.debug("Replace {} CSS selector elements with text", replacements.size)
+
+        // Convert replacements to a format that can be serialized for JavaScript
+        val replacementsData = replacements.map {
+            mapOf("cssSelector" to it.cssSelector, "text" to it.text)
+        }
+
+        // Perform all replacements in a single evaluate call for optimal performance
+        apiMutex.withLock {
+            page.evaluate(
+                """
+            (replacements) => {
+                for (const replacement of replacements) {
+                    const cssSelector = replacement.cssSelector;
+                    const text = replacement.text;
+                    
+                    // Query all matching elements
+                    const elements = document.querySelectorAll(cssSelector);
+                    
+                    if (elements.length === 0) {
+                        continue;
+                    }
+                    
+                    // When CSS selector matches multiple elements, select the last one
+                    const target = elements[elements.length - 1];
                     
                     if (text !== null && text !== undefined) {
                         // Replace element with text node

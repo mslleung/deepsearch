@@ -159,9 +159,9 @@ class WebpageExtractionService(
 
         // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)
         val tableInputs = tables.map { table ->
-            val elementScreenshot = webpage.getElementScreenshotByXPath(table.xpath)
-            val elementHtml = webpage.getElementHtmlByXPath(table.xpath)
-            table.xpath to TableInterpretationInput(
+            val elementScreenshot = webpage.getElementScreenshotByCssSelector(table.cssSelector)
+            val elementHtml = webpage.getElementHtmlByCssSelector(table.cssSelector)
+            table.cssSelector to TableInterpretationInput(
                 screenshotBytes = elementScreenshot.bytes,
                 mimetype = elementScreenshot.mimeType,
                 auxiliaryInfo = table.auxiliaryInfo,
@@ -171,15 +171,15 @@ class WebpageExtractionService(
 
         // Interpret tables in parallel (LLM calls can be parallelized)
         val replacements = tableInputs
-            .map { (xpath, input) ->
+            .map { (cssSelector, input) ->
                 async(dispatchers.io) {
                     val markdown = tableInterpretationService.interpretTable(input)
-                    IBrowserPage.XPathReplacementWithText(xpath, markdown)
+                    IBrowserPage.CssSelectorReplacementWithText(cssSelector, markdown)
                 }
             }
             .awaitAll()
 
-        webpage.replaceElementsByXPathWithText(replacements)
+        webpage.replaceElementsByCssSelectorWithText(replacements)
     }
 
     private suspend fun removeSemanticElements(

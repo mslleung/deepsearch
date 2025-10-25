@@ -12,7 +12,7 @@ data class TableIdentificationInput(
 
 @Serializable
 data class TableIdentification(
-    val xpath: String,
+    val cssSelector: String,
     val auxiliaryInfo: String
 )
 
