@@ -1,0 +1,47 @@
+package io.deepsearch.presentation.dto
+
+import io.deepsearch.domain.entities.User
+import io.deepsearch.domain.models.valueobjects.Email
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class RegisterRequest(
+    val email: String,
+    val password: String,
+    val displayName: String? = null
+)
+
+@Serializable
+data class LoginRequest(
+    val email: String,
+    val password: String
+)
+
+@Serializable
+data class LoginResponse(
+    val token: String,
+    val user: UserResponse
+)
+
+@Serializable
+data class UserResponse(
+    val id: Int,
+    val email: String,
+    val displayName: String?,
+    val oauthProvider: String?,
+    val createdAt: String
+)
+
+fun User.toUserResponse(): UserResponse {
+    return UserResponse(
+        id = id!!.value,
+        email = email.value,
+        displayName = displayName,
+        oauthProvider = oauthProvider?.name,
+        createdAt = createdAt.toString()
+    )
+}
+
+fun RegisterRequest.toEmail(): Email = Email(email)
+fun LoginRequest.toEmail(): Email = Email(email)
+

@@ -2,16 +2,18 @@ package io.deepsearch.presentation.routes
 
 import io.deepsearch.presentation.controllers.SearchController
 import io.ktor.server.application.*
+import io.ktor.server.auth.*
 import io.ktor.server.routing.*
 import org.koin.ktor.plugin.scope
 
 fun Application.configureSearchRoutes() {
-
     routing {
-        route("/api") {
-            post("/search") {
-                val searchController = call.scope.get<SearchController>()
-                searchController.searchWebsite(call)
+        authenticate("api-key") {
+            route("/api") {
+                post("/search") {
+                    val searchController = call.scope.get<SearchController>()
+                    searchController.searchWebsite(call)
+                }
             }
         }
     }

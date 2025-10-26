@@ -38,6 +38,9 @@ dependencies {
     // Coroutines
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.rx3)
+    
+    // DateTime
+    implementation(libs.kotlinx.datetime)
 
     // Dependency injection
     implementation(libs.koin.ktor)

@@ -8,6 +8,7 @@ koin-version = "4.1.0"
 koin-ktor-version = "4.1.0"
 kotlin-version = "2.2.0"
 kotlinx-coroutines-version = "1.10.2"
+kotlinx-datetime-version = "0.6.1"
 kotlinx-serialization-json-version = "1.9.0"
 ktor-version = "3.2.3"
 logback-version = "1.5.18"
@@ -23,6 +24,8 @@ r2dbc-h2-version = "1.1.0.RELEASE"
 r2dbc-postgresql-version = "1.0.7.RELEASE"
 sqlite-jdbc-version = "3.49.1.0"
 jsoup-version = "1.21.2"
+jbcrypt-version = "0.4"
+jwt-version = "4.4.0"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor-version" }
@@ -51,6 +54,7 @@ ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref 
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines-version" }
 kotlinx-coroutines-rx3 = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-rx3", version.ref = "kotlinx-coroutines-version" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines-version" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime-version" }
 kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin-version" }
 junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit-version" }
 junit-jupiter-params = { module = "org.junit.jupiter:junit-jupiter-params", version.ref = "junit-version" }
@@ -66,6 +70,11 @@ apache-httpcore5 = { module = "org.apache.httpcomponents.core5:httpcore5", versi
 apache-httpcore5-h2 = { module = "org.apache.httpcomponents.core5:httpcore5-h2", version.ref = "apache-httpcore5-version" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization-json-version" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup-version" }
+jbcrypt = { module = "org.mindrot:jbcrypt", version.ref = "jbcrypt-version" }
+jwt = { module = "com.auth0:java-jwt", version.ref = "jwt-version" }
+ktor-server-auth = { module = "io.ktor:ktor-server-auth", version.ref = "ktor-version" }
+ktor-server-auth-jwt = { module = "io.ktor:ktor-server-auth-jwt", version.ref = "ktor-version" }
+ktor-server-sessions = { module = "io.ktor:ktor-server-sessions", version.ref = "ktor-version" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin-version" }

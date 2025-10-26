@@ -18,8 +18,16 @@ val applicationModule = module {
     // Shared across requests
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
+    
+    // JWT Service - singleton with config from environment
+    single<IJwtService> {
+        val secret = System.getenv("JWT_SECRET") ?: "default-secret-please-change-in-production"
+        JwtService(secret)
+    }
 
     requestScope {
+        scopedOf(::ApiKeyService) bind IApiKeyService::class
+        scopedOf(::AuthService) bind IAuthService::class
         scopedOf(::PrecacheService) bind IPrecacheService::class
         scopedOf(::CacheQueryService) bind ICacheQueryService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class

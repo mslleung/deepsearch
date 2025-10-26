@@ -26,6 +26,7 @@ object DatabaseConfig {
             suspendTransaction {
                 SchemaUtils.create(
                     UserTable,
+                    ApiKeyTable,
                     WebpageIconTable,
                     WebpageImageTable,
                     WebpagePopupTable,

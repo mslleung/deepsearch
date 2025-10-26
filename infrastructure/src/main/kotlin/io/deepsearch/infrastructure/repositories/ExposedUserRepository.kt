@@ -2,14 +2,16 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.entities.User
 import io.deepsearch.domain.repositories.IUserRepository
+import io.deepsearch.domain.models.valueobjects.Email
+import io.deepsearch.domain.models.valueobjects.OAuthProvider
+import io.deepsearch.domain.models.valueobjects.PasswordHash
 import io.deepsearch.domain.models.valueobjects.UserId
-import io.deepsearch.domain.models.valueobjects.UserName
-import io.deepsearch.domain.models.valueobjects.UserAge
 import io.deepsearch.infrastructure.database.UserTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
@@ -21,8 +23,13 @@ class ExposedUserRepository : IUserRepository {
     
     override suspend fun save(user: User): User = suspendTransaction {
         val id = UserTable.insert {
-            it[name] = user.name.value
-            it[age] = user.age.value
+            it[email] = user.email.value
+            it[passwordHash] = user.passwordHash?.value
+            it[oauthProvider] = user.oauthProvider?.name
+            it[oauthProviderId] = user.oauthProviderId
+            it[displayName] = user.displayName
+            it[createdAt] = user.createdAt
+            it[updatedAt] = user.updatedAt
         }[UserTable.id]
         
         user.withId(UserId(id))
@@ -35,6 +42,20 @@ class ExposedUserRepository : IUserRepository {
             .singleOrNull()
     }
 
+    override suspend fun findByEmail(email: Email): User? = suspendTransaction {
+        UserTable.selectAll()
+            .where { UserTable.email eq email.value }
+            .map { mapRowToUser(it) }
+            .singleOrNull()
+    }
+
+    override suspend fun findByOAuthProvider(provider: OAuthProvider, providerId: String): User? = suspendTransaction {
+        UserTable.selectAll()
+            .where { (UserTable.oauthProvider eq provider.name) and (UserTable.oauthProviderId eq providerId) }
+            .map { mapRowToUser(it) }
+            .singleOrNull()
+    }
+
     override suspend fun findAll(): List<User> = suspendTransaction {
         UserTable.selectAll()
             .map { mapRowToUser(it) }
@@ -43,8 +64,12 @@ class ExposedUserRepository : IUserRepository {
 
     override suspend fun update(user: User): User = suspendTransaction {
         UserTable.update({ UserTable.id eq user.id!!.value }) {
-            it[name] = user.name.value
-            it[age] = user.age.value
+            it[email] = user.email.value
+            it[passwordHash] = user.passwordHash?.value
+            it[oauthProvider] = user.oauthProvider?.name
+            it[oauthProviderId] = user.oauthProviderId
+            it[displayName] = user.displayName
+            it[updatedAt] = user.updatedAt
         }
         user
     }
@@ -63,8 +88,13 @@ class ExposedUserRepository : IUserRepository {
     private fun mapRowToUser(row: ResultRow): User {
         return User(
             id = UserId(row[UserTable.id]),
-            name = UserName(row[UserTable.name]),
-            age = UserAge(row[UserTable.age])
+            email = Email(row[UserTable.email]),
+            passwordHash = row[UserTable.passwordHash]?.let { PasswordHash(it) },
+            oauthProvider = row[UserTable.oauthProvider]?.let { OAuthProvider.fromString(it) },
+            oauthProviderId = row[UserTable.oauthProviderId],
+            displayName = row[UserTable.displayName],
+            createdAt = row[UserTable.createdAt],
+            updatedAt = row[UserTable.updatedAt]
         )
     }
 } 
