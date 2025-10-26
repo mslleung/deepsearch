@@ -7,10 +7,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
-import org.jetbrains.exposed.v1.r2dbc.update
+import org.jetbrains.exposed.v1.r2dbc.upsert
 
 class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
 
@@ -21,24 +20,16 @@ class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
             .singleOrNull()
     }
 
-    override suspend fun upsert(pdfMarkdown: PdfMarkdown) = suspendTransaction {
-        // Try update first; if nothing updated, insert
-        val updated = PdfMarkdownTable.update({ PdfMarkdownTable.pdfHash eq pdfMarkdown.pdfHash }) {
+    override suspend fun upsert(pdfMarkdown: PdfMarkdown): Unit = suspendTransaction {
+        PdfMarkdownTable.upsert(
+            keys = arrayOf(PdfMarkdownTable.pdfHash)
+        ) {
+            it[pdfHash] = pdfMarkdown.pdfHash
             it[markdown] = pdfMarkdown.markdown
             it[pageCount] = pdfMarkdown.pageCount
             it[fileSizeBytes] = pdfMarkdown.fileSizeBytes
+            it[createdAtEpochMs] = pdfMarkdown.createdAtEpochMs
             it[updatedAtEpochMs] = pdfMarkdown.updatedAtEpochMs
-        }
-
-        if (updated == 0) {
-            PdfMarkdownTable.insert {
-                it[pdfHash] = pdfMarkdown.pdfHash
-                it[markdown] = pdfMarkdown.markdown
-                it[pageCount] = pdfMarkdown.pageCount
-                it[fileSizeBytes] = pdfMarkdown.fileSizeBytes
-                it[createdAtEpochMs] = pdfMarkdown.createdAtEpochMs
-                it[updatedAtEpochMs] = pdfMarkdown.updatedAtEpochMs
-            }
         }
     }
 

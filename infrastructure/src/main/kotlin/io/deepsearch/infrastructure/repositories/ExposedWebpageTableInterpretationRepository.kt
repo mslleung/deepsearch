@@ -7,30 +7,23 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
-import org.jetbrains.exposed.v1.r2dbc.update
+import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
 
 class ExposedWebpageTableInterpretationRepository : IWebpageTableInterpretationRepository {
 
-    override suspend fun upsert(interpretation: WebpageTableInterpretation) = suspendTransaction {
+    override suspend fun upsert(interpretation: WebpageTableInterpretation): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(interpretation.tableDataHash)
 
-        // Try update first; if nothing updated, insert
-        val updated = WebpageTableInterpretationTable.update({ WebpageTableInterpretationTable.tableDataHash eq hashBase64 }) {
+        WebpageTableInterpretationTable.upsert(
+            keys = arrayOf(WebpageTableInterpretationTable.tableDataHash)
+        ) {
+            it[tableDataHash] = hashBase64
             it[markdown] = interpretation.markdown
+            it[createdAtEpochMs] = interpretation.createdAtEpochMs
             it[updatedAtEpochMs] = interpretation.updatedAtEpochMs
-        }
-
-        if (updated == 0) {
-            WebpageTableInterpretationTable.insert {
-                it[tableDataHash] = hashBase64
-                it[markdown] = interpretation.markdown
-                it[createdAtEpochMs] = interpretation.createdAtEpochMs
-                it[updatedAtEpochMs] = interpretation.updatedAtEpochMs
-            }
         }
     }
 

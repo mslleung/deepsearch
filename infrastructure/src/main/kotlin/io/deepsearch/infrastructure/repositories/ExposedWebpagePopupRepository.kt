@@ -8,10 +8,9 @@ import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
-import org.jetbrains.exposed.v1.r2dbc.update
+import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
 
 class ExposedWebpagePopupRepository : IWebpagePopupRepository {
@@ -29,18 +28,12 @@ class ExposedWebpagePopupRepository : IWebpagePopupRepository {
     override suspend fun upsert(webpagePopup: WebpagePopup): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(webpagePopup.pageHash)
         
-        // Try update first; if nothing updated, insert
-        val updated = WebpagePopupTable.update({ WebpagePopupTable.pageHash eq hashBase64 }) {
+        WebpagePopupTable.upsert(
+            keys = arrayOf(WebpagePopupTable.pageHash)
+        ) {
+            it[pageHash] = hashBase64
             it[popupXPaths] = json.encodeToString(webpagePopup.popupXPaths)
         }
-
-        if (updated == 0) {
-            WebpagePopupTable.insert {
-                it[pageHash] = hashBase64
-                it[popupXPaths] = json.encodeToString(webpagePopup.popupXPaths)
-            }
-        }
-        Unit
     }
 
     private fun mapRowToWebpagePopup(row: ResultRow): WebpagePopup {

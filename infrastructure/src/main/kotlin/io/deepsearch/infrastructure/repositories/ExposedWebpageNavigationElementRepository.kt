@@ -8,10 +8,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
-import org.jetbrains.exposed.v1.r2dbc.update
+import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlinx.serialization.json.Json
 import kotlin.io.encoding.Base64
 
@@ -28,18 +27,12 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
     override suspend fun upsert(webpageSemanticElement: WebpageSemanticElement): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(webpageSemanticElement.pageHash)
         
-        // Try update first; if nothing updated, insert
-        val updated = WebpageSemanticElementTable.update({ WebpageSemanticElementTable.pageHash eq hashBase64 }) {
+        WebpageSemanticElementTable.upsert(
+            keys = arrayOf(WebpageSemanticElementTable.pageHash)
+        ) {
+            it[pageHash] = hashBase64
             it[elementsJson] = Json.encodeToString(SemanticElements.serializer(), webpageSemanticElement.elements)
         }
-
-        if (updated == 0) {
-            WebpageSemanticElementTable.insert {
-                it[pageHash] = hashBase64
-                it[elementsJson] = Json.encodeToString(SemanticElements.serializer(), webpageSemanticElement.elements)
-            }
-        }
-        Unit
     }
 
     private fun mapRowToWebpageSemanticElement(row: ResultRow): WebpageSemanticElement {

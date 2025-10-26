@@ -9,10 +9,9 @@ import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.like
-import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
-import org.jetbrains.exposed.v1.r2dbc.update
+import org.jetbrains.exposed.v1.r2dbc.upsert
 
 class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
 
@@ -23,28 +22,18 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
             .singleOrNull()
     }
 
-    override suspend fun upsert(webpage: WebpageMarkdown) = suspendTransaction {
-        // Try update first; if nothing updated, insert
-        val updated = WebpageMarkdownTable.update({ WebpageMarkdownTable.url eq webpage.url }) {
+    override suspend fun upsert(webpage: WebpageMarkdown): Unit = suspendTransaction {
+        WebpageMarkdownTable.upsert(
+            keys = arrayOf(WebpageMarkdownTable.url)
+        ) {
+            it[url] = webpage.url
             it[markdown] = webpage.markdown
             it[html] = webpage.html
             it[httpStatus] = webpage.httpStatus
             it[httpReason] = webpage.httpReason
             it[mimeType] = webpage.mimeType
+            it[createdAtEpochMs] = webpage.createdAtEpochMs
             it[updatedAtEpochMs] = webpage.updatedAtEpochMs
-        }
-
-        if (updated == 0) {
-            WebpageMarkdownTable.insert {
-                it[url] = webpage.url
-                it[markdown] = webpage.markdown
-                it[html] = webpage.html
-                it[httpStatus] = webpage.httpStatus
-                it[httpReason] = webpage.httpReason
-                it[mimeType] = webpage.mimeType
-                it[createdAtEpochMs] = webpage.createdAtEpochMs
-                it[updatedAtEpochMs] = webpage.updatedAtEpochMs
-            }
         }
     }
 

@@ -8,6 +8,7 @@ import org.apache.pdfbox.Loader
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
+import kotlin.io.encoding.Base64
 
 interface IPdfConversionService {
     suspend fun convertPdfToMarkdown(pdfBytes: ByteArray): String
@@ -76,7 +77,7 @@ class PdfConversionService(
     private fun calculateHash(pdfBytes: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val hashBytes = digest.digest(pdfBytes)
-        return hashBytes.joinToString("") { "%02x".format(it) }
+        return Base64.encode(hashBytes)
     }
     
     private data class PdfValidation(

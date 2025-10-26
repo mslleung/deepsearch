@@ -7,30 +7,23 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
-import org.jetbrains.exposed.v1.r2dbc.update
+import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
 
 class ExposedWebpageIconRepository : IWebpageIconRepository {
 
-    override suspend fun upsert(icon: WebpageIcon) = suspendTransaction {
+    override suspend fun upsert(icon: WebpageIcon): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(icon.imageBytesHash)
 
-        // Try update first; if nothing updated, insert
-        val updated = WebpageIconTable.update({ WebpageIconTable.imageBytesHash eq hashBase64 }) {
+        WebpageIconTable.upsert(
+            keys = arrayOf(WebpageIconTable.imageBytesHash)
+        ) {
+            it[imageBytesHash] = hashBase64
             it[label] = icon.label
+            it[createdAtEpochMs] = icon.createdAtEpochMs
             it[updatedAtEpochMs] = icon.updatedAtEpochMs
-        }
-
-        if (updated == 0) {
-            WebpageIconTable.insert {
-                it[imageBytesHash] = hashBase64
-                it[label] = icon.label
-                it[createdAtEpochMs] = icon.createdAtEpochMs
-                it[updatedAtEpochMs] = icon.updatedAtEpochMs
-            }
         }
     }
 
