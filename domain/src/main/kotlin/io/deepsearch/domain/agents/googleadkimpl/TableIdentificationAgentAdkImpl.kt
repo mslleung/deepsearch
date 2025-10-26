@@ -84,7 +84,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             Instructions:
             - Analyze both the screenshot and HTML to identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
-            - For every table you find, create a CSS selector that targets the smallest ROOT CONTAINER element that wraps the entire table.
+            - For every table you find, create a CSS selector that targets the ROOT CONTAINER element that wraps the entire table.
             - The CSS selectors should be as simplistic and direct as possible. It should contain no more than the bare minimal to uniquely identify the table.
             - Prefer using IDs when available (e.g., "#tableId"), then classes (e.g., ".table-class"), then element type with nth-child if needed (e.g., "table:nth-child(2)").
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.

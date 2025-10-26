@@ -209,7 +209,7 @@ class AgenticBrowserSearchOrchestrator(
                 }
 
                 // Process URL and collect events as they're emitted
-                urlContentProcessingService.processUrlAsFlow(link.url, searchQuery.query, runtime)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, runtime)
                     .collect { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
