@@ -1,7 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationTestModule
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.toList
@@ -21,7 +21,7 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
         modules(applicationTestModule)
     }
 
-    private val browserPool by inject<IBrowserPool>()
+    private val browserRuntimePool by inject<IBrowserRuntimePool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val urlContentProcessingService by inject<IUrlContentProcessingService>()
 
@@ -29,11 +29,11 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
     fun `processUrlAsFlow emits LinkDiscoveryComplete before MarkdownExtractionComplete`() = runTest(testCoroutineDispatcher) {
         // Given
         val url = "https://www.example.com/"
-        val browser = browserPool.acquireBrowser()
+        val runtime = browserRuntimePool.acquireRuntime()
 
         try {
             // When
-            val events = urlContentProcessingService.processUrlAsFlow(url, browser).toList()
+            val events = urlContentProcessingService.processUrlAsFlow(url, runtime).toList()
 
             // Then
             assertTrue(events.isNotEmpty(), "Should emit at least one event")
@@ -57,7 +57,7 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
             assertEquals(url, markdownEvent.url)
             assertTrue(markdownEvent.markdown.isNotBlank(), "Markdown should not be blank")
         } finally {
-            browser.close()
+            runtime.close()
         }
     }
 
@@ -66,11 +66,11 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
         // Given
         val url = "https://www.example.com/"
         val query = "What is this page about?"
-        val browser = browserPool.acquireBrowser()
+        val runtime = browserRuntimePool.acquireRuntime()
 
         try {
             // When
-            val events = urlContentProcessingService.processUrlAsFlow(url, query, browser).toList()
+            val events = urlContentProcessingService.processUrlAsFlow(url, query, runtime).toList()
 
             // Then
             assertTrue(events.size >= 2, "Should emit at least two events")
@@ -89,7 +89,7 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
                 "Last event should be MarkdownExtractionComplete"
             )
         } finally {
-            browser.close()
+            runtime.close()
         }
     }
 }

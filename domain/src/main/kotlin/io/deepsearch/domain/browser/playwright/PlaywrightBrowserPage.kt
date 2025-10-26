@@ -60,6 +60,7 @@ class PlaywrightBrowserPage(
             page.screenshot(
                 Page.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
+                    timeout = 5000.0
                 })
         }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
@@ -72,6 +73,7 @@ class PlaywrightBrowserPage(
                 Page.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
                     fullPage = true
+                    timeout = 5000.0
                 })
         }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
@@ -88,7 +90,10 @@ class PlaywrightBrowserPage(
             // When XPath matches a chain (target + ancestors), select the leaf-most node
             val target = locator.last()
             target.screenshot(
-                Locator.ScreenshotOptions().apply { type = ScreenshotType.JPEG }
+                Locator.ScreenshotOptions().apply {
+                    type = ScreenshotType.JPEG
+                    timeout = 5000.0
+                }
             )
         }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
@@ -101,7 +106,10 @@ class PlaywrightBrowserPage(
             // When CSS selector matches multiple elements, select the last one
             val target = locator.last()
             target.screenshot(
-                Locator.ScreenshotOptions().apply { type = ScreenshotType.JPEG }
+                Locator.ScreenshotOptions().apply {
+                    type = ScreenshotType.JPEG
+                    timeout = 5000.0
+                }
             )
         }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)

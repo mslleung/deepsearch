@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.NavigationElementIdentificationInput
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
@@ -36,7 +36,7 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<INavigationElementIdentificationAgent>()
-    private val browserPool by inject<IBrowserPool>()
+    private val browserRuntimePool by inject<IBrowserRuntimePool>()
 
     @Test
     fun `should identify no navigation elements on example page`() = runTest(testCoroutineDispatcher) {
@@ -56,9 +56,10 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
 
     @Test
     fun `should identify header and footer on OT&P webpage`() = runTest(testCoroutineDispatcher) {
-        val browser = browserPool.acquireBrowser()
-        val context = browser.createContext()
+        val runtime = browserRuntimePool.acquireRuntime()
         try {
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
             val page = context.newPage()
             page.navigate("https://www.otandp.com/body-check")
 
@@ -75,15 +76,16 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
                 output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "Exposed doc webpage should have navigation elements")
         } finally {
-            browser.close()
+            runtime.close()
         }
     }
 
     @Test
     fun `should identify header and footer on exposed doc page`() = runTest(testCoroutineDispatcher) {
-        val browser = browserPool.acquireBrowser()
-        val context = browser.createContext()
+        val runtime = browserRuntimePool.acquireRuntime()
         try {
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
             val page = context.newPage()
             page.navigate("https://www.jetbrains.com/help/exposed/working-with-database.html")
 
@@ -100,7 +102,7 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
                 output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "Exposed doc webpage should have navigation elements")
         } finally {
-            browser.close()
+            runtime.close()
         }
     }
 }

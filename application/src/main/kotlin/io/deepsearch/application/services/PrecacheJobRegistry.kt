@@ -1,7 +1,7 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.browser.IBrowser
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntime
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.entities.PrecacheJob
@@ -34,7 +34,7 @@ interface IPrecacheJobRegistry {
 }
 
 class PrecacheJobRegistry(
-    private val browserPool: IBrowserPool,
+    private val browserRuntimePool: IBrowserRuntimePool,
     private val normalizeUrlService: INormalizeUrlService,
     private val webpageCacheService: IWebpageCacheService,
     private val urlContentProcessingService: IUrlContentProcessingService,
@@ -102,12 +102,12 @@ class PrecacheJobRegistry(
             )
         )
 
-        val browser = browserPool.acquireBrowser()
+        val runtime = browserRuntimePool.acquireRuntime()
         try {
             extractAndCacheLinks(
                 jobId = jobId,
                 job = job,
-                browser = browser,
+                runtime = runtime,
                 eventFlow = flow
             )
 
@@ -144,7 +144,7 @@ class PrecacheJobRegistry(
                 )
             )
         } finally {
-            try { browser.close() } catch (_: Throwable) {}
+            runtime.close()
             runs.remove(jobId)
         }
     }
@@ -156,7 +156,7 @@ class PrecacheJobRegistry(
     private suspend fun extractAndCacheLinks(
         jobId: Long,
         job: PrecacheJob,
-        browser: IBrowser,
+        runtime: IBrowserRuntime,
         eventFlow: MutableSharedFlow<IPrecacheService.PrecacheEvent>
     ) {
         val visitedUrls = ConcurrentHashMap.newKeySet<String>()
@@ -177,7 +177,7 @@ class PrecacheJobRegistry(
             .processLinks(
                 jobId = jobId,
                 job = job,
-                browser = browser,
+                runtime = runtime,
                 visitedUrls = visitedUrls,
                 processedCount = processedCount,
                 discoveredLinksFlow = discoveredLinksFlow
@@ -223,7 +223,7 @@ class PrecacheJobRegistry(
     private fun Flow<String>.processLinks(
         jobId: Long,
         job: PrecacheJob,
-        browser: IBrowser,
+        runtime: IBrowserRuntime,
         visitedUrls: MutableSet<String>,
         processedCount: AtomicInteger,
         discoveredLinksFlow: MutableSharedFlow<String>
@@ -245,7 +245,7 @@ class PrecacheJobRegistry(
                 }
 
                 // Process URL and collect events
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, browser)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, runtime)
                     .collect { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {

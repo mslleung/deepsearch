@@ -1,6 +1,6 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.browser.IBrowser
+import io.deepsearch.domain.browser.IBrowserRuntime
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -36,7 +36,7 @@ interface IUrlContentProcessingService {
     fun processUrlAsFlow(
         url: String,
         query: String,
-        browser: IBrowser
+        runtime: IBrowserRuntime
     ): Flow<UrlProcessingEvent>
 
     /**
@@ -45,7 +45,7 @@ interface IUrlContentProcessingService {
      */
     fun processUrlAsFlow(
         url: String,
-        browser: IBrowser
+        runtime: IBrowserRuntime
     ): Flow<UrlProcessingEvent>
 }
 
@@ -64,25 +64,25 @@ class UrlContentProcessingService(
     override fun processUrlAsFlow(
         url: String,
         query: String,
-        browser: IBrowser
+        runtime: IBrowserRuntime
     ): Flow<UrlProcessingEvent> {
-        return processInternalAsFlow(url, browser) { html ->
+        return processInternalAsFlow(url, runtime) { html ->
             webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html)
         }
     }
 
     override fun processUrlAsFlow(
         url: String,
-        browser: IBrowser
+        runtime: IBrowserRuntime
     ): Flow<UrlProcessingEvent> {
-        return processInternalAsFlow(url, browser) { html ->
+        return processInternalAsFlow(url, runtime) { html ->
             webpageLinkDiscoveryService.discoverAllLinks(html, url)
         }
     }
 
     private fun processInternalAsFlow(
         url: String,
-        browser: IBrowser,
+        runtime: IBrowserRuntime,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
         logger.debug("Processing URL: {}", url)
@@ -105,7 +105,7 @@ class UrlContentProcessingService(
             when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
                 is ContentTypeResult.Html -> {
                     logger.debug("Detected HTML content for: {}", normalizedUrl)
-                    processHtmlUrlAsFlow(normalizedUrl, browser, discoverLinks)
+                    processHtmlUrlAsFlow(normalizedUrl, runtime, discoverLinks)
                         .collect { event -> emit(event) }
                 }
                 is ContentTypeResult.Pdf -> {
@@ -149,9 +149,10 @@ class UrlContentProcessingService(
 
     private fun processHtmlUrlAsFlow(
         normalizedUrl: String,
-        browser: IBrowser,
+        runtime: IBrowserRuntime,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
+        val browser = runtime.createBrowser()
         val context = browser.createContext()
         val page = context.newPage()
         page.navigate(normalizedUrl)

@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import kotlinx.coroutines.CoroutineDispatcher
@@ -24,7 +24,7 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val browserPool by inject<IBrowserPool>()
+    private val browserRuntimePool by inject<IBrowserRuntimePool>()
     private val agent by inject<ILinkRelevanceAnalysisAgent>()
 
     @Test
@@ -33,12 +33,13 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
         val url = "https://www.example.com/"
         val query = "information about the website"
         
-        val browser = browserPool.acquireBrowser()
-        val browserContext = browser.createContext()
-        val browserPage = browserContext.newPage()
+        val runtime = browserRuntimePool.acquireRuntime()
+        val browser = runtime.createBrowser()
+        val context = browser.createContext()
+        val page = context.newPage()
 
-        browserPage.navigate(url)
-        val html = browserPage.getFullHtml()
+        page.navigate(url)
+        val html = page.getFullHtml()
 
         // When
         val output = agent.generate(LinkRelevanceAnalysisInput(html, query))
@@ -57,12 +58,13 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
         val url = "https://www.otandp.com/"
         val query = "information about body check packages"
         
-        val browser = browserPool.acquireBrowser()
-        val browserContext = browser.createContext()
-        val browserPage = browserContext.newPage()
+        val runtime = browserRuntimePool.acquireRuntime()
+        val browser = runtime.createBrowser()
+        val context = browser.createContext()
+        val page = context.newPage()
 
-        browserPage.navigate(url)
-        val html = browserPage.getFullHtml()
+        page.navigate(url)
+        val html = page.getFullHtml()
 
         // When
         val output = agent.generate(LinkRelevanceAnalysisInput(html, query))
@@ -81,12 +83,13 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
         val url = "https://www.otandp.com/"
         val query = "how much is Singular Test: VO2 Max"
 
-        val browser = browserPool.acquireBrowser()
-        val browserContext = browser.createContext()
-        val browserPage = browserContext.newPage()
+        val runtime = browserRuntimePool.acquireRuntime()
+        val browser = runtime.createBrowser()
+        val context = browser.createContext()
+        val page = context.newPage()
 
-        browserPage.navigate(url)
-        val html = browserPage.getFullHtml()
+        page.navigate(url)
+        val html = page.getFullHtml()
 
         // When
         val output = agent.generate(LinkRelevanceAnalysisInput(html, query))
@@ -107,12 +110,13 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
         val url = "https://www.otandp.com/otandp-digital-app"
         val query = "what are the steps to delete my data on the OT&P Digital App?"
 
-        val browser = browserPool.acquireBrowser()
-        val browserContext = browser.createContext()
-        val browserPage = browserContext.newPage()
+        val runtime = browserRuntimePool.acquireRuntime()
+        val browser = runtime.createBrowser()
+        val context = browser.createContext()
+        val page = context.newPage()
 
-        browserPage.navigate(url)
-        val html = browserPage.getFullHtml()
+        page.navigate(url)
+        val html = page.getFullHtml()
 
         // When
         val output = agent.generate(LinkRelevanceAnalysisInput(html, query))

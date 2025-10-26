@@ -40,8 +40,8 @@ import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.SemanticIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableInterpretationAgentAdkImpl
-import io.deepsearch.domain.browser.BrowserPool
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.BrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.singleOf
@@ -62,7 +62,7 @@ val domainTestModule = module {
         }
     }
 
-    singleOf(::BrowserPool) bind IBrowserPool::class
+    singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
 
     // Google ADK agent has its own lifecycle management, so we make it singleton
     singleOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class

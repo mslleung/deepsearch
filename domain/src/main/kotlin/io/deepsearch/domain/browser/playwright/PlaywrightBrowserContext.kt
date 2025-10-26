@@ -6,6 +6,11 @@ import io.deepsearch.domain.browser.IBrowserPage
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+/**
+ * Playwright-backed browser context.
+ * 
+ * Uses the browser's mutex to ensure thread-safe access to the Playwright API.
+ */
 class PlaywrightBrowserContext(
     private val context: BrowserContext,
     private val apiMutex: Mutex
@@ -20,3 +25,4 @@ class PlaywrightBrowserContext(
         apiMutex.withLock { context.close() }
     }
 }
+

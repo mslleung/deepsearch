@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.domainTestModule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -24,7 +24,7 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<ITableIdentificationAgent>()
-    private val browserPool by inject<IBrowserPool>()
+    private val browserRuntimePool by inject<IBrowserRuntimePool>()
 
     @ParameterizedTest
     @ValueSource(
@@ -36,9 +36,10 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
         ]
     )
     fun `identifies a single table from webpage HTML`(url: String) = runTest(testCoroutineDispatcher) {
-        val browser = browserPool.acquireBrowser()
-        val context = browser.createContext()
+        val runtime = browserRuntimePool.acquireRuntime()
         try {
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
             val html = page.getFullHtml()
@@ -53,7 +54,7 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
 
             assertEquals(1, output.tables.size, "Should identify exactly one table")
         } finally {
-            browser.close()
+            runtime.close()
         }
     }
 }

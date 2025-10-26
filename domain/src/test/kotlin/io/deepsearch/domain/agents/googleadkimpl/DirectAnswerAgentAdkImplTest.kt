@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.DirectAnswerInput
 import io.deepsearch.domain.agents.IDirectAnswerAgent
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
@@ -28,7 +28,7 @@ class DirectAnswerAgentAdkImplTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IDirectAnswerAgent>()
-    private val browserPool by inject<IBrowserPool>()
+    private val browserRuntimePool by inject<IBrowserRuntimePool>()
 
     companion object {
         @JvmStatic
@@ -51,9 +51,10 @@ class DirectAnswerAgentAdkImplTest : KoinTest {
     @ParameterizedTest
     @MethodSource("testCases")
     fun `generates direct answer for webpage query`(url: String, query: String) = runTest(testCoroutineDispatcher) {
-        val browser = browserPool.acquireBrowser()
-        val context = browser.createContext()
+        val runtime = browserRuntimePool.acquireRuntime()
         try {
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
 
@@ -75,7 +76,7 @@ class DirectAnswerAgentAdkImplTest : KoinTest {
             println("Query: $query")
             println("Answer: ${output.answer}")
         } finally {
-            browser.close()
+            runtime.close()
         }
     }
 }

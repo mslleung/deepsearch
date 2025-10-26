@@ -8,24 +8,29 @@ import io.deepsearch.domain.browser.IBrowserContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class PlaywrightBrowser() : IBrowser {
-    private val playwright: Playwright = Playwright.create()
-    private val browser: Browser = playwright.chromium().launch(
+/**
+ * Playwright-backed browser instance created from a runtime.
+ *
+ * Each browser has its own mutex to ensure thread-safe access to the Playwright API,
+ * allowing multiple browsers from the same runtime to operate concurrently.
+ * Browsers are typically created per-link during web scraping.
+ */
+class PlaywrightBrowser(
+    private val playwright: Playwright,
+) : IBrowser {
+    private val playwrightBrowser = playwright.chromium().launch(
         BrowserType.LaunchOptions()
             .setHeadless(true)
     )
     private val apiMutex: Mutex = Mutex()
 
     override suspend fun createContext(): IBrowserContext {
-        val context = apiMutex.withLock { browser.newContext() }
+        val context = apiMutex.withLock { playwrightBrowser.newContext() }
         return PlaywrightBrowserContext(context, apiMutex)
     }
 
     override suspend fun close() {
-        try {
-            apiMutex.withLock { browser.close() }
-        } finally {
-            apiMutex.withLock { playwright.close() }
-        }
+        // Browser instance doesn't close the underlying Playwright browser,
+        // only its contexts. The runtime owns the Playwright browser lifecycle.
     }
 }

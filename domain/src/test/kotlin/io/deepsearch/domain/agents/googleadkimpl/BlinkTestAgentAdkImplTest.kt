@@ -1,7 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.IBlinkTestAgent
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
@@ -22,7 +22,7 @@ class BlinkTestAgentAdkImplTest : KoinTest {
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val browserPool by inject<IBrowserPool>()
+    private val browserRuntimePool by inject<IBrowserRuntimePool>()
     private val agent by inject<IBlinkTestAgent>()
 
     @Test
@@ -32,12 +32,13 @@ class BlinkTestAgentAdkImplTest : KoinTest {
             query = "website purpose",
             url = "https://www.example.com/"
         )
-        val browser = browserPool.acquireBrowser()
-        val browserContext = browser.createContext()
-        val browserPage = browserContext.newPage()
+        val runtime = browserRuntimePool.acquireRuntime()
+        val browser = runtime.createBrowser()
+        val context = browser.createContext()
+        val page = context.newPage()
 
-        browserPage.navigate(searchQuery.url)
-        val screenshot = browserPage.takeScreenshot()
+        page.navigate(searchQuery.url)
+        val screenshot = page.takeScreenshot()
 
         // When
         val output = agent.generate(
@@ -60,12 +61,13 @@ class BlinkTestAgentAdkImplTest : KoinTest {
             query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
             url = "https://www.example.com/"
         )
-        val browser = browserPool.acquireBrowser()
-        val browserContext = browser.createContext()
-        val browserPage = browserContext.newPage()
+        val runtime = browserRuntimePool.acquireRuntime()
+        val browser = runtime.createBrowser()
+        val context = browser.createContext()
+        val page = context.newPage()
 
-        browserPage.navigate(searchQuery.url)
-        val screenshot = browserPage.takeScreenshot()
+        page.navigate(searchQuery.url)
+        val screenshot = page.takeScreenshot()
 
         // When
         val output = agent.generate(

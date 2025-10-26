@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.SemanticIdentificationInput
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
@@ -38,7 +38,7 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<ISemanticIdentificationAgent>()
-    private val browserPool by inject<IBrowserPool>()
+    private val browserRuntimePool by inject<IBrowserRuntimePool>()
 
     @Test
     fun `should identify no semantic elements on simple example page`() = runTest(testCoroutineDispatcher) {
@@ -71,9 +71,10 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
         ]
     )
     fun `should identify navigation elements`(url: String) = runTest(testCoroutineDispatcher) {
-        val browser = browserPool.acquireBrowser()
-        val context = browser.createContext()
+        val runtime = browserRuntimePool.acquireRuntime()
         try {
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
 
@@ -94,7 +95,7 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
                 output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "OT&P webpage should have semantic elements")
         } finally {
-            browser.close()
+            runtime.close()
         }
     }
 }

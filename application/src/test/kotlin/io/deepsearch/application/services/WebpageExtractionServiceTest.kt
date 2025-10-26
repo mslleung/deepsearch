@@ -1,7 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationTestModule
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -20,7 +20,7 @@ class WebpageExtractionServiceTest : KoinTest {
         modules(applicationTestModule)
     }
 
-    private val browserPool by inject<IBrowserPool>()
+    private val browserRuntimePool by inject<IBrowserRuntimePool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val webpageExtractionService by inject<IWebpageExtractionService>()
 
@@ -32,7 +32,8 @@ class WebpageExtractionServiceTest : KoinTest {
         ]
     )
     fun `extract webpage text`(url: String) = runTest(testCoroutineDispatcher) {
-        val browser = browserPool.acquireBrowser()
+        val runtime = browserRuntimePool.acquireRuntime()
+        val browser = runtime.createBrowser()
         val context = browser.createContext()
         val page = context.newPage()
 

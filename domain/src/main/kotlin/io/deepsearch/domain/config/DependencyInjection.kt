@@ -3,8 +3,8 @@ package io.deepsearch.domain.config
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googleadkimpl.*
 import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
-import io.deepsearch.domain.browser.BrowserPool
-import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.BrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserRuntimePool
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -16,7 +16,7 @@ val domainModule = module {
     singleOf(::DefaultDispatcherProvider) bind IDispatcherProvider::class
 
     requestScope {
-        scopedOf(::BrowserPool) bind IBrowserPool::class
+        scopedOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
 
         // domain agents (request scoped)
         scopedOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
