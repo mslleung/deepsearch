@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IMultiImageTextExtractionAgent
 import io.deepsearch.domain.agents.MultiImageTextExtractionInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageImage
+import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.repositories.IWebpageImageRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -20,7 +21,8 @@ interface IWebpageImageTextExtractionService {
 
 class WebpageImageTextExtractionService(
     private val multiImageTextExtractionAgent: IMultiImageTextExtractionAgent,
-    private val webpageImageRepository: IWebpageImageRepository
+    private val webpageImageRepository: IWebpageImageRepository,
+    private val ocrService: IOcrImageTextExtractionService
 ) : IWebpageImageTextExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -73,7 +75,7 @@ class WebpageImageTextExtractionService(
             
 			coroutineScope {
 				val ocrResults = uncachedImages.map { image ->
-					async { image to image.containsText() }
+					async { image to !ocrService.extractText(image.bytes, image.mimeType).isEmpty() }
 				}.awaitAll()
 
 				ocrResults.forEach { (image, hasText) ->

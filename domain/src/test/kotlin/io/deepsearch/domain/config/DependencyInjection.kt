@@ -42,8 +42,15 @@ import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableInterpretationAgentAdkImpl
 import io.deepsearch.domain.browser.BrowserRuntimePool
 import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.services.IOcrImageTextExtractionService
+import io.deepsearch.domain.ocr.ITesseractPool
+import io.deepsearch.domain.services.OcrImageTextExtractionService
+import io.deepsearch.domain.ocr.TesseractPoolImpl
+import io.deepsearch.domain.services.IJwtService
+import io.deepsearch.domain.services.JwtService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -51,6 +58,9 @@ import org.koin.dsl.module
 private val domainCommonTestModule = module {
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
     singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
+    
+    // OCR services
+    singleOf(::TesseractPoolImpl) bind ITesseractPool::class
 
     // Google ADK agent has its own lifecycle management, so we make it singleton
     singleOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
@@ -73,6 +83,10 @@ private val domainCommonTestModule = module {
     singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
     singleOf(::MultiIconInterpreterAgentAdkImpl) bind IMultiIconInterpreterAgent::class
+
+    // domain services
+    singleOf(::JwtService) bind IJwtService::class
+    singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
 }
 
 val domainTestModule = module {

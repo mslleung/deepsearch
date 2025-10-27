@@ -32,7 +32,7 @@ dependencies {
     implementation(libs.ktor.client.okhttp)
 
     // OCR support
-    implementation(libs.tesserect)
+    implementation(libs.tesseract)
     implementation(libs.opencv)
 
     // Coroutines
