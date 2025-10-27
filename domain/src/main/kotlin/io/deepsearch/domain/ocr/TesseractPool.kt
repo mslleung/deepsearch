@@ -61,7 +61,7 @@ class TesseractPoolImpl() : ITesseractPool {
         private fun createTessBaseAPI(): TessBaseAPI {
             return TessBaseAPI().apply {
                 // Initialize with English, Chinese Simplified, and Chinese Traditional
-                if (Init(tessdataPath, "eng+chi_sim+chi_tra") != 0) {
+                if (Init(tessdataPath, "eng") != 0) {   // prefer to use one language only for performance reasons
                     throw RuntimeException("Failed to initialize Tesseract OCR with tessdata path: $tessdataPath")
                 }
             }
