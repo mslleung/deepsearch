@@ -10,4 +10,4 @@ jwt:
     privateKey: ${JWT_PRIVATE_KEY}  # Read from environment
     issuer: "deepsearch"
     audience: "deepsearch-users"
-    realm: "DeepSearch API"
+    realm: "DeepSearch Web App API"
