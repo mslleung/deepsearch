@@ -1,7 +1,6 @@
 package io.deepsearch.presentation
 
-import io.deepsearch.presentation.dto.SearchRequest
-import io.deepsearch.presentation.dto.SearchResponse
+import io.deepsearch.presentation.dto.*
 import io.ktor.client.call.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
@@ -18,10 +17,6 @@ class SearchEndpointTest {
 
     @Test
     fun `test search endpoint with OT&P body check query`() = testApplication {
-        application {
-            module()
-        }
-
         environment {
             config = ApplicationConfig("application.yaml")
         }
@@ -39,31 +34,65 @@ class SearchEndpointTest {
             }
         }
 
-        // Prepare the search request
-        val request = SearchRequest(
+        // Step 1: Register a new user
+        val testEmail = "test-${System.currentTimeMillis()}@example.com"
+        val registerResponse = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody(RegisterRequest(
+                email = testEmail,
+                password = "testpassword123",
+                displayName = "Test User"
+            ))
+        }
+        assertEquals(HttpStatusCode.Created, registerResponse.status, "User registration should succeed")
+
+        // Step 2: Login to get JWT token
+        val loginResponse = client.post("/api/auth/login") {
+            contentType(ContentType.Application.Json)
+            setBody(LoginRequest(
+                email = testEmail,
+                password = "testpassword123"
+            ))
+        }
+        assertEquals(HttpStatusCode.OK, loginResponse.status, "Login should succeed")
+        val loginData = loginResponse.body<LoginResponse>()
+        val jwtToken = loginData.token
+
+        // Step 3: Create an API key using the JWT token
+        val createKeyResponse = client.post("/api/keys") {
+            bearerAuth(jwtToken)
+            contentType(ContentType.Application.Json)
+            setBody(CreateApiKeyRequest(name = "Test API Key"))
+        }
+        assertEquals(HttpStatusCode.Created, createKeyResponse.status, "API key creation should succeed")
+        val createKeyData = createKeyResponse.body<CreateApiKeyResponse>()
+        val apiKey = createKeyData.rawKey
+
+        // Step 4: Use the API key to make a search request
+        val searchRequest = SearchRequest(
             query = "the standard body check package",
             url = "https://www.otandp.com/"
         )
 
-        // Make the request
-        val response = client.post("/api/search") {
+        val searchResponse = client.post("/api/search") {
+            bearerAuth(apiKey)
             contentType(ContentType.Application.Json)
-            setBody(request)
+            setBody(searchRequest)
         }
 
         // Assert response status
-        assertEquals(HttpStatusCode.OK, response.status, "Expected OK status")
+        assertEquals(HttpStatusCode.OK, searchResponse.status, "Expected OK status")
 
         // Parse the response body
-        val searchResponse = response.body<SearchResponse>()
+        val searchResult = searchResponse.body<SearchResponse>()
 
         // Assert response is not null and contains meaningful content
-        assertTrue(searchResponse.answer.isNotBlank(), "Response content should not be null")
+        assertTrue(searchResult.answer.isNotBlank(), "Response answer should not be blank")
         assertTrue(
-            searchResponse.content.isNotBlank(),
+            searchResult.content.isNotBlank(),
             "Response content should not be blank"
         )
-        println("Search response: ${searchResponse.answer}")
+        println("Search response: ${searchResult.answer}")
     }
 }
 
