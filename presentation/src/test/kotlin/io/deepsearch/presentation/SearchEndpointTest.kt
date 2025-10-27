@@ -7,6 +7,7 @@ import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.server.config.ApplicationConfig
 import io.ktor.server.testing.*
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
@@ -19,6 +20,10 @@ class SearchEndpointTest {
     fun `test search endpoint with OT&P body check query`() = testApplication {
         application {
             module()
+        }
+
+        environment {
+            config = ApplicationConfig("application.yaml")
         }
 
         // Configure client with JSON content negotiation
