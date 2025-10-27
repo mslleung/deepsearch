@@ -42,16 +42,15 @@ import io.deepsearch.application.services.IUrlProcessingLockRegistry
 import io.deepsearch.application.services.PrecacheJobRegistry
 import io.deepsearch.application.services.QuerySessionService
 import io.deepsearch.application.services.UrlProcessingLockRegistry
+import io.deepsearch.domain.config.domainBenchmarkTestModule
 import io.deepsearch.domain.config.domainTestModule
+import io.deepsearch.infrastructure.config.infrastructureBenchmarkTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
-val applicationTestModule = module {
-    includes(domainTestModule)
-    includes(infrastructureTestModule)
-
+private val applicationCommonTestModule = module {
     // Shared across test components
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
@@ -75,4 +74,16 @@ val applicationTestModule = module {
     singleOf(::PdfConversionService) bind IPdfConversionService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class
+}
+
+val applicationTestModule = module {
+    includes(domainTestModule)
+    includes(infrastructureTestModule)
+    includes(applicationCommonTestModule)
+}
+
+val applicationBenchmarkTestModule = module {
+    includes(domainBenchmarkTestModule)
+    includes(infrastructureBenchmarkTestModule)
+    includes(applicationCommonTestModule)
 }

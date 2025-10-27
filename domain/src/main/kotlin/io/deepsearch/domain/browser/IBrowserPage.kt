@@ -32,7 +32,7 @@ interface IBrowserPage {
         private fun createTessBaseAPI(): TessBaseAPI {
             return TessBaseAPI().apply {
                 // Initialize with English, Chinese Simplified, and Chinese Traditional
-                if (Init(tessdataPath, "eng+chi_sim+chi_tra") != 0) {
+                if (Init(tessdataPath, "eng") != 0) {
                     throw RuntimeException("Failed to initialize Tesseract OCR with tessdata path: $tessdataPath")
                 }
             }

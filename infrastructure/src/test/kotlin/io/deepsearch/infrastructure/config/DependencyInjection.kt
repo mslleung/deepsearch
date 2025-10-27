@@ -5,12 +5,11 @@ import io.deepsearch.infrastructure.database.DatabaseConfig
 import io.deepsearch.infrastructure.repositories.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
-import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
-val infrastructureTestModule = module {
+private val infrastructureCommonTestModule = module {
     // Initialize database for tests
     single(createdAtStart = true) { DatabaseConfig.configureDatabase() }
     
@@ -24,8 +23,15 @@ val infrastructureTestModule = module {
     singleOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
     singleOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
     singleOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
+}
 
+val infrastructureTestModule = module {
+    includes(infrastructureCommonTestModule)
     single<CoroutineDispatcher> { StandardTestDispatcher() }
+}
+
+val infrastructureBenchmarkTestModule = module {
+    includes(infrastructureCommonTestModule)
 }
 
 

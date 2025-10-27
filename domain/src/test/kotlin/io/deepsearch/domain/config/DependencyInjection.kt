@@ -48,20 +48,8 @@ import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
-val domainTestModule = module {
+private val domainCommonTestModule = module {
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
-    single<CoroutineDispatcher> { StandardTestDispatcher() }
-
-    single<IDispatcherProvider> {
-        val testDispatcher = get<CoroutineDispatcher>()
-        object : IDispatcherProvider {
-            override val io = testDispatcher
-            override val default = testDispatcher
-            override val main = testDispatcher
-            override val unconfined = testDispatcher
-        }
-    }
-
     singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
 
     // Google ADK agent has its own lifecycle management, so we make it singleton
@@ -85,7 +73,30 @@ val domainTestModule = module {
     singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
     singleOf(::MultiIconInterpreterAgentAdkImpl) bind IMultiIconInterpreterAgent::class
+}
 
+val domainTestModule = module {
+    includes(domainCommonTestModule)
+
+    single<CoroutineDispatcher> { StandardTestDispatcher() }
+
+    single<IDispatcherProvider> {
+        val testDispatcher = get<CoroutineDispatcher>()
+        object : IDispatcherProvider {
+            override val io = testDispatcher
+            override val default = testDispatcher
+            override val main = testDispatcher
+            override val unconfined = testDispatcher
+        }
+    }
+}
+
+val domainBenchmarkTestModule = module {
+    includes(domainCommonTestModule)
+
+    single<CoroutineDispatcher> { StandardTestDispatcher() }
+
+    singleOf(::DefaultDispatcherProvider) bind IDispatcherProvider::class
 }
 
 
