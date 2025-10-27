@@ -1,6 +1,7 @@
 package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IApiKeyService
+import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.presentation.dto.CreateApiKeyRequest
@@ -83,7 +84,7 @@ class ApiKeyController(
 
     private fun getUserIdFromPrincipal(call: ApplicationCall): UserId? {
         val principal = call.principal<JWTPrincipal>()
-        val userIdValue = principal?.payload?.getClaim("userId")?.asInt() ?: return null
+        val userIdValue = principal?.payload?.getClaim(JwtConfig.CLAIM_USER_ID)?.asInt() ?: return null
         return UserId(userIdValue)
     }
 }
