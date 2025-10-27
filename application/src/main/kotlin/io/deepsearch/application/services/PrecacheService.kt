@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 interface IPrecacheService {
     @Serializable
@@ -29,6 +31,7 @@ interface IPrecacheService {
     fun events(jobId: Long): SharedFlow<IPrecacheService.PrecacheEvent>
 }
 
+@OptIn(ExperimentalTime::class)
 class PrecacheService(
     private val normalizeUrlService: INormalizeUrlService,
     private val jobRepository: IPrecacheJobRepository,
@@ -42,14 +45,14 @@ class PrecacheService(
         val existing = jobRepository.findActiveByBaseUrl(normalizedBase)
         if (existing != null) return existing
 
-        val now = System.currentTimeMillis()
+        val now = Clock.System.now()
         val created = jobRepository.create(
             PrecacheJob(
                 id = null,
                 baseUrl = normalizedBase,
                 maxUrlCount = maxUrlCount,
-                createdAtMs = now,
-                updatedAtMs = now,
+                createdAt = now,
+                updatedAt = now,
                 processedCount = 0,
                 state = PrecacheJobState.IN_PROGRESS
             )

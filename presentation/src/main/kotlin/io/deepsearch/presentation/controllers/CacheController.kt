@@ -7,6 +7,7 @@ import io.deepsearch.presentation.dto.CacheItem
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
+import kotlin.time.ExperimentalTime
 
 class CacheController(private val cacheQueryService: ICacheQueryService) {
     suspend fun list(call: ApplicationCall) {
@@ -56,9 +57,10 @@ class CacheController(private val cacheQueryService: ICacheQueryService) {
         call.respond(items)
     }
 
+    @OptIn(ExperimentalTime::class)
     private fun WebpageMarkdown.toItem(): CacheItem = CacheItem(
         url = url,
-        updatedAtEpochMs = updatedAtEpochMs,
+        updatedAt = updatedAt.toEpochMilliseconds(),
         httpStatus = httpStatus,
         mimeType = mimeType
     )

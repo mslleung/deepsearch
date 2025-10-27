@@ -1,36 +1,31 @@
 package io.deepsearch.domain.models.entities
 
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
+
 /**
  * Persistent record of a precache job. Encapsulates allowed state transitions
  * and progress updates. Jobs are immutable in identity; state and counters can
  * evolve over time but deletion is not allowed.
  */
+@OptIn(ExperimentalTime::class)
 class PrecacheJob(
-    val id: Long? = null,
+    var id: Long? = null,
     val baseUrl: String,
     val maxUrlCount: Int,
-    val createdAtMs: Long,
-    var updatedAtMs: Long,
+    val createdAt: Instant = Clock.System.now(),
+    var updatedAt: Instant = Clock.System.now(),
     var processedCount: Int = 0,
     var state: PrecacheJobState = PrecacheJobState.IN_PROGRESS
 ) {
 
-    fun withId(newId: Long): PrecacheJob = PrecacheJob(
-        id = newId,
-        baseUrl = baseUrl,
-        maxUrlCount = maxUrlCount,
-        createdAtMs = createdAtMs,
-        updatedAtMs = updatedAtMs,
-        processedCount = processedCount,
-        state = state
-    )
-
-    fun incrementProcessed(nowMs: Long) {
+    fun incrementProcessed() {
         if (state != PrecacheJobState.IN_PROGRESS) return
         if (processedCount < maxUrlCount) {
             processedCount += 1
         }
-        updatedAtMs = nowMs
+        updatedAt = Clock.System.now()
         if (processedCount >= maxUrlCount) {
             state = PrecacheJobState.COMPLETED
         }
@@ -39,13 +34,13 @@ class PrecacheJob(
     fun markStopped(nowMs: Long) {
         if (state == PrecacheJobState.IN_PROGRESS) {
             state = PrecacheJobState.STOPPED
-            updatedAtMs = nowMs
+            updatedAt = Clock.System.now()
         }
     }
 
     fun markCompleted(nowMs: Long) {
         state = PrecacheJobState.COMPLETED
-        updatedAtMs = nowMs
+        updatedAt = Clock.System.now()
     }
 }
 

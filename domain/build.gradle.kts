@@ -39,8 +39,12 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.rx3)
     
-    // DateTime
+    // DateTime - exposed in domain model APIs
     implementation(libs.kotlinx.datetime)
+
+    // Security
+    implementation(libs.jbcrypt)
+    implementation(libs.jwt)
 
     // Dependency injection
     implementation(libs.koin.ktor)

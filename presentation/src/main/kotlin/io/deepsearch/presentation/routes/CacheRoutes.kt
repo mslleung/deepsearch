@@ -8,7 +8,7 @@ import org.koin.ktor.plugin.scope
 
 fun Application.configureCacheRoutes() {
     routing {
-        authenticate("api-key") {
+        authenticate("auth-jwt") {
             route("/api/cache") {
                 get("/list") {
                     val controller = call.scope.get<CacheController>()

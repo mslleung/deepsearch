@@ -10,7 +10,10 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
 
     override suspend fun findByHash(pdfHash: String): PdfMarkdown? = suspendTransaction {
@@ -28,8 +31,8 @@ class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
             it[markdown] = pdfMarkdown.markdown
             it[pageCount] = pdfMarkdown.pageCount
             it[fileSizeBytes] = pdfMarkdown.fileSizeBytes
-            it[createdAtEpochMs] = pdfMarkdown.createdAtEpochMs
-            it[updatedAtEpochMs] = pdfMarkdown.updatedAtEpochMs
+            it[createdAtEpochMs] = pdfMarkdown.createdAt.toEpochMilliseconds()
+            it[updatedAtEpochMs] = pdfMarkdown.updatedAt.toEpochMilliseconds()
         }
     }
 
@@ -39,8 +42,8 @@ class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
             markdown = row[PdfMarkdownTable.markdown],
             pageCount = row[PdfMarkdownTable.pageCount],
             fileSizeBytes = row[PdfMarkdownTable.fileSizeBytes],
-            createdAtEpochMs = row[PdfMarkdownTable.createdAtEpochMs],
-            updatedAtEpochMs = row[PdfMarkdownTable.updatedAtEpochMs]
+            createdAt = Instant.fromEpochMilliseconds(row[PdfMarkdownTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[PdfMarkdownTable.updatedAtEpochMs])
         )
     }
 }

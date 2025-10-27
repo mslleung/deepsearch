@@ -11,7 +11,10 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedWebpageIconRepository : IWebpageIconRepository {
 
     override suspend fun upsert(icon: WebpageIcon): Unit = suspendTransaction {
@@ -22,8 +25,8 @@ class ExposedWebpageIconRepository : IWebpageIconRepository {
         ) {
             it[imageBytesHash] = hashBase64
             it[label] = icon.label
-            it[createdAtEpochMs] = icon.createdAtEpochMs
-            it[updatedAtEpochMs] = icon.updatedAtEpochMs
+            it[createdAtEpochMs] = icon.createdAt.toEpochMilliseconds()
+            it[updatedAtEpochMs] = icon.updatedAt.toEpochMilliseconds()
         }
     }
 
@@ -39,8 +42,8 @@ class ExposedWebpageIconRepository : IWebpageIconRepository {
         return WebpageIcon(
             imageBytesHash = Base64.decode(row[WebpageIconTable.imageBytesHash]),
             label = row[WebpageIconTable.label],
-            createdAtEpochMs = row[WebpageIconTable.createdAtEpochMs],
-            updatedAtEpochMs = row[WebpageIconTable.updatedAtEpochMs],
+            createdAt = Instant.fromEpochMilliseconds(row[WebpageIconTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[WebpageIconTable.updatedAtEpochMs]),
         )
     }
 }

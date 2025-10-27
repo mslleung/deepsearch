@@ -3,6 +3,9 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpagePopup
 import io.deepsearch.domain.repositories.IWebpagePopupRepository
 import io.deepsearch.infrastructure.database.WebpagePopupTable
+import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable
+import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable.createdAtEpochMs
+import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable.updatedAtEpochMs
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.serialization.json.Json
@@ -12,7 +15,10 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedWebpagePopupRepository : IWebpagePopupRepository {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -27,19 +33,23 @@ class ExposedWebpagePopupRepository : IWebpagePopupRepository {
 
     override suspend fun upsert(webpagePopup: WebpagePopup): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(webpagePopup.pageHash)
-        
+
         WebpagePopupTable.upsert(
             keys = arrayOf(WebpagePopupTable.pageHash)
         ) {
             it[pageHash] = hashBase64
             it[popupXPaths] = json.encodeToString(webpagePopup.popupXPaths)
+            it[createdAtEpochMs] = webpagePopup.createdAt.toEpochMilliseconds()
+            it[updatedAtEpochMs] = webpagePopup.updatedAt.toEpochMilliseconds()
         }
     }
 
     private fun mapRowToWebpagePopup(row: ResultRow): WebpagePopup {
         return WebpagePopup(
             pageHash = Base64.decode(row[WebpagePopupTable.pageHash]),
-            popupXPaths = json.decodeFromString(row[WebpagePopupTable.popupXPaths])
+            popupXPaths = json.decodeFromString(row[WebpagePopupTable.popupXPaths]),
+            createdAt = Instant.fromEpochMilliseconds(row[WebpagePopupTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[WebpagePopupTable.updatedAtEpochMs]),
         )
     }
 }

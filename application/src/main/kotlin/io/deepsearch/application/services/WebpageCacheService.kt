@@ -4,6 +4,8 @@ import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 /**
  * Result of cache lookup operation.
@@ -41,6 +43,7 @@ interface IWebpageCacheService {
     )
 }
 
+@OptIn(ExperimentalTime::class)
 class WebpageCacheService(
     private val webpageMarkdownRepository: IWebpageMarkdownRepository
 ) : IWebpageCacheService {
@@ -57,10 +60,10 @@ class WebpageCacheService(
                 logger.debug("Cache miss for URL: {}", url)
             }
 
-        val currentTime = System.currentTimeMillis()
-        val age = currentTime - cached.updatedAtEpochMs
+        val currentTime = Clock.System.now()
+        val age = currentTime - cached.updatedAt
 
-        return if (age < CACHE_TTL_MS) {
+        return if (age.inWholeMilliseconds < CACHE_TTL_MS) {
             logger.debug("Cache hit for URL: {} (age: {} ms)", url, age)
             CachedWebpageResult.Hit(cached)
         } else {
@@ -77,7 +80,7 @@ class WebpageCacheService(
         httpReason: String,
         mimeType: String?
     ) {
-        val currentTime = System.currentTimeMillis()
+        val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
 
         webpageMarkdownRepository.upsert(
@@ -88,8 +91,8 @@ class WebpageCacheService(
                 httpStatus = httpStatus,
                 httpReason = httpReason,
                 mimeType = mimeType,
-                createdAtEpochMs = existing?.createdAtEpochMs ?: currentTime,
-                updatedAtEpochMs = currentTime
+                createdAt = existing?.createdAt ?: currentTime,
+                updatedAt = currentTime
             )
         )
 

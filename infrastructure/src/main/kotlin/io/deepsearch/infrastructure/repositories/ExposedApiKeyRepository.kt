@@ -15,7 +15,10 @@ import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedApiKeyRepository : IApiKeyRepository {
 
     override suspend fun save(apiKey: ApiKey): ApiKey = suspendTransaction {
@@ -24,12 +27,13 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             it[keyHash] = apiKey.keyHash
             it[keyPrefix] = apiKey.keyPrefix
             it[name] = apiKey.name
-            it[createdAt] = apiKey.createdAt
-            it[lastUsedAt] = apiKey.lastUsedAt
+            it[createdAtEpochMs] = apiKey.createdAt.toEpochMilliseconds()
+            it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
         }[ApiKeyTable.id]
 
-        apiKey.withId(ApiKeyId(id))
+        apiKey.id = ApiKeyId(id)
+        apiKey
     }
 
     override suspend fun findById(id: ApiKeyId): ApiKey? = suspendTransaction {
@@ -59,7 +63,7 @@ class ExposedApiKeyRepository : IApiKeyRepository {
 
     override suspend fun update(apiKey: ApiKey): ApiKey = suspendTransaction {
         ApiKeyTable.update({ ApiKeyTable.id eq apiKey.id!!.value }) {
-            it[lastUsedAt] = apiKey.lastUsedAt
+            it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
         }
         apiKey
@@ -72,8 +76,8 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             keyHash = row[ApiKeyTable.keyHash],
             keyPrefix = row[ApiKeyTable.keyPrefix],
             name = row[ApiKeyTable.name],
-            createdAt = row[ApiKeyTable.createdAt],
-            lastUsedAt = row[ApiKeyTable.lastUsedAt],
+            createdAt = Instant.fromEpochMilliseconds(row[ApiKeyTable.createdAtEpochMs]),
+            lastUsedAt = row[ApiKeyTable.lastUsedAtEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
             usageCount = row[ApiKeyTable.usageCount]
         )
     }

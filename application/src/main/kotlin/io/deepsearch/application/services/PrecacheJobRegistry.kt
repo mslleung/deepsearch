@@ -266,7 +266,7 @@ class PrecacheJobRegistry(
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                 // Markdown extraction complete, increment counter and emit result
                                 val count = processedCount.incrementAndGet()
-                                job.incrementProcessed(System.currentTimeMillis())
+                                job.incrementProcessed()
                                 jobRepository.update(job)
                                 
                                 logger.debug(

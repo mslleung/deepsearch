@@ -9,6 +9,7 @@ import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
+import kotlin.time.ExperimentalTime
 
 interface INavigationElementRemovalService {
     /**
@@ -58,6 +59,7 @@ class NavigationElementRemovalService(
         return identificationResult.elements
     }
 
+    @OptIn(ExperimentalTime::class)
     private suspend fun cacheNavigationElements(
         pageHash: ByteArray,
         elements: SemanticElements

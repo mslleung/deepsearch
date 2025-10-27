@@ -4,10 +4,10 @@ import io.deepsearch.domain.entities.User
 import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.OAuthProvider
 import io.deepsearch.domain.models.valueobjects.PasswordHash
-import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IUserRepository
-import kotlinx.datetime.Clock
 import org.mindrot.jbcrypt.BCrypt
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 interface IAuthService {
     suspend fun registerUser(email: Email, password: String, displayName: String? = null): User
@@ -26,6 +26,7 @@ interface IAuthService {
     ): User
 }
 
+@OptIn(ExperimentalTime::class)
 class AuthService(
     private val userRepository: IUserRepository
 ) : IAuthService {
@@ -54,11 +55,9 @@ class AuthService(
     override suspend fun authenticateUser(email: Email, password: String): User? {
         val user = userRepository.findByEmail(email) ?: return null
 
-        if (user.passwordHash == null) {
-            return null // OAuth-only user
-        }
+        val passwordHash = user.passwordHash ?: return null // OAuth-only user
 
-        return if (BCrypt.checkpw(password, user.passwordHash.value)) {
+        return if (BCrypt.checkpw(password, passwordHash.value)) {
             user
         } else {
             null
@@ -107,15 +106,9 @@ class AuthService(
         val emailUser = userRepository.findByEmail(email)
         if (emailUser != null) {
             // User exists with this email but different OAuth provider
-            // Update user to add OAuth info
-            val now = Clock.System.now()
-            val updatedUser = emailUser.copy(
-                oauthProvider = provider,
-                oauthProviderId = providerId,
-                displayName = displayName ?: emailUser.displayName,
-                updatedAt = now
-            )
-            return userRepository.update(updatedUser)
+            // Note: This is a business decision - we're merging accounts based on email.
+            // In production, you might want to ask for user confirmation first.
+            throw IllegalStateException("User with email ${email.value} already exists. Cannot link OAuth account automatically.")
         }
 
         // Create new user

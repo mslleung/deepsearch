@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.io.encoding.Base64
+import kotlin.time.ExperimentalTime
 
 interface IWebpageImageTextExtractionService {
     suspend fun extractTextFromImage(image: IBrowserPage.WebImage): String?
@@ -42,6 +43,7 @@ class WebpageImageTextExtractionService(
      * - Using multi-image agent that processes up to 50 images per LLM call
      * Results are cached to avoid reprocessing the same images.
      */
+    @OptIn(ExperimentalTime::class)
     override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>): List<String?> {
         if (images.isEmpty()) {
             return emptyList()

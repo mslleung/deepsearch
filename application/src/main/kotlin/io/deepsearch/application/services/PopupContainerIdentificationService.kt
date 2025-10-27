@@ -6,6 +6,7 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpagePopup
 import io.deepsearch.domain.repositories.IWebpagePopupRepository
 import java.security.MessageDigest
+import kotlin.time.ExperimentalTime
 
 interface IPopupContainerIdentificationService {
     /**
@@ -20,6 +21,7 @@ class PopupContainerIdentificationService(
     private val webpagePopupRepository: IWebpagePopupRepository
 ) : IPopupContainerIdentificationService {
 
+    @OptIn(ExperimentalTime::class)
     override suspend fun identifyPopupContainers(webpage: IBrowserPage): List<String> {
         val screenshot = webpage.takeScreenshot()
         val html = webpage.getFullHtml()

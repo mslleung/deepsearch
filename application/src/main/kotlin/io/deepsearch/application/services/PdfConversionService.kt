@@ -9,6 +9,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import kotlin.io.encoding.Base64
+import kotlin.time.ExperimentalTime
 
 interface IPdfConversionService {
     suspend fun convertPdfToMarkdown(pdfBytes: ByteArray): String
@@ -30,6 +31,7 @@ class PdfConversionService(
         private const val MAX_FILE_SIZE_BYTES = 50L * 1024 * 1024 // 50MB
     }
 
+    @OptIn(ExperimentalTime::class)
     override suspend fun convertPdfToMarkdown(pdfBytes: ByteArray): String {
         // Calculate PDF hash for caching
         val pdfHash = calculateHash(pdfBytes)

@@ -4,9 +4,10 @@ import io.deepsearch.domain.models.entities.ApiKey
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
-import kotlinx.datetime.Clock
 import org.mindrot.jbcrypt.BCrypt
 import java.security.SecureRandom
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 interface IApiKeyService {
     suspend fun generateApiKey(userId: UserId, name: String): Pair<ApiKey, String>
@@ -15,6 +16,7 @@ interface IApiKeyService {
     suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean
 }
 
+@OptIn(ExperimentalTime::class)
 class ApiKeyService(
     private val apiKeyRepository: IApiKeyRepository
 ) : IApiKeyService {
@@ -67,9 +69,9 @@ class ApiKeyService(
         if (apiKey != null) {
             // Update last used time and usage count
             val now = Clock.System.now()
-            val updatedKey = apiKey.incrementUsage(now)
-            apiKeyRepository.update(updatedKey)
-            return updatedKey
+            apiKey.incrementUsage(now)
+            apiKeyRepository.update(apiKey)
+            return apiKey
         }
         
         return null
@@ -83,7 +85,7 @@ class ApiKeyService(
         // Verify the key belongs to the user
         val apiKey = apiKeyRepository.findById(keyId)
         if (apiKey?.userId != userId) {
-            return false
+            throw IllegalAccessError("$keyId does not belong to user $userId")
         }
         return apiKeyRepository.delete(keyId)
     }

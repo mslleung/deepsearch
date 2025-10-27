@@ -24,11 +24,13 @@ class SearchEndpointTest {
         // Configure client with JSON content negotiation
         val client = createClient {
             install(ContentNegotiation) {
-                json(Json {
-                    ignoreUnknownKeys = true
-                    prettyPrint = true
-                    isLenient = true
-                })
+                json(
+                    Json {
+                        ignoreUnknownKeys = true
+                        prettyPrint = true
+                        isLenient = true
+                    }
+                )
             }
         }
 
@@ -49,7 +51,7 @@ class SearchEndpointTest {
 
         // Parse the response body
         val searchResponse = response.body<SearchResponse>()
-        
+
         // Assert response is not null and contains meaningful content
         assertTrue(searchResponse.answer.isNotBlank(), "Response content should not be null")
         assertTrue(

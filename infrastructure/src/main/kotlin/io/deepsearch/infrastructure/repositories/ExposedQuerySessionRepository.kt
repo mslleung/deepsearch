@@ -15,7 +15,10 @@ import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedQuerySessionRepository : IQuerySessionRepository {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -33,8 +36,8 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             it[answer] = session.answer
             it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
             it[sourcesDiscovered] = json.encodeToString(session.sourcesDiscovered)
-            it[createdAtEpochMs] = session.createdAtEpochMs
-            it[updatedAtEpochMs] = session.updatedAtEpochMs
+            it[createdAtEpochMs] = session.createdAt.toEpochMilliseconds()
+            it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
         }
         session
     }
@@ -58,7 +61,7 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             it[answer] = session.answer
             it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
             it[sourcesDiscovered] = json.encodeToString(session.sourcesDiscovered)
-            it[updatedAtEpochMs] = session.updatedAtEpochMs
+            it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
         }
         session
     }
@@ -79,8 +82,8 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             traversedUrls = json.decodeFromString<List<String>>(row[QuerySessionTable.traversedUrls]).toMutableSet(),
             sourcesDiscovered = json.decodeFromString<List<String>>(row[QuerySessionTable.sourcesDiscovered])
                 .toMutableList(),
-            createdAtEpochMs = row[QuerySessionTable.createdAtEpochMs],
-            updatedAtEpochMs = row[QuerySessionTable.updatedAtEpochMs],
+            createdAt = Instant.fromEpochMilliseconds(row[QuerySessionTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[QuerySessionTable.updatedAtEpochMs]),
         )
     }
 }

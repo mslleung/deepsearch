@@ -9,6 +9,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import kotlin.io.encoding.Base64
+import kotlin.time.ExperimentalTime
 
 interface IWebpageIconInterpretationService {
     suspend fun interpretIcon(icon: IBrowserPage.Icon): String?
@@ -42,6 +43,7 @@ class WebpageIconInterpretationService(
      * - Using multi-icon agent that processes multiple icons per LLM call
      * Results are cached to avoid reprocessing the same icons.
      */
+    @OptIn(ExperimentalTime::class)
     override suspend fun interpretIcons(icons: List<IBrowserPage.Icon>): List<String?> {
         if (icons.isEmpty()) {
             return emptyList()

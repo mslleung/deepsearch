@@ -38,8 +38,8 @@ class UserService(
         }
         
         // Ensure the user object has the correct ID
-        val userWithId = user.copy(id = userId)
-        return userRepository.update(userWithId)
+        user.id = userId
+        return userRepository.update(user)
     }
 
     override suspend fun deleteUser(userId: UserId): Boolean {

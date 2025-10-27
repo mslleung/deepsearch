@@ -3,6 +3,7 @@ package io.deepsearch.presentation.dto
 import io.deepsearch.domain.entities.User
 import io.deepsearch.domain.models.valueobjects.Email
 import kotlinx.serialization.Serializable
+import kotlin.time.ExperimentalTime
 
 @Serializable
 data class RegisterRequest(
@@ -29,19 +30,16 @@ data class UserResponse(
     val email: String,
     val displayName: String?,
     val oauthProvider: String?,
-    val createdAt: String
+    val createdAt: Long
 )
 
+@OptIn(ExperimentalTime::class)
 fun User.toUserResponse(): UserResponse {
     return UserResponse(
         id = id!!.value,
         email = email.value,
         displayName = displayName,
         oauthProvider = oauthProvider?.name,
-        createdAt = createdAt.toString()
+        createdAt = createdAt.toEpochMilliseconds()
     )
 }
-
-fun RegisterRequest.toEmail(): Email = Email(email)
-fun LoginRequest.toEmail(): Email = Email(email)
-

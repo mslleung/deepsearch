@@ -2,6 +2,7 @@ package io.deepsearch.presentation.dto
 
 import io.deepsearch.domain.models.entities.PrecacheJob
 import kotlinx.serialization.Serializable
+import kotlin.time.ExperimentalTime
 
 @Serializable
 data class PrecacheJobResponse(
@@ -14,14 +15,15 @@ data class PrecacheJobResponse(
     val updatedAtMs: Long
 )
 
+@OptIn(ExperimentalTime::class)
 fun PrecacheJob.toResponse(): PrecacheJobResponse = PrecacheJobResponse(
     id = id,
     baseUrl = baseUrl,
     maxUrlCount = maxUrlCount,
     processedCount = processedCount,
     state = state.name,
-    createdAtMs = createdAtMs,
-    updatedAtMs = updatedAtMs
+    createdAtMs = createdAt.toEpochMilliseconds(),
+    updatedAtMs = updatedAt.toEpochMilliseconds()
 )
 
 

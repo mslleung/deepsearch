@@ -12,7 +12,6 @@ val presentationModule = module {
     requestScope {
         scopedOf(::AuthController)
         scopedOf(::ApiKeyController)
-        scopedOf(::UserController)
         scopedOf(::SearchController)
         scopedOf(::CacheController)
         scopedOf(::PrecacheController)

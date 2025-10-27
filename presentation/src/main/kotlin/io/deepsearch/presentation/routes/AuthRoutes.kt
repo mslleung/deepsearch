@@ -1,5 +1,6 @@
 package io.deepsearch.presentation.routes
 
+import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.presentation.controllers.AuthController
 import io.ktor.server.application.*
 import io.ktor.server.auth.*

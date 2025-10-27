@@ -5,6 +5,8 @@ import io.deepsearch.domain.agents.googleadkimpl.*
 import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
 import io.deepsearch.domain.browser.BrowserRuntimePool
 import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.services.IJwtService
+import io.deepsearch.domain.services.JwtService
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -38,5 +40,8 @@ val domainModule = module {
         scopedOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
         scopedOf(::StreamingAnswerAgentAdkImpl) bind IStreamingAnswerAgent::class
         scopedOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
+
+        // domain services
+        scopedOf(::JwtService) bind IJwtService::class
     }
 }

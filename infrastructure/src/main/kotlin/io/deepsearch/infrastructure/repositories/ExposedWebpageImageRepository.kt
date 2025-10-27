@@ -11,7 +11,10 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedWebpageImageRepository : IWebpageImageRepository {
 
     override suspend fun upsert(image: WebpageImage): Unit = suspendTransaction {
@@ -22,8 +25,8 @@ class ExposedWebpageImageRepository : IWebpageImageRepository {
         ) {
             it[imageBytesHash] = hashBase64
             it[extractedText] = image.extractedText
-            it[createdAtEpochMs] = image.createdAtEpochMs
-            it[updatedAtEpochMs] = image.updatedAtEpochMs
+            it[createdAtEpochMs] = image.createdAt.toEpochMilliseconds()
+            it[updatedAtEpochMs] = image.updatedAt.toEpochMilliseconds()
         }
     }
 
@@ -39,8 +42,8 @@ class ExposedWebpageImageRepository : IWebpageImageRepository {
         return WebpageImage(
             imageBytesHash = Base64.decode(row[WebpageImageTable.imageBytesHash]),
             extractedText = row[WebpageImageTable.extractedText],
-            createdAtEpochMs = row[WebpageImageTable.createdAtEpochMs],
-            updatedAtEpochMs = row[WebpageImageTable.updatedAtEpochMs]
+            createdAt = Instant.fromEpochMilliseconds(row[WebpageImageTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[WebpageImageTable.updatedAtEpochMs])
         )
     }
 }

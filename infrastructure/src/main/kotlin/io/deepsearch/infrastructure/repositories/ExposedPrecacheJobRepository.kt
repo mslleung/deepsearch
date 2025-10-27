@@ -13,7 +13,10 @@ import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedPrecacheJobRepository : IPrecacheJobRepository {
 
     override suspend fun create(job: PrecacheJob): PrecacheJob = suspendTransaction {
@@ -22,18 +25,19 @@ class ExposedPrecacheJobRepository : IPrecacheJobRepository {
             it[maxUrlCount] = job.maxUrlCount
             it[processedCount] = job.processedCount
             it[state] = job.state.name
-            it[createdAtMs] = job.createdAtMs
-            it[updatedAtMs] = job.updatedAtMs
+            it[createdAtMs] = job.createdAt.toEpochMilliseconds()
+            it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
         }[PrecacheJobTable.id]
 
-        job.withId(id)
+        job.id = id
+        job
     }
 
     override suspend fun update(job: PrecacheJob): PrecacheJob = suspendTransaction {
         PrecacheJobTable.update({ PrecacheJobTable.id eq (job.id ?: -1) }) {
             it[processedCount] = job.processedCount
             it[state] = job.state.name
-            it[updatedAtMs] = job.updatedAtMs
+            it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
         }
         job
     }
@@ -66,8 +70,8 @@ class ExposedPrecacheJobRepository : IPrecacheJobRepository {
         id = row[PrecacheJobTable.id],
         baseUrl = row[PrecacheJobTable.baseUrl],
         maxUrlCount = row[PrecacheJobTable.maxUrlCount],
-        createdAtMs = row[PrecacheJobTable.createdAtMs],
-        updatedAtMs = row[PrecacheJobTable.updatedAtMs],
+        createdAt = Instant.fromEpochMilliseconds(row[PrecacheJobTable.createdAtMs]),
+        updatedAt = Instant.fromEpochMilliseconds(row[PrecacheJobTable.updatedAtMs]),
         processedCount = row[PrecacheJobTable.processedCount],
         state = PrecacheJobState.valueOf(row[PrecacheJobTable.state])
     )

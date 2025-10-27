@@ -1,8 +1,10 @@
 package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IAuthService
-import io.deepsearch.application.services.IJwtService
+import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.application.services.IUserService
+import io.deepsearch.domain.config.JwtConfig
+import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.presentation.dto.*
 import io.ktor.http.*
@@ -22,11 +24,11 @@ class AuthController(
             val request = call.receive<RegisterRequest>()
             
             val user = authService.registerUser(
-                email = request.toEmail(),
+                email = Email(request.email),
                 password = request.password,
                 displayName = request.displayName
             )
-            
+
             val token = jwtService.generateToken(user.id!!)
             
             call.respond(
@@ -48,7 +50,7 @@ class AuthController(
             val request = call.receive<LoginRequest>()
             
             val user = authService.authenticateUser(
-                email = request.toEmail(),
+                email = Email(request.email),
                 password = request.password
             )
             
@@ -56,7 +58,7 @@ class AuthController(
                 call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid email or password"))
                 return
             }
-            
+
             val token = jwtService.generateToken(user.id!!)
             
             call.respond(

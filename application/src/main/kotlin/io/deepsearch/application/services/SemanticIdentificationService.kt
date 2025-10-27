@@ -9,6 +9,7 @@ import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
+import kotlin.time.ExperimentalTime
 
 interface ISemanticIdentificationService {
     /**
@@ -62,6 +63,7 @@ class SemanticIdentificationService(
         return elements
     }
 
+    @OptIn(ExperimentalTime::class)
     private suspend fun cacheSemanticElements(
         pageHash: ByteArray,
         elements: SemanticElements

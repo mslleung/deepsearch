@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class CacheItem(
     val url: String,
-    val updatedAtEpochMs: Long?,
+    val updatedAt: Long?,
     val httpStatus: Int?,
     val mimeType: String?
 )

@@ -5,6 +5,7 @@ import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.models.entities.WebpageTableInterpretation
 import io.deepsearch.domain.repositories.IWebpageTableInterpretationRepository
 import java.security.MessageDigest
+import kotlin.time.ExperimentalTime
 
 interface ITableInterpretationService {
     suspend fun interpretTable(input: TableInterpretationInput): String
@@ -19,6 +20,7 @@ class TableInterpretationService(
      * Interprets a table using an LLM agent and returns markdown.
      * Results are cached in the repository to avoid repeated calls with the same input.
      */
+    @OptIn(ExperimentalTime::class)
     override suspend fun interpretTable(input: TableInterpretationInput): String {
         // Create a hash from all input parameters that affect the interpretation
         val digest = MessageDigest.getInstance("SHA-256")

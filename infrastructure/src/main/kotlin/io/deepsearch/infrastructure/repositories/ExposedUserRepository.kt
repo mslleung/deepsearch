@@ -18,9 +18,12 @@ import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedUserRepository : IUserRepository {
-    
+
     override suspend fun save(user: User): User = suspendTransaction {
         val id = UserTable.insert {
             it[email] = user.email.value
@@ -28,11 +31,12 @@ class ExposedUserRepository : IUserRepository {
             it[oauthProvider] = user.oauthProvider?.name
             it[oauthProviderId] = user.oauthProviderId
             it[displayName] = user.displayName
-            it[createdAt] = user.createdAt
-            it[updatedAt] = user.updatedAt
+            it[createdAtEpochMs] = user.createdAt.toEpochMilliseconds()
+            it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
         }[UserTable.id]
         
-        user.withId(UserId(id))
+        user.id = UserId(id)
+        user
     }
 
     override suspend fun findById(id: UserId): User? = suspendTransaction {
@@ -69,7 +73,7 @@ class ExposedUserRepository : IUserRepository {
             it[oauthProvider] = user.oauthProvider?.name
             it[oauthProviderId] = user.oauthProviderId
             it[displayName] = user.displayName
-            it[updatedAt] = user.updatedAt
+            it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
         }
         user
     }
@@ -93,8 +97,8 @@ class ExposedUserRepository : IUserRepository {
             oauthProvider = row[UserTable.oauthProvider]?.let { OAuthProvider.fromString(it) },
             oauthProviderId = row[UserTable.oauthProviderId],
             displayName = row[UserTable.displayName],
-            createdAt = row[UserTable.createdAt],
-            updatedAt = row[UserTable.updatedAt]
+            createdAt = Instant.fromEpochMilliseconds(row[UserTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[UserTable.updatedAtEpochMs])
         )
     }
 } 

@@ -1,12 +1,19 @@
 package io.deepsearch.domain.models.entities
 
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
+
 /**
  * Domain entity representing a cached popup container identification result.
  * The pageHash is derived from the screenshot bytes to identify similar page layouts.
  */
+@OptIn(ExperimentalTime::class)
 data class WebpagePopup(
     val pageHash: ByteArray,
-    val popupXPaths: List<String>
+    val popupXPaths: List<String>,
+    val createdAt: Instant = Clock.System.now(),
+    val updatedAt: Instant = Clock.System.now()
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

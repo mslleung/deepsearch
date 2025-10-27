@@ -11,7 +11,10 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedWebpageTableRepository : IWebpageTableRepository {
 
     override suspend fun upsert(table: WebpageTable): Unit = suspendTransaction {
@@ -22,8 +25,8 @@ class ExposedWebpageTableRepository : IWebpageTableRepository {
         ) {
             it[webpageHtmlHash] = hashBase64
             it[tables] = table.tables
-            it[createdAtEpochMs] = table.createdAtEpochMs
-            it[updatedAtEpochMs] = table.updatedAtEpochMs
+            it[createdAtEpochMs] = table.createdAt.toEpochMilliseconds()
+            it[updatedAtEpochMs] = table.updatedAt.toEpochMilliseconds()
         }
     }
 
@@ -39,8 +42,8 @@ class ExposedWebpageTableRepository : IWebpageTableRepository {
         return WebpageTable(
             webpageHtmlHash = Base64.decode(row[WebpageTableTable.webpageHtmlHash]),
             tables = row[WebpageTableTable.tables],
-            createdAtEpochMs = row[WebpageTableTable.createdAtEpochMs],
-            updatedAtEpochMs = row[WebpageTableTable.updatedAtEpochMs],
+            createdAt = Instant.fromEpochMilliseconds(row[WebpageTableTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[WebpageTableTable.updatedAtEpochMs]),
         )
     }
 }

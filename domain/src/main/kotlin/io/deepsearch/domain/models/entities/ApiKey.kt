@@ -2,15 +2,18 @@ package io.deepsearch.domain.models.entities
 
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.UserId
-import kotlinx.datetime.Instant
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ApiKey(
-    val id: ApiKeyId? = null,
+    var id: ApiKeyId? = null,
     val userId: UserId,
     val keyHash: String,
     val keyPrefix: String,
     val name: String,
-    val createdAt: Instant,
+    val createdAt: Instant = Clock.System.now(),
     var lastUsedAt: Instant? = null,
     var usageCount: Long = 0
 ) {

@@ -1,6 +1,9 @@
 package io.deepsearch.domain.models.entities
 
 import io.deepsearch.domain.models.valueobjects.SearchBudget
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 /**
  * Represents a search query session with state tracking for coordinating
@@ -9,6 +12,7 @@ import io.deepsearch.domain.models.valueobjects.SearchBudget
  * This is a rich domain model that encapsulates business logic for state transitions
  * and state management, following DDD principles.
  */
+@OptIn(ExperimentalTime::class)
 class QuerySession(
     val id: String,
     val query: String,
@@ -20,8 +24,8 @@ class QuerySession(
     var answer: String?,
     val traversedUrls: MutableSet<String>,
     var sourcesDiscovered: MutableList<String>,
-    val createdAtEpochMs: Long,
-    var updatedAtEpochMs: Long,
+    val createdAt: Instant,
+    var updatedAt: Instant,
 ) {
 
     constructor(id: String, query: String, url: String) : this(
@@ -35,8 +39,8 @@ class QuerySession(
         answer = null,
         traversedUrls = mutableSetOf(),
         sourcesDiscovered = mutableListOf(),
-        createdAtEpochMs = System.currentTimeMillis(),
-        updatedAtEpochMs = System.currentTimeMillis(),
+        createdAt = Clock.System.now(),
+        updatedAt = Clock.System.now(),
     )
 
     /**
@@ -48,7 +52,7 @@ class QuerySession(
             throw InvalidStateTransitionException(id, state, newState)
         }
         state = newState
-        updatedAtEpochMs = System.currentTimeMillis()
+        updatedAt = Clock.System.now()
     }
 
     /**
@@ -60,7 +64,7 @@ class QuerySession(
         this.answer = answer
         sourcesDiscovered.clear()
         sourcesDiscovered.addAll(sources)
-        updatedAtEpochMs = System.currentTimeMillis()
+        updatedAt = Clock.System.now()
     }
 
     /**
@@ -68,7 +72,7 @@ class QuerySession(
      */
     fun addTraversedUrl(url: String) {
         traversedUrls.add(url)
-        updatedAtEpochMs = System.currentTimeMillis()
+        updatedAt = Clock.System.now()
     }
 
     /**
@@ -77,7 +81,7 @@ class QuerySession(
     fun addTraversedUrls(urls: Collection<String>) {
         if (urls.isEmpty()) return
         traversedUrls.addAll(urls)
-        updatedAtEpochMs = System.currentTimeMillis()
+        updatedAt = Clock.System.now()
     }
 
     /**
@@ -86,7 +90,7 @@ class QuerySession(
      */
     fun markFailed() {
         state = QuerySessionState.FAILED
-        updatedAtEpochMs = System.currentTimeMillis()
+        updatedAt = Clock.System.now()
     }
 
     /**
@@ -95,7 +99,7 @@ class QuerySession(
      */
     fun finish(reason: FinishReason) {
         finishReason = reason
-        updatedAtEpochMs = System.currentTimeMillis()
+        updatedAt = Clock.System.now()
     }
 
     /**
@@ -103,9 +107,9 @@ class QuerySession(
      * Returns the corresponding FinishReason if exceeded, or null otherwise.
      */
     fun checkSearchBudget(budget: SearchBudget = searchBudget): FinishReason? {
-        val elapsedMs = System.currentTimeMillis() - createdAtEpochMs
+        val elapsedMs = Clock.System.now() - createdAt
         return when {
-            elapsedMs >= budget.timeLimitMs -> FinishReason.TIME_EXCEEDED
+            elapsedMs.inWholeMilliseconds >= budget.timeLimitMs -> FinishReason.TIME_EXCEEDED
             traversedUrls.size >= budget.maxLinks -> FinishReason.MAX_LINKS_EXCEEDED
             else -> null
         }

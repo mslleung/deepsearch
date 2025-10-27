@@ -11,7 +11,10 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
+@OptIn(ExperimentalTime::class)
 class ExposedWebpageTableInterpretationRepository : IWebpageTableInterpretationRepository {
 
     override suspend fun upsert(interpretation: WebpageTableInterpretation): Unit = suspendTransaction {
@@ -22,8 +25,8 @@ class ExposedWebpageTableInterpretationRepository : IWebpageTableInterpretationR
         ) {
             it[tableDataHash] = hashBase64
             it[markdown] = interpretation.markdown
-            it[createdAtEpochMs] = interpretation.createdAtEpochMs
-            it[updatedAtEpochMs] = interpretation.updatedAtEpochMs
+            it[createdAtEpochMs] = interpretation.createdAt.toEpochMilliseconds()
+            it[updatedAtEpochMs] = interpretation.updatedAt.toEpochMilliseconds()
         }
     }
 
@@ -39,8 +42,8 @@ class ExposedWebpageTableInterpretationRepository : IWebpageTableInterpretationR
         return WebpageTableInterpretation(
             tableDataHash = Base64.decode(row[WebpageTableInterpretationTable.tableDataHash]),
             markdown = row[WebpageTableInterpretationTable.markdown],
-            createdAtEpochMs = row[WebpageTableInterpretationTable.createdAtEpochMs],
-            updatedAtEpochMs = row[WebpageTableInterpretationTable.updatedAtEpochMs],
+            createdAt = Instant.fromEpochMilliseconds(row[WebpageTableInterpretationTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[WebpageTableInterpretationTable.updatedAtEpochMs]),
         )
     }
 }
