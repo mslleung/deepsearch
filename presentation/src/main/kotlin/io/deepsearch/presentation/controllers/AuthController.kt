@@ -114,7 +114,7 @@ class AuthController(
             val principal = call.principal<OAuthAccessTokenResponse.OAuth2>()
             
             if (principal == null) {
-                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "OAuth authentication failed"))
+                call.respondRedirect("http://localhost:3000/auth/callback#error=OAuth authentication failed")
                 return
             }
 
@@ -136,20 +136,14 @@ class AuthController(
             // Generate JWT token for the user
             val token = jwtService.generateToken(user.id!!)
 
-            // Return the same response format as email/password login
-            call.respond(
-                HttpStatusCode.OK,
-                LoginResponse(
-                    token = token,
-                    user = user.toUserResponse()
-                )
-            )
+            // Redirect to frontend with token in hash fragment
+            call.respondRedirect("http://localhost:3000/auth/callback#token=$token")
         } catch (e: IllegalStateException) {
             // User with email already exists but with different OAuth provider
-            call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
+            call.respondRedirect("http://localhost:3000/auth/callback#error=${e.message ?: "Account conflict"}")
         } catch (e: Exception) {
             call.application.log.error("OAuth callback error", e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
+            call.respondRedirect("http://localhost:3000/auth/callback#error=Internal server error")
         }
     }
 }
