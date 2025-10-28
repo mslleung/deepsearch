@@ -1,3 +1,8 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.plugin.serialization)
@@ -95,13 +100,20 @@ val tsResourcesDir = file("src/main/resources")
 val tsSrcDir = file("src/main/resources/src")
 val tsOutDir = file("src/main/resources/out")
 
-// Ensure output directory exists
-val ensureTsOutDir by tasks.registering {
-    group = "build setup"
-    outputs.dir(tsOutDir)
-    doLast {
-        tsOutDir.mkdirs()
+// Ensure output directory exists - using a proper task with providers for configuration cache compatibility
+abstract class EnsureDirectoryTask : DefaultTask() {
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+    
+    @TaskAction
+    fun ensureDirectory() {
+        outputDir.get().asFile.mkdirs()
     }
+}
+
+val ensureTsOutDir by tasks.registering(EnsureDirectoryTask::class) {
+    group = "build setup"
+    outputDir.set(tsOutDir)
 }
 
 // Check that Node.js toolchain is available (without installing/modifying on every build)
