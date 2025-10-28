@@ -6,6 +6,8 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import org.mindrot.jbcrypt.BCrypt
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import java.security.SecureRandom
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -22,6 +24,8 @@ interface IApiKeyService {
 class ApiKeyService(
     private val apiKeyRepository: IApiKeyRepository
 ) : IApiKeyService {
+
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     companion object {
         private const val KEY_LENGTH = 32
@@ -86,17 +90,16 @@ class ApiKeyService(
         // Try to find existing playground key
         val existingKey = apiKeyRepository.findByUserIdAndType(userId, ApiKeyType.PLAYGROUND)
         
-        if (existingKey != null) {
-            // Return the key - but we can't return the raw key since it's hashed
-            // We need to generate a new one or store it differently
-            // For playground keys, we'll regenerate if needed
-            // Actually, we should only create it once and return an error if lost
-            throw IllegalStateException("Playground key exists but raw key is not available. Please contact support.")
+        if (existingKey == null) {
+            // a user should have a playground key when they register the account
+            // in case they somehow lost it, we will create a new one
+            logger.warn("Playground key not found, creating new key.")
+            // Create new playground key
+            val (_, rawKey) = generateApiKey(userId, "Web App Playground", ApiKeyType.PLAYGROUND)
+            return rawKey
         }
-        
-        // Create new playground key
-        val (_, rawKey) = generateApiKey(userId, "Web App Playground", ApiKeyType.PLAYGROUND)
-        return rawKey
+
+        return existingKey.keyHash
     }
 
     override suspend fun listUserApiKeys(userId: UserId): List<ApiKey> {
