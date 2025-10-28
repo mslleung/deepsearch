@@ -14,6 +14,8 @@ data class ApiKeyResponse(
     val id: Int,
     val name: String,
     val keyPrefix: String,
+    val type: String,
+    val rateLimitPerMinute: Int,
     val createdAt: Long,
     val lastUsedAt: Long?,
     val usageCount: Long
@@ -25,12 +27,19 @@ data class CreateApiKeyResponse(
     val rawKey: String // Only returned once at creation
 )
 
+@Serializable
+data class PlaygroundKeyResponse(
+    val rawKey: String
+)
+
 @OptIn(ExperimentalTime::class)
 fun ApiKey.toApiKeyResponse(): ApiKeyResponse {
     return ApiKeyResponse(
         id = id!!.value,
         name = name,
         keyPrefix = keyPrefix,
+        type = type.name.lowercase(),
+        rateLimitPerMinute = rateLimitPerMinute,
         createdAt = createdAt.toEpochMilliseconds(),
         lastUsedAt = lastUsedAt?.toEpochMilliseconds(),
         usageCount = usageCount

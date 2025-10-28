@@ -1,6 +1,7 @@
 package io.deepsearch.domain.models.entities
 
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -13,6 +14,8 @@ class ApiKey(
     val keyHash: String,
     val keyPrefix: String,
     val name: String,
+    val type: ApiKeyType = ApiKeyType.REGULAR,
+    val rateLimitPerMinute: Int = type.rateLimitPerMinute,
     val createdAt: Instant = Clock.System.now(),
     var lastUsedAt: Instant? = null,
     var usageCount: Long = 0

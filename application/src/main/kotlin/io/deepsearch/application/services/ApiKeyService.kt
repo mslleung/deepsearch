@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.ApiKey
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import org.mindrot.jbcrypt.BCrypt
@@ -10,10 +11,11 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 interface IApiKeyService {
-    suspend fun generateApiKey(userId: UserId, name: String): Pair<ApiKey, String>
+    suspend fun generateApiKey(userId: UserId, name: String, type: ApiKeyType = ApiKeyType.REGULAR): Pair<ApiKey, String>
     suspend fun validateApiKey(rawKey: String): ApiKey?
     suspend fun listUserApiKeys(userId: UserId): List<ApiKey>
     suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean
+    suspend fun getOrCreatePlaygroundKey(userId: UserId): String
 }
 
 @OptIn(ExperimentalTime::class)
@@ -22,15 +24,14 @@ class ApiKeyService(
 ) : IApiKeyService {
 
     companion object {
-        private const val API_KEY_PREFIX = "ds_live_"
         private const val KEY_LENGTH = 32
         private val SECURE_RANDOM = SecureRandom()
         private val CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     }
 
-    override suspend fun generateApiKey(userId: UserId, name: String): Pair<ApiKey, String> {
+    override suspend fun generateApiKey(userId: UserId, name: String, type: ApiKeyType): Pair<ApiKey, String> {
         val randomPart = generateRandomString(KEY_LENGTH)
-        val rawKey = "$API_KEY_PREFIX$randomPart"
+        val rawKey = "${type.prefix}$randomPart"
         val keyHash = BCrypt.hashpw(rawKey, BCrypt.gensalt(12))
         val keyPrefix = rawKey.take(16) // First 16 chars for display
 
@@ -40,6 +41,8 @@ class ApiKeyService(
             keyHash = keyHash,
             keyPrefix = keyPrefix,
             name = name,
+            type = type,
+            rateLimitPerMinute = type.rateLimitPerMinute,
             createdAt = now,
             lastUsedAt = null,
             usageCount = 0
@@ -50,7 +53,9 @@ class ApiKeyService(
     }
 
     override suspend fun validateApiKey(rawKey: String): ApiKey? {
-        if (!rawKey.startsWith(API_KEY_PREFIX)) {
+        // Check if it matches any of our key types
+        val matchesPrefix = ApiKeyType.entries.any { rawKey.startsWith(it.prefix) }
+        if (!matchesPrefix) {
             return null
         }
 
@@ -75,6 +80,23 @@ class ApiKeyService(
         }
         
         return null
+    }
+
+    override suspend fun getOrCreatePlaygroundKey(userId: UserId): String {
+        // Try to find existing playground key
+        val existingKey = apiKeyRepository.findByUserIdAndType(userId, ApiKeyType.PLAYGROUND)
+        
+        if (existingKey != null) {
+            // Return the key - but we can't return the raw key since it's hashed
+            // We need to generate a new one or store it differently
+            // For playground keys, we'll regenerate if needed
+            // Actually, we should only create it once and return an error if lost
+            throw IllegalStateException("Playground key exists but raw key is not available. Please contact support.")
+        }
+        
+        // Create new playground key
+        val (_, rawKey) = generateApiKey(userId, "Web App Playground", ApiKeyType.PLAYGROUND)
+        return rawKey
     }
 
     override suspend fun listUserApiKeys(userId: UserId): List<ApiKey> {

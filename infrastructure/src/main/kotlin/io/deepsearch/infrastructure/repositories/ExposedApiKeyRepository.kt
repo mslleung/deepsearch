@@ -2,6 +2,7 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.ApiKey
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import io.deepsearch.infrastructure.database.ApiKeyTable
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
@@ -27,6 +29,8 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             it[keyHash] = apiKey.keyHash
             it[keyPrefix] = apiKey.keyPrefix
             it[name] = apiKey.name
+            it[type] = apiKey.type.name
+            it[rateLimitPerMinute] = apiKey.rateLimitPerMinute
             it[createdAtEpochMs] = apiKey.createdAt.toEpochMilliseconds()
             it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
@@ -57,6 +61,13 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             .toList()
     }
 
+    override suspend fun findByUserIdAndType(userId: UserId, type: ApiKeyType): ApiKey? = suspendTransaction {
+        ApiKeyTable.selectAll()
+            .where { (ApiKeyTable.userId eq userId.value) and (ApiKeyTable.type eq type.name) }
+            .map { mapRowToApiKey(it) }
+            .singleOrNull()
+    }
+
     override suspend fun delete(id: ApiKeyId): Boolean = suspendTransaction {
         ApiKeyTable.deleteWhere { ApiKeyTable.id eq id.value } > 0
     }
@@ -76,6 +87,8 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             keyHash = row[ApiKeyTable.keyHash],
             keyPrefix = row[ApiKeyTable.keyPrefix],
             name = row[ApiKeyTable.name],
+            type = ApiKeyType.valueOf(row[ApiKeyTable.type]),
+            rateLimitPerMinute = row[ApiKeyTable.rateLimitPerMinute],
             createdAt = Instant.fromEpochMilliseconds(row[ApiKeyTable.createdAtEpochMs]),
             lastUsedAt = row[ApiKeyTable.lastUsedAtEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
             usageCount = row[ApiKeyTable.usageCount]

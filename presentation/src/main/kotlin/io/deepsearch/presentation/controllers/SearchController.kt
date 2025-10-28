@@ -1,21 +1,60 @@
 package io.deepsearch.presentation.controllers
 
-import io.deepsearch.presentation.dto.SearchRequest
+import io.deepsearch.application.services.IApiKeyService
+import io.deepsearch.application.services.IRateLimitService
 import io.deepsearch.application.services.ISearchService
 import io.deepsearch.domain.exceptions.AiInterpretationException
 import io.deepsearch.domain.exceptions.InvalidUrlException
 import io.deepsearch.domain.exceptions.WebScrapeException
 import io.deepsearch.domain.exceptions.WebScrapeTimeoutException
-import io.deepsearch.presentation.dto.SearchResponse
+import io.deepsearch.presentation.dto.SearchRequest
 import io.deepsearch.presentation.dto.toResponse
 import io.ktor.http.*
 import io.ktor.server.application.*
+import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 
-class SearchController(private val searchService: ISearchService) {
+class SearchController(
+    private val searchService: ISearchService,
+    private val apiKeyService: IApiKeyService,
+    private val rateLimitService: IRateLimitService
+) {
     suspend fun searchWebsite(call: ApplicationCall) {
         try {
+            // Get API key from bearer token
+            val principal = call.principal<UserIdPrincipal>()
+            val rawApiKey = principal?.name
+            
+            if (rawApiKey == null) {
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "API key required"))
+                return
+            }
+            
+            // Validate API key
+            val apiKey = apiKeyService.validateApiKey(rawApiKey)
+            if (apiKey == null) {
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid API key"))
+                return
+            }
+            
+            // Check rate limit
+            val allowed = rateLimitService.checkRateLimit(apiKey.id!!, apiKey.rateLimitPerMinute)
+            if (!allowed) {
+                call.respond(
+                    HttpStatusCode.TooManyRequests,
+                    mapOf(
+                        "error" to "Rate limit exceeded",
+                        "limit" to apiKey.rateLimitPerMinute,
+                        "message" to "You have exceeded ${apiKey.rateLimitPerMinute} requests per minute"
+                    )
+                )
+                return
+            }
+            
+            // Record the request
+            rateLimitService.recordRequest(apiKey.id!!)
+            
             val request = call.receive<SearchRequest>()
             val searchResult = searchService.searchWebsite(request.query, request.url)
             call.respond(HttpStatusCode.OK, searchResult.toResponse())

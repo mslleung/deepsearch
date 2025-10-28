@@ -24,6 +24,11 @@ fun Application.configureApiKeyRoutes() {
                     val controller = call.scope.get<ApiKeyController>()
                     controller.deleteKey(call)
                 }
+
+                get("/playground") {
+                    val controller = call.scope.get<ApiKeyController>()
+                    controller.getPlaygroundKey(call)
+                }
             }
         }
     }

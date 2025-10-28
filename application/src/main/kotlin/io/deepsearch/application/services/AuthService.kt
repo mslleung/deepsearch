@@ -1,6 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.entities.User
+import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.OAuthProvider
 import io.deepsearch.domain.models.valueobjects.PasswordHash
@@ -26,7 +27,8 @@ interface IAuthService {
 
 @OptIn(ExperimentalTime::class)
 class AuthService(
-    private val userRepository: IUserRepository
+    private val userRepository: IUserRepository,
+    private val apiKeyService: IApiKeyService
 ) : IAuthService {
 
     override suspend fun registerUser(email: Email, password: String): User {
@@ -46,7 +48,13 @@ class AuthService(
             updatedAt = now
         )
 
-        return userRepository.save(user)
+        val savedUser = userRepository.save(user)
+        
+        // Create default API keys for the user
+        apiKeyService.generateApiKey(savedUser.id!!, "Web App Playground", ApiKeyType.PLAYGROUND)
+        apiKeyService.generateApiKey(savedUser.id!!, "Default API Key", ApiKeyType.REGULAR)
+        
+        return savedUser
     }
 
     override suspend fun authenticateUser(email: Email, password: String): User? {
@@ -82,7 +90,13 @@ class AuthService(
             updatedAt = now
         )
 
-        return userRepository.save(user)
+        val savedUser = userRepository.save(user)
+        
+        // Create default API keys for the user
+        apiKeyService.generateApiKey(savedUser.id!!, "Web App Playground", ApiKeyType.PLAYGROUND)
+        apiKeyService.generateApiKey(savedUser.id!!, "Default API Key", ApiKeyType.REGULAR)
+        
+        return savedUser
     }
 
     override suspend fun findOrCreateOAuthUser(
