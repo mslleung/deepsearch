@@ -83,7 +83,7 @@ class AuthController(
     suspend fun getCurrentUser(call: ApplicationCall) {
         try {
             val principal = call.principal<JWTPrincipal>()
-            val userIdValue = principal?.payload?.getClaim("userId")?.asInt()
+            val userIdValue = principal?.payload?.getClaim(JwtConfig.CLAIM_USER_ID)?.asInt()
             
             if (userIdValue == null) {
                 call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid token"))
