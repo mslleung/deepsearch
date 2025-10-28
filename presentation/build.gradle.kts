@@ -31,6 +31,11 @@ dependencies {
     implementation(libs.ktor.server.auth.jwt)
     implementation(libs.ktor.server.sessions)
     
+    // Ktor client dependencies (for OAuth)
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    
     // Dependency injection
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)

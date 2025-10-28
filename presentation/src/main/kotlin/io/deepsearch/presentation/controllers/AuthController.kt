@@ -5,8 +5,13 @@ import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.application.services.IUserService
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.Email
+import io.deepsearch.domain.models.valueobjects.GoogleUserInfo
+import io.deepsearch.domain.models.valueobjects.OAuthProvider
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.presentation.dto.*
+import io.ktor.client.*
+import io.ktor.client.call.*
+import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -17,7 +22,8 @@ import io.ktor.server.response.*
 class AuthController(
     private val authService: IAuthService,
     private val userService: IUserService,
-    private val jwtService: IJwtService
+    private val jwtService: IJwtService,
+    private val httpClient: HttpClient
 ) {
     suspend fun register(call: ApplicationCall) {
         try {
@@ -96,6 +102,55 @@ class AuthController(
         // With JWT, logout is typically handled client-side by removing the token
         // For now, just acknowledge the logout
         call.respond(HttpStatusCode.OK, mapOf("message" to "Logged out successfully"))
+    }
+
+    suspend fun initiateGoogleOAuth(call: ApplicationCall) {
+        // This route is automatically handled by Ktor OAuth plugin
+        // It will redirect to Google's authorization page
+    }
+
+    suspend fun handleGoogleCallback(call: ApplicationCall) {
+        try {
+            val principal = call.principal<OAuthAccessTokenResponse.OAuth2>()
+            
+            if (principal == null) {
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "OAuth authentication failed"))
+                return
+            }
+
+            // Fetch user info from Google API using the access token
+            val userInfo = httpClient.get("https://www.googleapis.com/oauth2/v2/userinfo") {
+                headers {
+                    append(HttpHeaders.Authorization, "Bearer ${principal.accessToken}")
+                }
+            }.body<GoogleUserInfo>()
+
+            // Find or create user with OAuth credentials
+            val user = authService.findOrCreateOAuthUser(
+                provider = OAuthProvider.GOOGLE,
+                providerId = userInfo.id,
+                email = Email(userInfo.email),
+                displayName = userInfo.name
+            )
+
+            // Generate JWT token for the user
+            val token = jwtService.generateToken(user.id!!)
+
+            // Return the same response format as email/password login
+            call.respond(
+                HttpStatusCode.OK,
+                LoginResponse(
+                    token = token,
+                    user = user.toUserResponse()
+                )
+            )
+        } catch (e: IllegalStateException) {
+            // User with email already exists but with different OAuth provider
+            call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
+        } catch (e: Exception) {
+            call.application.log.error("OAuth callback error", e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
+        }
     }
 }
 

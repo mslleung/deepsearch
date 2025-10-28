@@ -3,23 +3,31 @@ package io.deepsearch.presentation
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import io.deepsearch.domain.config.JwtConfig
+import io.deepsearch.domain.config.OAuthConfig
+import io.deepsearch.domain.config.GoogleOAuthConfig
 import io.deepsearch.presentation.config.presentationModule
 import io.deepsearch.presentation.routes.*
+import io.ktor.client.*
+import io.ktor.client.engine.okhttp.*
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 import io.ktor.http.*
 import io.ktor.server.sse.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.Authentication
 import io.ktor.server.auth.AuthenticationConfig
+import io.ktor.server.auth.OAuthServerSettings
 import io.ktor.server.auth.UserIdPrincipal
 import io.ktor.server.auth.bearer
 import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.jwt.jwt
+import io.ktor.server.auth.oauth
 import io.ktor.server.netty.*
-import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 import io.ktor.server.plugins.requestvalidation.*
 import io.ktor.server.response.*
 import io.ktor.server.websocket.*
+import kotlinx.serialization.json.Json
 import org.koin.dsl.module
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
@@ -49,7 +57,7 @@ fun Application.module() {
 }
 
 private fun Application.configureSerialization() {
-    install(ContentNegotiation) {
+    install(ServerContentNegotiation) {
         json()
     }
 }
@@ -68,6 +76,24 @@ private fun Application.configureDependencyInjection() {
                         audience = environment.config.property("jwt.audience").getString(),
                         realm = environment.config.property("jwt.realm").getString()
                     )
+                }
+                single {
+                    OAuthConfig(
+                        google = GoogleOAuthConfig(
+                            clientId = environment.config.property("oauth.google.clientId").getString(),
+                            clientSecret = environment.config.property("oauth.google.clientSecret").getString(),
+                            redirectUrl = environment.config.property("oauth.google.redirectUrl").getString()
+                        )
+                    )
+                }
+                single {
+                    HttpClient(OkHttp) {
+                        install(ClientContentNegotiation) {
+                            json(Json {
+                                ignoreUnknownKeys = true
+                            })
+                        }
+                    }
                 }
             })
     }
@@ -104,6 +130,7 @@ private fun Application.configureAuthentication() {
     install(Authentication) {
         configureJwtAuth(application)
         configureApiKeyAuth()
+        configureOAuthGoogle(application)
     }
 }
 
@@ -154,6 +181,37 @@ private fun AuthenticationConfig.configureApiKeyAuth() {
             // Return a principal with the raw token
             // Actual validation happens in route handlers
             UserIdPrincipal(credential.token)
+        }
+    }
+}
+
+private fun AuthenticationConfig.configureOAuthGoogle(application: Application) {
+    oauth("auth-oauth-google") {
+        urlProvider = {
+            application.environment.config.property("oauth.google.redirectUrl").getString()
+        }
+        
+        providerLookup = {
+            OAuthServerSettings.OAuth2ServerSettings(
+                name = "google",
+                authorizeUrl = "https://accounts.google.com/o/oauth2/auth",
+                accessTokenUrl = "https://accounts.google.com/o/oauth2/token",
+                requestMethod = HttpMethod.Post,
+                clientId = application.environment.config.property("oauth.google.clientId").getString(),
+                clientSecret = application.environment.config.property("oauth.google.clientSecret").getString(),
+                defaultScopes = listOf(
+                    "https://www.googleapis.com/auth/userinfo.profile",
+                    "https://www.googleapis.com/auth/userinfo.email"
+                )
+            )
+        }
+        
+        client = HttpClient(OkHttp) {
+            install(ClientContentNegotiation) {
+                json(Json {
+                    ignoreUnknownKeys = true
+                })
+            }
         }
     }
 }

@@ -11,3 +11,8 @@ jwt:
     issuer: "deepsearch"
     audience: "deepsearch-users"
     realm: "DeepSearch Web App API"
+oauth:
+    google:
+        clientId: ${GOOGLE_OAUTH_CLIENT_ID}
+        clientSecret: ${GOOGLE_OAUTH_CLIENT_SECRET}
+        redirectUrl: "http://localhost:8080/api/auth/oauth/google/callback"

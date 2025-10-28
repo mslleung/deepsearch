@@ -31,6 +31,21 @@ fun Application.configureAuthRoutes() {
                     controller.getCurrentUser(call)
                 }
             }
+
+            // OAuth Google routes
+            route("/oauth/google") {
+                authenticate("auth-oauth-google") {
+                    get("/login") {
+                        val controller = call.scope.get<AuthController>()
+                        controller.initiateGoogleOAuth(call)
+                    }
+
+                    get("/callback") {
+                        val controller = call.scope.get<AuthController>()
+                        controller.handleGoogleCallback(call)
+                    }
+                }
+            }
         }
     }
 }
