@@ -40,8 +40,7 @@ class SearchEndpointTest {
             contentType(ContentType.Application.Json)
             setBody(RegisterRequest(
                 email = testEmail,
-                password = "testpassword123",
-                displayName = "Test User"
+                password = "testpassword123"
             ))
         }
         assertEquals(HttpStatusCode.Created, registerResponse.status, "User registration should succeed")

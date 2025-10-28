@@ -15,7 +15,6 @@ class User(
     var passwordHash: PasswordHash? = null,
     val oauthProvider: OAuthProvider? = null,
     val oauthProviderId: String? = null,
-    val displayName: String? = null,
     val createdAt: Instant = Clock.System.now(),
     var updatedAt: Instant = Clock.System.now()
 ) {

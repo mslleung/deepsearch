@@ -10,19 +10,17 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 interface IAuthService {
-    suspend fun registerUser(email: Email, password: String, displayName: String? = null): User
+    suspend fun registerUser(email: Email, password: String): User
     suspend fun authenticateUser(email: Email, password: String): User?
     suspend fun registerOAuthUser(
         provider: OAuthProvider,
         providerId: String,
-        email: Email,
-        displayName: String?
+        email: Email
     ): User
     suspend fun findOrCreateOAuthUser(
         provider: OAuthProvider,
         providerId: String,
-        email: Email,
-        displayName: String?
+        email: Email
     ): User
 }
 
@@ -31,7 +29,7 @@ class AuthService(
     private val userRepository: IUserRepository
 ) : IAuthService {
 
-    override suspend fun registerUser(email: Email, password: String, displayName: String?): User {
+    override suspend fun registerUser(email: Email, password: String): User {
         // Check if user already exists
         val existingUser = userRepository.findByEmail(email)
         if (existingUser != null) {
@@ -44,7 +42,6 @@ class AuthService(
         val user = User(
             email = email,
             passwordHash = passwordHash,
-            displayName = displayName,
             createdAt = now,
             updatedAt = now
         )
@@ -67,8 +64,7 @@ class AuthService(
     override suspend fun registerOAuthUser(
         provider: OAuthProvider,
         providerId: String,
-        email: Email,
-        displayName: String?
+        email: Email
     ): User {
         // Check if user already exists with this OAuth provider
         val existingUser = userRepository.findByOAuthProvider(provider, providerId)
@@ -82,7 +78,6 @@ class AuthService(
             email = email,
             oauthProvider = provider,
             oauthProviderId = providerId,
-            displayName = displayName,
             createdAt = now,
             updatedAt = now
         )
@@ -93,8 +88,7 @@ class AuthService(
     override suspend fun findOrCreateOAuthUser(
         provider: OAuthProvider,
         providerId: String,
-        email: Email,
-        displayName: String?
+        email: Email
     ): User {
         // First, try to find by OAuth provider
         val existingUser = userRepository.findByOAuthProvider(provider, providerId)
@@ -112,7 +106,7 @@ class AuthService(
         }
 
         // Create new user
-        return registerOAuthUser(provider, providerId, email, displayName)
+        return registerOAuthUser(provider, providerId, email)
     }
 
     private fun hashPassword(password: String): PasswordHash {

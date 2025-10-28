@@ -8,8 +8,7 @@ import kotlin.time.ExperimentalTime
 @Serializable
 data class RegisterRequest(
     val email: String,
-    val password: String,
-    val displayName: String? = null
+    val password: String
 )
 
 @Serializable
@@ -28,7 +27,6 @@ data class LoginResponse(
 data class UserResponse(
     val id: Int,
     val email: String,
-    val displayName: String?,
     val oauthProvider: String?,
     val createdAt: Long
 )
@@ -38,7 +36,6 @@ fun User.toUserResponse(): UserResponse {
     return UserResponse(
         id = id!!.value,
         email = email.value,
-        displayName = displayName,
         oauthProvider = oauthProvider?.name,
         createdAt = createdAt.toEpochMilliseconds()
     )

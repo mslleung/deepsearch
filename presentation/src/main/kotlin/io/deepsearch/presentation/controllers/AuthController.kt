@@ -31,8 +31,7 @@ class AuthController(
             
             val user = authService.registerUser(
                 email = Email(request.email),
-                password = request.password,
-                displayName = request.displayName
+                password = request.password
             )
 
             val token = jwtService.generateToken(user.id!!)
@@ -129,8 +128,7 @@ class AuthController(
             val user = authService.findOrCreateOAuthUser(
                 provider = OAuthProvider.GOOGLE,
                 providerId = userInfo.id,
-                email = Email(userInfo.email),
-                displayName = userInfo.name
+                email = Email(userInfo.email)
             )
 
             // Generate JWT token for the user

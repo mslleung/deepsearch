@@ -30,7 +30,6 @@ class ExposedUserRepository : IUserRepository {
             it[passwordHash] = user.passwordHash?.value
             it[oauthProvider] = user.oauthProvider?.name
             it[oauthProviderId] = user.oauthProviderId
-            it[displayName] = user.displayName
             it[createdAtEpochMs] = user.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
         }[UserTable.id]
@@ -72,7 +71,6 @@ class ExposedUserRepository : IUserRepository {
             it[passwordHash] = user.passwordHash?.value
             it[oauthProvider] = user.oauthProvider?.name
             it[oauthProviderId] = user.oauthProviderId
-            it[displayName] = user.displayName
             it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
         }
         user
@@ -96,7 +94,6 @@ class ExposedUserRepository : IUserRepository {
             passwordHash = row[UserTable.passwordHash]?.let { PasswordHash(it) },
             oauthProvider = row[UserTable.oauthProvider]?.let { OAuthProvider.fromString(it) },
             oauthProviderId = row[UserTable.oauthProviderId],
-            displayName = row[UserTable.displayName],
             createdAt = Instant.fromEpochMilliseconds(row[UserTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[UserTable.updatedAtEpochMs])
         )
