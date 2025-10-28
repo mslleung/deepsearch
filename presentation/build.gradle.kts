@@ -30,6 +30,7 @@ dependencies {
     implementation(libs.ktor.server.auth)
     implementation(libs.ktor.server.auth.jwt)
     implementation(libs.ktor.server.sessions)
+    implementation(libs.ktor.server.cors)
     
     // Ktor client dependencies (for OAuth)
     implementation(libs.ktor.client.core)
@@ -55,4 +56,8 @@ tasks.test {
     
     // Pass environment variables to tests
     environment("GOOGLE_API_KEY", System.getenv("GOOGLE_API_KEY") ?: "")
+}
+
+tasks.shadowJar {
+    isZip64 = true
 }
