@@ -11,6 +11,23 @@
         <appender-ref ref="STDOUT"/>
     </logger>
 
+    <logger name="io.deepsearch.application" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+
+    <logger name="io.deepsearch.domain" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+
+    <logger name="io.deepsearch.infrastructure" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+
+    <!-- Suppress noisy third-party loggers -->
+    <logger name="ch.qos.logback" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+
     <!-- Root logger at INFO for cleanliness -->
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
