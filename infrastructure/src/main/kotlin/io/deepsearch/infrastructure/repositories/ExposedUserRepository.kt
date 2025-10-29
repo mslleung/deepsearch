@@ -1,6 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
-import io.deepsearch.domain.entities.User
+import io.deepsearch.domain.models.entities.User
 import io.deepsearch.domain.repositories.IUserRepository
 import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.OAuthProvider
