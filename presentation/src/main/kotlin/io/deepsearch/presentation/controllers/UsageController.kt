@@ -143,14 +143,14 @@ class UsageController(
             val request = call.receive<UpgradePlanRequest>()
             val plan = SubscriptionPlan.fromName(request.planName)
             
-            if (plan == null) {
+            if (plan == null || plan == SubscriptionPlan.FREE) {
                 call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid plan name"))
                 return
             }
 
             val newSubscription = subscriptionPlanService.upgradePlan(userId, plan)
             val subscriptionDto = newSubscription.toDto()
-            call.respond(HttpStatusCode.OK, mapOf("subscription" to subscriptionDto, "message" to "Plan upgraded successfully"))
+            call.respond(HttpStatusCode.OK, subscriptionDto)
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
         } catch (e: Exception) {

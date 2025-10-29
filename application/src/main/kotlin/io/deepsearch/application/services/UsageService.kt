@@ -1,6 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.ApiKeyUsage
+import io.deepsearch.domain.models.entities.PlanTier
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyUsageRepository
@@ -80,7 +81,17 @@ class UsageService(
     override suspend fun getActiveSubscriptionUsage(userId: UserId): SubscriptionUsageSummary {
         val activeSubscriptions = subscriptionPlanService.getUserAllActiveSubscriptions(userId)
 
-        val subscriptionDetails = activeSubscriptions.map { subscription ->
+        // Separate paid and free subscriptions
+        val paidSubscriptions = activeSubscriptions.filter { it.tier == PlanTier.PAID }
+        val freeSubscriptions = activeSubscriptions.filter { it.tier == PlanTier.FREE }
+
+        // If there are any paid subscriptions, count only paid subscriptions
+        // Otherwise, count the free subscription
+        val subscriptionsToCount = paidSubscriptions.ifEmpty {
+            freeSubscriptions
+        }
+
+        val subscriptionDetails = subscriptionsToCount.map { subscription ->
             SubscriptionUsageDetail(
                 subscriptionId = subscription.id!!.value,
                 planName = subscription.planName,
