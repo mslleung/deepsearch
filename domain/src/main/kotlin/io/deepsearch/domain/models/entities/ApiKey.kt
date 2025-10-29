@@ -27,13 +27,13 @@ class ApiKey(
         require(usageCount >= 0) { "Usage count cannot be negative" }
     }
 
-    fun incrementUsage(now: Instant) {
+    fun incrementUsage() {
         usageCount += 1
-        lastUsedAt = now
+        lastUsedAt = Clock.System.now()
     }
 
-    fun markAsUsed(now: Instant) {
-        lastUsedAt = now
+    fun markAsUsed() {
+        lastUsedAt = Clock.System.now()
     }
 
     fun isExpired(): Boolean {

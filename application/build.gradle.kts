@@ -20,6 +20,10 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.jsoup)
 
+    // Database dependencies
+    implementation(libs.exposed.core)
+    implementation(libs.exposed.r2dbc)
+
     // Ktor HTTP Client for content type resolution
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)

@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.utils.withTransaction
 import io.deepsearch.domain.models.entities.User
 import io.deepsearch.domain.models.entities.SubscriptionPlan
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
@@ -33,7 +34,7 @@ class AuthService(
     private val subscriptionPlanService: IUserSubscriptionService
 ) : IAuthService {
 
-    override suspend fun registerUser(email: Email, password: String): User {
+    override suspend fun registerUser(email: Email, password: String): User = withTransaction {
         // Check if user already exists
         val existingUser = userRepository.findByEmail(email)
         if (existingUser != null) {
@@ -59,7 +60,7 @@ class AuthService(
         // Enroll user in free plan
         subscriptionPlanService.upgradePlan(savedUser.id!!, SubscriptionPlan.FREE)
         
-        return savedUser
+        savedUser
     }
 
     override suspend fun authenticateUser(email: Email, password: String): User? {
@@ -78,7 +79,7 @@ class AuthService(
         provider: OAuthProvider,
         providerId: String,
         email: Email
-    ): User {
+    ): User = withTransaction {
         // Check if user already exists with this OAuth provider
         val existingUser = userRepository.findByOAuthProvider(provider, providerId)
         if (existingUser != null) {
@@ -104,18 +105,18 @@ class AuthService(
         // Enroll user in free plan
         subscriptionPlanService.upgradePlan(savedUser.id!!, SubscriptionPlan.FREE)
 
-        return savedUser
+        savedUser
     }
 
     override suspend fun findOrCreateOAuthUser(
         provider: OAuthProvider,
         providerId: String,
         email: Email
-    ): User {
+    ): User = withTransaction {
         // First, try to find by OAuth provider
         val existingUser = userRepository.findByOAuthProvider(provider, providerId)
         if (existingUser != null) {
-            return existingUser
+            return@withTransaction existingUser
         }
 
         // If not found, try to find by email
@@ -128,7 +129,7 @@ class AuthService(
         }
 
         // Create new user
-        return registerOAuthUser(provider, providerId, email)
+        registerOAuthUser(provider, providerId, email)
     }
 
     private fun hashPassword(password: String): PasswordHash {

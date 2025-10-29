@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.utils.withTransaction
 import io.deepsearch.domain.models.entities.ApiKey
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
@@ -14,9 +15,11 @@ import kotlin.time.ExperimentalTime
 
 interface IApiKeyService {
     suspend fun generateApiKey(userId: UserId, name: String, type: ApiKeyType = ApiKeyType.REGULAR): Pair<ApiKey, String>
-    suspend fun validateApiKey(rawKey: String): ApiKey?
+    suspend fun validateApiKey(rawKey: String): Boolean
+    suspend fun incrementApiKeyUsage(rawKey: String)
     suspend fun listUserApiKeys(userId: UserId): List<ApiKey>
     suspend fun getApiKeyById(keyId: ApiKeyId): ApiKey?
+    suspend fun getApiKeyByRawKey(rawKey: String): ApiKey?
     suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean
     suspend fun getOrCreatePlaygroundKey(userId: UserId): String
 }
@@ -57,11 +60,11 @@ class ApiKeyService(
         return Pair(savedApiKey, rawKey)
     }
 
-    override suspend fun validateApiKey(rawKey: String): ApiKey? {
+    override suspend fun validateApiKey(rawKey: String): Boolean {
         // Check if it matches any of our key types
         val matchesPrefix = ApiKeyType.entries.any { rawKey.startsWith(it.prefix) }
         if (!matchesPrefix) {
-            return null
+            return false
         }
 
         // For performance, we could add a cache here in the future
@@ -75,16 +78,19 @@ class ApiKeyService(
         
         val keyHash = hashApiKey(rawKey)
         val apiKey = apiKeyRepository.findByKeyHash(keyHash)
-        
-        if (apiKey != null) {
-            // Update last used time and usage count
-            val now = Clock.System.now()
-            apiKey.incrementUsage(now)
-            apiKeyRepository.update(apiKey)
-            return apiKey
+
+        return apiKey != null
+    }
+
+    override suspend fun incrementApiKeyUsage(rawKey: String) {
+        val keyHash = hashApiKey(rawKey)
+        val apiKey = apiKeyRepository.findByKeyHash(keyHash)
+        if (apiKey == null) {
+            throw Error("API ket $apiKey not found")
         }
-        
-        return null
+        // Update last used time and usage count
+        apiKey.incrementUsage()
+        apiKeyRepository.update(apiKey)
     }
 
     override suspend fun getOrCreatePlaygroundKey(userId: UserId): String {
@@ -109,6 +115,11 @@ class ApiKeyService(
 
     override suspend fun getApiKeyById(keyId: ApiKeyId): ApiKey? {
         return apiKeyRepository.findById(keyId)
+    }
+
+    override suspend fun getApiKeyByRawKey(rawKey: String): ApiKey? {
+        val keyHash = hashApiKey(rawKey)
+        return apiKeyRepository.findByKeyHash(keyHash)
     }
 
     override suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean {

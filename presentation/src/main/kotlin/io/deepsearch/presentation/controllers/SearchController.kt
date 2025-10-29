@@ -34,12 +34,14 @@ class SearchController(
             }
             
             // Validate API key
-            val apiKey = apiKeyService.validateApiKey(rawApiKey)
-            if (apiKey == null) {
+            val isApikeyOk = apiKeyService.validateApiKey(rawApiKey)
+            if (!isApikeyOk) {
                 call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid API key"))
                 return
             }
-            
+
+            val apiKey = apiKeyService.getApiKeyByRawKey(rawApiKey)!!
+
             // Check rate limit
             val allowed = rateLimitService.checkRateLimit(apiKey.id!!, apiKey.rateLimitPerMinute)
             if (!allowed) {
@@ -66,6 +68,8 @@ class SearchController(
                 )
                 return
             }
+
+            apiKeyService.incrementApiKeyUsage(rawApiKey)
             
             // Record the request
             rateLimitService.recordUsage(apiKey.id!!)
