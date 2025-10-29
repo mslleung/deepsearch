@@ -36,6 +36,9 @@ dependencies {
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)
 
+    // DateTime
+    implementation(libs.kotlinx.datetime)
+
     // Security
     implementation(libs.jbcrypt)
     implementation(libs.jwt)

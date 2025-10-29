@@ -15,5 +15,6 @@ val presentationModule = module {
         scopedOf(::SearchController)
         scopedOf(::CacheController)
         scopedOf(::PrecacheController)
+        scopedOf(::UsageController)
     }
 } 

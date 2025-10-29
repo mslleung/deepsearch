@@ -3,6 +3,7 @@ package io.deepsearch.presentation.controllers
 import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IRateLimitService
 import io.deepsearch.application.services.ISearchService
+import io.deepsearch.application.services.IUserSubscriptionService
 import io.deepsearch.domain.exceptions.AiInterpretationException
 import io.deepsearch.domain.exceptions.InvalidUrlException
 import io.deepsearch.domain.exceptions.WebScrapeException
@@ -18,7 +19,8 @@ import io.ktor.server.response.*
 class SearchController(
     private val searchService: ISearchService,
     private val apiKeyService: IApiKeyService,
-    private val rateLimitService: IRateLimitService
+    private val rateLimitService: IRateLimitService,
+    private val subscriptionPlanService: IUserSubscriptionService
 ) {
     suspend fun searchWebsite(call: ApplicationCall) {
         try {
@@ -52,11 +54,28 @@ class SearchController(
                 return
             }
             
+            // Check usage limit (subscription quota)
+            val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
+            if (!hasUsageRemaining) {
+                call.respond(
+                    HttpStatusCode.PaymentRequired,
+                    mapOf(
+                        "error" to "Usage limit exceeded",
+                        "message" to "You have reached your plan's search limit. Please upgrade your plan."
+                    )
+                )
+                return
+            }
+            
             // Record the request
-            rateLimitService.recordRequest(apiKey.id!!)
+            rateLimitService.recordUsage(apiKey.id!!)
             
             val request = call.receive<SearchRequest>()
             val searchResult = searchService.searchWebsite(request.query, request.url)
+            
+            // Consume usage after successful search
+            subscriptionPlanService.consumeUsage(apiKey.userId)
+            
             call.respond(HttpStatusCode.OK, searchResult.toResponse())
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))

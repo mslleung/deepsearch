@@ -1,4 +1,4 @@
-package io.deepsearch.domain.entities
+package io.deepsearch.domain.models.entities
 
 import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.OAuthProvider

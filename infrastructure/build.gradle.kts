@@ -25,6 +25,9 @@ dependencies {
     
     // Serialization
     implementation(libs.kotlinx.serialization.json)
+
+    // DateTime
+    implementation(libs.kotlinx.datetime)
     
     testImplementation(libs.koin.test.junit5)
     testImplementation(libs.kotlin.test.junit5)

@@ -56,6 +56,7 @@ fun Application.module() {
     configureSearchRoutes()
     configurePrecacheRoutes()
     configureCacheRoutes()
+    configureUsageRoutes()
 }
 
 private fun Application.configureSerialization() {

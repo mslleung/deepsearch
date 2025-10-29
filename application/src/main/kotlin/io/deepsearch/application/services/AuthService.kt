@@ -1,6 +1,7 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.entities.User
+import io.deepsearch.domain.models.entities.User
+import io.deepsearch.domain.models.entities.SubscriptionPlan
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.OAuthProvider
@@ -28,7 +29,8 @@ interface IAuthService {
 @OptIn(ExperimentalTime::class)
 class AuthService(
     private val userRepository: IUserRepository,
-    private val apiKeyService: IApiKeyService
+    private val apiKeyService: IApiKeyService,
+    private val subscriptionPlanService: IUserSubscriptionService
 ) : IAuthService {
 
     override suspend fun registerUser(email: Email, password: String): User {
@@ -53,6 +55,9 @@ class AuthService(
         // Create default API keys for the user
         apiKeyService.generateApiKey(savedUser.id!!, "Web App Playground", ApiKeyType.PLAYGROUND)
         apiKeyService.generateApiKey(savedUser.id!!, "Default API Key", ApiKeyType.REGULAR)
+        
+        // Enroll user in free plan
+        subscriptionPlanService.upgradePlan(savedUser.id!!, SubscriptionPlan.FREE)
         
         return savedUser
     }
@@ -96,6 +101,9 @@ class AuthService(
         apiKeyService.generateApiKey(savedUser.id!!, "Web App Playground", ApiKeyType.PLAYGROUND)
         apiKeyService.generateApiKey(savedUser.id!!, "Default API Key", ApiKeyType.REGULAR)
         
+        // Enroll user in free plan
+        subscriptionPlanService.upgradePlan(savedUser.id!!, SubscriptionPlan.FREE)
+
         return savedUser
     }
 

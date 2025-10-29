@@ -4,7 +4,6 @@ import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.UserId
-import kotlinx.datetime.Clock
 import java.security.KeyFactory
 import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
@@ -12,12 +11,15 @@ import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.util.Date
 import kotlin.io.encoding.Base64
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.ExperimentalTime
 
 interface IJwtService {
     fun generateToken(userId: UserId): String
 }
 
+@OptIn(ExperimentalTime::class)
 class JwtService(
     private val jwtConfig: JwtConfig
 ) : IJwtService {

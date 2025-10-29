@@ -6,11 +6,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.time.Duration
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.time.Duration.Companion.hours
 
 private const val maxPoolSize: Int = 8
-private val maxUsageDuration: Duration = Duration.ofHours(1)
+private val maxUsageDuration = 1.hours
 private const val standbyMinIdleRuntimes: Int = 0
 
 interface IBrowserRuntimePool {
@@ -43,7 +43,7 @@ class BrowserRuntimePool : IBrowserRuntimePool {
     ) {
         fun isExpired(): Boolean {
             val lifetimeMs = System.currentTimeMillis() - createdAtMillis
-            return lifetimeMs >= maxUsageDuration.toMillis()
+            return lifetimeMs >= maxUsageDuration.inWholeMilliseconds
         }
     }
 

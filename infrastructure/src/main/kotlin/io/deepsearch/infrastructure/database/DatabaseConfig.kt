@@ -27,6 +27,8 @@ object DatabaseConfig {
                 SchemaUtils.create(
                     UserTable,
                     ApiKeyTable,
+                    ApiKeyUsageTable,
+                    UserSubscriptionTable,
                     WebpageIconTable,
                     WebpageImageTable,
                     WebpagePopupTable,

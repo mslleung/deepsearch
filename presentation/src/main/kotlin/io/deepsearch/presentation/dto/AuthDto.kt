@@ -1,7 +1,6 @@
 package io.deepsearch.presentation.dto
 
-import io.deepsearch.domain.entities.User
-import io.deepsearch.domain.models.valueobjects.Email
+import io.deepsearch.domain.models.entities.User
 import kotlinx.serialization.Serializable
 import kotlin.time.ExperimentalTime
 

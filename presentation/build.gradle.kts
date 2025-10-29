@@ -40,6 +40,9 @@ dependencies {
     // Dependency injection
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)
+
+    // DateTime
+    implementation(libs.kotlinx.datetime)
     
     // Logging
     implementation(libs.logback.classic)

@@ -16,6 +16,7 @@ interface IApiKeyService {
     suspend fun generateApiKey(userId: UserId, name: String, type: ApiKeyType = ApiKeyType.REGULAR): Pair<ApiKey, String>
     suspend fun validateApiKey(rawKey: String): ApiKey?
     suspend fun listUserApiKeys(userId: UserId): List<ApiKey>
+    suspend fun getApiKeyById(keyId: ApiKeyId): ApiKey?
     suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean
     suspend fun getOrCreatePlaygroundKey(userId: UserId): String
 }
@@ -104,6 +105,10 @@ class ApiKeyService(
 
     override suspend fun listUserApiKeys(userId: UserId): List<ApiKey> {
         return apiKeyRepository.findByUserId(userId)
+    }
+
+    override suspend fun getApiKeyById(keyId: ApiKeyId): ApiKey? {
+        return apiKeyRepository.findById(keyId)
     }
 
     override suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean {

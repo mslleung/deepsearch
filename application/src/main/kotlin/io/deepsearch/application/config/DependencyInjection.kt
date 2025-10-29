@@ -23,6 +23,8 @@ val applicationModule = module {
         scopedOf(::ApiKeyService) bind IApiKeyService::class
         scopedOf(::AuthService) bind IAuthService::class
         scopedOf(::RateLimitService) bind IRateLimitService::class
+        scopedOf(::UserSubscriptionService) bind IUserSubscriptionService::class
+        scopedOf(::UsageService) bind IUsageService::class
         scopedOf(::PrecacheService) bind IPrecacheService::class
         scopedOf(::CacheQueryService) bind ICacheQueryService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class

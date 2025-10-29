@@ -13,9 +13,10 @@ val infrastructureModule = module {
 
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
-        scopedOf(::ExposedApiKeyRequestRepository) bind IApiKeyRequestRepository::class
+        scopedOf(::ExposedApiKeyUsageRepository) bind IApiKeyUsageRepository::class
         scopedOf(::ExposedPrecacheJobRepository) bind IPrecacheJobRepository::class
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
+        scopedOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class
         scopedOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
         scopedOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
         scopedOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class

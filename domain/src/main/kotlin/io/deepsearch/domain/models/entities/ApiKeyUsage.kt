@@ -6,7 +6,7 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ApiKeyRequest(
+class ApiKeyUsage(
     var id: Long? = null,
     val apiKeyId: ApiKeyId,
     val requestedAt: Instant = Clock.System.now()
