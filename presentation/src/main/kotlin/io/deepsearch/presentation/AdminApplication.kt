@@ -1,5 +1,9 @@
 package io.deepsearch.presentation
 
+import io.deepsearch.domain.config.ApiKeyConfig
+import io.deepsearch.domain.config.GoogleOAuthConfig
+import io.deepsearch.domain.config.JwtConfig
+import io.deepsearch.domain.config.OAuthConfig
 import io.deepsearch.presentation.admin.routes.*
 import io.deepsearch.presentation.admin.config.adminPresentationModule
 import io.ktor.client.*
@@ -72,6 +76,11 @@ private fun Application.configureDependencyInjection() {
         modules(
             adminPresentationModule,
             module {
+                single {
+                    ApiKeyConfig(
+                        hmacSecret = environment.config.property("apiKey.hmacSecret").getString()
+                    )
+                }
                 single {
                     HttpClient(OkHttp) {
                         install(ClientContentNegotiation) {

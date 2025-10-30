@@ -1,5 +1,6 @@
 package io.deepsearch.presentation.controllers
 
+import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IAuthService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.application.services.IUserService
@@ -23,6 +24,7 @@ class AuthController(
     private val authService: IAuthService,
     private val userService: IUserService,
     private val jwtService: IJwtService,
+    private val apiKeyService: IApiKeyService,
     private val httpClient: HttpClient
 ) {
     suspend fun register(call: ApplicationCall) {
@@ -35,12 +37,14 @@ class AuthController(
             )
 
             val token = jwtService.generateToken(user.id!!)
+            val playgroundKey = apiKeyService.getRawPlaygroundKey(user.id!!)
             
             call.respond(
                 HttpStatusCode.Created,
                 LoginResponse(
                     token = token,
-                    user = user.toUserResponse()
+                    user = user.toUserResponse(),
+                    playgroundKey = playgroundKey
                 )
             )
         } catch (e: IllegalArgumentException) {
@@ -65,12 +69,14 @@ class AuthController(
             }
 
             val token = jwtService.generateToken(user.id!!)
+            val playgroundKey = apiKeyService.getRawPlaygroundKey(user.id!!)
             
             call.respond(
                 HttpStatusCode.OK,
                 LoginResponse(
                     token = token,
-                    user = user.toUserResponse()
+                    user = user.toUserResponse(),
+                    playgroundKey = playgroundKey
                 )
             )
         } catch (e: IllegalArgumentException) {

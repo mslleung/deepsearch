@@ -7,6 +7,8 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import io.deepsearch.infrastructure.database.ApiKeyTable
+import io.deepsearch.infrastructure.database.RawApiKeyTable
+import kotlinx.coroutines.flow.count
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
@@ -70,6 +72,13 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             .singleOrNull()
     }
 
+    override suspend fun countByUserIdAndType(userId: UserId, type: ApiKeyType): Long = suspendTransaction {
+        ApiKeyTable.selectAll()
+            .where { (ApiKeyTable.userId eq userId.value) and (ApiKeyTable.type eq type.name) }
+            .count()
+            .toLong()
+    }
+
     override suspend fun delete(id: ApiKeyId): Boolean = suspendTransaction {
         ApiKeyTable.deleteWhere { ApiKeyTable.id eq id.value } > 0
     }
@@ -89,6 +98,26 @@ class ExposedApiKeyRepository : IApiKeyRepository {
         
         apiKey.version += 1
         apiKey
+    }
+
+    // Raw API key operations (for playground keys only)
+    override suspend fun saveRawApiKey(userId: UserId, rawKey: String): Unit = suspendTransaction {
+        RawApiKeyTable.insert {
+            it[RawApiKeyTable.userId] = userId.value
+            it[encryptedRawKey] = rawKey
+        }
+        Unit
+    }
+
+    override suspend fun findRawApiKey(userId: UserId): String? = suspendTransaction {
+        RawApiKeyTable.selectAll()
+            .where { RawApiKeyTable.userId eq userId.value }
+            .map { it[RawApiKeyTable.encryptedRawKey] }
+            .singleOrNull()
+    }
+
+    override suspend fun deleteRawApiKey(userId: UserId): Boolean = suspendTransaction {
+        RawApiKeyTable.deleteWhere { RawApiKeyTable.userId eq userId.value } > 0
     }
 
     private fun mapRowToApiKey(row: ResultRow): ApiKey {

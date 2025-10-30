@@ -53,9 +53,8 @@ class AuthService(
 
         val savedUser = userRepository.save(user)
         
-        // Create default API keys for the user
+        // Create playground API key for the user (regular keys must be created manually)
         apiKeyService.generateApiKey(savedUser.id!!, "Web App Playground", ApiKeyType.PLAYGROUND)
-        apiKeyService.generateApiKey(savedUser.id!!, "Default API Key", ApiKeyType.REGULAR)
         
         // Enroll user in free plan
         subscriptionPlanService.upgradePlan(savedUser.id!!, SubscriptionPlan.FREE)
@@ -98,9 +97,8 @@ class AuthService(
 
         val savedUser = userRepository.save(user)
         
-        // Create default API keys for the user
+        // Create playground API key for the user (regular keys must be created manually)
         apiKeyService.generateApiKey(savedUser.id!!, "Web App Playground", ApiKeyType.PLAYGROUND)
-        apiKeyService.generateApiKey(savedUser.id!!, "Default API Key", ApiKeyType.REGULAR)
         
         // Enroll user in free plan
         subscriptionPlanService.upgradePlan(savedUser.id!!, SubscriptionPlan.FREE)

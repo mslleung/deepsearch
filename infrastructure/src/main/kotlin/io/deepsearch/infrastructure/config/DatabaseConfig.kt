@@ -1,5 +1,20 @@
-package io.deepsearch.infrastructure.database
+package io.deepsearch.infrastructure.config
 
+import io.deepsearch.infrastructure.database.ApiKeyTable
+import io.deepsearch.infrastructure.database.ApiKeyUsageTable
+import io.deepsearch.infrastructure.database.PdfMarkdownTable
+import io.deepsearch.infrastructure.database.PrecacheJobTable
+import io.deepsearch.infrastructure.database.QuerySessionTable
+import io.deepsearch.infrastructure.database.RawApiKeyTable
+import io.deepsearch.infrastructure.database.UserSubscriptionTable
+import io.deepsearch.infrastructure.database.UserTable
+import io.deepsearch.infrastructure.database.WebpageIconTable
+import io.deepsearch.infrastructure.database.WebpageImageTable
+import io.deepsearch.infrastructure.database.WebpageMarkdownTable
+import io.deepsearch.infrastructure.database.WebpagePopupTable
+import io.deepsearch.infrastructure.database.WebpageSemanticElementTable
+import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable
+import io.deepsearch.infrastructure.database.WebpageTableTable
 import io.r2dbc.spi.IsolationLevel
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
@@ -29,6 +44,7 @@ object DatabaseConfig {
                 SchemaUtils.create(
                     UserTable,
                     ApiKeyTable,
+                    RawApiKeyTable,
                     ApiKeyUsageTable,
                     UserSubscriptionTable,
                     WebpageIconTable,
@@ -81,14 +97,14 @@ object DatabaseConfig {
     private fun configureH2Database(): R2dbcDatabase {
         val databaseDir = getDatabaseDirectory()
         val dbFile = File(databaseDir, "deepsearch-dev.h2")
-        
+
         // Use H2 file-based database for development with R2DBC
         // URL-encode the path to handle spaces and special characters
         val dbPath = dbFile.absolutePath.replace("\\", "/")
         val encodedPath = URLEncoder.encode(dbPath, StandardCharsets.UTF_8)
             .replace("%2F", "/")  // Keep forward slashes unencoded
             .replace("+", "%20")  // Use proper space encoding for URLs
-        
+
         return R2dbcDatabase.connect(
             "r2dbc:h2:file:///$encodedPath;DB_CLOSE_DELAY=-1",
             databaseConfig = R2dbcDatabaseConfig {
@@ -126,7 +142,7 @@ object DatabaseConfig {
      */
     private fun getDatabaseDirectory(): File {
         var currentDir = File(System.getProperty("user.dir"))
-        
+
         // Walk up to find the Gradle project root (identified by gradlew)
         while (currentDir.parentFile != null) {
             if (File(currentDir, "gradlew").exists()) {
@@ -134,7 +150,7 @@ object DatabaseConfig {
             }
             currentDir = currentDir.parentFile
         }
-        
+
         error("Could not find Gradle project root directory")
     }
 }

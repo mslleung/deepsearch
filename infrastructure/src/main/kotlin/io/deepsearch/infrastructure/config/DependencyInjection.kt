@@ -1,7 +1,6 @@
 package io.deepsearch.infrastructure.config
 
 import io.deepsearch.domain.repositories.*
-import io.deepsearch.infrastructure.database.DatabaseConfig
 import io.deepsearch.infrastructure.repositories.*
 import org.koin.core.module.dsl.scopedOf
 import org.koin.dsl.bind

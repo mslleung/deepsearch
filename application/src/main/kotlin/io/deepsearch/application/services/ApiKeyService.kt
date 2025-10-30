@@ -22,6 +22,7 @@ interface IApiKeyService {
     suspend fun getApiKeyByRawKey(rawKey: String): ApiKey?
     suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean
     suspend fun getOrCreatePlaygroundKey(userId: UserId): String
+    suspend fun getRawPlaygroundKey(userId: UserId): String?
 }
 
 @OptIn(ExperimentalTime::class)
@@ -40,6 +41,14 @@ class ApiKeyService(
     }
 
     override suspend fun generateApiKey(userId: UserId, name: String, type: ApiKeyType): Pair<ApiKey, String> {
+        // Enforce maximum 1 regular key per user
+        if (type == ApiKeyType.REGULAR) {
+            val existingCount = apiKeyRepository.countByUserIdAndType(userId, ApiKeyType.REGULAR)
+            if (existingCount >= 1) {
+                throw IllegalStateException("User already has the maximum number of regular API keys (1). Please delete the existing key before creating a new one.")
+            }
+        }
+        
         val randomPart = generateRandomString(KEY_LENGTH)
         val rawKey = "${type.prefix}$randomPart"
         val keyPrefix = rawKey.take(16) // First 16 chars for display
@@ -61,6 +70,12 @@ class ApiKeyService(
         )
 
         val savedApiKey = apiKeyRepository.save(apiKey)
+        
+        // For playground keys, also store the raw key encrypted
+        if (type == ApiKeyType.PLAYGROUND) {
+            apiKeyRepository.saveRawApiKey(userId, rawKey)
+        }
+        
         return Pair(savedApiKey, rawKey)
     }
 
@@ -91,18 +106,20 @@ class ApiKeyService(
     }
 
     override suspend fun getOrCreatePlaygroundKey(userId: UserId): String {
-        // Try to find existing playground key
-        val existingKey = apiKeyRepository.findByUserIdAndType(userId, ApiKeyType.PLAYGROUND)
+        // Try to find existing raw playground key
+        val existingRawKey = apiKeyRepository.findRawApiKey(userId)
         
-        if (existingKey != null) {
-            // Cannot retrieve hashed key - must regenerate
-            logger.info("Regenerating playground key for user ${userId.value}")
-            apiKeyRepository.delete(existingKey.id!!)
+        if (existingRawKey != null) {
+            return existingRawKey
         }
         
-        // Create new playground key (either first time or regenerated)
+        // Create new playground key (first time)
         val (_, rawKey) = generateApiKey(userId, "Web App Playground", ApiKeyType.PLAYGROUND)
         return rawKey
+    }
+    
+    override suspend fun getRawPlaygroundKey(userId: UserId): String? {
+        return apiKeyRepository.findRawApiKey(userId)
     }
 
     override suspend fun listUserApiKeys(userId: UserId): List<ApiKey> {

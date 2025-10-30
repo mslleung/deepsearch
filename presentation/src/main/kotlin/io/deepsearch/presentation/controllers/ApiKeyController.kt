@@ -54,6 +54,8 @@ class ApiKeyController(
                     rawKey = rawKey
                 )
             )
+        } catch (e: IllegalStateException) {
+            call.respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "Conflict")))
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Invalid request")))
         } catch (e: Exception) {
