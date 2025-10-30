@@ -9,7 +9,7 @@ import org.koin.ktor.plugin.scope
 
 fun Application.configurePrecacheRoutes() {
     routing {
-        authenticate("api-key") {
+        authenticate("auth-jwt") {
             route("/api") {
                 route("/precache/jobs") {
                     post {

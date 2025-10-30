@@ -4,6 +4,7 @@ import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.Agenti
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
+import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.application.services.INormalizeUrlService
 import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupContainerIdentificationService
@@ -51,6 +52,13 @@ import org.koin.dsl.bind
 import org.koin.dsl.module
 
 private val applicationCommonTestModule = module {
+    // Test configuration
+    single {
+        ApiKeyConfig(
+            hmacSecret = "test-hmac-secret-for-testing-purposes-only"
+        )
+    }
+
     // Shared across test components
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class

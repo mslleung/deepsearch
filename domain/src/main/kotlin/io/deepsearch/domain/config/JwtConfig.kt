@@ -8,6 +8,6 @@ data class JwtConfig(
     val realm: String
 ) {
     companion object {
-        val CLAIM_USER_ID = "user-id"
+        const val CLAIM_USER_ID = "user-id"
     }
 }

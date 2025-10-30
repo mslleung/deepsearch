@@ -80,6 +80,31 @@ openssl ec -in es256-private-key.pem -pubout -out es256-public-key.pem
 
 This will create `es256-private-key.pem` and `es256-public-key.pem` in your project root.
 
+### 4. Configure API Key Secret
+
+Generate a secure random secret for HMAC-SHA256 API key hashing:
+
+```bash
+# Generate a random 32-byte (256-bit) secret encoded as base64
+openssl rand -base64 32
+```
+
+Add the generated secret as an environment variable to your system or IDE run configuration:
+
+```bash
+API_KEY_HMAC_SECRET=<paste-your-generated-secret-here>
+```
+
+⚠️ **Important:** 
+- Use a strong, randomly generated secret in production
+- Never commit this secret to version control
+- API keys are hashed one-way using HMAC-SHA256 and cannot be retrieved after creation
+
+**For development, you can use this test secret:**
+```bash
+API_KEY_HMAC_SECRET=dev-hmac-secret-change-in-production-use-openssl-rand
+```
+
 ## Running the Application
 
 ### Start the Server

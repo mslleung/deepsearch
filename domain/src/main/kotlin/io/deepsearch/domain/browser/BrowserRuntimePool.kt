@@ -9,9 +9,9 @@ import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.hours
 
-private const val maxPoolSize: Int = 8
+private const val maxPoolSize: Int = 20
 private val maxUsageDuration = 1.hours
-private const val standbyMinIdleRuntimes: Int = 0
+private const val standbyMinIdleRuntimes: Int = 5
 
 interface IBrowserRuntimePool {
     suspend fun acquireRuntime(): IBrowserRuntime

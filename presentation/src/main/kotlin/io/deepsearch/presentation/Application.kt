@@ -2,6 +2,7 @@ package io.deepsearch.presentation
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
+import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.config.OAuthConfig
 import io.deepsearch.domain.config.GoogleOAuthConfig
@@ -108,6 +109,11 @@ private fun Application.configureDependencyInjection() {
                             clientSecret = environment.config.property("oauth.google.clientSecret").getString(),
                             redirectUrl = environment.config.property("oauth.google.redirectUrl").getString()
                         )
+                    )
+                }
+                single {
+                    ApiKeyConfig(
+                        hmacSecret = environment.config.property("apiKey.hmacSecret").getString()
                     )
                 }
                 single {

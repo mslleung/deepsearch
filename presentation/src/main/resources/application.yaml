@@ -16,3 +16,5 @@ oauth:
         clientId: ${GOOGLE_OAUTH_CLIENT_ID}
         clientSecret: ${GOOGLE_OAUTH_CLIENT_SECRET}
         redirectUrl: "http://localhost:8080/api/auth/oauth/google/callback"
+apiKey:
+    hmacSecret: ${API_KEY_HMAC_SECRET}  # For HMAC-SHA256 hashing of API keys

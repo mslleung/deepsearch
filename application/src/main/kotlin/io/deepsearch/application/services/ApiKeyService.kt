@@ -1,12 +1,12 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.application.utils.withTransaction
+import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.models.entities.ApiKey
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
-import org.mindrot.jbcrypt.BCrypt
+import io.deepsearch.domain.services.IApiKeyCryptoService
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.SecureRandom
@@ -26,7 +26,9 @@ interface IApiKeyService {
 
 @OptIn(ExperimentalTime::class)
 class ApiKeyService(
-    private val apiKeyRepository: IApiKeyRepository
+    private val apiKeyRepository: IApiKeyRepository,
+    private val apiKeyConfig: ApiKeyConfig,
+    private val apiKeyCryptoService: IApiKeyCryptoService
 ) : IApiKeyService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -40,8 +42,10 @@ class ApiKeyService(
     override suspend fun generateApiKey(userId: UserId, name: String, type: ApiKeyType): Pair<ApiKey, String> {
         val randomPart = generateRandomString(KEY_LENGTH)
         val rawKey = "${type.prefix}$randomPart"
-        val keyHash = BCrypt.hashpw(rawKey, BCrypt.gensalt(12))
         val keyPrefix = rawKey.take(16) // First 16 chars for display
+        
+        // Hash all keys with HMAC (one-way, secure, fast validation)
+        val keyHash = apiKeyCryptoService.hmacSha256(rawKey, apiKeyConfig.hmacSecret)
 
         val now = Clock.System.now()
         val apiKey = ApiKey(
@@ -67,27 +71,20 @@ class ApiKeyService(
             return false
         }
 
-        // For performance, we could add a cache here in the future
-        // For now, we need to check all API keys (or add prefix to DB for faster lookup)
-        // Since we're hashing, we can't do a direct DB lookup
-        // This is a trade-off between security and performance
+        // Compute HMAC hash of the raw key (deterministic, O(1) lookup)
+        val computedHash = apiKeyCryptoService.hmacSha256(rawKey, apiKeyConfig.hmacSecret)
         
-        // Simple approach: Hash and check
-        // Better approach: Store prefix in DB and only check those matches
-        // For now, let's use a findByKeyHash approach that assumes we can query by hash
-        
-        val keyHash = hashApiKey(rawKey)
-        val apiKey = apiKeyRepository.findByKeyHash(keyHash)
+        // Direct lookup by hash with unique index
+        val apiKey = apiKeyRepository.findByKeyHash(computedHash)
 
         return apiKey != null
     }
 
     override suspend fun incrementApiKeyUsage(rawKey: String) {
-        val keyHash = hashApiKey(rawKey)
-        val apiKey = apiKeyRepository.findByKeyHash(keyHash)
-        if (apiKey == null) {
-            throw Error("API ket $apiKey not found")
-        }
+        val computedHash = apiKeyCryptoService.hmacSha256(rawKey, apiKeyConfig.hmacSecret)
+        val apiKey = apiKeyRepository.findByKeyHash(computedHash)
+            ?: throw IllegalStateException("API key not found")
+        
         // Update last used time and usage count
         apiKey.incrementUsage()
         apiKeyRepository.update(apiKey)
@@ -97,16 +94,15 @@ class ApiKeyService(
         // Try to find existing playground key
         val existingKey = apiKeyRepository.findByUserIdAndType(userId, ApiKeyType.PLAYGROUND)
         
-        if (existingKey == null) {
-            // a user should have a playground key when they register the account
-            // in case they somehow lost it, we will create a new one
-            logger.warn("Playground key not found, creating new key.")
-            // Create new playground key
-            val (_, rawKey) = generateApiKey(userId, "Web App Playground", ApiKeyType.PLAYGROUND)
-            return rawKey
+        if (existingKey != null) {
+            // Cannot retrieve hashed key - must regenerate
+            logger.info("Regenerating playground key for user ${userId.value}")
+            apiKeyRepository.delete(existingKey.id!!)
         }
-
-        return existingKey.keyHash
+        
+        // Create new playground key (either first time or regenerated)
+        val (_, rawKey) = generateApiKey(userId, "Web App Playground", ApiKeyType.PLAYGROUND)
+        return rawKey
     }
 
     override suspend fun listUserApiKeys(userId: UserId): List<ApiKey> {
@@ -118,8 +114,8 @@ class ApiKeyService(
     }
 
     override suspend fun getApiKeyByRawKey(rawKey: String): ApiKey? {
-        val keyHash = hashApiKey(rawKey)
-        return apiKeyRepository.findByKeyHash(keyHash)
+        val computedHash = apiKeyCryptoService.hmacSha256(rawKey, apiKeyConfig.hmacSecret)
+        return apiKeyRepository.findByKeyHash(computedHash)
     }
 
     override suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean {
@@ -135,10 +131,6 @@ class ApiKeyService(
         return (1..length)
             .map { CHARS[SECURE_RANDOM.nextInt(CHARS.length)] }
             .joinToString("")
-    }
-
-    private fun hashApiKey(rawKey: String): String {
-        return BCrypt.hashpw(rawKey, BCrypt.gensalt(12))
     }
 }
 

@@ -9,6 +9,8 @@ import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.ocr.ITesseractPool
 import io.deepsearch.domain.services.OcrImageTextExtractionService
 import io.deepsearch.domain.ocr.TesseractPoolImpl
+import io.deepsearch.domain.services.ApiKeyCryptoService
+import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.JwtService
 import org.koin.core.module.dsl.scopedOf
@@ -49,6 +51,7 @@ val domainModule = module {
         scopedOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
 
         // domain services
+        scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
         scopedOf(::JwtService) bind IJwtService::class
         scopedOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     }
