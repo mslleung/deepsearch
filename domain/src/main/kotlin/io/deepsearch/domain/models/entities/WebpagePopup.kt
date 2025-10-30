@@ -14,7 +14,7 @@ data class WebpagePopup(
     val popupXPaths: List<String>,
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now(),
-    var version: Long = 1
+    var version: Long = 0
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

@@ -7,7 +7,7 @@ object WebpageImageTable : Table("webpage_images") {
     val extractedText = text("extracted_text").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
-    val version = long("version").default(1)
+    val version = long("version").default(0)
 
     init {
         // Unique index

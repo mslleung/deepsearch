@@ -19,7 +19,7 @@ class ApiKey(
     val createdAt: Instant = Clock.System.now(),
     var lastUsedAt: Instant? = null,
     var usageCount: Long = 0,
-    var version: Long = 1
+    var version: Long = 0
 ) {
     init {
         require(keyHash.isNotBlank()) { "Key hash cannot be blank" }

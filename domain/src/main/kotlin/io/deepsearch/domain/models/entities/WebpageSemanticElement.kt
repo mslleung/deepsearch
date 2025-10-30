@@ -15,5 +15,5 @@ data class WebpageSemanticElement(
     val elements: SemanticElements = SemanticElements(),
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now(),
-    var version: Long = 1
+    var version: Long = 0
 )

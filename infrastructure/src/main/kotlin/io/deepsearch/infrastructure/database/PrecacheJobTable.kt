@@ -10,7 +10,7 @@ object PrecacheJobTable : Table("precache_jobs") {
     val state = varchar("state", length = 32)
     val createdAtMs = long("created_at_ms")
     val updatedAtMs = long("updated_at_ms")
-    val version = long("version").default(1)
+    val version = long("version").default(0)
 
     init {
         index(false, baseUrl)

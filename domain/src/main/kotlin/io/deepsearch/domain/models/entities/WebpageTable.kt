@@ -14,6 +14,6 @@ data class WebpageTable(
     val tables: String, // JSON serialized list of TableIdentification
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now(),
-    var version: Long = 1
+    var version: Long = 0
 )
 

@@ -18,7 +18,7 @@ class PrecacheJob(
     var updatedAt: Instant = Clock.System.now(),
     var processedCount: Int = 0,
     var state: PrecacheJobState = PrecacheJobState.IN_PROGRESS,
-    var version: Long = 1
+    var version: Long = 0
 ) {
 
     fun incrementProcessed() {

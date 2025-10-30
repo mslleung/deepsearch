@@ -10,6 +10,6 @@ class ApiKeyUsage(
     var id: Long? = null,
     val apiKeyId: ApiKeyId,
     val requestedAt: Instant = Clock.System.now(),
-    var version: Long = 1
+    var version: Long = 0
 )
 

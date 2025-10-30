@@ -10,5 +10,5 @@ data class WebpageIcon(
     val label: String?, // null if the icon is blank or cannot be interpreted, this prevents repeated sending it to the LLM
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now(),
-    var version: Long = 1
+    var version: Long = 0
 )

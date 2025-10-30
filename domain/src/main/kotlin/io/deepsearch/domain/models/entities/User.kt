@@ -17,7 +17,7 @@ class User(
     val oauthProviderId: String? = null,
     val createdAt: Instant = Clock.System.now(),
     var updatedAt: Instant = Clock.System.now(),
-    var version: Long = 1
+    var version: Long = 0
 ) {
     fun canAuthenticate(): Boolean {
         return passwordHash != null || (oauthProvider != null && oauthProviderId != null)
