@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
@@ -35,6 +36,12 @@ class ExposedUserSubscriptionRepository : IUserSubscriptionRepository {
             .map { row -> mapRowToUserSubscription(row) }
             .toList()
             .firstOrNull()
+    }
+
+    override suspend fun findAll(): List<UserSubscription> = suspendTransaction {
+        UserSubscriptionTable.selectAll()
+            .map { row -> mapRowToUserSubscription(row) }
+            .toList()
     }
 
     override suspend fun save(subscription: UserSubscription): UserSubscription = suspendTransaction {
@@ -71,6 +78,10 @@ class ExposedUserSubscriptionRepository : IUserSubscriptionRepository {
         
         subscription.version += 1
         subscription
+    }
+
+    override suspend fun delete(id: UserSubscriptionId): Boolean = suspendTransaction {
+        UserSubscriptionTable.deleteWhere { UserSubscriptionTable.id eq id.value } > 0
     }
 
     private fun mapRowToUserSubscription(row: ResultRow): UserSubscription {

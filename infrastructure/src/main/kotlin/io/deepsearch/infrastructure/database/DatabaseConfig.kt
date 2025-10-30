@@ -1,7 +1,9 @@
 package io.deepsearch.infrastructure.database
 
+import io.r2dbc.spi.IsolationLevel
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
+import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabaseConfig
 import org.jetbrains.exposed.v1.r2dbc.SchemaUtils
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import java.io.File
@@ -87,7 +89,12 @@ object DatabaseConfig {
             .replace("%2F", "/")  // Keep forward slashes unencoded
             .replace("+", "%20")  // Use proper space encoding for URLs
         
-        return R2dbcDatabase.connect("r2dbc:h2:file:///$encodedPath;DB_CLOSE_DELAY=-1")
+        return R2dbcDatabase.connect(
+            "r2dbc:h2:file:///$encodedPath;DB_CLOSE_DELAY=-1",
+            databaseConfig = R2dbcDatabaseConfig {
+                defaultMaxAttempts = 1
+                defaultR2dbcIsolationLevel = IsolationLevel.READ_COMMITTED
+            })
     }
 
     /**
@@ -105,7 +112,11 @@ object DatabaseConfig {
         return R2dbcDatabase.connect(
             url = url,
             user = username,
-            password = password
+            password = password,
+            databaseConfig = R2dbcDatabaseConfig {
+                defaultMaxAttempts = 1
+                defaultR2dbcIsolationLevel = IsolationLevel.READ_COMMITTED
+            }
         )
     }
 

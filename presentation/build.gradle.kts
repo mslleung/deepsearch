@@ -44,6 +44,9 @@ dependencies {
     // DateTime
     implementation(libs.kotlinx.datetime)
     
+    // Security (for admin password updates)
+    implementation(libs.jbcrypt)
+    
     // Logging
     implementation(libs.logback.classic)
     

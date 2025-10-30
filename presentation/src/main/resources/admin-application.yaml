@@ -1,0 +1,8 @@
+ktor:
+    development: true  # Enable development mode for admin panel
+    application:
+        modules:
+            - io.deepsearch.presentation.AdminApplicationKt.adminModule
+    deployment:
+        port: 8081
+
