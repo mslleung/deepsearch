@@ -80,7 +80,7 @@ class PrecacheJobRegistry(
     override suspend fun stop(jobId: Long) {
         runs.remove(jobId)?.job?.cancel()
         val record = jobRepository.findById(jobId) ?: return
-        record.markStopped(System.currentTimeMillis())
+        record.markStopped()
         jobRepository.update(record)
     }
 
@@ -111,7 +111,7 @@ class PrecacheJobRegistry(
                 eventFlow = flow
             )
 
-            job.markCompleted(System.currentTimeMillis())
+            job.markCompleted()
             jobRepository.update(job)
             flow.emit(
                 IPrecacheService.PrecacheEvent(
@@ -128,7 +128,7 @@ class PrecacheJobRegistry(
             )
         } catch (t: Throwable) {
             logger.warn("Precache failed for {}: {}", job.baseUrl, t.message)
-            job.markStopped(System.currentTimeMillis())
+            job.markStopped()
             jobRepository.update(job)
             flow.emit(
                 IPrecacheService.PrecacheEvent(

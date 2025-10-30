@@ -17,7 +17,8 @@ class PrecacheJob(
     val createdAt: Instant = Clock.System.now(),
     var updatedAt: Instant = Clock.System.now(),
     var processedCount: Int = 0,
-    var state: PrecacheJobState = PrecacheJobState.IN_PROGRESS
+    var state: PrecacheJobState = PrecacheJobState.IN_PROGRESS,
+    var version: Long = 1
 ) {
 
     fun incrementProcessed() {
@@ -31,14 +32,14 @@ class PrecacheJob(
         }
     }
 
-    fun markStopped(nowMs: Long) {
+    fun markStopped() {
         if (state == PrecacheJobState.IN_PROGRESS) {
             state = PrecacheJobState.STOPPED
             updatedAt = Clock.System.now()
         }
     }
 
-    fun markCompleted(nowMs: Long) {
+    fun markCompleted() {
         state = PrecacheJobState.COMPLETED
         updatedAt = Clock.System.now()
     }

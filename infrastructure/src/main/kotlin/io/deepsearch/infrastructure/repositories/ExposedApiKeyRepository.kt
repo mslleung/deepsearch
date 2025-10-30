@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
+import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.ApiKey
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
@@ -34,6 +35,7 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             it[createdAtEpochMs] = apiKey.createdAt.toEpochMilliseconds()
             it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
+            it[version] = apiKey.version
         }[ApiKeyTable.id]
 
         apiKey.id = ApiKeyId(id)
@@ -73,10 +75,19 @@ class ExposedApiKeyRepository : IApiKeyRepository {
     }
 
     override suspend fun update(apiKey: ApiKey): ApiKey = suspendTransaction {
-        ApiKeyTable.update({ ApiKeyTable.id eq apiKey.id!!.value }) {
+        val affectedRows = ApiKeyTable.update({ 
+            (ApiKeyTable.id eq apiKey.id!!.value) and (ApiKeyTable.version eq apiKey.version) 
+        }) {
             it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
+            it[version] = apiKey.version + 1
         }
+        
+        if (affectedRows == 0) {
+            throw OptimisticLockException("ApiKey", apiKey.id!!.value, apiKey.version)
+        }
+        
+        apiKey.version += 1
         apiKey
     }
 
@@ -91,7 +102,8 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             rateLimitPerMinute = row[ApiKeyTable.rateLimitPerMinute],
             createdAt = Instant.fromEpochMilliseconds(row[ApiKeyTable.createdAtEpochMs]),
             lastUsedAt = row[ApiKeyTable.lastUsedAtEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
-            usageCount = row[ApiKeyTable.usageCount]
+            usageCount = row[ApiKeyTable.usageCount],
+            version = row[ApiKeyTable.version]
         )
     }
 }

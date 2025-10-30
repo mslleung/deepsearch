@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
+import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.User
 import io.deepsearch.domain.repositories.IUserRepository
 import io.deepsearch.domain.models.valueobjects.Email
@@ -32,6 +33,7 @@ class ExposedUserRepository : IUserRepository {
             it[oauthProviderId] = user.oauthProviderId
             it[createdAtEpochMs] = user.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
+            it[version] = user.version
         }[UserTable.id]
         
         user.id = UserId(id)
@@ -66,13 +68,22 @@ class ExposedUserRepository : IUserRepository {
     }
 
     override suspend fun update(user: User): User = suspendTransaction {
-        UserTable.update({ UserTable.id eq user.id!!.value }) {
+        val affectedRows = UserTable.update({ 
+            (UserTable.id eq user.id!!.value) and (UserTable.version eq user.version) 
+        }) {
             it[email] = user.email.value
             it[passwordHash] = user.passwordHash?.value
             it[oauthProvider] = user.oauthProvider?.name
             it[oauthProviderId] = user.oauthProviderId
             it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
+            it[version] = user.version + 1
         }
+        
+        if (affectedRows == 0) {
+            throw OptimisticLockException("User", user.id!!.value, user.version)
+        }
+        
+        user.version += 1
         user
     }
 
@@ -95,7 +106,8 @@ class ExposedUserRepository : IUserRepository {
             oauthProvider = row[UserTable.oauthProvider]?.let { OAuthProvider.fromString(it) },
             oauthProviderId = row[UserTable.oauthProviderId],
             createdAt = Instant.fromEpochMilliseconds(row[UserTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[UserTable.updatedAtEpochMs])
+            updatedAt = Instant.fromEpochMilliseconds(row[UserTable.updatedAtEpochMs]),
+            version = row[UserTable.version]
         )
     }
 } 

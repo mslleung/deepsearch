@@ -27,6 +27,7 @@ class ExposedWebpageTableInterpretationRepository : IWebpageTableInterpretationR
             it[markdown] = interpretation.markdown
             it[createdAtEpochMs] = interpretation.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = interpretation.updatedAt.toEpochMilliseconds()
+            it[version] = interpretation.version
         }
     }
 
@@ -44,6 +45,7 @@ class ExposedWebpageTableInterpretationRepository : IWebpageTableInterpretationR
             markdown = row[WebpageTableInterpretationTable.markdown],
             createdAt = Instant.fromEpochMilliseconds(row[WebpageTableInterpretationTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[WebpageTableInterpretationTable.updatedAtEpochMs]),
+            version = row[WebpageTableInterpretationTable.version]
         )
     }
 }

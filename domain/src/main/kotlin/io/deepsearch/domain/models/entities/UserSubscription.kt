@@ -18,7 +18,8 @@ class UserSubscription(
     val startDate: Instant = Clock.System.now(),
     val expiryDate: Instant?,
     val createdAt: Instant = Clock.System.now(),
-    var updatedAt: Instant = Clock.System.now()
+    var updatedAt: Instant = Clock.System.now(),
+    var version: Long = 1
 ) {
     fun hasRemainingSearches(): Boolean {
         return usedSearches < maxSearches

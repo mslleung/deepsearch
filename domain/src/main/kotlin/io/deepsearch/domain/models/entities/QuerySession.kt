@@ -26,6 +26,7 @@ class QuerySession(
     var sourcesDiscovered: MutableList<String>,
     val createdAt: Instant,
     var updatedAt: Instant,
+    var version: Long = 1
 ) {
 
     constructor(id: String, query: String, url: String) : this(

@@ -40,6 +40,7 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
             it[elementsJson] = Json.encodeToString(SemanticElements.serializer(), webpageSemanticElement.elements)
             it[createdAtEpochMs] = webpageSemanticElement.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpageSemanticElement.updatedAt.toEpochMilliseconds()
+            it[version] = webpageSemanticElement.version
         }
     }
 
@@ -51,6 +52,7 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
             },
             createdAt = Instant.fromEpochMilliseconds(row[WebpageSemanticElementTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[WebpageSemanticElementTable.updatedAtEpochMs]),
+            version = row[WebpageSemanticElementTable.version]
         )
     }
 }

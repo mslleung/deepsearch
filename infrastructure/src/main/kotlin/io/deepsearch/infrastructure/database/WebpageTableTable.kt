@@ -7,6 +7,7 @@ object WebpageTableTable : Table("webpage_tables") {
     val tables = text("tables") // JSON serialized list of TableIdentification
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
+    val version = long("version").default(1)
 
     init {
         // Unique index

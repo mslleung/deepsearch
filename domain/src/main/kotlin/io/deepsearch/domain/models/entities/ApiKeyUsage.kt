@@ -9,6 +9,7 @@ import kotlin.time.Instant
 class ApiKeyUsage(
     var id: Long? = null,
     val apiKeyId: ApiKeyId,
-    val requestedAt: Instant = Clock.System.now()
+    val requestedAt: Instant = Clock.System.now(),
+    var version: Long = 1
 )
 

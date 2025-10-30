@@ -13,7 +13,8 @@ data class WebpagePopup(
     val pageHash: ByteArray,
     val popupXPaths: List<String>,
     val createdAt: Instant = Clock.System.now(),
-    val updatedAt: Instant = Clock.System.now()
+    val updatedAt: Instant = Clock.System.now(),
+    var version: Long = 1
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
+import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.entities.QuerySessionState
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
@@ -38,6 +40,7 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             it[sourcesDiscovered] = json.encodeToString(session.sourcesDiscovered)
             it[createdAtEpochMs] = session.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
+            it[version] = session.version
         }
         session
     }
@@ -50,7 +53,9 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
     }
 
     override suspend fun update(session: QuerySession): QuerySession = suspendTransaction {
-        QuerySessionTable.update({ QuerySessionTable.id eq session.id }) {
+        val affectedRows = QuerySessionTable.update({ 
+            (QuerySessionTable.id eq session.id) and (QuerySessionTable.version eq session.version) 
+        }) {
             it[query] = session.query
             it[url] = session.url
             it[state] = session.state.name
@@ -62,7 +67,14 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
             it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
             it[sourcesDiscovered] = json.encodeToString(session.sourcesDiscovered)
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
+            it[version] = session.version + 1
         }
+        
+        if (affectedRows == 0) {
+            throw OptimisticLockException("QuerySession", session.id, session.version)
+        }
+        
+        session.version += 1
         session
     }
 
@@ -84,6 +96,7 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
                 .toMutableList(),
             createdAt = Instant.fromEpochMilliseconds(row[QuerySessionTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[QuerySessionTable.updatedAtEpochMs]),
+            version = row[QuerySessionTable.version]
         )
     }
 }

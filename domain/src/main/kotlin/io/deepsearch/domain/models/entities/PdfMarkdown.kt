@@ -11,6 +11,7 @@ data class PdfMarkdown(
     val pageCount: Int,
     val fileSizeBytes: Long,
     val createdAt: Instant = Clock.System.now(),
-    val updatedAt: Instant = Clock.System.now()
+    val updatedAt: Instant = Clock.System.now(),
+    var version: Long = 1
 )
 

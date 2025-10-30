@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
+import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.PrecacheJob
 import io.deepsearch.domain.models.entities.PrecacheJobState
 import io.deepsearch.domain.repositories.IPrecacheJobRepository
@@ -8,6 +9,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
@@ -27,6 +29,7 @@ class ExposedPrecacheJobRepository : IPrecacheJobRepository {
             it[state] = job.state.name
             it[createdAtMs] = job.createdAt.toEpochMilliseconds()
             it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
+            it[version] = job.version
         }[PrecacheJobTable.id]
 
         job.id = id
@@ -34,11 +37,20 @@ class ExposedPrecacheJobRepository : IPrecacheJobRepository {
     }
 
     override suspend fun update(job: PrecacheJob): PrecacheJob = suspendTransaction {
-        PrecacheJobTable.update({ PrecacheJobTable.id eq (job.id ?: -1) }) {
+        val affectedRows = PrecacheJobTable.update({ 
+            (PrecacheJobTable.id eq (job.id ?: -1)) and (PrecacheJobTable.version eq job.version) 
+        }) {
             it[processedCount] = job.processedCount
             it[state] = job.state.name
             it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
+            it[version] = job.version + 1
         }
+        
+        if (affectedRows == 0) {
+            throw OptimisticLockException("PrecacheJob", job.id ?: -1, job.version)
+        }
+        
+        job.version += 1
         job
     }
 
@@ -73,6 +85,7 @@ class ExposedPrecacheJobRepository : IPrecacheJobRepository {
         createdAt = Instant.fromEpochMilliseconds(row[PrecacheJobTable.createdAtMs]),
         updatedAt = Instant.fromEpochMilliseconds(row[PrecacheJobTable.updatedAtMs]),
         processedCount = row[PrecacheJobTable.processedCount],
-        state = PrecacheJobState.valueOf(row[PrecacheJobTable.state])
+        state = PrecacheJobState.valueOf(row[PrecacheJobTable.state]),
+        version = row[PrecacheJobTable.version]
     )
 }

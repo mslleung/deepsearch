@@ -16,6 +16,7 @@ object QuerySessionTable : Table("query_sessions") {
     val sourcesDiscovered = text("sources_discovered")  // JSON array
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
+    val version = long("version").default(1)
 
     override val primaryKey = PrimaryKey(id)
 }

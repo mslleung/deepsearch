@@ -27,6 +27,7 @@ class ExposedWebpageImageRepository : IWebpageImageRepository {
             it[extractedText] = image.extractedText
             it[createdAtEpochMs] = image.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = image.updatedAt.toEpochMilliseconds()
+            it[version] = image.version
         }
     }
 
@@ -43,7 +44,8 @@ class ExposedWebpageImageRepository : IWebpageImageRepository {
             imageBytesHash = Base64.decode(row[WebpageImageTable.imageBytesHash]),
             extractedText = row[WebpageImageTable.extractedText],
             createdAt = Instant.fromEpochMilliseconds(row[WebpageImageTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[WebpageImageTable.updatedAtEpochMs])
+            updatedAt = Instant.fromEpochMilliseconds(row[WebpageImageTable.updatedAtEpochMs]),
+            version = row[WebpageImageTable.version]
         )
     }
 }

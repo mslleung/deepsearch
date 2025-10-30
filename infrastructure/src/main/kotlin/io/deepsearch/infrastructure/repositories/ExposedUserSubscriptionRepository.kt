@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
+import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.PlanTier
 import io.deepsearch.domain.models.entities.UserSubscription
 import io.deepsearch.domain.models.valueobjects.UserId
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
@@ -47,6 +49,7 @@ class ExposedUserSubscriptionRepository : IUserSubscriptionRepository {
             it[expiryDateEpochMs] = subscription.expiryDate?.toEpochMilliseconds()
             it[createdAtEpochMs] = subscription.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = subscription.updatedAt.toEpochMilliseconds()
+            it[version] = subscription.version
         }[UserSubscriptionTable.id]
 
         subscription.id = UserSubscriptionId(id)
@@ -54,10 +57,19 @@ class ExposedUserSubscriptionRepository : IUserSubscriptionRepository {
     }
 
     override suspend fun update(subscription: UserSubscription): UserSubscription = suspendTransaction {
-        UserSubscriptionTable.update({ UserSubscriptionTable.id eq subscription.id!!.value }) {
+        val affectedRows = UserSubscriptionTable.update({ 
+            (UserSubscriptionTable.id eq subscription.id!!.value) and (UserSubscriptionTable.version eq subscription.version) 
+        }) {
             it[usedSearches] = subscription.usedSearches
             it[updatedAtEpochMs] = subscription.updatedAt.toEpochMilliseconds()
+            it[version] = subscription.version + 1
         }
+        
+        if (affectedRows == 0) {
+            throw OptimisticLockException("UserSubscription", subscription.id!!.value, subscription.version)
+        }
+        
+        subscription.version += 1
         subscription
     }
 
@@ -73,7 +85,8 @@ class ExposedUserSubscriptionRepository : IUserSubscriptionRepository {
             startDate = Instant.fromEpochMilliseconds(row[UserSubscriptionTable.startDateEpochMs]),
             expiryDate = row[UserSubscriptionTable.expiryDateEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
             createdAt = Instant.fromEpochMilliseconds(row[UserSubscriptionTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[UserSubscriptionTable.updatedAtEpochMs])
+            updatedAt = Instant.fromEpochMilliseconds(row[UserSubscriptionTable.updatedAtEpochMs]),
+            version = row[UserSubscriptionTable.version]
         )
     }
 }

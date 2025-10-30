@@ -14,6 +14,7 @@ object UserSubscriptionTable : Table("user_subscriptions") {
     val expiryDateEpochMs = long("expiry_date_epoch_ms").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
+    val version = long("version").default(1)
 
     override val primaryKey = PrimaryKey(id)
 }

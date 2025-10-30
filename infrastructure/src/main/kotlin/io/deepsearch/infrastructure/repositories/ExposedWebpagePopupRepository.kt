@@ -3,9 +3,6 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpagePopup
 import io.deepsearch.domain.repositories.IWebpagePopupRepository
 import io.deepsearch.infrastructure.database.WebpagePopupTable
-import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable
-import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable.createdAtEpochMs
-import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable.updatedAtEpochMs
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.serialization.json.Json
@@ -41,6 +38,7 @@ class ExposedWebpagePopupRepository : IWebpagePopupRepository {
             it[popupXPaths] = json.encodeToString(webpagePopup.popupXPaths)
             it[createdAtEpochMs] = webpagePopup.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpagePopup.updatedAt.toEpochMilliseconds()
+            it[version] = webpagePopup.version
         }
     }
 
@@ -50,6 +48,7 @@ class ExposedWebpagePopupRepository : IWebpagePopupRepository {
             popupXPaths = json.decodeFromString(row[WebpagePopupTable.popupXPaths]),
             createdAt = Instant.fromEpochMilliseconds(row[WebpagePopupTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[WebpagePopupTable.updatedAtEpochMs]),
+            version = row[WebpagePopupTable.version]
         )
     }
 }

@@ -33,6 +33,7 @@ class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
             it[fileSizeBytes] = pdfMarkdown.fileSizeBytes
             it[createdAtEpochMs] = pdfMarkdown.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = pdfMarkdown.updatedAt.toEpochMilliseconds()
+            it[version] = pdfMarkdown.version
         }
     }
 
@@ -43,7 +44,8 @@ class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
             pageCount = row[PdfMarkdownTable.pageCount],
             fileSizeBytes = row[PdfMarkdownTable.fileSizeBytes],
             createdAt = Instant.fromEpochMilliseconds(row[PdfMarkdownTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[PdfMarkdownTable.updatedAtEpochMs])
+            updatedAt = Instant.fromEpochMilliseconds(row[PdfMarkdownTable.updatedAtEpochMs]),
+            version = row[PdfMarkdownTable.version]
         )
     }
 }

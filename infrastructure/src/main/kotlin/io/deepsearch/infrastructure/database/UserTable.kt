@@ -10,6 +10,7 @@ object UserTable : Table("users") {
     val oauthProviderId = varchar("oauth_provider_id", length = 255).nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
+    val version = long("version").default(1)
 
     override val primaryKey = PrimaryKey(id)
 } 

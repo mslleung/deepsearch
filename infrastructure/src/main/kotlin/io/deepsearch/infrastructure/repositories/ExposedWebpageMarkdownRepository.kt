@@ -37,6 +37,7 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
             it[mimeType] = webpage.mimeType
             it[createdAtEpochMs] = webpage.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpage.updatedAt.toEpochMilliseconds()
+            it[version] = webpage.version
         }
     }
 
@@ -81,7 +82,8 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
             httpReason = row[WebpageMarkdownTable.httpReason],
             mimeType = row[WebpageMarkdownTable.mimeType],
             createdAt = Instant.fromEpochMilliseconds(row[WebpageMarkdownTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[WebpageMarkdownTable.updatedAtEpochMs])
+            updatedAt = Instant.fromEpochMilliseconds(row[WebpageMarkdownTable.updatedAtEpochMs]),
+            version = row[WebpageMarkdownTable.version]
         )
     }
 }

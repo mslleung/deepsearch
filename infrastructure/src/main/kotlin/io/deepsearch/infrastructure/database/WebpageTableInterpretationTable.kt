@@ -7,6 +7,7 @@ object WebpageTableInterpretationTable : Table("webpage_table_interpretations") 
     val markdown = text("markdown")
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
+    val version = long("version").default(1)
 
     init {
         // Unique index

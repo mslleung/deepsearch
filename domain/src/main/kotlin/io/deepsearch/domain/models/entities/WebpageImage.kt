@@ -9,5 +9,6 @@ data class WebpageImage(
     val imageBytesHash: ByteArray,
     val extractedText: String?, // null if the image contains no text or cannot be extracted
     val createdAt: Instant = Clock.System.now(),
-    val updatedAt: Instant = Clock.System.now()
+    val updatedAt: Instant = Clock.System.now(),
+    var version: Long = 1
 )

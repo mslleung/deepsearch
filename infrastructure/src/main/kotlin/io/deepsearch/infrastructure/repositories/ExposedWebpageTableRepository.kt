@@ -27,6 +27,7 @@ class ExposedWebpageTableRepository : IWebpageTableRepository {
             it[tables] = table.tables
             it[createdAtEpochMs] = table.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = table.updatedAt.toEpochMilliseconds()
+            it[version] = table.version
         }
     }
 
@@ -44,6 +45,7 @@ class ExposedWebpageTableRepository : IWebpageTableRepository {
             tables = row[WebpageTableTable.tables],
             createdAt = Instant.fromEpochMilliseconds(row[WebpageTableTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[WebpageTableTable.updatedAtEpochMs]),
+            version = row[WebpageTableTable.version]
         )
     }
 }

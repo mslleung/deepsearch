@@ -27,6 +27,7 @@ class ExposedWebpageIconRepository : IWebpageIconRepository {
             it[label] = icon.label
             it[createdAtEpochMs] = icon.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = icon.updatedAt.toEpochMilliseconds()
+            it[version] = icon.version
         }
     }
 
@@ -44,6 +45,7 @@ class ExposedWebpageIconRepository : IWebpageIconRepository {
             label = row[WebpageIconTable.label],
             createdAt = Instant.fromEpochMilliseconds(row[WebpageIconTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[WebpageIconTable.updatedAtEpochMs]),
+            version = row[WebpageIconTable.version]
         )
     }
 }

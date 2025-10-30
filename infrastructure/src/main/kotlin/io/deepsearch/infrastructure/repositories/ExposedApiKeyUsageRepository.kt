@@ -26,6 +26,7 @@ class ExposedApiKeyUsageRepository : IApiKeyUsageRepository {
         val id = ApiKeyUsageTable.insert {
             it[apiKeyId] = usage.apiKeyId.value
             it[requestedAtEpochMs] = usage.requestedAt.toEpochMilliseconds()
+            it[version] = usage.version
         }[ApiKeyUsageTable.id]
 
         usage.id = id
@@ -59,7 +60,8 @@ class ExposedApiKeyUsageRepository : IApiKeyUsageRepository {
                 ApiKeyUsage(
                     id = row[ApiKeyUsageTable.id],
                     apiKeyId = ApiKeyId(row[ApiKeyUsageTable.apiKeyId]),
-                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs])
+                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs]),
+                    version = row[ApiKeyUsageTable.version]
                 )
             }
             .toList()
@@ -78,7 +80,8 @@ class ExposedApiKeyUsageRepository : IApiKeyUsageRepository {
                 ApiKeyUsage(
                     id = row[ApiKeyUsageTable.id],
                     apiKeyId = ApiKeyId(row[ApiKeyUsageTable.apiKeyId]),
-                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs])
+                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs]),
+                    version = row[ApiKeyUsageTable.version]
                 )
             }
             .toList()
@@ -95,7 +98,8 @@ class ExposedApiKeyUsageRepository : IApiKeyUsageRepository {
                 ApiKeyUsage(
                     id = row[ApiKeyUsageTable.id],
                     apiKeyId = ApiKeyId(row[ApiKeyUsageTable.apiKeyId]),
-                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs])
+                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs]),
+                    version = row[ApiKeyUsageTable.version]
                 )
             }
             .toList()

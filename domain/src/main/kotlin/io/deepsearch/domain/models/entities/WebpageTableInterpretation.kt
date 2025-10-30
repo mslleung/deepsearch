@@ -13,6 +13,7 @@ data class WebpageTableInterpretation(
     val tableDataHash: ByteArray, // Hash of screenshot bytes + html
     val markdown: String,
     val createdAt: Instant = Clock.System.now(),
-    val updatedAt: Instant = Clock.System.now()
+    val updatedAt: Instant = Clock.System.now(),
+    var version: Long = 1
 )
 
