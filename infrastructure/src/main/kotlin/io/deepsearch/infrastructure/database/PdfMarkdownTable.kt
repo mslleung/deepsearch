@@ -1,8 +1,11 @@
 package io.deepsearch.infrastructure.database
 
+import io.deepsearch.infrastructure.config.DatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-object PdfMarkdownTable : Table("pdf_markdowns") {
+class PdfMarkdownTable(
+    private val databaseCryptoService: DatabaseCryptoService
+) : Table("pdf_markdowns") {
     val pdfHash = varchar("pdf_hash", length = 64) // SHA-256 hex string
     val markdown = text("markdown")
     val pageCount = integer("page_count")

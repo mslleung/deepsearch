@@ -3,10 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageSemanticElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
-import io.deepsearch.infrastructure.database.WebpagePopupTable
 import io.deepsearch.infrastructure.database.WebpageSemanticElementTable
-import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable.createdAtEpochMs
-import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable.updatedAtEpochMs
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -20,12 +17,14 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepository {
+class ExposedWebpageNavigationElementRepository(
+    private val webpageSemanticElementTable: WebpageSemanticElementTable
+) : IWebpageNavigationElementRepository {
 
     override suspend fun findByHash(pageHash: ByteArray): WebpageSemanticElement? = suspendTransaction {
         val hashBase64 = Base64.encode(pageHash)
-        WebpageSemanticElementTable.selectAll()
-            .where { WebpageSemanticElementTable.pageHash eq hashBase64 }
+        webpageSemanticElementTable.selectAll()
+            .where { webpageSemanticElementTable.pageHash eq hashBase64 }
             .map { mapRowToWebpageSemanticElement(it) }
             .singleOrNull()
     }
@@ -33,8 +32,8 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
     override suspend fun upsert(webpageSemanticElement: WebpageSemanticElement): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(webpageSemanticElement.pageHash)
 
-        WebpageSemanticElementTable.upsert(
-            keys = arrayOf(WebpageSemanticElementTable.pageHash)
+        webpageSemanticElementTable.upsert(
+            keys = arrayOf(webpageSemanticElementTable.pageHash)
         ) {
             it[pageHash] = hashBase64
             it[elementsJson] = Json.encodeToString(SemanticElements.serializer(), webpageSemanticElement.elements)
@@ -46,14 +45,13 @@ class ExposedWebpageNavigationElementRepository : IWebpageNavigationElementRepos
 
     private fun mapRowToWebpageSemanticElement(row: ResultRow): WebpageSemanticElement {
         return WebpageSemanticElement(
-            pageHash = Base64.decode(row[WebpageSemanticElementTable.pageHash]),
-            elements = row[WebpageSemanticElementTable.elementsJson].let {
+            pageHash = Base64.decode(row[webpageSemanticElementTable.pageHash]),
+            elements = row[webpageSemanticElementTable.elementsJson].let {
                 Json.decodeFromString(SemanticElements.serializer(), it)
             },
-            createdAt = Instant.fromEpochMilliseconds(row[WebpageSemanticElementTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[WebpageSemanticElementTable.updatedAtEpochMs]),
-            version = row[WebpageSemanticElementTable.version]
+            createdAt = Instant.fromEpochMilliseconds(row[webpageSemanticElementTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[webpageSemanticElementTable.updatedAtEpochMs]),
+            version = row[webpageSemanticElementTable.version]
         )
     }
 }
-

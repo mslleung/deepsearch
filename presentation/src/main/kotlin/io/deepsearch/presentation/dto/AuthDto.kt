@@ -20,7 +20,7 @@ data class LoginRequest(
 data class LoginResponse(
     val token: String,
     val user: UserResponse,
-    val playgroundKey: String? = null
+    val playgroundKey: String
 )
 
 @Serializable

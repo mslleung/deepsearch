@@ -1,10 +1,14 @@
 package io.deepsearch.infrastructure.database
 
+import io.deepsearch.infrastructure.config.DatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-object ApiKeyTable : Table("api_keys") {
+class ApiKeyTable(
+    private val databaseCryptoService: DatabaseCryptoService,
+    private val userTable: UserTable
+) : Table("api_keys") {
     val id = integer("id").autoIncrement()
-    val userId = integer("user_id").references(UserTable.id)
+    val userId = integer("user_id").references(userTable.id)
     val keyHash = varchar("key_hash", length = 255).uniqueIndex()
     val keyPrefix = varchar("key_prefix", length = 20)
     val name = varchar("name", length = 100)

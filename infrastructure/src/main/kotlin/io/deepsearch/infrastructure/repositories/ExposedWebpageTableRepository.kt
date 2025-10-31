@@ -15,13 +15,15 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedWebpageTableRepository : IWebpageTableRepository {
+class ExposedWebpageTableRepository(
+    private val webpageTableTable: WebpageTableTable
+) : IWebpageTableRepository {
 
     override suspend fun upsert(table: WebpageTable): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(table.webpageHtmlHash)
 
-        WebpageTableTable.upsert(
-            keys = arrayOf(WebpageTableTable.webpageHtmlHash)
+        webpageTableTable.upsert(
+            keys = arrayOf(webpageTableTable.webpageHtmlHash)
         ) {
             it[webpageHtmlHash] = hashBase64
             it[tables] = table.tables
@@ -33,20 +35,19 @@ class ExposedWebpageTableRepository : IWebpageTableRepository {
 
     override suspend fun findByHash(webpageHtmlHash: ByteArray): WebpageTable? = suspendTransaction {
         val hashBase64 = Base64.encode(webpageHtmlHash)
-        WebpageTableTable.selectAll()
-            .where { WebpageTableTable.webpageHtmlHash eq hashBase64 }
+        webpageTableTable.selectAll()
+            .where { webpageTableTable.webpageHtmlHash eq hashBase64 }
             .map { mapRowToWebpageTable(it) }
             .singleOrNull()
     }
 
     private fun mapRowToWebpageTable(row: ResultRow): WebpageTable {
         return WebpageTable(
-            webpageHtmlHash = Base64.decode(row[WebpageTableTable.webpageHtmlHash]),
-            tables = row[WebpageTableTable.tables],
-            createdAt = Instant.fromEpochMilliseconds(row[WebpageTableTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[WebpageTableTable.updatedAtEpochMs]),
-            version = row[WebpageTableTable.version]
+            webpageHtmlHash = Base64.decode(row[webpageTableTable.webpageHtmlHash]),
+            tables = row[webpageTableTable.tables],
+            createdAt = Instant.fromEpochMilliseconds(row[webpageTableTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[webpageTableTable.updatedAtEpochMs]),
+            version = row[webpageTableTable.version]
         )
     }
 }
-

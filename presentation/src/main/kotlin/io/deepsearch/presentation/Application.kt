@@ -3,6 +3,7 @@ package io.deepsearch.presentation
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import io.deepsearch.domain.config.ApiKeyConfig
+import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.config.OAuthConfig
 import io.deepsearch.domain.config.GoogleOAuthConfig
@@ -114,6 +115,11 @@ private fun Application.configureDependencyInjection() {
                 single {
                     ApiKeyConfig(
                         hmacSecret = environment.config.property("apiKey.hmacSecret").getString()
+                    )
+                }
+                single {
+                    DatabaseEncryptionConfig(
+                        encryptionSecret = environment.config.property("database.encryptionSecret").getString()
                     )
                 }
                 single {

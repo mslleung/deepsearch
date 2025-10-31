@@ -23,10 +23,12 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedUserRepository : IUserRepository {
+class ExposedUserRepository(
+    private val userTable: UserTable
+) : IUserRepository {
 
     override suspend fun save(user: User): User = suspendTransaction {
-        val id = UserTable.insert {
+        val id = userTable.insert {
             it[email] = user.email.value
             it[passwordHash] = user.passwordHash?.value
             it[oauthProvider] = user.oauthProvider?.name
@@ -34,42 +36,42 @@ class ExposedUserRepository : IUserRepository {
             it[createdAtEpochMs] = user.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
             it[version] = user.version
-        }[UserTable.id]
+        }[userTable.id]
         
         user.id = UserId(id)
         user
     }
 
     override suspend fun findById(id: UserId): User? = suspendTransaction {
-        UserTable.selectAll()
-            .where { UserTable.id eq id.value }
+        userTable.selectAll()
+            .where { userTable.id eq id.value }
             .map { mapRowToUser(it) }
             .singleOrNull()
     }
 
     override suspend fun findByEmail(email: Email): User? = suspendTransaction {
-        UserTable.selectAll()
-            .where { UserTable.email eq email.value }
+        userTable.selectAll()
+            .where { userTable.email eq email.value }
             .map { mapRowToUser(it) }
             .singleOrNull()
     }
 
     override suspend fun findByOAuthProvider(provider: OAuthProvider, providerId: String): User? = suspendTransaction {
-        UserTable.selectAll()
-            .where { (UserTable.oauthProvider eq provider.name) and (UserTable.oauthProviderId eq providerId) }
+        userTable.selectAll()
+            .where { (userTable.oauthProvider eq provider.name) and (userTable.oauthProviderId eq providerId) }
             .map { mapRowToUser(it) }
             .singleOrNull()
     }
 
     override suspend fun findAll(): List<User> = suspendTransaction {
-        UserTable.selectAll()
+        userTable.selectAll()
             .map { mapRowToUser(it) }
             .toList()
     }
 
     override suspend fun update(user: User): User = suspendTransaction {
-        val affectedRows = UserTable.update({ 
-            (UserTable.id eq user.id!!.value) and (UserTable.version eq user.version) 
+        val affectedRows = userTable.update({ 
+            (userTable.id eq user.id!!.value) and (userTable.version eq user.version) 
         }) {
             it[email] = user.email.value
             it[passwordHash] = user.passwordHash?.value
@@ -88,26 +90,26 @@ class ExposedUserRepository : IUserRepository {
     }
 
     override suspend fun delete(id: UserId): Boolean = suspendTransaction {
-        UserTable.deleteWhere { UserTable.id eq id.value } > 0
+        userTable.deleteWhere { userTable.id eq id.value } > 0
     }
 
     override suspend fun exists(id: UserId): Boolean = suspendTransaction {
-        UserTable.selectAll()
-            .where { UserTable.id eq id.value }
+        userTable.selectAll()
+            .where { userTable.id eq id.value }
             .limit(1)
             .count() > 0
     }
 
     private fun mapRowToUser(row: ResultRow): User {
         return User(
-            id = UserId(row[UserTable.id]),
-            email = Email(row[UserTable.email]),
-            passwordHash = row[UserTable.passwordHash]?.let { PasswordHash(it) },
-            oauthProvider = row[UserTable.oauthProvider]?.let { OAuthProvider.fromString(it) },
-            oauthProviderId = row[UserTable.oauthProviderId],
-            createdAt = Instant.fromEpochMilliseconds(row[UserTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[UserTable.updatedAtEpochMs]),
-            version = row[UserTable.version]
+            id = UserId(row[userTable.id]),
+            email = Email(row[userTable.email]),
+            passwordHash = row[userTable.passwordHash]?.let { PasswordHash(it) },
+            oauthProvider = row[userTable.oauthProvider]?.let { OAuthProvider.fromString(it) },
+            oauthProviderId = row[userTable.oauthProviderId],
+            createdAt = Instant.fromEpochMilliseconds(row[userTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[userTable.updatedAtEpochMs]),
+            version = row[userTable.version]
         )
     }
 } 

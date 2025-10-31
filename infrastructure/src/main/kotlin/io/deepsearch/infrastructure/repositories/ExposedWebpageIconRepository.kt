@@ -15,13 +15,15 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedWebpageIconRepository : IWebpageIconRepository {
+class ExposedWebpageIconRepository(
+    private val webpageIconTable: WebpageIconTable
+) : IWebpageIconRepository {
 
     override suspend fun upsert(icon: WebpageIcon): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(icon.imageBytesHash)
 
-        WebpageIconTable.upsert(
-            keys = arrayOf(WebpageIconTable.imageBytesHash)
+        webpageIconTable.upsert(
+            keys = arrayOf(webpageIconTable.imageBytesHash)
         ) {
             it[imageBytesHash] = hashBase64
             it[label] = icon.label
@@ -33,19 +35,19 @@ class ExposedWebpageIconRepository : IWebpageIconRepository {
 
     override suspend fun findByHash(imageBytesHash: ByteArray): WebpageIcon? = suspendTransaction {
         val hashBase64 = Base64.encode(imageBytesHash)
-        WebpageIconTable.selectAll()
-            .where { WebpageIconTable.imageBytesHash eq hashBase64 }
+        webpageIconTable.selectAll()
+            .where { webpageIconTable.imageBytesHash eq hashBase64 }
             .map { mapRowToWebpageIcon(it) }
             .singleOrNull()
     }
 
     private fun mapRowToWebpageIcon(row: ResultRow): WebpageIcon {
         return WebpageIcon(
-            imageBytesHash = Base64.decode(row[WebpageIconTable.imageBytesHash]),
-            label = row[WebpageIconTable.label],
-            createdAt = Instant.fromEpochMilliseconds(row[WebpageIconTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[WebpageIconTable.updatedAtEpochMs]),
-            version = row[WebpageIconTable.version]
+            imageBytesHash = Base64.decode(row[webpageIconTable.imageBytesHash]),
+            label = row[webpageIconTable.label],
+            createdAt = Instant.fromEpochMilliseconds(row[webpageIconTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[webpageIconTable.updatedAtEpochMs]),
+            version = row[webpageIconTable.version]
         )
     }
 }

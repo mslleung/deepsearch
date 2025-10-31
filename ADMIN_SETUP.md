@@ -6,6 +6,43 @@ This guide covers how to run the DeepSearch admin backend and frontend applicati
 
 The admin backend runs on **port 8081** and provides RESTful APIs for managing the DeepSearch system.
 
+### Prerequisites
+
+Before running the admin backend, ensure you have the following environment variables configured:
+
+#### Required Environment Variables
+
+1. **API_KEY_HMAC_SECRET** - For HMAC-SHA256 hashing of API keys
+2. **DATABASE_ENCRYPTION_SECRET** - For AES-256-GCM encryption of sensitive database columns
+
+Generate these secrets using OpenSSL:
+
+```bash
+# Generate API Key HMAC Secret (32-byte base64-encoded)
+openssl rand -base64 32
+
+# Generate Database Encryption Secret (32-byte base64-encoded)
+openssl rand -base64 32
+```
+
+Set them as environment variables in your system or IDE run configuration:
+
+```bash
+API_KEY_HMAC_SECRET=<paste-your-generated-secret-here>
+DATABASE_ENCRYPTION_SECRET=<paste-your-generated-secret-here>
+```
+
+**For development, you can use these test secrets:**
+```bash
+API_KEY_HMAC_SECRET=dev-hmac-secret-change-in-production-use-openssl-rand
+DATABASE_ENCRYPTION_SECRET=dev-encryption-secret-change-in-production-use-openssl-rand
+```
+
+⚠️ **Important:** 
+- Use strong, randomly generated secrets in production (use the openssl command above)
+- Never commit these secrets to version control
+- Use the same secrets across main and admin applications to access the same database
+
 ### Running the Admin Backend
 
 #### Option 1: Using Gradle

@@ -21,12 +21,14 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedQuerySessionRepository : IQuerySessionRepository {
+class ExposedQuerySessionRepository(
+    private val querySessionTable: QuerySessionTable
+) : IQuerySessionRepository {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun save(session: QuerySession): QuerySession = suspendTransaction {
-        QuerySessionTable.insert {
+        querySessionTable.insert {
             it[id] = session.id
             it[query] = session.query
             it[url] = session.url
@@ -46,15 +48,15 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
     }
 
     override suspend fun findById(id: String): QuerySession? = suspendTransaction {
-        QuerySessionTable.selectAll()
-            .where { QuerySessionTable.id eq id }
+        querySessionTable.selectAll()
+            .where { querySessionTable.id eq id }
             .map { mapRowToQuerySession(it) }
             .singleOrNull()
     }
 
     override suspend fun update(session: QuerySession): QuerySession = suspendTransaction {
-        val affectedRows = QuerySessionTable.update({ 
-            (QuerySessionTable.id eq session.id) and (QuerySessionTable.version eq session.version) 
+        val affectedRows = querySessionTable.update({ 
+            (querySessionTable.id eq session.id) and (querySessionTable.version eq session.version) 
         }) {
             it[query] = session.query
             it[url] = session.url
@@ -80,24 +82,23 @@ class ExposedQuerySessionRepository : IQuerySessionRepository {
 
     private fun mapRowToQuerySession(row: ResultRow): QuerySession {
         return QuerySession(
-            id = row[QuerySessionTable.id],
-            query = row[QuerySessionTable.query],
-            url = row[QuerySessionTable.url],
-            state = QuerySessionState.valueOf(row[QuerySessionTable.state]),
+            id = row[querySessionTable.id],
+            query = row[querySessionTable.query],
+            url = row[querySessionTable.url],
+            state = QuerySessionState.valueOf(row[querySessionTable.state]),
             searchBudget = SearchBudget(
-                timeLimitMs = row[QuerySessionTable.budgetTimeLimitMs],
-                maxLinks = row[QuerySessionTable.budgetMaxLinks]
+                timeLimitMs = row[querySessionTable.budgetTimeLimitMs],
+                maxLinks = row[querySessionTable.budgetMaxLinks]
             ),
-            finishReason = row[QuerySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
-            answerComplete = row[QuerySessionTable.answerComplete],
-            answer = row[QuerySessionTable.answer],
-            traversedUrls = json.decodeFromString<List<String>>(row[QuerySessionTable.traversedUrls]).toMutableSet(),
-            sourcesDiscovered = json.decodeFromString<List<String>>(row[QuerySessionTable.sourcesDiscovered])
+            finishReason = row[querySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
+            answerComplete = row[querySessionTable.answerComplete],
+            answer = row[querySessionTable.answer],
+            traversedUrls = json.decodeFromString<List<String>>(row[querySessionTable.traversedUrls]).toMutableSet(),
+            sourcesDiscovered = json.decodeFromString<List<String>>(row[querySessionTable.sourcesDiscovered])
                 .toMutableList(),
-            createdAt = Instant.fromEpochMilliseconds(row[QuerySessionTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[QuerySessionTable.updatedAtEpochMs]),
-            version = row[QuerySessionTable.version]
+            createdAt = Instant.fromEpochMilliseconds(row[querySessionTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[querySessionTable.updatedAtEpochMs]),
+            version = row[querySessionTable.version]
         )
     }
 }
-

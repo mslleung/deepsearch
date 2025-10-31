@@ -1,8 +1,11 @@
 package io.deepsearch.infrastructure.database
 
+import io.deepsearch.infrastructure.config.DatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-object WebpageImageTable : Table("webpage_images") {
+class WebpageImageTable(
+    private val databaseCryptoService: DatabaseCryptoService
+) : Table("webpage_images") {
     val imageBytesHash = varchar("image_bytes_hash", length = 128)
     val extractedText = text("extracted_text").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")

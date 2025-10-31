@@ -16,18 +16,20 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
+class ExposedWebpageMarkdownRepository(
+    private val webpageMarkdownTable: WebpageMarkdownTable
+) : IWebpageMarkdownRepository {
 
     override suspend fun findByUrl(url: String): WebpageMarkdown? = suspendTransaction {
-        WebpageMarkdownTable.selectAll()
-            .where { WebpageMarkdownTable.url eq url }
+        webpageMarkdownTable.selectAll()
+            .where { webpageMarkdownTable.url eq url }
             .map { mapRowToWebpageMarkdown(it) }
             .singleOrNull()
     }
 
     override suspend fun upsert(webpage: WebpageMarkdown): Unit = suspendTransaction {
-        WebpageMarkdownTable.upsert(
-            keys = arrayOf(WebpageMarkdownTable.url)
+        webpageMarkdownTable.upsert(
+            keys = arrayOf(webpageMarkdownTable.url)
         ) {
             it[url] = webpage.url
             it[markdown] = webpage.markdown
@@ -42,8 +44,8 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
     }
 
     override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = suspendTransaction {
-        WebpageMarkdownTable.selectAll()
-            .where { WebpageMarkdownTable.url like ("$prefix%") }
+        webpageMarkdownTable.selectAll()
+            .where { webpageMarkdownTable.url like ("$prefix%") }
             .limit(limit)
             .offset(offset.toLong())
             .map { mapRowToWebpageMarkdown(it) }
@@ -51,15 +53,15 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
     }
 
     override suspend fun countByDomainPrefix(prefix: String): Long = suspendTransaction {
-        WebpageMarkdownTable.selectAll()
-            .where { WebpageMarkdownTable.url like ("$prefix%") }
+        webpageMarkdownTable.selectAll()
+            .where { webpageMarkdownTable.url like ("$prefix%") }
             .count()
     }
 
     override suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown> = suspendTransaction {
         val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
-        WebpageMarkdownTable.selectAll()
-            .where { WebpageMarkdownTable.url like pattern }
+        webpageMarkdownTable.selectAll()
+            .where { webpageMarkdownTable.url like pattern }
             .limit(limit)
             .offset(offset.toLong())
             .map { mapRowToWebpageMarkdown(it) }
@@ -68,23 +70,22 @@ class ExposedWebpageMarkdownRepository : IWebpageMarkdownRepository {
 
     override suspend fun countSearchByUrl(query: String): Long = suspendTransaction {
         val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
-        WebpageMarkdownTable.selectAll()
-            .where { WebpageMarkdownTable.url like pattern }
+        webpageMarkdownTable.selectAll()
+            .where { webpageMarkdownTable.url like pattern }
             .count()
     }
 
     private fun mapRowToWebpageMarkdown(row: ResultRow): WebpageMarkdown {
         return WebpageMarkdown(
-            url = row[WebpageMarkdownTable.url],
-            markdown = row[WebpageMarkdownTable.markdown],
-            html = row[WebpageMarkdownTable.html],
-            httpStatus = row[WebpageMarkdownTable.httpStatus],
-            httpReason = row[WebpageMarkdownTable.httpReason],
-            mimeType = row[WebpageMarkdownTable.mimeType],
-            createdAt = Instant.fromEpochMilliseconds(row[WebpageMarkdownTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[WebpageMarkdownTable.updatedAtEpochMs]),
-            version = row[WebpageMarkdownTable.version]
+            url = row[webpageMarkdownTable.url],
+            markdown = row[webpageMarkdownTable.markdown],
+            html = row[webpageMarkdownTable.html],
+            httpStatus = row[webpageMarkdownTable.httpStatus],
+            httpReason = row[webpageMarkdownTable.httpReason],
+            mimeType = row[webpageMarkdownTable.mimeType],
+            createdAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.updatedAtEpochMs]),
+            version = row[webpageMarkdownTable.version]
         )
     }
 }
-

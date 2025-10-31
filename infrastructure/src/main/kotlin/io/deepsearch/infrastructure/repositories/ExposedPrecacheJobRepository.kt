@@ -19,10 +19,12 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedPrecacheJobRepository : IPrecacheJobRepository {
+class ExposedPrecacheJobRepository(
+    private val precacheJobTable: PrecacheJobTable
+) : IPrecacheJobRepository {
 
     override suspend fun create(job: PrecacheJob): PrecacheJob = suspendTransaction {
-        val id = PrecacheJobTable.insert {
+        val id = precacheJobTable.insert {
             it[baseUrl] = job.baseUrl
             it[maxUrlCount] = job.maxUrlCount
             it[processedCount] = job.processedCount
@@ -30,15 +32,15 @@ class ExposedPrecacheJobRepository : IPrecacheJobRepository {
             it[createdAtMs] = job.createdAt.toEpochMilliseconds()
             it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
             it[version] = job.version
-        }[PrecacheJobTable.id]
+        }[precacheJobTable.id]
 
         job.id = id
         job
     }
 
     override suspend fun update(job: PrecacheJob): PrecacheJob = suspendTransaction {
-        val affectedRows = PrecacheJobTable.update({ 
-            (PrecacheJobTable.id eq (job.id ?: -1)) and (PrecacheJobTable.version eq job.version) 
+        val affectedRows = precacheJobTable.update({ 
+            (precacheJobTable.id eq (job.id ?: -1)) and (precacheJobTable.version eq job.version) 
         }) {
             it[processedCount] = job.processedCount
             it[state] = job.state.name
@@ -55,22 +57,22 @@ class ExposedPrecacheJobRepository : IPrecacheJobRepository {
     }
 
     override suspend fun findById(id: Long): PrecacheJob? = suspendTransaction {
-        PrecacheJobTable.selectAll()
-            .where { PrecacheJobTable.id eq id }
+        precacheJobTable.selectAll()
+            .where { precacheJobTable.id eq id }
             .map { mapRow(it) }
             .singleOrNull()
     }
 
     override suspend fun findActiveByBaseUrl(baseUrl: String): PrecacheJob? = suspendTransaction {
-        PrecacheJobTable.selectAll()
-            .where { (PrecacheJobTable.baseUrl eq baseUrl) }
+        precacheJobTable.selectAll()
+            .where { (precacheJobTable.baseUrl eq baseUrl) }
             .map { mapRow(it) }
             .toList()
             .firstOrNull { it.state == PrecacheJobState.IN_PROGRESS }
     }
 
     override suspend fun listAll(state: PrecacheJobState?): List<PrecacheJob> = suspendTransaction {
-        val query = PrecacheJobTable.selectAll()
+        val query = precacheJobTable.selectAll()
         if (state == null) {
             query.map { mapRow(it) }.toList()
         } else {
@@ -79,13 +81,13 @@ class ExposedPrecacheJobRepository : IPrecacheJobRepository {
     }
 
     private fun mapRow(row: ResultRow): PrecacheJob = PrecacheJob(
-        id = row[PrecacheJobTable.id],
-        baseUrl = row[PrecacheJobTable.baseUrl],
-        maxUrlCount = row[PrecacheJobTable.maxUrlCount],
-        createdAt = Instant.fromEpochMilliseconds(row[PrecacheJobTable.createdAtMs]),
-        updatedAt = Instant.fromEpochMilliseconds(row[PrecacheJobTable.updatedAtMs]),
-        processedCount = row[PrecacheJobTable.processedCount],
-        state = PrecacheJobState.valueOf(row[PrecacheJobTable.state]),
-        version = row[PrecacheJobTable.version]
+        id = row[precacheJobTable.id],
+        baseUrl = row[precacheJobTable.baseUrl],
+        maxUrlCount = row[precacheJobTable.maxUrlCount],
+        createdAt = Instant.fromEpochMilliseconds(row[precacheJobTable.createdAtMs]),
+        updatedAt = Instant.fromEpochMilliseconds(row[precacheJobTable.updatedAtMs]),
+        processedCount = row[precacheJobTable.processedCount],
+        state = PrecacheJobState.valueOf(row[precacheJobTable.state]),
+        version = row[precacheJobTable.version]
     )
 }

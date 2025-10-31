@@ -1,8 +1,11 @@
 package io.deepsearch.infrastructure.database
 
+import io.deepsearch.infrastructure.config.DatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-object QuerySessionTable : Table("query_sessions") {
+class QuerySessionTable(
+    private val databaseCryptoService: DatabaseCryptoService
+) : Table("query_sessions") {
     val id = varchar("id", 255)
     val query = text("query")
     val url = varchar("url", 2048)

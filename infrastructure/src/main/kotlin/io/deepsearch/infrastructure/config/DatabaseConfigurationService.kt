@@ -1,20 +1,6 @@
 package io.deepsearch.infrastructure.config
 
-import io.deepsearch.infrastructure.database.ApiKeyTable
-import io.deepsearch.infrastructure.database.ApiKeyUsageTable
-import io.deepsearch.infrastructure.database.PdfMarkdownTable
-import io.deepsearch.infrastructure.database.PrecacheJobTable
-import io.deepsearch.infrastructure.database.QuerySessionTable
-import io.deepsearch.infrastructure.database.RawApiKeyTable
-import io.deepsearch.infrastructure.database.UserSubscriptionTable
-import io.deepsearch.infrastructure.database.UserTable
-import io.deepsearch.infrastructure.database.WebpageIconTable
-import io.deepsearch.infrastructure.database.WebpageImageTable
-import io.deepsearch.infrastructure.database.WebpageMarkdownTable
-import io.deepsearch.infrastructure.database.WebpagePopupTable
-import io.deepsearch.infrastructure.database.WebpageSemanticElementTable
-import io.deepsearch.infrastructure.database.WebpageTableInterpretationTable
-import io.deepsearch.infrastructure.database.WebpageTableTable
+import io.deepsearch.infrastructure.database.*
 import io.r2dbc.spi.IsolationLevel
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
@@ -25,7 +11,30 @@ import java.io.File
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-object DatabaseConfig {
+/**
+ * Service for configuring database connection and schema initialization.
+ */
+class DatabaseConfigurationService(
+    private val userTable: UserTable,
+    private val apiKeyTable: ApiKeyTable,
+    private val rawApiKeyTable: RawApiKeyTable,
+    private val apiKeyUsageTable: ApiKeyUsageTable,
+    private val userSubscriptionTable: UserSubscriptionTable,
+    private val webpageIconTable: WebpageIconTable,
+    private val webpageImageTable: WebpageImageTable,
+    private val webpagePopupTable: WebpagePopupTable,
+    private val webpageTableTable: WebpageTableTable,
+    private val webpageTableInterpretationTable: WebpageTableInterpretationTable,
+    private val webpageSemanticElementTable: WebpageSemanticElementTable,
+    private val webpageMarkdownTable: WebpageMarkdownTable,
+    private val pdfMarkdownTable: PdfMarkdownTable,
+    private val querySessionTable: QuerySessionTable,
+    private val precacheJobTable: PrecacheJobTable
+) {
+    init {
+        configureDatabase()
+    }
+
     /**
      * Configures database connection based on environment.
      * For development: H2 with R2DBC (SQLite-like, lightweight)
@@ -42,21 +51,21 @@ object DatabaseConfig {
         runBlocking {
             suspendTransaction {
                 SchemaUtils.create(
-                    UserTable,
-                    ApiKeyTable,
-                    RawApiKeyTable,
-                    ApiKeyUsageTable,
-                    UserSubscriptionTable,
-                    WebpageIconTable,
-                    WebpageImageTable,
-                    WebpagePopupTable,
-                    WebpageTableTable,
-                    WebpageTableInterpretationTable,
-                    WebpageSemanticElementTable,
-                    WebpageMarkdownTable,
-                    PdfMarkdownTable,
-                    QuerySessionTable,
-                    PrecacheJobTable,
+                    userTable,
+                    apiKeyTable,
+                    rawApiKeyTable,
+                    apiKeyUsageTable,
+                    userSubscriptionTable,
+                    webpageIconTable,
+                    webpageImageTable,
+                    webpagePopupTable,
+                    webpageTableTable,
+                    webpageTableInterpretationTable,
+                    webpageSemanticElementTable,
+                    webpageMarkdownTable,
+                    pdfMarkdownTable,
+                    querySessionTable,
+                    precacheJobTable,
                 )
             }
         }

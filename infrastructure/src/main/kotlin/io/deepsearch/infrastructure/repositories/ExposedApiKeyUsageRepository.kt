@@ -20,24 +20,27 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedApiKeyUsageRepository : IApiKeyUsageRepository {
+class ExposedApiKeyUsageRepository(
+    private val apiKeyUsageTable: ApiKeyUsageTable,
+    private val apiKeyTable: ApiKeyTable
+) : IApiKeyUsageRepository {
 
     override suspend fun recordUsage(usage: ApiKeyUsage): ApiKeyUsage = suspendTransaction {
-        val id = ApiKeyUsageTable.insert {
+        val id = apiKeyUsageTable.insert {
             it[apiKeyId] = usage.apiKeyId.value
             it[requestedAtEpochMs] = usage.requestedAt.toEpochMilliseconds()
             it[version] = usage.version
-        }[ApiKeyUsageTable.id]
+        }[apiKeyUsageTable.id]
 
         usage.id = id
         usage
     }
 
     override suspend fun countRequestsSince(apiKeyId: ApiKeyId, since: Instant): Long = suspendTransaction {
-        val results = ApiKeyUsageTable.selectAll()
+        val results = apiKeyUsageTable.selectAll()
             .where { 
-                (ApiKeyUsageTable.apiKeyId eq apiKeyId.value) and
-                (ApiKeyUsageTable.requestedAtEpochMs greaterEq since.toEpochMilliseconds())
+                (apiKeyUsageTable.apiKeyId eq apiKeyId.value) and
+                (apiKeyUsageTable.requestedAtEpochMs greaterEq since.toEpochMilliseconds())
             }
             .map { it }
             .toList()
@@ -45,61 +48,61 @@ class ExposedApiKeyUsageRepository : IApiKeyUsageRepository {
     }
 
     override suspend fun deleteRequestsBefore(before: Instant): Int = suspendTransaction {
-        ApiKeyUsageTable.deleteWhere { 
-            ApiKeyUsageTable.requestedAtEpochMs less before.toEpochMilliseconds() 
+        apiKeyUsageTable.deleteWhere { 
+            apiKeyUsageTable.requestedAtEpochMs less before.toEpochMilliseconds() 
         }
     }
 
     override suspend fun getUsageByDateRange(start: Instant, end: Instant): List<ApiKeyUsage> = suspendTransaction {
-        ApiKeyUsageTable.selectAll()
+        apiKeyUsageTable.selectAll()
             .where {
-                (ApiKeyUsageTable.requestedAtEpochMs greaterEq start.toEpochMilliseconds()) and
-                (ApiKeyUsageTable.requestedAtEpochMs less end.toEpochMilliseconds())
+                (apiKeyUsageTable.requestedAtEpochMs greaterEq start.toEpochMilliseconds()) and
+                (apiKeyUsageTable.requestedAtEpochMs less end.toEpochMilliseconds())
             }
             .map { row ->
                 ApiKeyUsage(
-                    id = row[ApiKeyUsageTable.id],
-                    apiKeyId = ApiKeyId(row[ApiKeyUsageTable.apiKeyId]),
-                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs]),
-                    version = row[ApiKeyUsageTable.version]
+                    id = row[apiKeyUsageTable.id],
+                    apiKeyId = ApiKeyId(row[apiKeyUsageTable.apiKeyId]),
+                    requestedAt = Instant.fromEpochMilliseconds(row[apiKeyUsageTable.requestedAtEpochMs]),
+                    version = row[apiKeyUsageTable.version]
                 )
             }
             .toList()
     }
 
     override suspend fun getUsageByUserIdAndDateRange(userId: UserId, start: Instant, end: Instant): List<ApiKeyUsage> = suspendTransaction {
-        ApiKeyUsageTable
-            .innerJoin(ApiKeyTable)
+        apiKeyUsageTable
+            .innerJoin(apiKeyTable)
             .selectAll()
             .where {
-                (ApiKeyTable.userId eq userId.value) and
-                (ApiKeyUsageTable.requestedAtEpochMs greaterEq start.toEpochMilliseconds()) and
-                (ApiKeyUsageTable.requestedAtEpochMs less end.toEpochMilliseconds())
+                (apiKeyTable.userId eq userId.value) and
+                (apiKeyUsageTable.requestedAtEpochMs greaterEq start.toEpochMilliseconds()) and
+                (apiKeyUsageTable.requestedAtEpochMs less end.toEpochMilliseconds())
             }
             .map { row ->
                 ApiKeyUsage(
-                    id = row[ApiKeyUsageTable.id],
-                    apiKeyId = ApiKeyId(row[ApiKeyUsageTable.apiKeyId]),
-                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs]),
-                    version = row[ApiKeyUsageTable.version]
+                    id = row[apiKeyUsageTable.id],
+                    apiKeyId = ApiKeyId(row[apiKeyUsageTable.apiKeyId]),
+                    requestedAt = Instant.fromEpochMilliseconds(row[apiKeyUsageTable.requestedAtEpochMs]),
+                    version = row[apiKeyUsageTable.version]
                 )
             }
             .toList()
     }
 
     override suspend fun getUsageByApiKeyIdAndDateRange(apiKeyId: ApiKeyId, start: Instant, end: Instant): List<ApiKeyUsage> = suspendTransaction {
-        ApiKeyUsageTable.selectAll()
+        apiKeyUsageTable.selectAll()
             .where {
-                (ApiKeyUsageTable.apiKeyId eq apiKeyId.value) and
-                (ApiKeyUsageTable.requestedAtEpochMs greaterEq start.toEpochMilliseconds()) and
-                (ApiKeyUsageTable.requestedAtEpochMs less end.toEpochMilliseconds())
+                (apiKeyUsageTable.apiKeyId eq apiKeyId.value) and
+                (apiKeyUsageTable.requestedAtEpochMs greaterEq start.toEpochMilliseconds()) and
+                (apiKeyUsageTable.requestedAtEpochMs less end.toEpochMilliseconds())
             }
             .map { row ->
                 ApiKeyUsage(
-                    id = row[ApiKeyUsageTable.id],
-                    apiKeyId = ApiKeyId(row[ApiKeyUsageTable.apiKeyId]),
-                    requestedAt = Instant.fromEpochMilliseconds(row[ApiKeyUsageTable.requestedAtEpochMs]),
-                    version = row[ApiKeyUsageTable.version]
+                    id = row[apiKeyUsageTable.id],
+                    apiKeyId = ApiKeyId(row[apiKeyUsageTable.apiKeyId]),
+                    requestedAt = Instant.fromEpochMilliseconds(row[apiKeyUsageTable.requestedAtEpochMs]),
+                    version = row[apiKeyUsageTable.version]
                 )
             }
             .toList()

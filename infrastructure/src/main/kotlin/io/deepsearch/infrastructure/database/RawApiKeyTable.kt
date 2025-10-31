@@ -1,21 +1,25 @@
 package io.deepsearch.infrastructure.database
 
-import io.deepsearch.infrastructure.config.DatabaseCrypto
+import io.deepsearch.infrastructure.config.DatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-object RawApiKeyTable : Table("raw_api_keys") {
-    // Get encryption password from environment
-    private val encryptionPassword = System.getenv("API_KEY_ENCRYPTION_SECRET") 
-        ?: "dev-encryption-secret-please-change-in-production"
+/**
+ * Table for storing encrypted raw API keys.
+ * 
+ * Encryption/decryption is handled at the table level using transform.
+ */
+class RawApiKeyTable(
+    private val databaseCryptoService: DatabaseCryptoService,
+    private val userTable: UserTable
+) : Table("raw_api_keys") {
+    val userId = integer("user_id").references(userTable.id).uniqueIndex()
     
-    val userId = integer("user_id").references(UserTable.id).uniqueIndex()
-    
-    // Store encrypted raw API key using transform
+    // Store encrypted raw API key (encryption handled by transform)
     val encryptedRawKey = varchar("encrypted_raw_key", length = 512)
         .transform(
-            wrap = { plaintext -> DatabaseCrypto.encrypt(plaintext, encryptionPassword) },
-            unwrap = { ciphertext -> DatabaseCrypto.decrypt(ciphertext, encryptionPassword) }
+            wrap = { plaintext -> databaseCryptoService.encrypt(plaintext) },
+            unwrap = { ciphertext -> databaseCryptoService.decrypt(ciphertext) }
         )
-    
+
     override val primaryKey = PrimaryKey(userId)
 }

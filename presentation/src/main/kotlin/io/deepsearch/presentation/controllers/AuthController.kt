@@ -37,7 +37,7 @@ class AuthController(
             )
 
             val token = jwtService.generateToken(user.id!!)
-            val playgroundKey = apiKeyService.getRawPlaygroundKey(user.id!!)
+            val playgroundKey = apiKeyService.getOrCreatePlaygroundKey(user.id!!)
             
             call.respond(
                 HttpStatusCode.Created,
@@ -69,7 +69,7 @@ class AuthController(
             }
 
             val token = jwtService.generateToken(user.id!!)
-            val playgroundKey = apiKeyService.getRawPlaygroundKey(user.id!!)
+            val playgroundKey = apiKeyService.getOrCreatePlaygroundKey(user.id!!)
             
             call.respond(
                 HttpStatusCode.OK,

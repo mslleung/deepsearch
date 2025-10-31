@@ -6,6 +6,7 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
+import io.deepsearch.domain.repositories.IRawApiKeyRepository
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -22,12 +23,12 @@ interface IApiKeyService {
     suspend fun getApiKeyByRawKey(rawKey: String): ApiKey?
     suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean
     suspend fun getOrCreatePlaygroundKey(userId: UserId): String
-    suspend fun getRawPlaygroundKey(userId: UserId): String?
 }
 
 @OptIn(ExperimentalTime::class)
 class ApiKeyService(
     private val apiKeyRepository: IApiKeyRepository,
+    private val rawApiKeyRepository: IRawApiKeyRepository,
     private val apiKeyConfig: ApiKeyConfig,
     private val apiKeyCryptoService: IApiKeyCryptoService
 ) : IApiKeyService {
@@ -73,7 +74,7 @@ class ApiKeyService(
         
         // For playground keys, also store the raw key encrypted
         if (type == ApiKeyType.PLAYGROUND) {
-            apiKeyRepository.saveRawApiKey(userId, rawKey)
+            rawApiKeyRepository.save(userId, rawKey)
         }
         
         return Pair(savedApiKey, rawKey)
@@ -107,7 +108,7 @@ class ApiKeyService(
 
     override suspend fun getOrCreatePlaygroundKey(userId: UserId): String {
         // Try to find existing raw playground key
-        val existingRawKey = apiKeyRepository.findRawApiKey(userId)
+        val existingRawKey = rawApiKeyRepository.findByUserId(userId)
         
         if (existingRawKey != null) {
             return existingRawKey
@@ -116,10 +117,6 @@ class ApiKeyService(
         // Create new playground key (first time)
         val (_, rawKey) = generateApiKey(userId, "Web App Playground", ApiKeyType.PLAYGROUND)
         return rawKey
-    }
-    
-    override suspend fun getRawPlaygroundKey(userId: UserId): String? {
-        return apiKeyRepository.findRawApiKey(userId)
     }
 
     override suspend fun listUserApiKeys(userId: UserId): List<ApiKey> {

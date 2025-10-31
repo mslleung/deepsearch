@@ -14,18 +14,20 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
+class ExposedPdfMarkdownRepository(
+    private val pdfMarkdownTable: PdfMarkdownTable
+) : IPdfMarkdownRepository {
 
     override suspend fun findByHash(pdfHash: String): PdfMarkdown? = suspendTransaction {
-        PdfMarkdownTable.selectAll()
-            .where { PdfMarkdownTable.pdfHash eq pdfHash }
+        pdfMarkdownTable.selectAll()
+            .where { pdfMarkdownTable.pdfHash eq pdfHash }
             .map { mapRowToPdfMarkdown(it) }
             .singleOrNull()
     }
 
     override suspend fun upsert(pdfMarkdown: PdfMarkdown): Unit = suspendTransaction {
-        PdfMarkdownTable.upsert(
-            keys = arrayOf(PdfMarkdownTable.pdfHash)
+        pdfMarkdownTable.upsert(
+            keys = arrayOf(pdfMarkdownTable.pdfHash)
         ) {
             it[pdfHash] = pdfMarkdown.pdfHash
             it[markdown] = pdfMarkdown.markdown
@@ -39,14 +41,13 @@ class ExposedPdfMarkdownRepository : IPdfMarkdownRepository {
 
     private fun mapRowToPdfMarkdown(row: ResultRow): PdfMarkdown {
         return PdfMarkdown(
-            pdfHash = row[PdfMarkdownTable.pdfHash],
-            markdown = row[PdfMarkdownTable.markdown],
-            pageCount = row[PdfMarkdownTable.pageCount],
-            fileSizeBytes = row[PdfMarkdownTable.fileSizeBytes],
-            createdAt = Instant.fromEpochMilliseconds(row[PdfMarkdownTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[PdfMarkdownTable.updatedAtEpochMs]),
-            version = row[PdfMarkdownTable.version]
+            pdfHash = row[pdfMarkdownTable.pdfHash],
+            markdown = row[pdfMarkdownTable.markdown],
+            pageCount = row[pdfMarkdownTable.pageCount],
+            fileSizeBytes = row[pdfMarkdownTable.fileSizeBytes],
+            createdAt = Instant.fromEpochMilliseconds(row[pdfMarkdownTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[pdfMarkdownTable.updatedAtEpochMs]),
+            version = row[pdfMarkdownTable.version]
         )
     }
 }
-

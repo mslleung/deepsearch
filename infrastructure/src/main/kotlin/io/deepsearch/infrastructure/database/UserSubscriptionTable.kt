@@ -1,10 +1,14 @@
 package io.deepsearch.infrastructure.database
 
+import io.deepsearch.infrastructure.config.DatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-object UserSubscriptionTable : Table("user_subscriptions") {
+class UserSubscriptionTable(
+    private val databaseCryptoService: DatabaseCryptoService,
+    private val userTable: UserTable
+) : Table("user_subscriptions") {
     val id = long("id").autoIncrement()
-    val userId = integer("user_id").references(UserTable.id)
+    val userId = integer("user_id").references(userTable.id)
     val planName = varchar("plan_name", length = 50)
     val tier = varchar("tier", length = 10) // FREE or PAID
     val maxSearches = integer("max_searches")

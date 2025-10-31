@@ -14,10 +14,5 @@ interface IApiKeyRepository {
     suspend fun countByUserIdAndType(userId: UserId, type: ApiKeyType): Long
     suspend fun delete(id: ApiKeyId): Boolean
     suspend fun update(apiKey: ApiKey): ApiKey
-    
-    // Raw API key operations (for playground keys only)
-    suspend fun saveRawApiKey(userId: UserId, rawKey: String)
-    suspend fun findRawApiKey(userId: UserId): String?
-    suspend fun deleteRawApiKey(userId: UserId): Boolean
 }
 

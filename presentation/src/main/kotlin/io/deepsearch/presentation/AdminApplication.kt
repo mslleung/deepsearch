@@ -1,24 +1,22 @@
 package io.deepsearch.presentation
 
 import io.deepsearch.domain.config.ApiKeyConfig
-import io.deepsearch.domain.config.GoogleOAuthConfig
-import io.deepsearch.domain.config.JwtConfig
-import io.deepsearch.domain.config.OAuthConfig
-import io.deepsearch.presentation.admin.routes.*
+import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.presentation.admin.config.adminPresentationModule
+import io.deepsearch.presentation.admin.routes.*
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.netty.*
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 import io.ktor.server.plugins.cors.routing.*
 import kotlinx.serialization.json.Json
 import org.koin.dsl.module
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation as ClientContentNegotiation
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 
 fun main(args: Array<String>) {
     EngineMain.main(args)
@@ -79,6 +77,11 @@ private fun Application.configureDependencyInjection() {
                 single {
                     ApiKeyConfig(
                         hmacSecret = environment.config.property("apiKey.hmacSecret").getString()
+                    )
+                }
+                single {
+                    DatabaseEncryptionConfig(
+                        encryptionSecret = environment.config.property("database.encryptionSecret").getString()
                     )
                 }
                 single {

@@ -21,31 +21,33 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedUserSubscriptionRepository : IUserSubscriptionRepository {
+class ExposedUserSubscriptionRepository(
+    private val userSubscriptionTable: UserSubscriptionTable
+) : IUserSubscriptionRepository {
 
     override suspend fun findByUserId(userId: UserId): List<UserSubscription> = suspendTransaction {
-        UserSubscriptionTable.selectAll()
-            .where { UserSubscriptionTable.userId eq userId.value }
+        userSubscriptionTable.selectAll()
+            .where { userSubscriptionTable.userId eq userId.value }
             .map { row -> mapRowToUserSubscription(row) }
             .toList()
     }
 
     override suspend fun findById(id: UserSubscriptionId): UserSubscription? = suspendTransaction {
-        UserSubscriptionTable.selectAll()
-            .where { UserSubscriptionTable.id eq id.value }
+        userSubscriptionTable.selectAll()
+            .where { userSubscriptionTable.id eq id.value }
             .map { row -> mapRowToUserSubscription(row) }
             .toList()
             .firstOrNull()
     }
 
     override suspend fun findAll(): List<UserSubscription> = suspendTransaction {
-        UserSubscriptionTable.selectAll()
+        userSubscriptionTable.selectAll()
             .map { row -> mapRowToUserSubscription(row) }
             .toList()
     }
 
     override suspend fun save(subscription: UserSubscription): UserSubscription = suspendTransaction {
-        val id = UserSubscriptionTable.insert {
+        val id = userSubscriptionTable.insert {
             it[userId] = subscription.userId.value
             it[planName] = subscription.planName
             it[tier] = subscription.tier.name
@@ -57,15 +59,15 @@ class ExposedUserSubscriptionRepository : IUserSubscriptionRepository {
             it[createdAtEpochMs] = subscription.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = subscription.updatedAt.toEpochMilliseconds()
             it[version] = subscription.version
-        }[UserSubscriptionTable.id]
+        }[userSubscriptionTable.id]
 
         subscription.id = UserSubscriptionId(id)
         subscription
     }
 
     override suspend fun update(subscription: UserSubscription): UserSubscription = suspendTransaction {
-        val affectedRows = UserSubscriptionTable.update({ 
-            (UserSubscriptionTable.id eq subscription.id!!.value) and (UserSubscriptionTable.version eq subscription.version) 
+        val affectedRows = userSubscriptionTable.update({ 
+            (userSubscriptionTable.id eq subscription.id!!.value) and (userSubscriptionTable.version eq subscription.version) 
         }) {
             it[usedSearches] = subscription.usedSearches
             it[updatedAtEpochMs] = subscription.updatedAt.toEpochMilliseconds()
@@ -81,23 +83,23 @@ class ExposedUserSubscriptionRepository : IUserSubscriptionRepository {
     }
 
     override suspend fun delete(id: UserSubscriptionId): Boolean = suspendTransaction {
-        UserSubscriptionTable.deleteWhere { UserSubscriptionTable.id eq id.value } > 0
+        userSubscriptionTable.deleteWhere { userSubscriptionTable.id eq id.value } > 0
     }
 
     private fun mapRowToUserSubscription(row: ResultRow): UserSubscription {
         return UserSubscription(
-            id = UserSubscriptionId(row[UserSubscriptionTable.id]),
-            userId = UserId(row[UserSubscriptionTable.userId]),
-            planName = row[UserSubscriptionTable.planName],
-            tier = PlanTier.valueOf(row[UserSubscriptionTable.tier]),
-            maxSearches = row[UserSubscriptionTable.maxSearches],
-            priceUsd = row[UserSubscriptionTable.priceUsd],
-            usedSearches = row[UserSubscriptionTable.usedSearches],
-            startDate = Instant.fromEpochMilliseconds(row[UserSubscriptionTable.startDateEpochMs]),
-            expiryDate = row[UserSubscriptionTable.expiryDateEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
-            createdAt = Instant.fromEpochMilliseconds(row[UserSubscriptionTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[UserSubscriptionTable.updatedAtEpochMs]),
-            version = row[UserSubscriptionTable.version]
+            id = UserSubscriptionId(row[userSubscriptionTable.id]),
+            userId = UserId(row[userSubscriptionTable.userId]),
+            planName = row[userSubscriptionTable.planName],
+            tier = PlanTier.valueOf(row[userSubscriptionTable.tier]),
+            maxSearches = row[userSubscriptionTable.maxSearches],
+            priceUsd = row[userSubscriptionTable.priceUsd],
+            usedSearches = row[userSubscriptionTable.usedSearches],
+            startDate = Instant.fromEpochMilliseconds(row[userSubscriptionTable.startDateEpochMs]),
+            expiryDate = row[userSubscriptionTable.expiryDateEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
+            createdAt = Instant.fromEpochMilliseconds(row[userSubscriptionTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[userSubscriptionTable.updatedAtEpochMs]),
+            version = row[userSubscriptionTable.version]
         )
     }
 }

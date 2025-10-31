@@ -18,3 +18,5 @@ oauth:
         redirectUrl: "http://localhost:8080/api/auth/oauth/google/callback"
 apiKey:
     hmacSecret: ${API_KEY_HMAC_SECRET}  # For HMAC-SHA256 hashing of API keys
+database:
+    encryptionSecret: ${DATABASE_ENCRYPTION_SECRET}  # For AES-256-GCM encryption of sensitive database columns

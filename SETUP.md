@@ -80,7 +80,9 @@ openssl ec -in es256-private-key.pem -pubout -out es256-public-key.pem
 
 This will create `es256-private-key.pem` and `es256-public-key.pem` in your project root.
 
-### 4. Configure API Key Secret
+### 4. Configure Secrets
+
+#### API Key HMAC Secret
 
 Generate a secure random secret for HMAC-SHA256 API key hashing:
 
@@ -103,6 +105,32 @@ API_KEY_HMAC_SECRET=<paste-your-generated-secret-here>
 **For development, you can use this test secret:**
 ```bash
 API_KEY_HMAC_SECRET=dev-hmac-secret-change-in-production-use-openssl-rand
+```
+
+#### Database Encryption Secret
+
+Generate a secure random secret for AES-256-GCM database encryption:
+
+```bash
+# Generate a random 32-byte (256-bit) secret encoded as base64
+openssl rand -base64 32
+```
+
+Add the generated secret as an environment variable to your system or IDE run configuration:
+
+```bash
+DATABASE_ENCRYPTION_SECRET=<paste-your-generated-secret-here>
+```
+
+⚠️ **Important:** 
+- Use a strong, randomly generated secret in production
+- Never commit this secret to version control
+- This secret encrypts sensitive data like raw API keys stored in the database
+- Changing this secret will make existing encrypted data unreadable
+
+**For development, you can use this test secret:**
+```bash
+DATABASE_ENCRYPTION_SECRET=dev-encryption-secret-change-in-production-use-openssl-rand
 ```
 
 ## Running the Application

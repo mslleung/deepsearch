@@ -1,8 +1,11 @@
 package io.deepsearch.infrastructure.database
 
+import io.deepsearch.infrastructure.config.DatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-object PrecacheJobTable : Table("precache_jobs") {
+class PrecacheJobTable(
+    private val databaseCryptoService: DatabaseCryptoService
+) : Table("precache_jobs") {
     val id = long("id").autoIncrement()
     val baseUrl = varchar("base_url", length = 2048)
     val maxUrlCount = integer("max_url_count")

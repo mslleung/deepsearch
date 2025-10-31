@@ -7,7 +7,6 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import io.deepsearch.infrastructure.database.ApiKeyTable
-import io.deepsearch.infrastructure.database.RawApiKeyTable
 import kotlinx.coroutines.flow.count
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -24,10 +23,12 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedApiKeyRepository : IApiKeyRepository {
+class ExposedApiKeyRepository(
+    private val apiKeyTable: ApiKeyTable
+) : IApiKeyRepository {
 
     override suspend fun save(apiKey: ApiKey): ApiKey = suspendTransaction {
-        val id = ApiKeyTable.insert {
+        val id = apiKeyTable.insert {
             it[userId] = apiKey.userId.value
             it[keyHash] = apiKey.keyHash
             it[keyPrefix] = apiKey.keyPrefix
@@ -38,54 +39,54 @@ class ExposedApiKeyRepository : IApiKeyRepository {
             it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
             it[version] = apiKey.version
-        }[ApiKeyTable.id]
+        }[apiKeyTable.id]
 
         apiKey.id = ApiKeyId(id)
         apiKey
     }
 
     override suspend fun findById(id: ApiKeyId): ApiKey? = suspendTransaction {
-        ApiKeyTable.selectAll()
-            .where { ApiKeyTable.id eq id.value }
+        apiKeyTable.selectAll()
+            .where { apiKeyTable.id eq id.value }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
     override suspend fun findByKeyHash(hash: String): ApiKey? = suspendTransaction {
-        ApiKeyTable.selectAll()
-            .where { ApiKeyTable.keyHash eq hash }
+        apiKeyTable.selectAll()
+            .where { apiKeyTable.keyHash eq hash }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
     override suspend fun findByUserId(userId: UserId): List<ApiKey> = suspendTransaction {
-        ApiKeyTable.selectAll()
-            .where { ApiKeyTable.userId eq userId.value }
+        apiKeyTable.selectAll()
+            .where { apiKeyTable.userId eq userId.value }
             .map { mapRowToApiKey(it) }
             .toList()
     }
 
     override suspend fun findByUserIdAndType(userId: UserId, type: ApiKeyType): ApiKey? = suspendTransaction {
-        ApiKeyTable.selectAll()
-            .where { (ApiKeyTable.userId eq userId.value) and (ApiKeyTable.type eq type.name) }
+        apiKeyTable.selectAll()
+            .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
     override suspend fun countByUserIdAndType(userId: UserId, type: ApiKeyType): Long = suspendTransaction {
-        ApiKeyTable.selectAll()
-            .where { (ApiKeyTable.userId eq userId.value) and (ApiKeyTable.type eq type.name) }
+        apiKeyTable.selectAll()
+            .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) }
             .count()
             .toLong()
     }
 
     override suspend fun delete(id: ApiKeyId): Boolean = suspendTransaction {
-        ApiKeyTable.deleteWhere { ApiKeyTable.id eq id.value } > 0
+        apiKeyTable.deleteWhere { apiKeyTable.id eq id.value } > 0
     }
 
     override suspend fun update(apiKey: ApiKey): ApiKey = suspendTransaction {
-        val affectedRows = ApiKeyTable.update({ 
-            (ApiKeyTable.id eq apiKey.id!!.value) and (ApiKeyTable.version eq apiKey.version) 
+        val affectedRows = apiKeyTable.update({ 
+            (apiKeyTable.id eq apiKey.id!!.value) and (apiKeyTable.version eq apiKey.version) 
         }) {
             it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
@@ -100,39 +101,19 @@ class ExposedApiKeyRepository : IApiKeyRepository {
         apiKey
     }
 
-    // Raw API key operations (for playground keys only)
-    override suspend fun saveRawApiKey(userId: UserId, rawKey: String): Unit = suspendTransaction {
-        RawApiKeyTable.insert {
-            it[RawApiKeyTable.userId] = userId.value
-            it[encryptedRawKey] = rawKey
-        }
-        Unit
-    }
-
-    override suspend fun findRawApiKey(userId: UserId): String? = suspendTransaction {
-        RawApiKeyTable.selectAll()
-            .where { RawApiKeyTable.userId eq userId.value }
-            .map { it[RawApiKeyTable.encryptedRawKey] }
-            .singleOrNull()
-    }
-
-    override suspend fun deleteRawApiKey(userId: UserId): Boolean = suspendTransaction {
-        RawApiKeyTable.deleteWhere { RawApiKeyTable.userId eq userId.value } > 0
-    }
-
     private fun mapRowToApiKey(row: ResultRow): ApiKey {
         return ApiKey(
-            id = ApiKeyId(row[ApiKeyTable.id]),
-            userId = UserId(row[ApiKeyTable.userId]),
-            keyHash = row[ApiKeyTable.keyHash],
-            keyPrefix = row[ApiKeyTable.keyPrefix],
-            name = row[ApiKeyTable.name],
-            type = ApiKeyType.valueOf(row[ApiKeyTable.type]),
-            rateLimitPerMinute = row[ApiKeyTable.rateLimitPerMinute],
-            createdAt = Instant.fromEpochMilliseconds(row[ApiKeyTable.createdAtEpochMs]),
-            lastUsedAt = row[ApiKeyTable.lastUsedAtEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
-            usageCount = row[ApiKeyTable.usageCount],
-            version = row[ApiKeyTable.version]
+            id = ApiKeyId(row[apiKeyTable.id]),
+            userId = UserId(row[apiKeyTable.userId]),
+            keyHash = row[apiKeyTable.keyHash],
+            keyPrefix = row[apiKeyTable.keyPrefix],
+            name = row[apiKeyTable.name],
+            type = ApiKeyType.valueOf(row[apiKeyTable.type]),
+            rateLimitPerMinute = row[apiKeyTable.rateLimitPerMinute],
+            createdAt = Instant.fromEpochMilliseconds(row[apiKeyTable.createdAtEpochMs]),
+            lastUsedAt = row[apiKeyTable.lastUsedAtEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
+            usageCount = row[apiKeyTable.usageCount],
+            version = row[apiKeyTable.version]
         )
     }
 }

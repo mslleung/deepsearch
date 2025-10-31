@@ -15,13 +15,15 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedWebpageTableInterpretationRepository : IWebpageTableInterpretationRepository {
+class ExposedWebpageTableInterpretationRepository(
+    private val webpageTableInterpretationTable: WebpageTableInterpretationTable
+) : IWebpageTableInterpretationRepository {
 
     override suspend fun upsert(interpretation: WebpageTableInterpretation): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(interpretation.tableDataHash)
 
-        WebpageTableInterpretationTable.upsert(
-            keys = arrayOf(WebpageTableInterpretationTable.tableDataHash)
+        webpageTableInterpretationTable.upsert(
+            keys = arrayOf(webpageTableInterpretationTable.tableDataHash)
         ) {
             it[tableDataHash] = hashBase64
             it[markdown] = interpretation.markdown
@@ -33,20 +35,19 @@ class ExposedWebpageTableInterpretationRepository : IWebpageTableInterpretationR
 
     override suspend fun findByHash(tableDataHash: ByteArray): WebpageTableInterpretation? = suspendTransaction {
         val hashBase64 = Base64.encode(tableDataHash)
-        WebpageTableInterpretationTable.selectAll()
-            .where { WebpageTableInterpretationTable.tableDataHash eq hashBase64 }
+        webpageTableInterpretationTable.selectAll()
+            .where { webpageTableInterpretationTable.tableDataHash eq hashBase64 }
             .map { mapRowToWebpageTableInterpretation(it) }
             .singleOrNull()
     }
 
     private fun mapRowToWebpageTableInterpretation(row: ResultRow): WebpageTableInterpretation {
         return WebpageTableInterpretation(
-            tableDataHash = Base64.decode(row[WebpageTableInterpretationTable.tableDataHash]),
-            markdown = row[WebpageTableInterpretationTable.markdown],
-            createdAt = Instant.fromEpochMilliseconds(row[WebpageTableInterpretationTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[WebpageTableInterpretationTable.updatedAtEpochMs]),
-            version = row[WebpageTableInterpretationTable.version]
+            tableDataHash = Base64.decode(row[webpageTableInterpretationTable.tableDataHash]),
+            markdown = row[webpageTableInterpretationTable.markdown],
+            createdAt = Instant.fromEpochMilliseconds(row[webpageTableInterpretationTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[webpageTableInterpretationTable.updatedAtEpochMs]),
+            version = row[webpageTableInterpretationTable.version]
         )
     }
 }
-

@@ -15,13 +15,15 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-class ExposedWebpageImageRepository : IWebpageImageRepository {
+class ExposedWebpageImageRepository(
+    private val webpageImageTable: WebpageImageTable
+) : IWebpageImageRepository {
 
     override suspend fun upsert(image: WebpageImage): Unit = suspendTransaction {
         val hashBase64 = Base64.encode(image.imageBytesHash)
 
-        WebpageImageTable.upsert(
-            keys = arrayOf(WebpageImageTable.imageBytesHash)
+        webpageImageTable.upsert(
+            keys = arrayOf(webpageImageTable.imageBytesHash)
         ) {
             it[imageBytesHash] = hashBase64
             it[extractedText] = image.extractedText
@@ -33,19 +35,19 @@ class ExposedWebpageImageRepository : IWebpageImageRepository {
 
     override suspend fun findByHash(imageBytesHash: ByteArray): WebpageImage? = suspendTransaction {
         val hashBase64 = Base64.encode(imageBytesHash)
-        WebpageImageTable.selectAll()
-            .where { WebpageImageTable.imageBytesHash eq hashBase64 }
+        webpageImageTable.selectAll()
+            .where { webpageImageTable.imageBytesHash eq hashBase64 }
             .map { mapRowToWebpageImage(it) }
             .singleOrNull()
     }
 
     private fun mapRowToWebpageImage(row: ResultRow): WebpageImage {
         return WebpageImage(
-            imageBytesHash = Base64.decode(row[WebpageImageTable.imageBytesHash]),
-            extractedText = row[WebpageImageTable.extractedText],
-            createdAt = Instant.fromEpochMilliseconds(row[WebpageImageTable.createdAtEpochMs]),
-            updatedAt = Instant.fromEpochMilliseconds(row[WebpageImageTable.updatedAtEpochMs]),
-            version = row[WebpageImageTable.version]
+            imageBytesHash = Base64.decode(row[webpageImageTable.imageBytesHash]),
+            extractedText = row[webpageImageTable.extractedText],
+            createdAt = Instant.fromEpochMilliseconds(row[webpageImageTable.createdAtEpochMs]),
+            updatedAt = Instant.fromEpochMilliseconds(row[webpageImageTable.updatedAtEpochMs]),
+            version = row[webpageImageTable.version]
         )
     }
 }
