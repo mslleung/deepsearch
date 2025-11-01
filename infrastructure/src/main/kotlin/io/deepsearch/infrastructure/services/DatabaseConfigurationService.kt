@@ -1,4 +1,4 @@
-package io.deepsearch.infrastructure.config
+package io.deepsearch.infrastructure.services
 
 import io.deepsearch.infrastructure.database.*
 import io.r2dbc.spi.IsolationLevel
@@ -10,6 +10,10 @@ import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import java.io.File
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+
+interface IDatabaseConfigurationService {
+    fun configureDatabase(): R2dbcDatabase
+}
 
 /**
  * Service for configuring database connection and schema initialization.
@@ -30,7 +34,8 @@ class DatabaseConfigurationService(
     private val pdfMarkdownTable: PdfMarkdownTable,
     private val querySessionTable: QuerySessionTable,
     private val precacheJobTable: PrecacheJobTable
-) {
+) : IDatabaseConfigurationService {
+
     init {
         configureDatabase()
     }
@@ -40,7 +45,7 @@ class DatabaseConfigurationService(
      * For development: H2 with R2DBC (SQLite-like, lightweight)
      * For production: PostgreSQL with R2DBC
      */
-    fun configureDatabase(): R2dbcDatabase {
+    override fun configureDatabase(): R2dbcDatabase {
         val database = if (isDevelopmentMode()) {
             configureH2Database()
         } else {

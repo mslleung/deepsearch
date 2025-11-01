@@ -1,10 +1,10 @@
 package io.deepsearch.infrastructure.database
 
-import io.deepsearch.infrastructure.config.DatabaseCryptoService
+import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
 class WebpageMarkdownTable(
-    private val databaseCryptoService: DatabaseCryptoService
+    private val databaseCryptoService: IDatabaseCryptoService
 ) : Table("webpage_markdowns") {
     val url = varchar("url", length = 2048)
     val markdown = text("markdown").nullable()

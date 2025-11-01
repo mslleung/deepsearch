@@ -1,10 +1,10 @@
 package io.deepsearch.infrastructure.database
 
-import io.deepsearch.infrastructure.config.DatabaseCryptoService
+import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
 class WebpageTableTable(
-    private val databaseCryptoService: DatabaseCryptoService
+    private val databaseCryptoService: IDatabaseCryptoService
 ) : Table("webpage_tables") {
     val webpageHtmlHash = varchar("webpage_html_hash", length = 128)
     val tables = text("tables") // JSON serialized list of TableIdentification

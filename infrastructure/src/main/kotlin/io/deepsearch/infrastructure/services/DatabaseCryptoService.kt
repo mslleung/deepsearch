@@ -1,4 +1,4 @@
-package io.deepsearch.infrastructure.config
+package io.deepsearch.infrastructure.services
 
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import java.util.Base64
@@ -6,6 +6,11 @@ import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+
+interface IDatabaseCryptoService {
+    fun encrypt(plaintext: String): String
+    fun decrypt(ciphertext: String): String
+}
 
 /**
  * Service for database column encryption using AES-256-GCM.
@@ -15,7 +20,14 @@ import javax.crypto.spec.SecretKeySpec
  */
 class DatabaseCryptoService(
     private val config: DatabaseEncryptionConfig
-) {
+) : IDatabaseCryptoService {
+
+    companion object {
+        private const val ALGORITHM = "AES/GCM/NoPadding"
+        private const val KEY_ALGORITHM = "AES"
+        private const val GCM_TAG_LENGTH = 128
+        private const val GCM_IV_LENGTH = 12
+    }
     
     /**
      * Derives a secret key from the encryption secret.
@@ -38,7 +50,7 @@ class DatabaseCryptoService(
      * @param plaintext The text to encrypt
      * @return Base64-encoded string containing IV + ciphertext
      */
-    fun encrypt(plaintext: String): String {
+    override fun encrypt(plaintext: String): String {
         val cipher = Cipher.getInstance(ALGORITHM)
         cipher.init(Cipher.ENCRYPT_MODE, getSecretKey())
         
@@ -56,7 +68,7 @@ class DatabaseCryptoService(
      * @param ciphertext Base64-encoded string containing IV + ciphertext
      * @return Decrypted plaintext
      */
-    fun decrypt(ciphertext: String): String {
+    override fun decrypt(ciphertext: String): String {
         val combined = Base64.getDecoder().decode(ciphertext)
         
         // Extract IV (first 12 bytes for GCM) and encrypted data
@@ -69,13 +81,6 @@ class DatabaseCryptoService(
         
         val decrypted = cipher.doFinal(encrypted)
         return String(decrypted, Charsets.UTF_8)
-    }
-    
-    companion object {
-        private const val ALGORITHM = "AES/GCM/NoPadding"
-        private const val KEY_ALGORITHM = "AES"
-        private const val GCM_TAG_LENGTH = 128
-        private const val GCM_IV_LENGTH = 12
     }
 }
 

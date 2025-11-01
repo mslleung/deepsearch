@@ -1,10 +1,10 @@
 package io.deepsearch.infrastructure.database
 
-import io.deepsearch.infrastructure.config.DatabaseCryptoService
+import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
 class UserSubscriptionTable(
-    private val databaseCryptoService: DatabaseCryptoService,
+    private val databaseCryptoService: IDatabaseCryptoService,
     private val userTable: UserTable
 ) : Table("user_subscriptions") {
     val id = long("id").autoIncrement()

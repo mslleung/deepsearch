@@ -1,9 +1,12 @@
 package io.deepsearch.infrastructure.config
 
-import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.repositories.*
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
+import io.deepsearch.infrastructure.services.DatabaseConfigurationService
+import io.deepsearch.infrastructure.services.DatabaseCryptoService
+import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
+import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -11,28 +14,26 @@ import org.koin.dsl.module
 import org.koin.module.requestScope
 
 val infrastructureModule = module {
-    // Database encryption service
-    singleOf(::DatabaseCryptoService)
+
+    singleOf(::DatabaseConfigurationService) bind IDatabaseConfigurationService::class
+    singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
     
     // All table instances (singletons, depend on DatabaseCryptoService)
-    single { UserTable(get()) }
-    single { ApiKeyTable(get(), get()) }
-    single { RawApiKeyTable(get(), get()) }
-    single { ApiKeyUsageTable(get(), get()) }
-    single { UserSubscriptionTable(get(), get()) }
-    single { WebpageIconTable(get()) }
-    single { WebpageImageTable(get()) }
-    single { WebpagePopupTable(get()) }
-    single { WebpageTableTable(get()) }
-    single { WebpageTableInterpretationTable(get()) }
-    single { WebpageSemanticElementTable(get()) }
-    single { WebpageMarkdownTable(get()) }
-    single { PdfMarkdownTable(get()) }
-    single { QuerySessionTable(get()) }
-    single { PrecacheJobTable(get()) }
-    
-    // Database configuration service (depends on all tables)
-    singleOf(::DatabaseConfigurationService) bind IDatabaseConfigurationService::class
+    singleOf(::UserTable)
+    singleOf(::ApiKeyTable)
+    singleOf(::RawApiKeyTable)
+    singleOf(::ApiKeyUsageTable)
+    singleOf(::UserSubscriptionTable)
+    singleOf(::WebpageIconTable)
+    singleOf(::WebpageImageTable)
+    singleOf(::WebpagePopupTable)
+    singleOf(::WebpageTableTable)
+    singleOf(::WebpageTableInterpretationTable)
+    singleOf(::WebpageSemanticElementTable)
+    singleOf(::WebpageMarkdownTable)
+    singleOf(::PdfMarkdownTable)
+    singleOf(::QuerySessionTable)
+    singleOf(::PrecacheJobTable)
 
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class

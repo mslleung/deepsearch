@@ -1,10 +1,10 @@
 package io.deepsearch.infrastructure.database
 
-import io.deepsearch.infrastructure.config.DatabaseCryptoService
+import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
 class UserTable(
-    private val databaseCryptoService: DatabaseCryptoService
+    private val databaseCryptoService: IDatabaseCryptoService
 ) : Table("users") {
     val id = integer("id").autoIncrement()
     val email = varchar("email", length = 255).uniqueIndex()

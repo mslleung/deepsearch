@@ -1,6 +1,6 @@
 package io.deepsearch.infrastructure.database
 
-import io.deepsearch.infrastructure.config.DatabaseCryptoService
+import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
 /**
@@ -9,7 +9,7 @@ import org.jetbrains.exposed.v1.core.Table
  * Encryption/decryption is handled at the table level using transform.
  */
 class RawApiKeyTable(
-    private val databaseCryptoService: DatabaseCryptoService,
+    private val databaseCryptoService: IDatabaseCryptoService,
     private val userTable: UserTable
 ) : Table("raw_api_keys") {
     val userId = integer("user_id").references(userTable.id).uniqueIndex()
