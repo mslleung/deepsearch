@@ -40,8 +40,10 @@ import io.deepsearch.application.services.IWebpageCacheService
 import io.deepsearch.application.services.UrlContentProcessingService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IUrlProcessingLockRegistry
+import io.deepsearch.application.services.ISitemapLinkDiscoveryLockRegistry
 import io.deepsearch.application.services.PrecacheJobRegistry
 import io.deepsearch.application.services.QuerySessionService
+import io.deepsearch.application.services.SitemapLinkDiscoveryLockRegistry
 import io.deepsearch.application.services.UrlProcessingLockRegistry
 import io.deepsearch.domain.config.domainBenchmarkTestModule
 import io.deepsearch.domain.config.domainTestModule
@@ -61,6 +63,7 @@ private val applicationCommonTestModule = module {
 
     // Shared across test components
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
+    singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
 
     singleOf(::UserService) bind IUserService::class

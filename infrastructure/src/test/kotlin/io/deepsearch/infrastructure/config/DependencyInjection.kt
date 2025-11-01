@@ -10,11 +10,9 @@ import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
-import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
-import org.koin.module.requestScope
 
 private val infrastructureCommonTestModule = module {
     // Test encryption config
@@ -44,6 +42,7 @@ private val infrastructureCommonTestModule = module {
     singleOf(::PdfMarkdownCacheTable)
     singleOf(::QuerySessionTable)
     singleOf(::PrecacheJobTable)
+    singleOf(::SitemapCacheTable)
     
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -57,6 +56,7 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
     singleOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
     singleOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
+    singleOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
 }
 
 val infrastructureTestModule = module {

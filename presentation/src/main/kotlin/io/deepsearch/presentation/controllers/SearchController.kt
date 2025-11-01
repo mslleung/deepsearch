@@ -78,7 +78,7 @@ class SearchController(
             rateLimitService.recordUsage(apiKey.id!!)
             
             val request = call.receive<SearchRequest>()
-            val searchResult = searchService.searchWebsite(request.query, request.url)
+            val searchResult = searchService.searchWebsite(request.query, request.url, request.sitemapUrl)
             
             // Consume usage after successful search
             subscriptionPlanService.consumeUsage(apiKey.userId)

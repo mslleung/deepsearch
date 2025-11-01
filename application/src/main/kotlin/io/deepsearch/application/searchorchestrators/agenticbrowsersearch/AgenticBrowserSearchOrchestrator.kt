@@ -152,8 +152,9 @@ class AgenticBrowserSearchOrchestrator(
         )
 
         val googleSearchLinksFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
+        val sitemapLinksFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
 
-        return merge(initialLinkFlow, googleSearchLinksFlow, discoveredLinksFlow)
+        return merge(initialLinkFlow, googleSearchLinksFlow, sitemapLinksFlow, discoveredLinksFlow)
             .processLinksToMarkdown(
                 sessionId = sessionId,
                 searchQuery = searchQuery,
@@ -180,6 +181,23 @@ class AgenticBrowserSearchOrchestrator(
             googleLinks.forEach { emit(it) }
         } catch (e: Exception) {
             logger.error("[{}] Failed Google search: {}", sessionId, e.message, e)
+        }
+    }
+
+    /**
+     * Sitemap link discovery flow
+     */
+    private fun createSitemapLinkDiscoveryFlow(
+        sessionId: String,
+        searchQuery: SearchQuery
+    ): Flow<WebpageLink> = flow {
+        val sitemapUrl = searchQuery.sitemapUrl ?: return@flow
+        try {
+            val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
+            logger.debug("[{}] Sitemap discovered {} links", sessionId, sitemapLinks.size)
+            sitemapLinks.forEach { emit(it) }
+        } catch (e: Exception) {
+            logger.error("[{}] Failed sitemap discovery: {}", sessionId, e.message, e)
         }
     }
 

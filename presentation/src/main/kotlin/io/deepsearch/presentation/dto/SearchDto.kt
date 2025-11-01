@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 data class SearchRequest(
     val query: String,
     val url: String,
+    val sitemapUrl: String? = null,
 )
 
 @Serializable

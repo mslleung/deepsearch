@@ -17,6 +17,7 @@ val applicationModule = module {
 
     // Shared across requests
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
+    singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
 
     requestScope {

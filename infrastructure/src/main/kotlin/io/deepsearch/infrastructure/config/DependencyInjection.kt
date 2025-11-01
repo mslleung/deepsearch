@@ -35,6 +35,7 @@ val infrastructureModule = module {
     singleOf(::PdfMarkdownCacheTable)
     singleOf(::QuerySessionTable)
     singleOf(::PrecacheJobTable)
+    singleOf(::SitemapCacheTable)
 
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
@@ -52,5 +53,6 @@ val infrastructureModule = module {
         scopedOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
         scopedOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
         scopedOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
+        scopedOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
     }
 }
