@@ -19,6 +19,8 @@ import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 class AuthController(
     private val authService: IAuthService,
@@ -27,6 +29,7 @@ class AuthController(
     private val apiKeyService: IApiKeyService,
     private val httpClient: HttpClient
 ) {
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     suspend fun register(call: ApplicationCall) {
         try {
             val request = call.receive<RegisterRequest>()
@@ -48,8 +51,10 @@ class AuthController(
                 )
             )
         } catch (e: IllegalArgumentException) {
+            logger.warn("Bad request in register: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Invalid request")))
         } catch (e: Exception) {
+            logger.error("Unexpected error in register: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
         }
     }
@@ -80,8 +85,10 @@ class AuthController(
                 )
             )
         } catch (e: IllegalArgumentException) {
+            logger.warn("Bad request in login: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Invalid request")))
         } catch (e: Exception) {
+            logger.error("Unexpected error in login: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
         }
     }
@@ -99,6 +106,7 @@ class AuthController(
             val user = userService.getUserById(UserId(userIdValue))
             call.respond(HttpStatusCode.OK, user.toUserResponse())
         } catch (e: Exception) {
+            logger.error("Unexpected error in getCurrentUser: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
         }
     }

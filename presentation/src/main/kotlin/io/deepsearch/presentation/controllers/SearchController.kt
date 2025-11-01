@@ -15,6 +15,8 @@ import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 class SearchController(
     private val searchService: ISearchService,
@@ -22,6 +24,7 @@ class SearchController(
     private val rateLimitService: IRateLimitService,
     private val subscriptionPlanService: IUserSubscriptionService
 ) {
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     suspend fun searchWebsite(call: ApplicationCall) {
         try {
             // Get API key from bearer token
@@ -82,16 +85,22 @@ class SearchController(
             
             call.respond(HttpStatusCode.OK, searchResult.toResponse())
         } catch (e: IllegalArgumentException) {
+            logger.warn("Bad request in search: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
         } catch (e: InvalidUrlException) {
+            logger.warn("Invalid URL in search: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
         } catch (e: WebScrapeTimeoutException) {
+            logger.warn("Web scrape timeout in search: {}", e.message, e)
             call.respond(HttpStatusCode.RequestTimeout, mapOf("error" to e.message))
         } catch (e: WebScrapeException) {
+            logger.error("Web scrape error in search: {}", e.message, e)
             call.respond(HttpStatusCode.BadGateway, mapOf("error" to e.message))
         } catch (e: AiInterpretationException) {
+            logger.error("AI interpretation error in search: {}", e.message, e)
             call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to e.message))
         } catch (e: Exception) {
+            logger.error("Unexpected error in search: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }

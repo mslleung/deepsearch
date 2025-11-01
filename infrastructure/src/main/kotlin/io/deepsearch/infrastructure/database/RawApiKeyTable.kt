@@ -17,8 +17,8 @@ class RawApiKeyTable(
     // Store encrypted raw API key (encryption handled by transform)
     val encryptedRawKey = varchar("encrypted_raw_key", length = 512)
         .transform(
-            wrap = { plaintext -> databaseCryptoService.encrypt(plaintext) },
-            unwrap = { ciphertext -> databaseCryptoService.decrypt(ciphertext) }
+            wrap = { plaintext -> databaseCryptoService.decrypt(plaintext) },
+            unwrap = { ciphertext -> databaseCryptoService.encrypt(ciphertext) }
         )
 
     override val primaryKey = PrimaryKey(userId)

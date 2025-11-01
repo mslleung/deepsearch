@@ -14,12 +14,15 @@ import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 class UsageController(
     private val subscriptionPlanService: IUserSubscriptionService,
     private val usageService: IUsageService,
     private val apiKeyService: IApiKeyService
 ) {
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     suspend fun getCurrentUsage(call: ApplicationCall) {
         try {
@@ -47,6 +50,7 @@ class UsageController(
 
             call.respond(HttpStatusCode.OK, response)
         } catch (e: Exception) {
+            logger.error("Unexpected error in getCurrentUsage: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }
@@ -75,6 +79,7 @@ class UsageController(
 
             call.respond(HttpStatusCode.OK, response)
         } catch (e: Exception) {
+            logger.error("Unexpected error in getUsageStats: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }
@@ -118,6 +123,7 @@ class UsageController(
 
             call.respond(HttpStatusCode.OK, response)
         } catch (e: Exception) {
+            logger.error("Unexpected error in getApiKeyUsageStats: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }
@@ -128,6 +134,7 @@ class UsageController(
             val plansDto = plans.map { it.toDto() }
             call.respond(HttpStatusCode.OK, plansDto)
         } catch (e: Exception) {
+            logger.error("Unexpected error in getAvailablePlans: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }
@@ -152,8 +159,10 @@ class UsageController(
             val subscriptionDto = newSubscription.toDto()
             call.respond(HttpStatusCode.OK, subscriptionDto)
         } catch (e: IllegalArgumentException) {
+            logger.warn("Bad request in upgradePlan: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
         } catch (e: Exception) {
+            logger.error("Unexpected error in upgradePlan: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }

@@ -15,10 +15,13 @@ import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 class ApiKeyController(
     private val apiKeyService: IApiKeyService
 ) {
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     suspend fun listKeys(call: ApplicationCall) {
         try {
             val userId = getUserIdFromPrincipal(call)
@@ -31,6 +34,7 @@ class ApiKeyController(
                 .filter { it.type != ApiKeyType.PLAYGROUND } // Hide playground keys from users
             call.respond(HttpStatusCode.OK, apiKeys.map { it.toApiKeyResponse() })
         } catch (e: Exception) {
+            logger.error("Unexpected error in listKeys: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
         }
     }
@@ -55,10 +59,13 @@ class ApiKeyController(
                 )
             )
         } catch (e: IllegalStateException) {
+            logger.warn("Conflict in createKey: {}", e.message, e)
             call.respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "Conflict")))
         } catch (e: IllegalArgumentException) {
+            logger.warn("Bad request in createKey: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Invalid request")))
         } catch (e: Exception) {
+            logger.error("Unexpected error in createKey: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
         }
     }
@@ -84,6 +91,7 @@ class ApiKeyController(
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "API key not found or unauthorized"))
             }
         } catch (e: Exception) {
+            logger.error("Unexpected error in deleteKey: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
         }
     }
@@ -99,8 +107,10 @@ class ApiKeyController(
             val rawKey = apiKeyService.getOrCreatePlaygroundKey(userId)
             call.respond(HttpStatusCode.OK, PlaygroundKeyResponse(rawKey))
         } catch (e: IllegalStateException) {
+            logger.warn("Conflict in getPlaygroundKey: {}", e.message, e)
             call.respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "Playground key already exists")))
         } catch (e: Exception) {
+            logger.error("Unexpected error in getPlaygroundKey: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
         }
     }

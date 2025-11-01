@@ -7,6 +7,7 @@ import io.deepsearch.infrastructure.services.DatabaseConfigurationService
 import io.deepsearch.infrastructure.services.DatabaseCryptoService
 import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
+import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -15,9 +16,9 @@ import org.koin.module.requestScope
 
 val infrastructureModule = module {
 
-    singleOf(::DatabaseConfigurationService) bind IDatabaseConfigurationService::class
+    singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
-    
+
     // All table instances (singletons, depend on DatabaseCryptoService)
     singleOf(::UserTable)
     singleOf(::ApiKeyTable)
