@@ -5,11 +5,19 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
-data class SitemapCache(
+class SitemapCache(
     val sitemapUrl: String,
     val xmlContent: String,
-    val linksJson: String, // JSON array of URLs
+    val links: List<String>,
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now()
-)
+) {
+    fun isExpired(): Boolean {
+        val cacheAgeMs = Clock.System.now().toEpochMilliseconds() -
+                updatedAt.toEpochMilliseconds()
+        val oneDayMs = 24 * 60 * 60 * 1000L
+
+        return cacheAgeMs >= oneDayMs
+    }
+}
 

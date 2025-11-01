@@ -5,6 +5,8 @@ import io.deepsearch.domain.repositories.ISitemapCacheRepository
 import io.deepsearch.infrastructure.database.SitemapCacheTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.selectAll
@@ -31,17 +33,20 @@ class ExposedSitemapCacheRepository(
         ) {
             it[sitemapUrl] = cache.sitemapUrl
             it[xmlContent] = cache.xmlContent
-            it[linksJson] = cache.linksJson
+            it[linksJson] = Json.encodeToString(cache.links)
             it[createdAtEpochMs] = cache.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = cache.updatedAt.toEpochMilliseconds()
         }
     }
 
     private fun mapRowToSitemapCache(row: ResultRow): SitemapCache {
+        val linksJson = row[sitemapCacheTable.linksJson]
+        val links = Json.decodeFromString<List<String>>(linksJson)
+        
         return SitemapCache(
             sitemapUrl = row[sitemapCacheTable.sitemapUrl],
             xmlContent = row[sitemapCacheTable.xmlContent],
-            linksJson = row[sitemapCacheTable.linksJson],
+            links = links,
             createdAt = Instant.fromEpochMilliseconds(row[sitemapCacheTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[sitemapCacheTable.updatedAtEpochMs])
         )
