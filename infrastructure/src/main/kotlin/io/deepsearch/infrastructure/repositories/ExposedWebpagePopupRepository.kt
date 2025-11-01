@@ -2,7 +2,7 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.WebpagePopup
 import io.deepsearch.domain.repositories.IWebpagePopupRepository
-import io.deepsearch.infrastructure.database.WebpagePopupTable
+import io.deepsearch.infrastructure.database.WebpagePopupCacheTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.serialization.json.Json
@@ -17,7 +17,7 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpagePopupRepository(
-    private val webpagePopupTable: WebpagePopupTable
+    private val webpagePopupTable: WebpagePopupCacheTable
 ) : IWebpagePopupRepository {
 
     private val json = Json { ignoreUnknownKeys = true }

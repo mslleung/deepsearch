@@ -3,7 +3,7 @@ package io.deepsearch.infrastructure.database
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-class WebpageMarkdownTable(
+class WebpageMarkdownCacheTable(
     private val databaseCryptoService: IDatabaseCryptoService
 ) : Table("webpage_markdowns") {
     val url = varchar("url", length = 2048)

@@ -2,7 +2,7 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.WebpageIcon
 import io.deepsearch.domain.repositories.IWebpageIconRepository
-import io.deepsearch.infrastructure.database.WebpageIconTable
+import io.deepsearch.infrastructure.database.WebpageIconCacheTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -16,7 +16,7 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageIconRepository(
-    private val webpageIconTable: WebpageIconTable
+    private val webpageIconTable: WebpageIconCacheTable
 ) : IWebpageIconRepository {
 
     override suspend fun upsert(icon: WebpageIcon): Unit = suspendTransaction {

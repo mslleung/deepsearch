@@ -2,7 +2,7 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.WebpageTable
 import io.deepsearch.domain.repositories.IWebpageTableRepository
-import io.deepsearch.infrastructure.database.WebpageTableTable
+import io.deepsearch.infrastructure.database.WebpageTableCacheTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -16,7 +16,7 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageTableRepository(
-    private val webpageTableTable: WebpageTableTable
+    private val webpageTableTable: WebpageTableCacheTable
 ) : IWebpageTableRepository {
 
     override suspend fun upsert(table: WebpageTable): Unit = suspendTransaction {

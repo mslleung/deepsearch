@@ -3,7 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageSemanticElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
-import io.deepsearch.infrastructure.database.WebpageSemanticElementTable
+import io.deepsearch.infrastructure.database.WebpageSemanticElementCacheTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -18,7 +18,7 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageNavigationElementRepository(
-    private val webpageSemanticElementTable: WebpageSemanticElementTable
+    private val webpageSemanticElementTable: WebpageSemanticElementCacheTable
 ) : IWebpageNavigationElementRepository {
 
     override suspend fun findByHash(pageHash: ByteArray): WebpageSemanticElement? = suspendTransaction {

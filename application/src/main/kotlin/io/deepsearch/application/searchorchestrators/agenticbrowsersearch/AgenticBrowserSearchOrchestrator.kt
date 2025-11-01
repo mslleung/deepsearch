@@ -151,9 +151,9 @@ class AgenticBrowserSearchOrchestrator(
             )
         )
 
-        val googleSearchFlow = createGoogleSearchLinkFlow(sessionId, searchQuery)
+        val googleSearchLinksFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
 
-        return merge(initialLinkFlow, googleSearchFlow, discoveredLinksFlow)
+        return merge(initialLinkFlow, googleSearchLinksFlow, discoveredLinksFlow)
             .processLinksToMarkdown(
                 sessionId = sessionId,
                 searchQuery = searchQuery,
@@ -170,7 +170,7 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Flow A: Google search link discovery
      */
-    private fun createGoogleSearchLinkFlow(
+    private fun createGoogleSearchLinkDiscoveryFlow(
         sessionId: String,
         searchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {

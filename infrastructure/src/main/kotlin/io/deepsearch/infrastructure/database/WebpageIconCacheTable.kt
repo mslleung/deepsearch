@@ -3,20 +3,20 @@ package io.deepsearch.infrastructure.database
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-class WebpageTableTable(
+class WebpageIconCacheTable(
     private val databaseCryptoService: IDatabaseCryptoService
-) : Table("webpage_tables") {
-    val webpageHtmlHash = varchar("webpage_html_hash", length = 128)
-    val tables = text("tables") // JSON serialized list of TableIdentification
+) : Table("webpage_icons") {
+    val imageBytesHash = varchar("image_bytes_hash", length = 128)
+    val label = text("label").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)
 
     init {
         // Unique index
-        index(true, webpageHtmlHash)
+        index(true, imageBytesHash)
     }
 
-    override val primaryKey = PrimaryKey(webpageHtmlHash)
+    override val primaryKey = PrimaryKey(imageBytesHash)
 }
 

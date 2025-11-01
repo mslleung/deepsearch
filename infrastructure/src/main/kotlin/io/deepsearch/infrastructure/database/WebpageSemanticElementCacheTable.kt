@@ -3,22 +3,21 @@ package io.deepsearch.infrastructure.database
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-class PdfMarkdownTable(
+class WebpageSemanticElementCacheTable(
     private val databaseCryptoService: IDatabaseCryptoService
-) : Table("pdf_markdowns") {
-    val pdfHash = varchar("pdf_hash", length = 64) // SHA-256 hex string
-    val markdown = text("markdown")
-    val pageCount = integer("page_count")
-    val fileSizeBytes = long("file_size_bytes")
+) : Table("webpage_navigation_elements") {
+    val pageHash = varchar("page_hash", length = 128)
+    // JSON column storing list of navigation elements with xpath, type, and note
+    val elementsJson = text("elements_json")
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)
 
     init {
-        // Unique index on PDF hash
-        index(true, pdfHash)
+        // Unique index
+        index(true, pageHash)
     }
 
-    override val primaryKey = PrimaryKey(pdfHash)
+    override val primaryKey = PrimaryKey(pageHash)
 }
 

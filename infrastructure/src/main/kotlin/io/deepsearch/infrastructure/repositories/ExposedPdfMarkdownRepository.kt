@@ -2,7 +2,7 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.PdfMarkdown
 import io.deepsearch.domain.repositories.IPdfMarkdownRepository
-import io.deepsearch.infrastructure.database.PdfMarkdownTable
+import io.deepsearch.infrastructure.database.PdfMarkdownCacheTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -15,7 +15,7 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedPdfMarkdownRepository(
-    private val pdfMarkdownTable: PdfMarkdownTable
+    private val pdfMarkdownTable: PdfMarkdownCacheTable
 ) : IPdfMarkdownRepository {
 
     override suspend fun findByHash(pdfHash: String): PdfMarkdown? = suspendTransaction {

@@ -3,21 +3,20 @@ package io.deepsearch.infrastructure.database
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-class WebpageSemanticElementTable(
+class WebpageTableCacheTable(
     private val databaseCryptoService: IDatabaseCryptoService
-) : Table("webpage_navigation_elements") {
-    val pageHash = varchar("page_hash", length = 128)
-    // JSON column storing list of navigation elements with xpath, type, and note
-    val elementsJson = text("elements_json")
+) : Table("webpage_tables") {
+    val webpageHtmlHash = varchar("webpage_html_hash", length = 128)
+    val tables = text("tables") // JSON serialized list of TableIdentification
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)
 
     init {
         // Unique index
-        index(true, pageHash)
+        index(true, webpageHtmlHash)
     }
 
-    override val primaryKey = PrimaryKey(pageHash)
+    override val primaryKey = PrimaryKey(webpageHtmlHash)
 }
 
