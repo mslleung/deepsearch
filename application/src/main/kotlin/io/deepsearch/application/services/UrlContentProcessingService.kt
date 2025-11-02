@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.browser.IBrowserRuntime
 import io.deepsearch.domain.models.valueobjects.WebpageLink
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
@@ -151,7 +152,7 @@ class UrlContentProcessingService(
         normalizedUrl: String,
         runtime: IBrowserRuntime,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
-    ): Flow<UrlProcessingEvent> = flow {
+    ): Flow<UrlProcessingEvent> = channelFlow {
         val browser = runtime.createBrowser()
         val context = browser.createContext()
         val page = context.newPage()
@@ -160,25 +161,36 @@ class UrlContentProcessingService(
             page.navigate(normalizedUrl)
             val extractedHtml = page.getFullHtml()
 
-            // Process link discovery (fast ~5s)
-            val discoveredLinks = discoverLinks(extractedHtml)
-            logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
-            emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
+            // Process link discovery and markdown extraction concurrently and independently
+            coroutineScope {
+                // Launch link discovery - emits as soon as ready
+                val linkDiscoveryJob = launch {
+                    val discoveredLinks = discoverLinks(extractedHtml)
+                    logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
+                    send(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
+                }
+                
+                // Launch markdown extraction - emits as soon as ready
+                val markdownExtractionJob = launch {
+                    val extractedMarkdown = webpageExtractionService.extractWebpage(page)
+                    logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractedMarkdown.length)
+                    
+                    webpageCacheService.cacheWebpage(
+                        url = normalizedUrl,
+                        markdown = extractedMarkdown,
+                        html = extractedHtml,
+                        httpStatus = 200,
+                        httpReason = "OK",
+                        mimeType = "text/html"
+                    )
+                    
+                    send(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown))
+                }
 
-            // Process markdown extraction (slow ~1min)
-            val extractedMarkdown = webpageExtractionService.extractWebpage(page)
-            logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractedMarkdown.length)
-
-            webpageCacheService.cacheWebpage(
-                url = normalizedUrl,
-                markdown = extractedMarkdown,
-                html = extractedHtml,
-                httpStatus = 200,
-                httpReason = "OK",
-                mimeType = "text/html"
-            )
-
-            emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown))
+                // Wait for both to complete before closing browser
+                linkDiscoveryJob.join()
+                markdownExtractionJob.join()
+            }
         } finally {
             browser.close()
         }
