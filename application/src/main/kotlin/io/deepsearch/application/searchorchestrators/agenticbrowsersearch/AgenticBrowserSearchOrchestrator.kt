@@ -27,6 +27,7 @@ import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator {
     override suspend fun execute(searchQuery: SearchQuery): SearchResult
@@ -266,6 +267,12 @@ class AgenticBrowserSearchOrchestrator(
                                 }
                             }
                     } catch (e: Exception) {
+                        // CancellationException (including AbortFlowException) is a normal flow control mechanism
+                        // and should be propagated without logging as an error
+                        if (e is CancellationException) {
+                            throw e
+                        }
+                        
                         logger.error(
                             "[{}] Failed to process {}: {} : {}",
                             sessionId,
