@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.QueryExpansionAgentInput
 import io.deepsearch.domain.agents.StreamingAnswerInput
 import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
@@ -23,6 +24,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -42,6 +44,7 @@ interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator {
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgenticBrowserSearchOrchestrator(
+    private val applicationScope: IApplicationCoroutineScope,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
     private val queryExpansionAgent: IQueryExpansionAgent,
@@ -106,22 +109,16 @@ class AgenticBrowserSearchOrchestrator(
 
             // Reactive flow: extract markdowns → check budget → batch → generate answer
             // When answer completes, single() cancels upstream flows
-            return flow {
-                extractRelevantMarkdowns(
-                    sessionId = sessionId,
-                    searchQuery = searchQuery,
-                    budget = budget
-                )
-                    .cancellable()  // Ensure flow respects cancellation
-                    .filter { it.markdown.isNotBlank() }
-                    .chunkFirstThenBySize(1, 3)
-                    .generateAnswerFromBatches(sessionId, searchQuery)
-                    .take(1)
-                    .onEach {
-                        emit(it)
-                    }
-                    .collect()
-            }.single()
+            return extractRelevantMarkdowns(
+                sessionId = sessionId,
+                searchQuery = searchQuery,
+                budget = budget
+            )
+                .cancellable()  // Ensure flow respects cancellation
+                .filter { it.markdown.isNotBlank() }
+                .chunkFirstThenBySize(1, 3)
+                .generateAnswerFromBatches(sessionId, searchQuery)
+                .single()
         } catch (e: Exception) {
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
             querySessionService.fail(sessionId, e.message ?: "Unknown error")
@@ -233,7 +230,7 @@ class AgenticBrowserSearchOrchestrator(
                 true  // Continue
             }
         }
-            .flatMapMerge(concurrency = 10) { link ->
+            .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     try {
                         val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
@@ -262,7 +259,6 @@ class AgenticBrowserSearchOrchestrator(
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                         // Emit markdown for batching (~1 minute)
-                                        querySessionService.addTraversedUrl(sessionId, normalizedUrl)
                                         logger.debug(
                                             "[{}] Markdown extracted for {}: {} chars",
                                             sessionId,
@@ -279,7 +275,7 @@ class AgenticBrowserSearchOrchestrator(
                         if (e is CancellationException) {
                             throw e
                         }
-                        
+
                         logger.error(
                             "[{}] Failed to process {}: {} : {}",
                             sessionId,
@@ -289,6 +285,9 @@ class AgenticBrowserSearchOrchestrator(
                         )
                     }
                 }
+            }
+            .onEach {
+                querySessionService.addTraversedUrl(sessionId, it.url)
             }
 
     /**
