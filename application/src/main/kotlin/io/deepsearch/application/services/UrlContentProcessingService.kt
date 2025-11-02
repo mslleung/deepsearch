@@ -2,11 +2,11 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onCompletion
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.IUrlContentProcessingService.*
@@ -150,6 +150,7 @@ class UrlContentProcessingService(
     ): Flow<UrlProcessingEvent> = channelFlow {
         browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
+            
             try {
                 val context = browser.createContext()
                 val page = context.newPage()
@@ -157,36 +158,42 @@ class UrlContentProcessingService(
                 page.navigate(normalizedUrl)
                 val extractedHtml = page.getFullHtml()
 
-                // Process link discovery and markdown extraction concurrently and independently
-                coroutineScope {
-                    // Launch link discovery - emits as soon as ready
-                    val linkDiscoveryJob = launch {
-                        val discoveredLinks = discoverLinks(extractedHtml)
-                        logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
-                        send(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
-                    }
-
-                    // Launch markdown extraction - emits as soon as ready
-                    val markdownExtractionJob = launch {
-                        val extractedMarkdown = webpageExtractionService.extractWebpage(page)
-                        logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractedMarkdown.length)
-
-                        webpageCacheService.cacheWebpage(
-                            url = normalizedUrl,
-                            markdown = extractedMarkdown,
-                            html = extractedHtml,
-                            httpStatus = 200,
-                            httpReason = "OK",
-                            mimeType = "text/html"
-                        )
-
-                        send(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown))
-                    }
-
-                    // Wait for both to complete before closing browser
-                    linkDiscoveryJob.join()
-                    markdownExtractionJob.join()
+                // Create separate flows for each operation - these are cancellation-aware
+                val linkDiscoveryFlow = flow {
+                    val discoveredLinks = discoverLinks(extractedHtml)
+                    logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
+                    emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
                 }
+
+                val markdownExtractionFlow = flow {
+                    val extractedMarkdown = webpageExtractionService.extractWebpage(page)
+                    logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractedMarkdown.length)
+
+                    webpageCacheService.cacheWebpage(
+                        url = normalizedUrl,
+                        markdown = extractedMarkdown,
+                        html = extractedHtml,
+                        httpStatus = 200,
+                        httpReason = "OK",
+                        mimeType = "text/html"
+                    )
+
+                    emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown))
+                }
+
+                // Merge both flows - they emit independently as each completes
+                // When this flow is cancelled, merge stops collecting immediately and propagates cancellation
+                merge(linkDiscoveryFlow, markdownExtractionFlow)
+                    .onCompletion { cause ->
+                        if (cause != null) {
+                            logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)
+                        }
+                    }
+                    .collect { event -> send(event) }
+                    
+            } catch (e: Exception) {
+                logger.debug("Browser operation failed for {}: {}", normalizedUrl, e.message)
+                throw e
             } finally {
                 browser.close()
             }

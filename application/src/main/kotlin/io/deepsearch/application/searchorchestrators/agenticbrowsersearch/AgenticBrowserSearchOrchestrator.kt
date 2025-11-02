@@ -28,6 +28,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.system.measureTimeMillis
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator {
     override suspend fun execute(searchQuery: SearchQuery): SearchResult
@@ -53,7 +54,7 @@ class AgenticBrowserSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery): SearchResult {
+    override suspend fun execute(searchQuery: SearchQuery): SearchResult = withContext(dispatchers.io) {
         // Expand the query into multiple sub-queries
         logger.info("Expanding query: {}", searchQuery.query)
         val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
@@ -64,7 +65,7 @@ class AgenticBrowserSearchOrchestrator(
         // If only one query, execute directly without aggregation
         if (expandedQueries.size == 1) {
             logger.info("Single query after expansion, executing directly")
-            return executeSearchForQuery(expandedQueries[0])
+            return@withContext executeSearchForQuery(expandedQueries[0])
         }
 
         // Execute all expanded queries in parallel
@@ -86,7 +87,7 @@ class AgenticBrowserSearchOrchestrator(
             )
         )
 
-        return aggregationOutput.aggregatedResult
+        aggregationOutput.aggregatedResult
     }
 
     /**
@@ -105,16 +106,22 @@ class AgenticBrowserSearchOrchestrator(
 
             // Reactive flow: extract markdowns → check budget → batch → generate answer
             // When answer completes, single() cancels upstream flows
-            return extractRelevantMarkdowns(
-                sessionId = sessionId,
-                searchQuery = searchQuery,
-                budget = budget
-            )
-                .cancellable()  // Ensure flow respects cancellation
-                .filter { it.markdown.isNotBlank() }
-                .chunkFirstThenBySize(1, 3)
-                .generateAnswerFromBatches(sessionId, searchQuery)
-                .single()  // Cancels upstream when result is emitted
+            return flow {
+                extractRelevantMarkdowns(
+                    sessionId = sessionId,
+                    searchQuery = searchQuery,
+                    budget = budget
+                )
+                    .cancellable()  // Ensure flow respects cancellation
+                    .filter { it.markdown.isNotBlank() }
+                    .chunkFirstThenBySize(1, 3)
+                    .generateAnswerFromBatches(sessionId, searchQuery)
+                    .take(1)
+                    .onEach {
+                        emit(it)
+                    }
+                    .collect()
+            }.single()
         } catch (e: Exception) {
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
             querySessionService.fail(sessionId, e.message ?: "Unknown error")
