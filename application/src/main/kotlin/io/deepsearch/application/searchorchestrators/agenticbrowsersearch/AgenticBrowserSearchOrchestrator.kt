@@ -26,6 +26,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CompletableDeferred
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
@@ -107,18 +108,39 @@ class AgenticBrowserSearchOrchestrator(
             logger.debug("[{}] Executing search for query: {}", sessionId, searchQuery.query)
             querySessionService.transitionToLinkTraversal(sessionId)
 
-            // Reactive flow: extract markdowns → check budget → batch → generate answer
-            // When answer completes, single() cancels upstream flows
-            return extractRelevantMarkdowns(
-                sessionId = sessionId,
-                searchQuery = searchQuery,
-                budget = budget
-            )
-                .cancellable()  // Ensure flow respects cancellation
-                .filter { it.markdown.isNotBlank() }
-                .chunkFirstThenBySize(1, 3)
-                .generateAnswerFromBatches(sessionId, searchQuery)
-                .single()
+            // Use CompletableDeferred to capture result immediately without waiting for flow cancellation
+            val resultDeferred = CompletableDeferred<SearchResult>()
+
+            // Launch flow processing in background
+            val flowJob = applicationScope.scope.launch {
+                try {
+                    extractRelevantMarkdowns(
+                        sessionId = sessionId,
+                        searchQuery = searchQuery,
+                        budget = budget
+                    )
+                        .cancellable()  // Ensure flow respects cancellation
+                        .filter { it.markdown.isNotBlank() }
+                        .chunkFirstThenBySize(1, 3)
+                        .generateAnswerFromBatches(sessionId, searchQuery, resultDeferred)
+                        .collect()  // Collect to completion (or until cancelled)
+                } catch (e: CancellationException) {
+                    // Normal cancellation after result is found
+                    logger.debug("[{}] Flow cancelled after result obtained", sessionId)
+                } catch (e: Exception) {
+                    if (!resultDeferred.isCompleted) {
+                        resultDeferred.completeExceptionally(e)
+                    }
+                }
+            }
+
+            // Wait for the result (not for cancellation)
+            val result = resultDeferred.await()
+
+            // Cancel the flow job asynchronously (don't wait)
+            flowJob.cancel()
+
+            return result
         } catch (e: Exception) {
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
             querySessionService.fail(sessionId, e.message ?: "Unknown error")
@@ -320,7 +342,8 @@ class AgenticBrowserSearchOrchestrator(
      */
     private fun Flow<List<MarkdownResult>>.generateAnswerFromBatches(
         sessionId: String,
-        searchQuery: SearchQuery
+        searchQuery: SearchQuery,
+        resultDeferred: CompletableDeferred<SearchResult>
     ): Flow<SearchResult> = flow {
         var currentAnswer: String? = null
         val allUrls = mutableListOf<String>()
@@ -361,6 +384,7 @@ class AgenticBrowserSearchOrchestrator(
                 // If answer is complete, emit result and stop (single() will cancel upstream)
                 if (output.isComplete) {
                     logger.info("[{}] Answer complete after {} pages", sessionId, allUrls.size)
+                    // Extract to local variable to avoid smart cast issues with captured variable
                     val answer: String = currentAnswer
                     querySessionService.completeSessionWithAnswer(
                         sessionId,
@@ -369,14 +393,15 @@ class AgenticBrowserSearchOrchestrator(
                         FinishReason.ANSWER_COMPLETE
                     )
 
-                    emit(
-                        SearchResult(
-                            originalQuery = searchQuery,
-                            answer = answer,
-                            content = allMarkdowns.joinToString("\n\n---\n\n"),
-                            sources = allUrls
-                        )
+                    val result = SearchResult(
+                        originalQuery = searchQuery,
+                        answer = answer,
+                        content = allMarkdowns.joinToString("\n\n---\n\n"),
+                        sources = allUrls
                     )
+                    
+                    resultDeferred.complete(result)  // Signal immediately
+                    emit(result)
                     false  // Stop processing more batches
                 } else {
                     true  // Continue processing
@@ -393,14 +418,15 @@ class AgenticBrowserSearchOrchestrator(
                 FinishReason.LINKS_EXHAUSTED
             )
 
-            emit(
-                SearchResult(
-                    originalQuery = searchQuery,
-                    answer = answer,
-                    content = allMarkdowns.joinToString("\n\n---\n\n"),
-                    sources = allUrls
-                )
+            val result = SearchResult(
+                originalQuery = searchQuery,
+                answer = answer,
+                content = allMarkdowns.joinToString("\n\n---\n\n"),
+                sources = allUrls
             )
+            
+            resultDeferred.complete(result)  // Signal immediately
+            emit(result)
         } catch (e: Exception) {
             logger.error("[{}] Error during answer generation: {}", sessionId, e.message, e)
             throw e
