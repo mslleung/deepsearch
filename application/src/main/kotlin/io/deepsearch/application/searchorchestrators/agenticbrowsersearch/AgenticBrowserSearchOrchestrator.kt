@@ -59,39 +59,46 @@ class AgenticBrowserSearchOrchestrator(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun execute(searchQuery: SearchQuery): SearchResult = withContext(dispatchers.io) {
-        // Expand the query into multiple sub-queries
-        logger.info("Expanding query: {}", searchQuery.query)
-        val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
-        val expandedQueries = expansionOutput.expandedQueries
+        val result: SearchResult
+        val executionTime = measureTimeMillis {
+            // Expand the query into multiple sub-queries
+            logger.info("Expanding query: {}", searchQuery.query)
+            val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
+            val expandedQueries = expansionOutput.expandedQueries
 
-        logger.info("Query expanded into {} sub-queries", expandedQueries.size)
+            logger.info("Query expanded into {} sub-queries", expandedQueries.size)
 
-        // If only one query, execute directly without aggregation
-        if (expandedQueries.size == 1) {
-            logger.info("Single query after expansion, executing directly")
-            return@withContext executeSearchForQuery(expandedQueries[0])
-        }
+            // If only one query, execute directly without aggregation
+            if (expandedQueries.size == 1) {
+                logger.info("Single query after expansion, executing directly")
+                result = executeSearchForQuery(expandedQueries[0])
+                return@measureTimeMillis
+            }
 
-        // Execute all expanded queries in parallel
-        logger.info("Executing {} queries in parallel", expandedQueries.size)
-        val searchResults = withContext(dispatchers.io) {
-            expandedQueries.map { query ->
-                async {
-                    executeSearchForQuery(query)
-                }
-            }.awaitAll()
-        }
+            // Execute all expanded queries in parallel
+            logger.info("Executing {} queries in parallel", expandedQueries.size)
+            val searchResults = withContext(dispatchers.io) {
+                expandedQueries.map { query ->
+                    async {
+                        executeSearchForQuery(query)
+                    }
+                }.awaitAll()
+            }
 
-        // Aggregate results from all sub-queries
-        logger.info("Aggregating results from {} sub-queries", searchResults.size)
-        val aggregationOutput = aggregateSearchResultsAgent.generate(
-            AggregateSearchResultsInput(
-                searchQuery = searchQuery,
-                searchResults = searchResults
+            // Aggregate results from all sub-queries
+            logger.info("Aggregating results from {} sub-queries", searchResults.size)
+            val aggregationOutput = aggregateSearchResultsAgent.generate(
+                AggregateSearchResultsInput(
+                    searchQuery = searchQuery,
+                    searchResults = searchResults
+                )
             )
-        )
 
-        aggregationOutput.aggregatedResult
+            result = aggregationOutput.aggregatedResult
+        }
+
+        logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
+        result
     }
 
     /**
