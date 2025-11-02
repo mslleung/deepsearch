@@ -111,7 +111,8 @@ class AgenticBrowserSearchOrchestrator(
             // Use CompletableDeferred to capture result immediately without waiting for flow cancellation
             val resultDeferred = CompletableDeferred<SearchResult>()
 
-            // Launch flow processing in background
+            // Launch flow processing in background, we don't mean to run this for a long period of time
+            // but cooperative cancellation takes time, and we need to keep it running outside the request scope
             val flowJob = applicationScope.scope.launch {
                 try {
                     extractRelevantMarkdowns(
@@ -123,7 +124,7 @@ class AgenticBrowserSearchOrchestrator(
                         .filter { it.markdown.isNotBlank() }
                         .chunkFirstThenBySize(1, 3)
                         .generateAnswerFromBatches(sessionId, searchQuery, resultDeferred)
-                        .collect()  // Collect to completion (or until cancelled)
+                        .single()
                 } catch (e: CancellationException) {
                     // Normal cancellation after result is found
                     logger.debug("[{}] Flow cancelled after result obtained", sessionId)
