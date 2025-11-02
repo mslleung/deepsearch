@@ -61,6 +61,10 @@ class BrowserRuntimePool : IBrowserRuntimePool {
 
     private val idGenerator = AtomicLong(1)
 
+    init {
+        ensureStandbyIdleLocked()
+    }
+
     private suspend fun acquireRuntime(): PooledRuntime {
         val pooled: PooledRuntime = mutex.withLock {
             // Recycle any idle runtimes that have exceeded max usage duration
@@ -218,7 +222,6 @@ class BrowserRuntimePool : IBrowserRuntimePool {
      * without exceeding [maxPoolSize]. Must be called with [mutex] held.
      */
     private fun ensureStandbyIdleLocked() {
-        if (standbyMinIdleRuntimes <= 0) return
         while (idleQueue.size < standbyMinIdleRuntimes && allRuntimes.size < maxPoolSize) {
             val prewarmed = createNewRuntimeLocked()
             idleQueue.addLast(prewarmed)
