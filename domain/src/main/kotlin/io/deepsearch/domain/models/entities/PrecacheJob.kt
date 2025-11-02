@@ -14,6 +14,7 @@ class PrecacheJob(
     var id: Long? = null,
     val baseUrl: String,
     val maxUrlCount: Int,
+    val sitemapUrl: String? = null,
     val createdAt: Instant = Clock.System.now(),
     var updatedAt: Instant = Clock.System.now(),
     var processedCount: Int = 0,

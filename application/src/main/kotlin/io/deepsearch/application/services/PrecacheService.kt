@@ -25,7 +25,7 @@ interface IPrecacheService {
         val timestampMs: Long = System.currentTimeMillis()
     )
 
-    suspend fun start(baseUrl: String, maxUrlCount: Int): PrecacheJob
+    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null): PrecacheJob
     suspend fun stop(jobId: Long)
     suspend fun list(state: PrecacheJobState? = null): List<PrecacheJob>
     fun events(jobId: Long): SharedFlow<IPrecacheService.PrecacheEvent>
@@ -40,7 +40,7 @@ class PrecacheService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun start(baseUrl: String, maxUrlCount: Int): PrecacheJob {
+    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?): PrecacheJob {
         val normalizedBase = normalize(baseUrl)
         val existing = jobRepository.findActiveByBaseUrl(normalizedBase)
         if (existing != null) return existing
@@ -51,6 +51,7 @@ class PrecacheService(
                 id = null,
                 baseUrl = normalizedBase,
                 maxUrlCount = maxUrlCount,
+                sitemapUrl = sitemapUrl,
                 createdAt = now,
                 updatedAt = now,
                 processedCount = 0,

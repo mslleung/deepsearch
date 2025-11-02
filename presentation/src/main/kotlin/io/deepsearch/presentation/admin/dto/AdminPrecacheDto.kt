@@ -10,6 +10,7 @@ data class AdminPrecacheJobDto(
     val id: Long,
     val baseUrl: String,
     val maxUrlCount: Int,
+    val sitemapUrl: String?,
     val processedCount: Int,
     val state: String,
     val createdAt: Long, // epoch millis
@@ -22,6 +23,7 @@ fun PrecacheJob.toAdminDto(): AdminPrecacheJobDto {
         id = this.id!!,
         baseUrl = this.baseUrl,
         maxUrlCount = this.maxUrlCount,
+        sitemapUrl = this.sitemapUrl,
         processedCount = this.processedCount,
         state = this.state.name,
         createdAt = this.createdAt.toEpochMilliseconds(),

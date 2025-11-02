@@ -9,6 +9,7 @@ class PrecacheJobTable(
     val id = long("id").autoIncrement()
     val baseUrl = varchar("base_url", length = 2048)
     val maxUrlCount = integer("max_url_count")
+    val sitemapUrl = varchar("sitemap_url", length = 2048).nullable()
     val processedCount = integer("processed_count")
     val state = varchar("state", length = 32)
     val createdAtMs = long("created_at_ms")

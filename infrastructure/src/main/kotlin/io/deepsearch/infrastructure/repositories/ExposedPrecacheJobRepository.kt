@@ -27,6 +27,7 @@ class ExposedPrecacheJobRepository(
         val id = precacheJobTable.insert {
             it[baseUrl] = job.baseUrl
             it[maxUrlCount] = job.maxUrlCount
+            it[sitemapUrl] = job.sitemapUrl
             it[processedCount] = job.processedCount
             it[state] = job.state.name
             it[createdAtMs] = job.createdAt.toEpochMilliseconds()
@@ -84,6 +85,7 @@ class ExposedPrecacheJobRepository(
         id = row[precacheJobTable.id],
         baseUrl = row[precacheJobTable.baseUrl],
         maxUrlCount = row[precacheJobTable.maxUrlCount],
+        sitemapUrl = row[precacheJobTable.sitemapUrl],
         createdAt = Instant.fromEpochMilliseconds(row[precacheJobTable.createdAtMs]),
         updatedAt = Instant.fromEpochMilliseconds(row[precacheJobTable.updatedAtMs]),
         processedCount = row[precacheJobTable.processedCount],

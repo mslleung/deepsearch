@@ -171,8 +171,11 @@ class PrecacheJobRegistry(
         // Seed link flow: Google search results
         val seedLinkFlow = createSeedLinkFlow(job.baseUrl)
 
+        // Sitemap link flow
+        val sitemapLinkFlow = createSitemapLinkFlow(job)
+
         // Merge all link sources and process
-        merge(initialLinkFlow, seedLinkFlow, discoveredLinksFlow)
+        merge(initialLinkFlow, seedLinkFlow, sitemapLinkFlow, discoveredLinksFlow)
             .filterByBaseUrl(job.baseUrl)
             .processLinks(
                 jobId = jobId,
@@ -302,6 +305,22 @@ class PrecacheJobRegistry(
             }
         } catch (e: Exception) {
             logger.error("Failed to discover seeds for {}: {}", baseUrl, e.message, e)
+        }
+    }
+
+    /**
+     * Create a flow of links from sitemap.
+     */
+    private fun createSitemapLinkFlow(job: PrecacheJob): Flow<String> = flow {
+        val sitemapUrl = job.sitemapUrl ?: return@flow
+        try {
+            val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
+            logger.debug("Sitemap discovered {} links for job {}", sitemapLinks.size, job.id)
+            sitemapLinks.forEach { link ->
+                emit(normalize(link.url))
+            }
+        } catch (e: Exception) {
+            logger.error("Failed sitemap discovery for job {}: {}", job.id, e.message, e)
         }
     }
 
