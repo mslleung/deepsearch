@@ -111,7 +111,7 @@ class AgenticBrowserSearchOrchestrator(
             )
                 .cancellable()  // Ensure flow respects cancellation
                 .filter { it.markdown.isNotBlank() }
-                .chunked(20)
+                .chunkFirstThenBySize(1, 3)
                 .generateAnswerFromBatches(sessionId, searchQuery)
                 .single()  // Cancels upstream when result is emitted
         } catch (e: Exception) {
@@ -391,6 +391,36 @@ class AgenticBrowserSearchOrchestrator(
         } catch (e: Exception) {
             logger.error("[{}] Error during answer generation: {}", sessionId, e.message, e)
             throw e
+        }
+    }
+
+    /**
+     * Custom chunking operator that emits the first N items as a single chunk,
+     * then chunks subsequent items by a different size.
+     *
+     * @param firstChunkSize Number of items in the first chunk
+     * @param subsequentChunkSize Number of items in subsequent chunks
+     */
+    private fun <T> Flow<T>.chunkFirstThenBySize(firstChunkSize: Int, subsequentChunkSize: Int): Flow<List<T>> = flow {
+        val buffer = mutableListOf<T>()
+        var isFirstChunkEmitted = false
+
+        collect { item ->
+            buffer.add(item)
+
+            if (!isFirstChunkEmitted && buffer.size >= firstChunkSize) {
+                emit(buffer.take(firstChunkSize))
+                buffer.subList(0, firstChunkSize).clear()
+                isFirstChunkEmitted = true
+            } else if (isFirstChunkEmitted && buffer.size >= subsequentChunkSize) {
+                emit(buffer.take(subsequentChunkSize))
+                buffer.subList(0, subsequentChunkSize).clear()
+            }
+        }
+
+        // Emit remaining items if any
+        if (buffer.isNotEmpty()) {
+            emit(buffer.toList())
         }
     }
 }
