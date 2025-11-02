@@ -151,23 +151,21 @@ class UrlContentProcessingService(
         normalizedUrl: String,
         runtime: IBrowserRuntime,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
-    ): Flow<UrlProcessingEvent> = channelFlow {
+    ): Flow<UrlProcessingEvent> = flow {
         val browser = runtime.createBrowser()
         val context = browser.createContext()
         val page = context.newPage()
-        page.navigate(normalizedUrl)
+        
+        try {
+            page.navigate(normalizedUrl)
+            val extractedHtml = page.getFullHtml()
 
-        val extractedHtml = page.getFullHtml()
-
-        // Launch link discovery concurrently
-        launch {
+            // Process link discovery (fast ~5s)
             val discoveredLinks = discoverLinks(extractedHtml)
             logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
-            send(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
-        }
+            emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
 
-        // Launch markdown extraction concurrently
-        launch {
+            // Process markdown extraction (slow ~1min)
             val extractedMarkdown = webpageExtractionService.extractWebpage(page)
             logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractedMarkdown.length)
 
@@ -180,7 +178,9 @@ class UrlContentProcessingService(
                 mimeType = "text/html"
             )
 
-            send(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown))
+            emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown))
+        } finally {
+            browser.close()
         }
     }
 

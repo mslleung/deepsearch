@@ -30,7 +30,8 @@ class PlaywrightBrowser(
     }
 
     override suspend fun close() {
-        // Browser instance doesn't close the underlying Playwright browser,
-        // only its contexts. The runtime owns the Playwright browser lifecycle.
+        apiMutex.withLock { 
+            playwrightBrowser.close() 
+        }
     }
 }
