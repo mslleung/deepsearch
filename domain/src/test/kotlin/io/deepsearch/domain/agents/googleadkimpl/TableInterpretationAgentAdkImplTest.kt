@@ -51,7 +51,7 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
                 )
             )
             // Take first table if any
-            val first = idOutput.tables.firstOrNull() ?: return@runTest
+            val first = idOutput.tables.firstOrNull() ?: return@acquireRuntime
             val elementShot = page.getElementScreenshotByCssSelector(first.cssSelector)
             val elementHtml = page.getElementHtmlByCssSelector(first.cssSelector)
 
