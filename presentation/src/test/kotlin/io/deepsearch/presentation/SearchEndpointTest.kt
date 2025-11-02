@@ -69,7 +69,7 @@ class SearchEndpointTest {
 
         // Step 4: Use the API key to make a search request
         val searchRequest = SearchRequest(
-            query = "the standard body check package",
+            query = "what is this website about?",
             url = "https://www.otandp.com/"
         )
 

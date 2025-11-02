@@ -10,6 +10,7 @@ import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -18,12 +19,12 @@ private val infrastructureCommonTestModule = module {
     // Test encryption config
     single {
         DatabaseEncryptionConfig(
-            encryptionSecret = "test-encryption-secret-32bytes!!"
+            encryptionSecret = System.getenv("DATABASE_ENCRYPTION_SECRET")
         )
     }
     
     // Database encryption service
-    singleOf(::DatabaseConfigurationService) bind IDatabaseConfigurationService::class
+    singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
 
     // All table instances (singletons, depend on DatabaseCryptoService)

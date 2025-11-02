@@ -223,7 +223,7 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         visitedUrls: MutableSet<String>,
         discoveredLinksFlow: MutableSharedFlow<WebpageLink>
-    ): Flow<MarkdownResult> = 
+    ): Flow<MarkdownResult> =
         // Check budget before accepting each link
         transformWhile { link ->
             if (isBudgetExceeded(sessionId, budget)) {
@@ -234,50 +234,57 @@ class AgenticBrowserSearchOrchestrator(
                 true  // Continue
             }
         }
-        .flatMapMerge(concurrency = 10) { link ->
-            flow {
-                try {
-                    val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+            .flatMapMerge(concurrency = 10) { link ->
+                flow {
+                    try {
+                        val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                    if (shouldSkipUrl(sessionId, normalizedUrl, visitedUrls)) {
-                        return@flow
-                    }
+                        if (shouldSkipUrl(sessionId, normalizedUrl, visitedUrls)) {
+                            return@flow
+                        }
 
-                    // Process URL and collect events as they're emitted
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, runtime)
-                        .cancellable()
-                        .collect { event ->
-                            when (event) {
-                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    // Emit discovered links immediately (~5 seconds)
-                                    logger.debug(
-                                        "[{}] Links discovered for {}: {} links",
-                                        sessionId,
-                                        event.url,
-                                        event.discoveredLinks.size
-                                    )
-                                    event.discoveredLinks.forEach { discoveredLink ->
-                                        discoveredLinksFlow.emit(discoveredLink)
+                        // Process URL and collect events as they're emitted
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, runtime)
+                            .cancellable()
+                            .collect { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                        // Emit discovered links immediately (~5 seconds)
+                                        logger.debug(
+                                            "[{}] Links discovered for {}: {} links",
+                                            sessionId,
+                                            event.url,
+                                            event.discoveredLinks.size
+                                        )
+                                        event.discoveredLinks.forEach { discoveredLink ->
+                                            discoveredLinksFlow.emit(discoveredLink)
+                                        }
+                                    }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        // Emit markdown for batching (~1 minute)
+                                        querySessionService.addTraversedUrl(sessionId, normalizedUrl)
+                                        logger.debug(
+                                            "[{}] Markdown extracted for {}: {} chars",
+                                            sessionId,
+                                            event.url,
+                                            event.markdown.length
+                                        )
+                                        emit(MarkdownResult(event.url, event.markdown))
                                     }
                                 }
-                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    // Emit markdown for batching (~1 minute)
-                                    querySessionService.addTraversedUrl(sessionId, normalizedUrl)
-                                    logger.debug(
-                                        "[{}] Markdown extracted for {}: {} chars",
-                                        sessionId,
-                                        event.url,
-                                        event.markdown.length
-                                    )
-                                    emit(MarkdownResult(event.url, event.markdown))
-                                }
                             }
-                        }
-                } catch (e: Exception) {
-                    logger.warn("[{}] Failed to process {}: {}", sessionId, link.url, e.message)
+                    } catch (e: Exception) {
+                        logger.error(
+                            "[{}] Failed to process {}: {} : {}",
+                            sessionId,
+                            link.url,
+                            e.message,
+                            e.stackTraceToString()
+                        )
+                    }
                 }
             }
-        }
 
     /**
      * Result containing only markdown data for downstream processing.
