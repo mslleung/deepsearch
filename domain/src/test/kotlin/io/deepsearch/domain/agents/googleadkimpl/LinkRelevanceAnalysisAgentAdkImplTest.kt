@@ -42,7 +42,7 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
             val html = page.getFullHtml()
 
             // When
-            val output = agent.generate(LinkRelevanceAnalysisInput(html, query))
+            val output = agent.generate(LinkRelevanceAnalysisInput(html, query, url))
 
             // Then
             output.links.forEach { link ->
@@ -69,7 +69,7 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
                 val html = page.getFullHtml()
 
                 // When
-                val output = agent.generate(LinkRelevanceAnalysisInput(html, query))
+                val output = agent.generate(LinkRelevanceAnalysisInput(html, query, url))
 
                 // Then
                 output.links.forEach { link ->
@@ -96,7 +96,7 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
                 val html = page.getFullHtml()
 
                 // When
-                val output = agent.generate(LinkRelevanceAnalysisInput(html, query))
+                val output = agent.generate(LinkRelevanceAnalysisInput(html, query, url))
 
                 // Then
                 // should access https://www.otandp.com/longevity-services
@@ -125,7 +125,7 @@ class LinkRelevanceAnalysisAgentAdkImplTest : KoinTest {
                 val html = page.getFullHtml()
 
                 // When
-                val output = agent.generate(LinkRelevanceAnalysisInput(html, query))
+                val output = agent.generate(LinkRelevanceAnalysisInput(html, query, url))
 
                 // Then
                 // should access https://www.otandp.com/longevity-services

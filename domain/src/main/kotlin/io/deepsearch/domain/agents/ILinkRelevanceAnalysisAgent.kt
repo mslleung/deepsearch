@@ -5,7 +5,8 @@ import io.deepsearch.domain.models.valueobjects.WebpageLink
 
 data class LinkRelevanceAnalysisInput(
     val html: String,
-    val query: String
+    val query: String,
+    val url: String
 ) : IAgent.IAgentInput
 
 data class LinkRelevanceAnalysisOutput(val links: List<WebpageLink>) : IAgent.IAgentOutput

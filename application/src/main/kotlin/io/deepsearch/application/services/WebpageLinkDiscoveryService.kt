@@ -29,12 +29,12 @@ interface IWebpageLinkDiscoveryService {
     /**
      * Discovers relevant links by analyzing links on the current webpage
      */
-    suspend fun discoverRelevantLinksByAgent(query: String, html: String): List<WebpageLink>
+    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String): List<WebpageLink>
 
     /**
      * Discovers all links on the page regardless of relevance.
      */
-    suspend fun discoverAllLinks(html: String, baseUrlForReason: String? = null): List<WebpageLink>
+    suspend fun discoverAllLinks(html: String, url: String): List<WebpageLink>
 
     /**
      * Discovers links from a sitemap XML file. Uses caching with 1-day TTL.
@@ -57,6 +57,22 @@ class WebpageLinkDiscoveryService(
         expectSuccess = false
     }
 
+    /**
+     * Extracts the base domain from a URL (scheme + host).
+     * For example: "https://example.com/path" -> "https://example.com"
+     */
+    private fun extractBaseDomain(url: String): String? {
+        return try {
+            val uri = java.net.URI(url)
+            val scheme = uri.scheme ?: return null
+            val host = uri.host ?: return null
+            "$scheme://$host"
+        } catch (e: Exception) {
+            logger.warn("Failed to parse URL for domain extraction: {}", url, e)
+            null
+        }
+    }
+
     override suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery): List<WebpageLink> {
         logger.debug("Discovering links via Google search for query: '{}' on {}", searchQuery.query, searchQuery.url)
 
@@ -68,21 +84,35 @@ class WebpageLinkDiscoveryService(
         return links
     }
 
-    override suspend fun discoverRelevantLinksByAgent(query: String, html: String): List<WebpageLink> {
+    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String): List<WebpageLink> {
         logger.debug("Discovering links via on-page analysis for query: '{}'", query)
+
+        val baseDomain = extractBaseDomain(url)
+        if (baseDomain == null) {
+            logger.warn("Could not extract base domain from URL: {}", url)
+            return emptyList()
+        }
 
         val links = linkRelevanceAnalysisAgent.generate(
             LinkRelevanceAnalysisInput(
                 html = html,
-                query = query
+                query = query,
+                url = url
             )
         ).links
 
-        logger.debug("Discovered {} links from on-page analysis", links.size)
-        return links
+        val filteredLinks = links.filter { it.url.startsWith(baseDomain) }
+        logger.debug("Discovered {} links from on-page analysis (filtered to {} same-domain links)", links.size, filteredLinks.size)
+        return filteredLinks
     }
 
-    override suspend fun discoverAllLinks(html: String, baseUrlForReason: String?): List<WebpageLink> {
+    override suspend fun discoverAllLinks(html: String, url: String): List<WebpageLink> {
+        val baseDomain = extractBaseDomain(url)
+        if (baseDomain == null) {
+            logger.warn("Could not extract base domain from URL: {}", url)
+            return emptyList()
+        }
+
         val doc = Jsoup.parse(html)
         val anchors = doc.select("a[href]")
         val links = anchors.mapNotNull { a ->
@@ -90,10 +120,13 @@ class WebpageLinkDiscoveryService(
             if (href.isBlank()) null else WebpageLink(
                 url = href,
                 source = LinkSource.ALL_LINKS,
-                reason = baseUrlForReason ?: (a.text().takeIf { it.isNotBlank() } ?: "anchor")
+                reason = url
             )
         }
-        return links
+        
+        val filteredLinks = links.filter { it.url.startsWith(baseDomain) }
+        logger.debug("Discovered {} links total (filtered to {} same-domain links)", links.size, filteredLinks.size)
+        return filteredLinks
     }
 
     override suspend fun discoverSitemapLinks(sitemapUrl: String): List<WebpageLink> {

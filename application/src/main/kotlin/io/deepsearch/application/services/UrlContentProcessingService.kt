@@ -66,7 +66,7 @@ class UrlContentProcessingService(
         query: String
     ): Flow<UrlProcessingEvent> {
         return processInternalAsFlow(url) { html ->
-            webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html)
+            webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url)
         }
     }
 

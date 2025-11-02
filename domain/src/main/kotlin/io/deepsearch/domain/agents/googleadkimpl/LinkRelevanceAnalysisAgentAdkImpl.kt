@@ -87,7 +87,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
     override suspend fun generate(input: LinkRelevanceAnalysisInput): LinkRelevanceAnalysisOutput {
         logger.debug("Analyzing link relevance for query: '{}'", input.query)
 
-        val cleanedHtml = cleanHtml(input.html)
+        val cleanedHtml = cleanHtml(input.html, input.url)
 
         val userPrompt = buildString {
             appendLine("Query: ${input.query}")
@@ -153,11 +153,29 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
     }
 
     /**
+     * Extracts the base domain from a URL (scheme + host).
+     * For example: "https://example.com/path" -> "https://example.com"
+     */
+    private fun extractBaseDomain(url: String): String? {
+        return try {
+            val uri = java.net.URI(url)
+            val scheme = uri.scheme ?: return null
+            val host = uri.host ?: return null
+            "$scheme://$host"
+        } catch (e: Exception) {
+            logger.warn("Failed to parse URL for domain extraction: {}", url, e)
+            null
+        }
+    }
+
+    /**
      * Cleans HTML by removing non-content elements that don't contribute to link analysis.
      * Preserves anchor tags and their surrounding context for better link relevance analysis.
+     * Filters anchor tags to only include those from the same domain as the url parameter.
      */
-    private fun cleanHtml(rawHtml: String): String {
+    private fun cleanHtml(rawHtml: String, url: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
+        val baseDomain = extractBaseDomain(url)
 
         // Step 1: Remove obvious non-content elements (scripts, styles, etc.)
         doc.select(
@@ -165,10 +183,21 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             "head, title, base"
         ).remove()
 
-        // Step 2: Remove form elements (not part of navigational content)
+        // Step 2: Filter anchor tags to only include those from the same domain
+        if (baseDomain != null) {
+            doc.select("a[href]").forEach { anchor ->
+                val href = anchor.attr("href")
+                if (href.isNotBlank() && !href.startsWith(baseDomain)) {
+                    anchor.remove()
+                }
+            }
+            logger.debug("Filtered anchor tags to base domain: {}", baseDomain)
+        }
+
+        // Step 3: Remove form elements (not part of navigational content)
         doc.select("form, input, button, select, textarea").remove()
 
-        // Step 3: Remove comments and processing instructions
+        // Step 4: Remove comments and processing instructions
         doc.select("*").forEach { element ->
             val nodesToRemove = element.childNodes().filter { node ->
                 node.nodeName() == "#comment" || node.nodeName() == "#pi"
@@ -176,7 +205,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Step 4: Strip attributes except those useful for link relevance analysis
+        // Step 5: Strip attributes except those useful for link relevance analysis
         // For anchors: keep href (critical) and aria-label (provides context)
         // For other elements: keep only semantic role attributes that indicate navigation structure
         val semanticRoles = setOf(
@@ -205,7 +234,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             }
         }
 
-        // Step 5: Truncate text content to reduce token usage while preserving context
+        // Step 6: Truncate text content to reduce token usage while preserving context
         doc.select("*").forEach { element ->
             element.textNodes().forEach { textNode ->
                 val text = textNode.text().trim()
@@ -215,7 +244,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             }
         }
 
-        // Step 6: Remove empty elements iteratively (but keep anchors even if empty)
+        // Step 7: Remove empty elements iteratively (but keep anchors even if empty)
         var changed = true
         while (changed) {
             changed = false
