@@ -39,6 +39,7 @@ interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator {
  * concurrently using flatMapMerge for maximum throughput. Markdowns are batched
  * and fed to answer generation, which terminates early when complete.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class AgenticBrowserSearchOrchestrator(
     private val browserRuntimePool: IBrowserRuntimePool,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
@@ -92,6 +93,7 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Execute the full search workflow for a single query using reactive flow composition.
      * Markdowns are extracted as links are discovered, batched, and fed to answer generation.
+     * Flow cancellation propagates upstream when answer is complete or budget exceeded.
      */
     private suspend fun executeSearchForQuery(searchQuery: SearchQuery): SearchResult {
         val session = querySessionService.createSession(searchQuery.query, searchQuery.url)
@@ -103,16 +105,19 @@ class AgenticBrowserSearchOrchestrator(
             logger.debug("[{}] Executing search for query: {}", sessionId, searchQuery.query)
             querySessionService.transitionToLinkTraversal(sessionId)
 
-            // Reactive flow: extract markdowns (including initial) → batch → generate answer
+            // Reactive flow: extract markdowns → check budget → batch → generate answer
+            // When answer completes, single() cancels upstream flows
             return extractRelevantMarkdowns(
                 sessionId = sessionId,
                 searchQuery = searchQuery,
                 runtime = runtime,
                 budget = budget
             )
-                .batchMarkdowns(20)
+                .cancellable()  // Ensure flow respects cancellation
+                .filter { it.markdown.isNotBlank() }
+                .chunked(20)
                 .generateAnswerFromBatches(sessionId, searchQuery)
-                .single()
+                .single()  // Cancels upstream when result is emitted
         } catch (e: Exception) {
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
             querySessionService.fail(sessionId, e.message ?: "Unknown error")
@@ -124,6 +129,7 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Reactive flow that produces markdown results as links are discovered.
+     * Cancellation propagates through all merged flows automatically.
      *
      * This function orchestrates parallel link discovery and processing using flow composition:
      * 1. Initial URL flow (seed)
@@ -154,7 +160,7 @@ class AgenticBrowserSearchOrchestrator(
         val googleSearchLinksFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
         val sitemapLinksFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
 
-        return merge(initialLinkFlow, googleSearchLinksFlow, sitemapLinksFlow, discoveredLinksFlow)
+        return merge(initialLinkFlow, googleSearchLinksFlow, sitemapLinksFlow, discoveredLinksFlow.asSharedFlow())
             .processLinksToMarkdown(
                 sessionId = sessionId,
                 searchQuery = searchQuery,
@@ -163,8 +169,12 @@ class AgenticBrowserSearchOrchestrator(
                 visitedUrls = visitedUrls,
                 discoveredLinksFlow = discoveredLinksFlow
             )
-            .onCompletion {
-                logger.info("[{}] Link discovery complete", sessionId)
+            .onCompletion { cause ->
+                if (cause != null) {
+                    logger.info("[{}] Link discovery cancelled: {}", sessionId, cause.message)
+                } else {
+                    logger.info("[{}] Link discovery complete", sessionId)
+                }
             }
     }
 
@@ -202,8 +212,8 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Flow C: Link processing with markdown conversion and discovered link feedback (Flow B)
-     * Now emits markdown data separately from link discovery for reactive processing.
+     * Flow C: Link processing with markdown conversion and discovered link feedback (Flow B).
+     * Budget checks cause flow termination which propagates to all merged flows.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun Flow<WebpageLink>.processLinksToMarkdown(
@@ -213,53 +223,61 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         visitedUrls: MutableSet<String>,
         discoveredLinksFlow: MutableSharedFlow<WebpageLink>
-    ): Flow<MarkdownResult> = flatMapMerge(concurrency = 10) { link ->
-        flow {
-            try {
-                val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-
-                if (shouldSkipUrl(sessionId, normalizedUrl, visitedUrls)) {
-                    return@flow
-                }
-
-                if (isBudgetExceeded(sessionId, budget)) {
-                    return@flow
-                }
-
-                // Process URL and collect events as they're emitted
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, runtime)
-                    .collect { event ->
-                        when (event) {
-                            is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                // Emit discovered links immediately (~5 seconds)
-                                logger.debug(
-                                    "[{}] Links discovered for {}: {} links",
-                                    sessionId,
-                                    event.url,
-                                    event.discoveredLinks.size
-                                )
-                                event.discoveredLinks.forEach { discoveredLink ->
-                                    discoveredLinksFlow.emit(discoveredLink)
-                                }
-                            }
-                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                // Emit markdown for batching (~1 minute)
-                                querySessionService.addTraversedUrl(sessionId, normalizedUrl)
-                                logger.debug(
-                                    "[{}] Markdown extracted for {}: {} chars",
-                                    sessionId,
-                                    event.url,
-                                    event.markdown.length
-                                )
-                                emit(MarkdownResult(event.url, event.markdown))
-                            }
-                        }
-                    }
-            } catch (e: Exception) {
-                logger.warn("[{}] Failed to process {}: {}", sessionId, link.url, e.message)
+    ): Flow<MarkdownResult> = 
+        // Check budget before accepting each link
+        transformWhile { link ->
+            if (isBudgetExceeded(sessionId, budget)) {
+                logger.info("[{}] Budget exceeded, terminating link processing", sessionId)
+                false  // Stop accepting links
+            } else {
+                emit(link)
+                true  // Continue
             }
         }
-    }
+        .flatMapMerge(concurrency = 10) { link ->
+            flow {
+                try {
+                    val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+
+                    if (shouldSkipUrl(sessionId, normalizedUrl, visitedUrls)) {
+                        return@flow
+                    }
+
+                    // Process URL and collect events as they're emitted
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, runtime)
+                        .cancellable()
+                        .collect { event ->
+                            when (event) {
+                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                    // Emit discovered links immediately (~5 seconds)
+                                    logger.debug(
+                                        "[{}] Links discovered for {}: {} links",
+                                        sessionId,
+                                        event.url,
+                                        event.discoveredLinks.size
+                                    )
+                                    event.discoveredLinks.forEach { discoveredLink ->
+                                        discoveredLinksFlow.emit(discoveredLink)
+                                    }
+                                }
+                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                    // Emit markdown for batching (~1 minute)
+                                    querySessionService.addTraversedUrl(sessionId, normalizedUrl)
+                                    logger.debug(
+                                        "[{}] Markdown extracted for {}: {} chars",
+                                        sessionId,
+                                        event.url,
+                                        event.markdown.length
+                                    )
+                                    emit(MarkdownResult(event.url, event.markdown))
+                                }
+                            }
+                        }
+                } catch (e: Exception) {
+                    logger.warn("[{}] Failed to process {}: {}", sessionId, link.url, e.message)
+                }
+            }
+        }
 
     /**
      * Result containing only markdown data for downstream processing.
@@ -286,32 +304,8 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Batch markdowns into groups of BATCH_SIZE.
-     */
-    private fun Flow<MarkdownResult>.batchMarkdowns(
-        batchSize: Int
-    ): Flow<List<MarkdownResult>> = flow {
-        val batch = mutableListOf<MarkdownResult>()
-
-        collect { result ->
-            if (result.markdown.isNotBlank()) {
-                batch.add(result)
-
-                if (batch.size >= batchSize) {
-                    emit(batch.toList())
-                    batch.clear()
-                }
-            }
-        }
-
-        // Emit remaining batch
-        if (batch.isNotEmpty()) {
-            emit(batch.toList())
-        }
-    }
-
-    /**
      * Generate answer from batches of markdowns, terminating early when complete.
+     * When this flow completes, the single() operator cancels all upstream flows.
      */
     private fun Flow<List<MarkdownResult>>.generateAnswerFromBatches(
         sessionId: String,
@@ -322,7 +316,7 @@ class AgenticBrowserSearchOrchestrator(
         val allMarkdowns = mutableListOf<String>()
 
         try {
-            collect { batch ->
+            transformWhile { batch ->
                 // Track URLs and markdowns
                 batch.forEach { result ->
                     allUrls.add(result.url)
@@ -353,7 +347,7 @@ class AgenticBrowserSearchOrchestrator(
                     output.isComplete
                 )
 
-                // If answer is complete, terminate flow immediately
+                // If answer is complete, emit result and stop (single() will cancel upstream)
                 if (output.isComplete) {
                     logger.info("[{}] Answer complete after {} pages", sessionId, allUrls.size)
                     val answer: String = currentAnswer
@@ -372,11 +366,13 @@ class AgenticBrowserSearchOrchestrator(
                             sources = allUrls
                         )
                     )
-                    return@collect
+                    false  // Stop processing more batches
+                } else {
+                    true  // Continue processing
                 }
-            }
+            }.collect()
 
-            // Links exhausted without complete answer
+            // This code only runs if transformWhile completed without emitting (LINKS_EXHAUSTED)
             logger.info("[{}] Links exhausted: {} pages total", sessionId, allUrls.size)
             val answer = currentAnswer ?: "No information found"
             querySessionService.completeSessionWithAnswer(
