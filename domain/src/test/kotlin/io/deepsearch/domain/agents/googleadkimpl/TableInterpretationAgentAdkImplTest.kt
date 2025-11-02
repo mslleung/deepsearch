@@ -36,8 +36,7 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
         ]
     )
     fun `interprets identified table to markdown`(url: String) = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        try {
+        browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
             val context = browser.createContext()
             val page = context.newPage()
@@ -67,8 +66,6 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
 
             assertTrue(md.contains("|"))
             assertTrue(md.contains("\n"))
-        } finally {
-            runtime.close()
         }
     }
 }

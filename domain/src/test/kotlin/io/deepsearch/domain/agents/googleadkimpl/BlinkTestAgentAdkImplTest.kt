@@ -27,58 +27,59 @@ class BlinkTestAgentAdkImplTest : KoinTest {
 
     @Test
     fun `blink test should pass for clearly related query`() = runTest(testCoroutineDispatcher) {
-        // Given
-        val searchQuery = SearchQuery(
-            query = "website purpose",
-            url = "https://www.example.com/"
-        )
-        val runtime = browserRuntimePool.acquireRuntime()
-        val browser = runtime.createBrowser()
-        val context = browser.createContext()
-        val page = context.newPage()
-
-        page.navigate(searchQuery.url)
-        val screenshot = page.takeScreenshot()
-
-        // When
-        val output = agent.generate(
-            io.deepsearch.domain.agents.BlinkTestInput(
-                searchQuery = searchQuery,
-                screenshotBytes = screenshot.bytes
+        browserRuntimePool.acquireRuntime { runtime ->
+            // Given
+            val searchQuery = SearchQuery(
+                query = "website purpose",
+                url = "https://www.example.com/"
             )
-        )
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
+            val page = context.newPage()
 
-        // Then
-        assertTrue { output.decision == IBlinkTestAgent.Decision.RELEVANT }
-        assertTrue(output.rationale.isNotBlank(), "rationale should not be blank")
+            page.navigate(searchQuery.url)
+            val screenshot = page.takeScreenshot()
+
+            // When
+            val output = agent.generate(
+                io.deepsearch.domain.agents.BlinkTestInput(
+                    searchQuery = searchQuery,
+                    screenshotBytes = screenshot.bytes
+                )
+            )
+
+            // Then
+            assertTrue { output.decision == IBlinkTestAgent.Decision.RELEVANT }
+            assertTrue(output.rationale.isNotBlank(), "rationale should not be blank")
+        }
     }
 
     @Test
     fun `blink test should fail for clearly unrelated query`() = runTest(testCoroutineDispatcher) {
-
-        // Given
-        val searchQuery = SearchQuery(
-            query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
-            url = "https://www.example.com/"
-        )
-        val runtime = browserRuntimePool.acquireRuntime()
-        val browser = runtime.createBrowser()
-        val context = browser.createContext()
-        val page = context.newPage()
-
-        page.navigate(searchQuery.url)
-        val screenshot = page.takeScreenshot()
-
-        // When
-        val output = agent.generate(
-            io.deepsearch.domain.agents.BlinkTestInput(
-                searchQuery = searchQuery,
-                screenshotBytes = screenshot.bytes
+        browserRuntimePool.acquireRuntime { runtime ->
+            // Given
+            val searchQuery = SearchQuery(
+                query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
+                url = "https://www.example.com/"
             )
-        )
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
+            val page = context.newPage()
 
-        // Then
-        assertTrue { output.decision == IBlinkTestAgent.Decision.IRRELEVANT }
-        assertTrue(output.rationale.isNotBlank(), "rationale should not be blank")
+            page.navigate(searchQuery.url)
+            val screenshot = page.takeScreenshot()
+
+            // When
+            val output = agent.generate(
+                io.deepsearch.domain.agents.BlinkTestInput(
+                    searchQuery = searchQuery,
+                    screenshotBytes = screenshot.bytes
+                )
+            )
+
+            // Then
+            assertTrue { output.decision == IBlinkTestAgent.Decision.IRRELEVANT }
+            assertTrue(output.rationale.isNotBlank(), "rationale should not be blank")
+        }
     }
 }

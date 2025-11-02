@@ -44,20 +44,19 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
             html = exampleHtml
         )
         val output = agent.generate(input)
-        val hasElements = output.elements.header != null || 
-            output.elements.footer != null || 
-            output.elements.navSidebar != null || 
-            output.elements.breadcrumb != null ||
-            output.elements.cookieBanner != null ||
-            output.elements.adBanners.isNotEmpty() ||
-            output.elements.popups.isNotEmpty()
+        val hasElements = output.elements.header != null ||
+                output.elements.footer != null ||
+                output.elements.navSidebar != null ||
+                output.elements.breadcrumb != null ||
+                output.elements.cookieBanner != null ||
+                output.elements.adBanners.isNotEmpty() ||
+                output.elements.popups.isNotEmpty()
         assertTrue(!hasElements, "Example page should not have navigation elements")
     }
 
     @Test
     fun `should identify header and footer on OT&P webpage`() = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        try {
+        browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
             val context = browser.createContext()
             val page = context.newPage()
@@ -67,23 +66,20 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
                 html = page.getFullHtml()
             )
             val output = agent.generate(input)
-            val hasElements = output.elements.header != null || 
-                output.elements.footer != null || 
-                output.elements.navSidebar != null || 
-                output.elements.breadcrumb != null ||
-                output.elements.cookieBanner != null ||
-                output.elements.adBanners.isNotEmpty() ||
-                output.elements.popups.isNotEmpty()
+            val hasElements = output.elements.header != null ||
+                    output.elements.footer != null ||
+                    output.elements.navSidebar != null ||
+                    output.elements.breadcrumb != null ||
+                    output.elements.cookieBanner != null ||
+                    output.elements.adBanners.isNotEmpty() ||
+                    output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "Exposed doc webpage should have navigation elements")
-        } finally {
-            runtime.close()
         }
     }
 
     @Test
     fun `should identify header and footer on exposed doc page`() = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        try {
+        browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
             val context = browser.createContext()
             val page = context.newPage()
@@ -93,16 +89,14 @@ class NavigationElementIdentificationAgentAdkImplTest : KoinTest {
                 html = page.getFullHtml()
             )
             val output = agent.generate(input)
-            val hasElements = output.elements.header != null || 
-                output.elements.footer != null || 
-                output.elements.navSidebar != null || 
-                output.elements.breadcrumb != null ||
-                output.elements.cookieBanner != null ||
-                output.elements.adBanners.isNotEmpty() ||
-                output.elements.popups.isNotEmpty()
+            val hasElements = output.elements.header != null ||
+                    output.elements.footer != null ||
+                    output.elements.navSidebar != null ||
+                    output.elements.breadcrumb != null ||
+                    output.elements.cookieBanner != null ||
+                    output.elements.adBanners.isNotEmpty() ||
+                    output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "Exposed doc webpage should have navigation elements")
-        } finally {
-            runtime.close()
         }
     }
 }

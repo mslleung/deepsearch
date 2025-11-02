@@ -60,8 +60,6 @@ import org.koin.dsl.module
 private val domainCommonTestModule = module {
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
     singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
-    
-    // OCR services
     singleOf(::TesseractPoolImpl) bind ITesseractPool::class
 
     // Google ADK agent has its own lifecycle management, so we make it singleton

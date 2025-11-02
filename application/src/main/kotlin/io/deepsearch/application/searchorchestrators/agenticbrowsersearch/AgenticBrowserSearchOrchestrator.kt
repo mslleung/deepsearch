@@ -11,7 +11,6 @@ import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.QueryExpansionAgentInput
 import io.deepsearch.domain.agents.StreamingAnswerInput
-import io.deepsearch.domain.browser.IBrowserRuntime
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -41,7 +40,6 @@ interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator {
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgenticBrowserSearchOrchestrator(
-    private val browserRuntimePool: IBrowserRuntimePool,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
     private val queryExpansionAgent: IQueryExpansionAgent,
@@ -100,7 +98,6 @@ class AgenticBrowserSearchOrchestrator(
         val sessionId = session.id
         val budget = SearchBudget()
 
-        val runtime = browserRuntimePool.acquireRuntime()
         try {
             logger.debug("[{}] Executing search for query: {}", sessionId, searchQuery.query)
             querySessionService.transitionToLinkTraversal(sessionId)
@@ -110,7 +107,6 @@ class AgenticBrowserSearchOrchestrator(
             return extractRelevantMarkdowns(
                 sessionId = sessionId,
                 searchQuery = searchQuery,
-                runtime = runtime,
                 budget = budget
             )
                 .cancellable()  // Ensure flow respects cancellation
@@ -122,8 +118,6 @@ class AgenticBrowserSearchOrchestrator(
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
             querySessionService.fail(sessionId, e.message ?: "Unknown error")
             throw e
-        } finally {
-            runtime.close()
         }
     }
 
@@ -141,7 +135,6 @@ class AgenticBrowserSearchOrchestrator(
     private fun extractRelevantMarkdowns(
         sessionId: String,
         searchQuery: SearchQuery,
-        runtime: IBrowserRuntime,
         budget: SearchBudget
     ): Flow<MarkdownResult> {
         val visitedUrls = ConcurrentHashMap.newKeySet<String>()
@@ -164,7 +157,6 @@ class AgenticBrowserSearchOrchestrator(
             .processLinksToMarkdown(
                 sessionId = sessionId,
                 searchQuery = searchQuery,
-                runtime = runtime,
                 budget = budget,
                 visitedUrls = visitedUrls,
                 discoveredLinksFlow = discoveredLinksFlow
@@ -219,7 +211,6 @@ class AgenticBrowserSearchOrchestrator(
     private fun Flow<WebpageLink>.processLinksToMarkdown(
         sessionId: String,
         searchQuery: SearchQuery,
-        runtime: IBrowserRuntime,
         budget: SearchBudget,
         visitedUrls: MutableSet<String>,
         discoveredLinksFlow: MutableSharedFlow<WebpageLink>
@@ -244,7 +235,7 @@ class AgenticBrowserSearchOrchestrator(
                         }
 
                         // Process URL and collect events as they're emitted
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, runtime)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
                             .cancellable()
                             .collect { event ->
                                 when (event) {

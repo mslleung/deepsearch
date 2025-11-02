@@ -9,12 +9,12 @@ import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.hours
 
-private const val maxPoolSize: Int = 20
+private const val maxPoolSize: Int = 100
 private val maxUsageDuration = 1.hours
 private const val standbyMinIdleRuntimes: Int = 5
 
 interface IBrowserRuntimePool {
-    suspend fun acquireRuntime(): IBrowserRuntime
+    suspend fun acquireRuntime(block: suspend (IBrowserRuntime) -> Unit)
 }
 
 /**
@@ -61,7 +61,7 @@ class BrowserRuntimePool : IBrowserRuntimePool {
 
     private val idGenerator = AtomicLong(1)
 
-    override suspend fun acquireRuntime(): IBrowserRuntime {
+    private suspend fun acquireRuntime(): PooledRuntime {
         val pooled: PooledRuntime = mutex.withLock {
             // Recycle any idle runtimes that have exceeded max usage duration
             recycleExpiredIdleLocked()
@@ -101,7 +101,13 @@ class BrowserRuntimePool : IBrowserRuntimePool {
         }
 
         // Wrap with a handle that returns the runtime to the pool when closed by the caller
-        return PooledRuntimeHandle(this, pooled)
+        return pooled
+    }
+
+    override suspend fun acquireRuntime(block: suspend (IBrowserRuntime) -> Unit) {
+        val pooledRuntime = acquireRuntime()
+        block(pooledRuntime.runtime)
+        release(pooledRuntime)
     }
 
     /**
@@ -237,22 +243,6 @@ class BrowserRuntimePool : IBrowserRuntimePool {
             p.runtime.close()
         } catch (t: Throwable) {
             logger.warn("Error while closing runtime #{}: {}", p.id, t.message)
-        }
-    }
-
-    /**
-     * Pooled handle that delegates to the underlying runtime and returns to the pool on close().
-     * This ensures existing call sites using try/finally { runtime.close() } automatically participate
-     * in pooling without code changes.
-     */
-    private class PooledRuntimeHandle(
-        private val pool: BrowserRuntimePool,
-        private val pooled: PooledRuntime
-    ) : IBrowserRuntime {
-        override suspend fun createBrowser(): IBrowser = pooled.runtime.createBrowser()
-
-        override suspend fun close() {
-            pool.release(pooled)
         }
     }
 }

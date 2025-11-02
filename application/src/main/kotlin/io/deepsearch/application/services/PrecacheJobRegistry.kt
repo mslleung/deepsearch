@@ -1,6 +1,5 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.browser.IBrowserRuntime
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
@@ -102,12 +101,10 @@ class PrecacheJobRegistry(
             )
         )
 
-        val runtime = browserRuntimePool.acquireRuntime()
         try {
             extractAndCacheLinks(
                 jobId = jobId,
                 job = job,
-                runtime = runtime,
                 eventFlow = flow
             )
 
@@ -144,7 +141,6 @@ class PrecacheJobRegistry(
                 )
             )
         } finally {
-            runtime.close()
             runs.remove(jobId)
         }
     }
@@ -156,7 +152,6 @@ class PrecacheJobRegistry(
     private suspend fun extractAndCacheLinks(
         jobId: Long,
         job: PrecacheJob,
-        runtime: IBrowserRuntime,
         eventFlow: MutableSharedFlow<IPrecacheService.PrecacheEvent>
     ) {
         val visitedUrls = ConcurrentHashMap.newKeySet<String>()
@@ -180,7 +175,6 @@ class PrecacheJobRegistry(
             .processLinks(
                 jobId = jobId,
                 job = job,
-                runtime = runtime,
                 visitedUrls = visitedUrls,
                 processedCount = processedCount,
                 discoveredLinksFlow = discoveredLinksFlow
@@ -226,7 +220,6 @@ class PrecacheJobRegistry(
     private fun Flow<String>.processLinks(
         jobId: Long,
         job: PrecacheJob,
-        runtime: IBrowserRuntime,
         visitedUrls: MutableSet<String>,
         processedCount: AtomicInteger,
         discoveredLinksFlow: MutableSharedFlow<String>
@@ -248,7 +241,7 @@ class PrecacheJobRegistry(
                 }
 
                 // Process URL and collect events
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, runtime)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl)
                     .collect { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {

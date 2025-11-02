@@ -43,8 +43,7 @@ class MarkdownConversionAgentAdkImplTest : KoinTest {
         ]
     )
     fun `converts webpage to markdown`(url: String) = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        try {
+        browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
             val context = browser.createContext()
             val page = context.newPage()
@@ -57,13 +56,11 @@ class MarkdownConversionAgentAdkImplTest : KoinTest {
                 screenshotBytes = screenshot.bytes,
                 html = html
             )
-            
+
             val output = agent.generate(input)
 
             assertTrue(output.markdown.isNotBlank(), "Markdown output should not be blank")
             assertTrue(output.markdown.length > 50, "Markdown should contain substantial content")
-        } finally {
-            runtime.close()
         }
     }
 }

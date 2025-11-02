@@ -33,14 +33,15 @@ class WebpageExtractionServiceTest : KoinTest {
         ]
     )
     fun `extract webpage text`(url: String) = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        val browser = runtime.createBrowser()
-        val context = browser.createContext()
-        val page = context.newPage()
+        browserRuntimePool.acquireRuntime { runtime ->
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
+            val page = context.newPage()
 
-        page.navigate(url)
-        val text = webpageExtractionService.extractWebpage(page)
+            page.navigate(url)
+            val text = webpageExtractionService.extractWebpage(page)
 
-        assertTrue(text.length > 200)
+            assertTrue(text.length > 200)
+        }
     }
 }

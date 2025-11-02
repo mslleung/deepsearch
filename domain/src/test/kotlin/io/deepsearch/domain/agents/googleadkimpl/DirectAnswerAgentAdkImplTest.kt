@@ -51,8 +51,7 @@ class DirectAnswerAgentAdkImplTest : KoinTest {
     @ParameterizedTest
     @MethodSource("testCases")
     fun `generates direct answer for webpage query`(url: String, query: String) = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        try {
+        browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
             val context = browser.createContext()
             val page = context.newPage()
@@ -75,8 +74,6 @@ class DirectAnswerAgentAdkImplTest : KoinTest {
 
             println("Query: $query")
             println("Answer: ${output.answer}")
-        } finally {
-            runtime.close()
         }
     }
 }

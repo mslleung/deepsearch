@@ -35,21 +35,23 @@ class WebpageExtractionServiceBenchmarkTest : KoinTest {
         ]
     )
     fun `benchmark webpage extraction performance`(url: String) = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        val browser = runtime.createBrowser()
-        val context = browser.createContext()
-        val page = context.newPage()
+        browserRuntimePool.acquireRuntime { runtime ->
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
+            val page = context.newPage()
 
-        page.navigate(url)
+            page.navigate(url)
 
-        val extractionTime = measureTimeMillis {
-            withContext(Dispatchers.IO) {
-                val text = webpageExtractionService.extractWebpage(page)
-                assertTrue(text.length > 200)
+            val extractionTime = measureTimeMillis {
+                withContext(Dispatchers.IO) {
+                    val text = webpageExtractionService.extractWebpage(page)
+                    assertTrue(text.length > 200)
+                }
             }
-        }
 
-        println("Extraction time for $url: ${extractionTime}ms")
+            println("Extraction time for $url: ${extractionTime}ms")
+
+        }
     }
 }
 

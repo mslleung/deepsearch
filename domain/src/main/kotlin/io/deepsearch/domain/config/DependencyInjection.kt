@@ -13,6 +13,7 @@ import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.JwtService
+import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -22,13 +23,12 @@ import org.koin.module.requestScope
 val domainModule = module {
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
     singleOf(::DefaultDispatcherProvider) bind IDispatcherProvider::class
-    
+
     // OCR services
-    singleOf(::TesseractPoolImpl) bind ITesseractPool::class
+    singleOf(::BrowserRuntimePool) { createdAtStart() } bind IBrowserRuntimePool::class
+    singleOf(::TesseractPoolImpl) { createdAtStart() } bind ITesseractPool::class
 
     requestScope {
-        scopedOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
-
         // domain agents (request scoped)
         scopedOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
         scopedOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class

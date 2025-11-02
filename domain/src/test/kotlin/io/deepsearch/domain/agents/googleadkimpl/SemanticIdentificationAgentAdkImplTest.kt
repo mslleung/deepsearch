@@ -45,20 +45,20 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
         // Verify resources are loaded
         assertTrue(exampleScreenshot.isNotEmpty(), "Screenshot should be loaded")
         assertTrue(exampleHtml.isNotBlank(), "HTML should be loaded")
-        
+
         val input = SemanticIdentificationInput(
             screenshotBytes = exampleScreenshot,
             mimetype = ImageMimeType.WEBP,
             html = exampleHtml
         )
         val output = agent.generate(input)
-        val hasElements = output.elements.header != null || 
-            output.elements.footer != null || 
-            output.elements.navSidebar != null || 
-            output.elements.breadcrumb != null ||
-            output.elements.cookieBanner != null ||
-            output.elements.adBanners.isNotEmpty() ||
-            output.elements.popups.isNotEmpty()
+        val hasElements = output.elements.header != null ||
+                output.elements.footer != null ||
+                output.elements.navSidebar != null ||
+                output.elements.breadcrumb != null ||
+                output.elements.cookieBanner != null ||
+                output.elements.adBanners.isNotEmpty() ||
+                output.elements.popups.isNotEmpty()
         assertTrue(!hasElements, "Simple example page should not have semantic elements")
     }
 
@@ -71,8 +71,7 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
         ]
     )
     fun `should identify navigation elements`(url: String) = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        try {
+        browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
             val context = browser.createContext()
             val page = context.newPage()
@@ -85,17 +84,15 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
                 html = page.getFullHtml()
             )
             val output = agent.generate(input)
-            
-            val hasElements = output.elements.header != null || 
-                output.elements.footer != null || 
-                output.elements.navSidebar != null || 
-                output.elements.breadcrumb != null ||
-                output.elements.cookieBanner != null ||
-                output.elements.adBanners.isNotEmpty() ||
-                output.elements.popups.isNotEmpty()
+
+            val hasElements = output.elements.header != null ||
+                    output.elements.footer != null ||
+                    output.elements.navSidebar != null ||
+                    output.elements.breadcrumb != null ||
+                    output.elements.cookieBanner != null ||
+                    output.elements.adBanners.isNotEmpty() ||
+                    output.elements.popups.isNotEmpty()
             assertTrue(hasElements, "OT&P webpage should have semantic elements")
-        } finally {
-            runtime.close()
         }
     }
 }

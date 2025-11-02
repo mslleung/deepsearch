@@ -37,8 +37,7 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
         ]
     )
     fun `identifies a single table from webpage HTML`(url: String) = runTest(testCoroutineDispatcher) {
-        val runtime = browserRuntimePool.acquireRuntime()
-        try {
+        browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
             val context = browser.createContext()
             val page = context.newPage()
@@ -54,8 +53,6 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
             val output = agent.generate(input)
 
             assertEquals(1, output.tables.size, "Should identify exactly one table")
-        } finally {
-            runtime.close()
         }
     }
 }
