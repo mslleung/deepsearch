@@ -147,6 +147,7 @@ class WebpageExtractionService(
 
     private suspend fun replaceTablesWithTexts(webpage: IBrowserPage) = coroutineScope {
         // Table processing: identify tables from HTML and interpret them to markdown
+        val url = webpage.getUrl()
         val fullHtml = webpage.getFullHtml()
         val fullScreenshot = webpage.takeFullPageScreenshot()
         val tables = tableIdentificationService.identifyTables(
@@ -158,15 +159,21 @@ class WebpageExtractionService(
         )
 
         // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)
-        val tableInputs = tables.map { table ->
-            val elementScreenshot = webpage.getElementScreenshotByCssSelector(table.cssSelector)
-            val elementHtml = webpage.getElementHtmlByCssSelector(table.cssSelector)
-            table.cssSelector to TableInterpretationInput(
-                screenshotBytes = elementScreenshot.bytes,
-                mimetype = elementScreenshot.mimeType,
-                auxiliaryInfo = table.auxiliaryInfo,
-                html = elementHtml
-            )
+        val tableInputs = tables.mapNotNull { table ->
+            try {
+                val elementScreenshot = webpage.getElementScreenshotByCssSelector(table.cssSelector)
+                val elementHtml = webpage.getElementHtmlByCssSelector(table.cssSelector)
+                table.cssSelector to TableInterpretationInput(
+                    screenshotBytes = elementScreenshot.bytes,
+                    mimetype = elementScreenshot.mimeType,
+                    auxiliaryInfo = table.auxiliaryInfo,
+                    html = elementHtml
+                )
+            } catch (e: Exception) {
+                logger.error("Failed to extract table at URL: {} with CSS selector '{}': {}", 
+                    url, table.cssSelector, e.message)
+                null
+            }
         }
 
         // Interpret tables in parallel (LLM calls can be parallelized)
