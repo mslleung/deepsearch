@@ -40,7 +40,7 @@ class MultiIconInterpreterAgentAdkImpl : IMultiIconInterpreterAgent {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     
     companion object {
-        private const val BATCH_SIZE = 50
+        private const val BATCH_SIZE = 25
     }
 
     private val outputSchema: Schema = Schema.builder()
