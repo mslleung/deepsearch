@@ -17,6 +17,7 @@ import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.IPdfToMarkdownAgent
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
+import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.ITableInterpretationAgent
@@ -37,6 +38,7 @@ import io.deepsearch.domain.agents.googleadkimpl.NavigationElementIdentification
 import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PopupContainerIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.QueryBreakdownAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.SemanticIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.TableInterpretationAgentAdkImpl
@@ -70,6 +72,7 @@ private val domainCommonTestModule = module {
     singleOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
     singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
     singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
+    singleOf(::QueryBreakdownAgentAdkImpl) bind IQueryBreakdownAgent::class
     singleOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
     singleOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class

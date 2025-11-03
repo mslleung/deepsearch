@@ -8,8 +8,10 @@ import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.domain.agents.AggregateSearchResultsInput
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
+import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.QueryExpansionAgentInput
+import io.deepsearch.domain.agents.QueryBreakdownAgentInput
 import io.deepsearch.domain.agents.StreamingAnswerInput
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
@@ -49,6 +51,7 @@ class AgenticBrowserSearchOrchestrator(
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
     private val queryExpansionAgent: IQueryExpansionAgent,
+    private val queryBreakdownAgent: IQueryBreakdownAgent,
     private val aggregateSearchResultsAgent: IAggregateSearchResultsAgent,
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
@@ -61,40 +64,89 @@ class AgenticBrowserSearchOrchestrator(
     override suspend fun execute(searchQuery: SearchQuery): SearchResult = withContext(dispatchers.io) {
         val result: SearchResult
         val executionTime = measureTimeMillis {
-            // Expand the query into multiple sub-queries
-            logger.info("Expanding query: {}", searchQuery.query)
-            val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
-            val expandedQueries = expansionOutput.expandedQueries
+            result = executeSearchForQuery(searchQuery)
+//            // Break down the query into fulfillment requirements
+//            logger.info("Breaking down query: {}", searchQuery.query)
+//            val breakdownOutput = queryBreakdownAgent.generate(QueryBreakdownAgentInput(searchQuery))
+//            val breakdownPoints = breakdownOutput.breakdownPoints
+//
+//            logger.info("Query broken down into {} requirements", breakdownPoints.size)
+//
+//            // If 5 or fewer points, execute as a single query without chunking
+//            if (breakdownPoints.size <= 5) {
+//                logger.info("5 or fewer requirements, executing as single query")
+//                val formattedQuery = breakdownPoints.mapIndexed { index, point ->
+//                    "${index + 1}. $point"
+//                }.joinToString("\n")
+//                val combinedSearchQuery = SearchQuery(formattedQuery, searchQuery.url, searchQuery.sitemapUrl)
+//                result = executeSearchForQuery(combinedSearchQuery)
+//                return@measureTimeMillis
+//            }
+//
+//            // Chunk points into groups of 5 and execute in parallel
+//            val chunks = breakdownPoints.chunked(5)
+//            logger.info("Chunking {} requirements into {} groups of max 5", breakdownPoints.size, chunks.size)
+//
+//            val chunkSearchQueries = chunks.map { chunk ->
+//                val formattedQuery = chunk.mapIndexed { index, point ->
+//                    "${index + 1}. $point"
+//                }.joinToString("\n")
+//                SearchQuery(formattedQuery, searchQuery.url, searchQuery.sitemapUrl)
+//            }
+//
+//            logger.info("Executing {} chunked queries in parallel", chunkSearchQueries.size)
+//            val searchResults = chunkSearchQueries.map { query ->
+//                async {
+//                    executeSearchForQuery(query)
+//                }
+//            }.awaitAll()
+//
+//            // Aggregate results from all chunks
+//            logger.info("Aggregating results from {} chunks", searchResults.size)
+//            val aggregationOutput = aggregateSearchResultsAgent.generate(
+//                AggregateSearchResultsInput(
+//                    searchQuery = searchQuery,
+//                    searchResults = searchResults
+//                )
+//            )
+//
+//            result = aggregationOutput.aggregatedResult
 
-            logger.info("Query expanded into {} sub-queries", expandedQueries.size)
-
-            // If only one query, execute directly without aggregation
-            if (expandedQueries.size == 1) {
-                logger.info("Single query after expansion, executing directly")
-                result = executeSearchForQuery(expandedQueries[0])
-                return@measureTimeMillis
-            }
-
-            // Execute all expanded queries in parallel
-            logger.info("Executing {} queries in parallel", expandedQueries.size)
-            val searchResults = withContext(dispatchers.io) {
-                expandedQueries.map { query ->
-                    async {
-                        executeSearchForQuery(query)
-                    }
-                }.awaitAll()
-            }
-
-            // Aggregate results from all sub-queries
-            logger.info("Aggregating results from {} sub-queries", searchResults.size)
-            val aggregationOutput = aggregateSearchResultsAgent.generate(
-                AggregateSearchResultsInput(
-                    searchQuery = searchQuery,
-                    searchResults = searchResults
-                )
-            )
-
-            result = aggregationOutput.aggregatedResult
+            // COMMENTED OUT: Query expansion logic (replaced with query breakdown)
+            // // Expand the query into multiple sub-queries
+            // logger.info("Expanding query: {}", searchQuery.query)
+            // val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
+            // val expandedQueries = expansionOutput.expandedQueries
+            //
+            // logger.info("Query expanded into {} sub-queries", expandedQueries.size)
+            //
+            // // If only one query, execute directly without aggregation
+            // if (expandedQueries.size == 1) {
+            //     logger.info("Single query after expansion, executing directly")
+            //     result = executeSearchForQuery(expandedQueries[0])
+            //     return@measureTimeMillis
+            // }
+            //
+            // // Execute all expanded queries in parallel
+            // logger.info("Executing {} queries in parallel", expandedQueries.size)
+            // val searchResults = withContext(dispatchers.io) {
+            //     expandedQueries.map { query ->
+            //         async {
+            //             executeSearchForQuery(query)
+            //         }
+            //     }.awaitAll()
+            // }
+            //
+            // // Aggregate results from all sub-queries
+            // logger.info("Aggregating results from {} sub-queries", searchResults.size)
+            // val aggregationOutput = aggregateSearchResultsAgent.generate(
+            //     AggregateSearchResultsInput(
+            //         searchQuery = searchQuery,
+            //         searchResults = searchResults
+            //     )
+            // )
+            //
+            // result = aggregationOutput.aggregatedResult
         }
 
         logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
@@ -407,7 +459,7 @@ class AgenticBrowserSearchOrchestrator(
                         content = allMarkdowns.joinToString("\n\n---\n\n"),
                         sources = allUrls
                     )
-                    
+
                     resultDeferred.complete(result)  // Signal immediately
                     emit(result)
                     false  // Stop processing more batches
@@ -432,7 +484,7 @@ class AgenticBrowserSearchOrchestrator(
                 content = allMarkdowns.joinToString("\n\n---\n\n"),
                 sources = allUrls
             )
-            
+
             resultDeferred.complete(result)  // Signal immediately
             emit(result)
         } catch (e: Exception) {

@@ -37,6 +37,7 @@ val domainModule = module {
         scopedOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
         scopedOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
         scopedOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
+        scopedOf(::QueryBreakdownAgentAdkImpl) bind IQueryBreakdownAgent::class
         scopedOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
         scopedOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
         scopedOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
