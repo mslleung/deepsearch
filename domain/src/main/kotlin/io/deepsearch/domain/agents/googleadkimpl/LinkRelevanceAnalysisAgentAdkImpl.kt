@@ -22,6 +22,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.net.URI
 
 /**
  * An agent that analyzes HTML to identify links relevant to a query.
@@ -158,9 +159,10 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
      */
     private fun extractBaseDomain(url: String): String? {
         return try {
-            val uri = java.net.URI(url)
-            val scheme = uri.scheme ?: return null
-            val host = uri.host ?: return null
+            // Use java.net.URL which is more lenient with special characters
+            val parsedUrl = URI.create(url).toURL()
+            val scheme = parsedUrl.protocol ?: return null
+            val host = parsedUrl.host ?: return null
             "$scheme://$host"
         } catch (e: Exception) {
             logger.warn("Failed to parse URL for domain extraction: {}", url, e)
