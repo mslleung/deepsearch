@@ -30,10 +30,10 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
     @ValueSource(
         strings = [
 //            "https://example.com/",
-//            "https://www.otandp.com/body-check/",
+            "https://www.otandp.com/body-check/",
 //            "https://sleekflow.io/pricing",
 //            "https://mybeame.com/beame-student-discount",
-            "https://www.otandp.com/body-check/online-appointment?selected_medical_package=Standard+Package&__hstc=147241320.301ff111340fc709c07be556781a0457.1761411708083.1761411708083.1761411708083.1&__hssc=147241320.1.1761411708083&__hsfp=1024023444&hsCtaTracking=4952e2f6-6874-4361-895b-b0cf7a596459%7C26dca732-a055-4f46-84dd-7389e2813263"
+//            "https://www.otandp.com/body-check/online-appointment?selected_medical_package=Standard+Package&__hstc=147241320.301ff111340fc709c07be556781a0457.1761411708083.1761411708083.1761411708083.1&__hssc=147241320.1.1761411708083&__hsfp=1024023444&hsCtaTracking=4952e2f6-6874-4361-895b-b0cf7a596459%7C26dca732-a055-4f46-84dd-7389e2813263"
         ]
     )
     fun `identifies a single table from webpage HTML`(url: String) = runTest(testCoroutineDispatcher) {

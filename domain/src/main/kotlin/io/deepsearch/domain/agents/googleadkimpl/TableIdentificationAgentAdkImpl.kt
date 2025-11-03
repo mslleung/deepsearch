@@ -30,24 +30,25 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("List of CSS selectors for table roots")
+        .description("List of HTML snippets for table roots")
         .properties(
             mapOf(
                 "tables" to Schema.builder()
                     .type("ARRAY")
-                    .description("Array of CSS selector strings pointing to table roots and captions")
+                    .description("Array of HTML snippet strings for table root elements")
                     .items(
                         Schema.builder()
                             .type("OBJECT")
                             .properties(
                                 mapOf(
-                                    "cssSelector" to Schema.builder().type("STRING").description("The CSS selector to the table.")
+                                    "htmlSnippet" to Schema.builder().type("STRING")
+                                        .description("The HTML opening tag with attributes of the table root element (e.g., '<table class=\"data-table\" id=\"results\">').")
                                         .build(),
                                     "auxiliaryInfo" to Schema.builder().type("STRING")
                                         .description("The auxiliary info for the table.").build()
                                 )
                             )
-                            .required(listOf("cssSelector", "auxiliaryInfo"))
+                            .required(listOf("htmlSnippet", "auxiliaryInfo"))
                             .build()
                     )
                     .build()
@@ -58,7 +59,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableIdentificationAgent")
-        description("Identify tables in webpage using screenshot and cleaned HTML, return CSS selectors to their root containers")
+        description("Identify tables in webpage using screenshot and cleaned HTML, return HTML snippets of their root containers")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -75,25 +76,23 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         )
         instruction(
             """
-            Your task is to identify all tables in the provided webpage and generate CSS selectors to their root containers.
+            Your task is to identify all tables in the provided webpage and extract HTML snippets of their root containers.
 
             Inputs:
             - A screenshot of the full webpage
             - Cleaned HTML structure of the webpage
 
             Instructions:
-            - Analyze both the screenshot and HTML to identify every table. A "table" is any data presented in a structured, grid-like format (rows and columns).
+            - Analyze both the screenshot and HTML to identify every table in the webpage
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
-            - For every table you find, create a CSS selector that targets the ROOT CONTAINER element that wraps the entire table.
-            - The CSS selectors should be as simplistic and direct as possible. It should contain no more than the bare minimal to uniquely identify the table.
-            - Prefer using IDs when available (e.g., "#tableId"), then classes (e.g., ".table-class"), then element type with nth-child if needed (e.g., "table:nth-child(2)").
+            - For every table you find, extract the entire HTML snippet with all its attributes (e.g., '<table class="data-table" id="results">').
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
             Expected output shape:
             {
                 "tables": [
                     {
-                        "cssSelector": "string",
+                        "htmlSnippet": "string",
                         "auxiliaryInfo": "string"
                     }
                 ]
@@ -107,8 +106,85 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     @Serializable
     private data class TableIdentificationResponse(
-        val tables: List<TableIdentification>
+        val tables: List<LlmTableResult>
     )
+
+    @Serializable
+    private data class LlmTableResult(
+        val htmlSnippet: String,
+        val auxiliaryInfo: String
+    )
+
+    /**
+     * Constructs CSS selectors from an HTML snippet by parsing the root element's attributes
+     * and finding all matching elements in the full HTML DOM.
+     * 
+     * @param htmlSnippet The HTML opening tag with attributes (e.g., '<table class="data" id="results">')
+     * @param fullHtml The full HTML document to search within
+     * @return List of CSS selectors, one for each matching element. Empty list if snippet is invalid.
+     */
+    private fun constructCssSelectorsFromSnippet(htmlSnippet: String, fullHtml: String): List<String> {
+        return try {
+            // Parse the snippet to extract the root element's attributes
+            val snippetDoc = Jsoup.parseBodyFragment(htmlSnippet)
+            val rootElement = snippetDoc.body().child(0)
+            
+            val tagName = rootElement.tagName()
+            val id = rootElement.attr("id")
+            val classes = rootElement.classNames()
+            
+            // Build base CSS selector
+            val baseSelector = when {
+                id.isNotBlank() -> "#$id"
+                classes.isNotEmpty() -> "$tagName.${classes.joinToString(".")}"
+                else -> tagName
+            }
+            
+            logger.debug("Constructed base selector: {} from snippet: {}", baseSelector, htmlSnippet)
+            
+            // Parse full HTML and find all matching elements
+            val fullDoc = Jsoup.parse(fullHtml)
+            val matchingElements = fullDoc.select(baseSelector)
+            
+            if (matchingElements.isEmpty()) {
+                logger.warn("No elements found in full HTML for selector: {}", baseSelector)
+                return emptyList()
+            }
+            
+            // If single match, return the base selector
+            if (matchingElements.size == 1) {
+                logger.debug("Single match found for selector: {}", baseSelector)
+                return listOf(baseSelector)
+            }
+            
+            // Multiple matches: construct indexed selectors using :nth-of-type()
+            logger.debug("Found {} matches for selector: {}, creating indexed selectors", matchingElements.size, baseSelector)
+            return matchingElements.mapIndexed { index, element ->
+                // Find the 1-based position among siblings of the same type
+                val parent = element.parent()
+                if (parent != null) {
+                    val siblingsOfSameType = parent.children().filter { it.tagName() == element.tagName() }
+                    val position = siblingsOfSameType.indexOf(element) + 1 // 1-based
+                    
+                    // Construct selector with parent context if needed for uniqueness
+                    if (id.isNotBlank()) {
+                        // ID should be unique, but if we found multiple, use nth-of-type
+                        "$tagName:nth-of-type($position)#$id"
+                    } else if (classes.isNotEmpty()) {
+                        "$tagName.${classes.joinToString(".")}:nth-of-type($position)"
+                    } else {
+                        "$tagName:nth-of-type($position)"
+                    }
+                } else {
+                    // No parent (shouldn't happen), use simple nth-of-type
+                    "$baseSelector:nth-of-type(${index + 1})"
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to construct CSS selector from HTML snippet: {}", htmlSnippet, e)
+            emptyList()
+        }
+    }
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
         logger.debug("Table identification for HTML (screenshot: {} bytes)", input.screenshotBytes.size)
@@ -159,9 +235,31 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
         val response = Json.decodeFromStringWithCodeBlocks<TableIdentificationResponse>(llmResponse)
 
-        logger.debug("Table identification found {} tables", response.tables.size)
+        logger.debug("Table identification found {} HTML snippets from LLM", response.tables.size)
 
-        return TableIdentificationOutput(tables = response.tables)
+        // Convert HTML snippets to CSS selectors and expand if multiple matches
+        val tableIdentifications = response.tables.flatMap { llmResult ->
+            val cssSelectors = constructCssSelectorsFromSnippet(llmResult.htmlSnippet, input.html)
+            
+            if (cssSelectors.isEmpty()) {
+                logger.warn("Skipping table with snippet '{}' - could not construct valid CSS selector", 
+                    llmResult.htmlSnippet.take(100))
+                emptyList()
+            } else {
+                cssSelectors.map { cssSelector ->
+                    TableIdentification(
+                        htmlSnippet = llmResult.htmlSnippet,
+                        cssSelector = cssSelector,
+                        auxiliaryInfo = llmResult.auxiliaryInfo
+                    )
+                }
+            }
+        }
+
+        logger.debug("Table identification produced {} table identifications (after expanding duplicates)", 
+            tableIdentifications.size)
+
+        return TableIdentificationOutput(tables = tableIdentifications)
     }
 
     private fun cleanHtml(rawHtml: String): String {
