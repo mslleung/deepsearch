@@ -76,19 +76,15 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             """
             You are a streaming answer agent that builds comprehensive answers incrementally as new markdown content arrives.
             
-            Your task:
-            1. Review the current answer (if any) and the new batch of markdown content
-            2. Extract relevant information from the new markdowns that helps answer the user's query
-            3. Update the answer by incorporating new relevant information
-            4. Determine if the answer is now complete enough to fully address the user's query
-            
             Instructions for answer updates:
             - If there's no current answer, create an initial answer from the markdown batch
             - If there's a current answer, enhance it with any new relevant information from the batch
+            - If the new batch contains no relevant information, return the current answer unchanged
+            
+            Answer quality:
+            - The answer should be as comprehensive and structured as possible
             - Only include information that directly addresses the user's query
             - Do not invent information not present in the content
-            - Maintain a clear, well-structured response
-            - If the new batch contains no relevant information, return the current answer unchanged
             
             Instructions for completeness determination (IMPORTANT - be conservative):
             - Set isComplete=true ONLY if you are confident the answer comprehensively addresses all aspects of the user's query
@@ -147,7 +143,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
         )
         instruction(
             """
-            You are an answer combining agent that synthesizes multiple partial answers into one coherent comprehensive answer in response to q query.
+            You are an answer combining agent that synthesizes multiple partial answers into one coherent comprehensive answer in response to a query.
             
             Your task:
             1. Review the current answer (if any) and multiple partial answers from different sources
