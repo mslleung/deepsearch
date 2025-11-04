@@ -94,11 +94,13 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
             Guidelines:
             - Identify the following if any:
+                (Max 1 of each)
                 - header: The top header bar of the webpage, usually for navigation
                 - footer: The bottom footer bar of the webpage
                 - navSidebar: The navigational sidebar of the current main content
                 - breadcrumb: The navigational breadcrumb
                 - cookieBanner: The cookie banner dialog
+                (Can be multiple)
                 - adBanners: Elements containing ads
                 - popups: Popup dialogs that cover the main content and are visually interrupting to the user
             - Do not include the main content of the webpage. Only include elements that contain no critical information in the webpage.
@@ -113,7 +115,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
             Output structure:
             {
-              "header": { "xpath": string, "note": string }?,
+              "header": { "xpath": string, "note": string } | null,
               "footer": { "xpath": string, "note": string } | null,
               "navSidebar": { "xpath": string, "note": string } | null,
               "breadcrumb": { "xpath": string, "note": string } | null,
