@@ -34,7 +34,7 @@ import javax.imageio.ImageIO
  * Given multiple images that may contain text (including tables), extract the text
  * and preserve structure (especially for tables).
  * This agent is designed to process multiple images efficiently by:
- * - Batching images into groups of up to 50 per LLM call
+ * - Batching images into groups of up to 5 per LLM call
  * - Processing batches in parallel to maximize throughput
  * - Detecting and rejecting oversized images before LLM processing
  */
@@ -43,7 +43,7 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     companion object {
-        private const val BATCH_SIZE = 25
+        private const val BATCH_SIZE = 5
         private const val MAX_PIXEL_COUNT = 33_000_000L // ~33 million pixels (e.g., 6000×5500)
     }
 

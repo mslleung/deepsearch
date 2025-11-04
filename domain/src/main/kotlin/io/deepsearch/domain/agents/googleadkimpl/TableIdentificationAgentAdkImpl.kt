@@ -42,7 +42,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
                             .properties(
                                 mapOf(
                                     "htmlSnippet" to Schema.builder().type("STRING")
-                                        .description("The HTML opening tag with attributes of the table root element (e.g., '<table class=\"data-table\" id=\"results\">').")
+                                        .description("The complete HTML of the table element, including opening tag, all content, and closing tag (e.g., '<table class=\"data-table\" id=\"results\"><tr><td>...</td></tr></table>').")
                                         .build(),
                                     "auxiliaryInfo" to Schema.builder().type("STRING")
                                         .description("The auxiliary info for the table.").build()
@@ -85,7 +85,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             Instructions:
             - Analyze both the screenshot and HTML to identify every table in the webpage
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
-            - For every table you find, extract the entire table HTML snippet with all its attributes (e.g., '<table class="data-table" id="results"><div>...</div></table>').
+            - For every table you find, extract the complete HTML of the table element (opening tag + all nested content + closing tag). This must include the full table structure, not just the opening tag or first row.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
             Expected output shape:
@@ -117,9 +117,9 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     /**
      * Constructs CSS selectors from an HTML snippet by parsing the root element's attributes
-     * and finding all matching elements in the full HTML DOM.
+     * and finding all matching elements in the full HTML DOM using hierarchical parent context.
      * 
-     * @param htmlSnippet The HTML opening tag with attributes (e.g., '<table class="data" id="results">')
+     * @param htmlSnippet The complete HTML of the table element
      * @param fullHtml The full HTML document to search within
      * @return List of CSS selectors, one for each matching element. Empty list if snippet is invalid.
      */
@@ -133,14 +133,10 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             val id = rootElement.attr("id")
             val classes = rootElement.classNames()
             
-            // Build base CSS selector
-            val baseSelector = when {
-                id.isNotBlank() -> "#$id"
-                classes.isNotEmpty() -> "$tagName.${classes.joinToString(".")}"
-                else -> tagName
-            }
+            // Build base CSS selector for the target element
+            val baseSelector = buildBaseSelector(tagName, id, classes)
             
-            logger.debug("Constructed base selector: {} from snippet: {}", baseSelector, htmlSnippet)
+            logger.debug("Constructed base selector: {} from snippet", baseSelector)
             
             // Parse full HTML and find all matching elements
             val fullDoc = Jsoup.parse(fullHtml)
@@ -157,33 +153,127 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
                 return listOf(baseSelector)
             }
             
-            // Multiple matches: construct indexed selectors using :nth-of-type()
-            logger.debug("Found {} matches for selector: {}, creating indexed selectors", matchingElements.size, baseSelector)
-            return matchingElements.mapIndexed { index, element ->
-                // Find the 1-based position among siblings of the same type
-                val parent = element.parent()
-                if (parent != null) {
-                    val siblingsOfSameType = parent.children().filter { it.tagName() == element.tagName() }
-                    val position = siblingsOfSameType.indexOf(element) + 1 // 1-based
-                    
-                    // Construct selector with parent context if needed for uniqueness
-                    if (id.isNotBlank()) {
-                        // ID should be unique, but if we found multiple, use nth-of-type
-                        "$tagName:nth-of-type($position)#$id"
-                    } else if (classes.isNotEmpty()) {
-                        "$tagName.${classes.joinToString(".")}:nth-of-type($position)"
-                    } else {
-                        "$tagName:nth-of-type($position)"
-                    }
-                } else {
-                    // No parent (shouldn't happen), use simple nth-of-type
-                    "$baseSelector:nth-of-type(${index + 1})"
-                }
+            // Multiple matches: construct hierarchical selectors using parent chain context
+            logger.debug("Found {} matches for selector: {}, creating hierarchical selectors", matchingElements.size, baseSelector)
+            return matchingElements.mapNotNull { element ->
+                buildHierarchicalSelector(element, fullDoc)
             }
         } catch (e: Exception) {
-            logger.error("Failed to construct CSS selector from HTML snippet: {}", htmlSnippet, e)
+            logger.error("Failed to construct CSS selector from HTML snippet: {}", htmlSnippet.take(100), e)
             emptyList()
         }
+    }
+    
+    /**
+     * Builds a base CSS selector for an element using its tag, id, and classes.
+     */
+    private fun buildBaseSelector(tagName: String, id: String, classes: Set<String>): String {
+        return when {
+            id.isNotBlank() -> "#$id"
+            classes.isNotEmpty() -> "$tagName.${classes.joinToString(".")}"
+            else -> tagName
+        }
+    }
+    
+    /**
+     * Builds a hierarchical CSS selector for an element by walking up the DOM tree
+     * to find unique ancestors and constructing a specific path.
+     * 
+     * Strategy:
+     * 1. Walk up to 5 levels to find a unique ancestor (with id or distinctive classes)
+     * 2. Build a selector path from that ancestor to the target element
+     * 3. Include positional selectors (:nth-of-type or :nth-child) when needed for uniqueness
+     * 
+     * @param element The target element to build a selector for
+     * @param doc The full document (for validating selector uniqueness)
+     * @return A hierarchical CSS selector, or null if unable to construct a unique one
+     */
+    private fun buildHierarchicalSelector(element: Element, doc: Document): String? {
+        val selectorParts = mutableListOf<String>()
+        var currentElement: Element? = element
+        var foundUniqueAncestor = false
+        val maxLevels = 5
+        var level = 0
+        
+        // Walk up the tree to build the selector path
+        while (currentElement != null && level < maxLevels) {
+            val tagName = currentElement.tagName()
+            val id = currentElement.attr("id")
+            val classes = currentElement.classNames()
+            
+            // Build selector part for this element
+            val selectorPart = when {
+                // If element has an ID, use it as an anchor point
+                id.isNotBlank() -> {
+                    foundUniqueAncestor = true
+                    "#$id"
+                }
+                // If element has classes, include them
+                classes.isNotEmpty() -> {
+                    val classSelector = "$tagName.${classes.joinToString(".")}"
+                    // Check if this selector is unique at this level
+                    val parent = currentElement.parent()
+                    if (parent != null) {
+                        val siblingsMatching = parent.children().filter { sibling ->
+                            sibling.tagName() == tagName && sibling.classNames() == classes
+                        }
+                        if (siblingsMatching.size > 1) {
+                            // Need positional selector
+                            val position = siblingsMatching.indexOf(currentElement) + 1
+                            "$classSelector:nth-of-type($position)"
+                        } else {
+                            classSelector
+                        }
+                    } else {
+                        classSelector
+                    }
+                }
+                // No id or classes, use tag with position
+                else -> {
+                    val parent = currentElement.parent()
+                    if (parent != null) {
+                        val siblingsOfSameType = parent.children().filter { it.tagName() == tagName }
+                        if (siblingsOfSameType.size > 1) {
+                            val position = siblingsOfSameType.indexOf(currentElement) + 1
+                            "$tagName:nth-of-type($position)"
+                        } else {
+                            tagName
+                        }
+                    } else {
+                        tagName
+                    }
+                }
+            }
+            
+            selectorParts.add(0, selectorPart)
+            
+            // If we found a unique anchor (ID), stop here
+            if (foundUniqueAncestor) {
+                break
+            }
+            
+            // Move up to parent
+            currentElement = currentElement.parent()
+            level++
+            
+            // Stop at body or html
+            if (currentElement?.tagName() == "body" || currentElement?.tagName() == "html") {
+                break
+            }
+        }
+        
+        // Construct the final selector with " > " combinator for direct child relationships
+        val hierarchicalSelector = selectorParts.joinToString(" > ")
+        
+        // Validate that this selector is unique in the document
+        val matches = doc.select(hierarchicalSelector)
+        if (matches.size != 1) {
+            logger.warn("Hierarchical selector '{}' matches {} elements, expected 1", hierarchicalSelector, matches.size)
+            // Return it anyway, as it's still more specific than the base selector
+        }
+        
+        logger.debug("Built hierarchical selector: {}", hierarchicalSelector)
+        return hierarchicalSelector
     }
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {

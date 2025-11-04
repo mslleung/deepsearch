@@ -53,6 +53,19 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
             val output = agent.generate(input)
 
             assertEquals(1, output.tables.size, "Should identify exactly one table")
+            
+            // Verify that each CSS selector is unique and specific
+            output.tables.forEach { table ->
+                // Parse the HTML to verify the selector matches exactly one element
+                val doc = org.jsoup.Jsoup.parse(html)
+                val matchedElements = doc.select(table.cssSelector)
+                
+                assertEquals(
+                    1, 
+                    matchedElements.size, 
+                    "CSS selector '${table.cssSelector}' should match exactly one element, but matched ${matchedElements.size}"
+                )
+            }
         }
     }
 }

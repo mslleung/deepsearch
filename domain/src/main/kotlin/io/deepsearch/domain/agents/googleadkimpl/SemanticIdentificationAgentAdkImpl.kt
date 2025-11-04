@@ -113,7 +113,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
             Output structure:
             {
-              "header": { "xpath": string, "note": string } | null,
+              "header": { "xpath": string, "note": string }?,
               "footer": { "xpath": string, "note": string } | null,
               "navSidebar": { "xpath": string, "note": string } | null,
               "breadcrumb": { "xpath": string, "note": string } | null,
