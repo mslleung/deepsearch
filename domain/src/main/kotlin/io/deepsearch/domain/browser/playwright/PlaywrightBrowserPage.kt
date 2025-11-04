@@ -13,6 +13,7 @@ import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.io.encoding.Base64
+import kotlin.system.measureTimeMillis
 
 /**
  * Playwright-backed implementation of a browser page.
@@ -48,9 +49,12 @@ class PlaywrightBrowserPage(
     override suspend fun navigate(url: String) {
         logger.debug("Navigate to {}", url)
         apiMutex.withLock {
-            page.navigate(url)
-            // Ensure baseline document readiness before any parsing calls
-            page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+            val navigationTime = measureTimeMillis {
+                page.navigate(url)
+                // Ensure baseline document readiness before any parsing calls
+                page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+            }
+            logger.debug("Navigate to {} took {} ms", url, navigationTime)
         }
     }
 
@@ -60,7 +64,7 @@ class PlaywrightBrowserPage(
             page.screenshot(
                 Page.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
-                    timeout = 5000.0
+                    timeout = 30000.0
                 })
         }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
@@ -73,7 +77,7 @@ class PlaywrightBrowserPage(
                 Page.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
                     fullPage = true
-                    timeout = 5000.0
+                    timeout = 30000.0
                 })
         }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
@@ -92,7 +96,7 @@ class PlaywrightBrowserPage(
             target.screenshot(
                 Locator.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
-                    timeout = 5000.0
+                    timeout = 30000.0
                 }
             )
         }
@@ -108,7 +112,7 @@ class PlaywrightBrowserPage(
             target.screenshot(
                 Locator.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
-                    timeout = 5000.0
+                    timeout = 30000.0
                 }
             )
         }

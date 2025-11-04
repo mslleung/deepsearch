@@ -9,7 +9,7 @@ import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.hours
 
-private const val maxPoolSize: Int = 100
+private const val maxPoolSize: Int = 1000
 private val maxUsageDuration = 1.hours
 private const val standbyMinIdleRuntimes: Int = 5
 

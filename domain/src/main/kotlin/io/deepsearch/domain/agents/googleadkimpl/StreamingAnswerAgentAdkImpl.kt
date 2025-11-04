@@ -82,9 +82,10 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             - If the new batch contains no relevant information, return the current answer unchanged
             
             Answer quality:
-            - The answer should be as comprehensive and structured as possible
+            - The answer should be as comprehensive as possible
             - Only include information that directly addresses the user's query
             - Do not invent information not present in the content
+            - Use markdown styling as applicable, such as headings/list etc.
             
             Instructions for completeness determination (IMPORTANT - be conservative):
             - Set isComplete=true ONLY if you are confident the answer comprehensively addresses all aspects of the user's query

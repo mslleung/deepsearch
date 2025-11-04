@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
 class SearchEndpointTest {
 
     @Test
-    fun `test search endpoint with OT&P body check query`() = testApplication {
+    fun `test search endpoint`() = testApplication {
         environment {
             config = ApplicationConfig("application.yaml")
         }
@@ -69,7 +69,7 @@ class SearchEndpointTest {
 
         // Step 4: Use the API key to make a search request
         val searchRequest = SearchRequest(
-            query = "what is this website about?",
+            query = "Are there any vhis plans?",
             url = "https://www.otandp.com/"
         )
 

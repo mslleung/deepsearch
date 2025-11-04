@@ -102,7 +102,7 @@ class QuerySessionService(
 
     override suspend fun checkBudgetAndMarkIfExceeded(
         sessionId: String,
-        budget: io.deepsearch.domain.models.valueobjects.SearchBudget
+        budget: SearchBudget
     ): Boolean {
         val session = getSessionOrThrow(sessionId)
         val exceeded = session.checkAndApplyBudgetExceeded(budget)
