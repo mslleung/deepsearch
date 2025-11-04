@@ -15,12 +15,14 @@ data class SearchResponse(
     val answer: String,
     val content: String,
     val sources: List<String>,
+    val durationMs: Long,
 )
 
 fun SearchResult.toResponse(): SearchResponse {
     return SearchResponse(
         answer = answer,
         content = content,
-        sources = sources
+        sources = sources,
+        durationMs = durationMs
     )
 }

@@ -17,6 +17,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.system.measureTimeMillis
 
 class SearchController(
     private val searchService: ISearchService,
@@ -78,12 +79,20 @@ class SearchController(
             rateLimitService.recordUsage(apiKey.id!!)
             
             val request = call.receive<SearchRequest>()
-            val searchResult = searchService.searchWebsite(request.query, request.url, request.sitemapUrl)
+            
+            // Measure search duration
+            var searchResult: io.deepsearch.domain.models.valueobjects.SearchResult
+            val durationMs = measureTimeMillis {
+                searchResult = searchService.searchWebsite(request.query, request.url, request.sitemapUrl)
+            }
+            
+            // Add duration to result
+            val resultWithDuration = searchResult.copy(durationMs = durationMs)
             
             // Consume usage after successful search
             subscriptionPlanService.consumeUsage(apiKey.userId)
             
-            call.respond(HttpStatusCode.OK, searchResult.toResponse())
+            call.respond(HttpStatusCode.OK, resultWithDuration.toResponse())
         } catch (e: IllegalArgumentException) {
             logger.warn("Bad request in search: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
