@@ -83,6 +83,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             
             Answer quality:
             - The answer should be as comprehensive as possible
+            - The answer should be standalone and serve as a direct answer to the user query
             - Only include information that directly addresses the user's query
             - Do not invent information not present in the content
             - Use markdown styling as applicable, such as headings/list etc.

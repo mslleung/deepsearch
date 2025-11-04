@@ -154,7 +154,7 @@ class WebpageLinkDiscoveryService(
             val xmlContent = fetchSitemapXml(sitemapUrl)
 
             // Parse XML to extract URLs
-            val urls = parseSitemapXml(xmlContent)
+            val urls = parseSitemapXml(xmlContent).distinct()
 
             logger.debug("Extracted {} URLs from sitemap {}", urls.size, sitemapUrl)
 

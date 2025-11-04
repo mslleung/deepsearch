@@ -188,10 +188,24 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             logger.debug("Filtered anchor tags to base domain: {}", baseDomain)
         }
 
-        // Step 3: Remove form elements (not part of navigational content)
+        // Step 3: Remove duplicate links (keep only first occurrence of each unique href)
+        val seenHrefs = mutableSetOf<String>()
+        doc.select("a[href]").forEach { anchor ->
+            val href = anchor.attr("href")
+            if (href.isNotBlank()) {
+                if (href in seenHrefs) {
+                    anchor.remove()
+                } else {
+                    seenHrefs.add(href)
+                }
+            }
+        }
+        logger.debug("Removed duplicate links, kept {} unique hrefs", seenHrefs.size)
+
+        // Step 4: Remove form elements (not part of navigational content)
         doc.select("form, input, button, select, textarea").remove()
 
-        // Step 4: Remove comments and processing instructions
+        // Step 5: Remove comments and processing instructions
         doc.select("*").forEach { element ->
             val nodesToRemove = element.childNodes().filter { node ->
                 node.nodeName() == "#comment" || node.nodeName() == "#pi"
@@ -199,7 +213,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Step 5: Strip attributes except those useful for link relevance analysis
+        // Step 6: Strip attributes except those useful for link relevance analysis
         // For anchors: keep href (critical) and aria-label (provides context)
         // For other elements: keep only semantic role attributes that indicate navigation structure
         val semanticRoles = setOf(
@@ -228,7 +242,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             }
         }
 
-        // Step 6: Truncate text content to reduce token usage while preserving context
+        // Step 7: Truncate text content to reduce token usage while preserving context
         doc.select("*").forEach { element ->
             element.textNodes().forEach { textNode ->
                 val text = textNode.text().trim()
@@ -238,7 +252,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             }
         }
 
-        // Step 7: Remove empty elements iteratively (but keep anchors even if empty)
+        // Step 8: Remove empty elements iteratively (but keep anchors even if empty)
         var changed = true
         while (changed) {
             changed = false

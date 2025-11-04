@@ -176,15 +176,14 @@ class WebpageExtractionService(
             }
         }
 
-        // Interpret tables in parallel (LLM calls can be parallelized)
-        val replacements = tableInputs
-            .map { (cssSelector, input) ->
-                async(dispatchers.io) {
-                    val markdown = tableInterpretationService.interpretTable(input)
-                    IBrowserPage.CssSelectorReplacementWithText(cssSelector, markdown)
-                }
-            }
-            .awaitAll()
+        // Interpret all tables in batch to reduce concurrent upsert issues
+        val cssSelectors = tableInputs.map { it.first }
+        val inputs = tableInputs.map { it.second }
+        val markdowns = tableInterpretationService.interpretTablesBatch(inputs)
+        
+        val replacements = cssSelectors.zip(markdowns).map { (cssSelector, markdown) ->
+            IBrowserPage.CssSelectorReplacementWithText(cssSelector, markdown)
+        }
 
         webpage.replaceElementsByCssSelectorWithText(replacements)
     }

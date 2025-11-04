@@ -43,7 +43,7 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     companion object {
-        private const val BATCH_SIZE = 50
+        private const val BATCH_SIZE = 25
         private const val MAX_PIXEL_COUNT = 33_000_000L // ~33 million pixels (e.g., 6000×5500)
     }
 

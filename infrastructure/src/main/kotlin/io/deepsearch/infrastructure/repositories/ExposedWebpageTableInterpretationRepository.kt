@@ -7,14 +7,16 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.r2dbc.batchUpsert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
-@OptIn(ExperimentalTime::class)
+@OptIn(ExperimentalTime::class, ExperimentalEncodingApi::class)
 class ExposedWebpageTableInterpretationRepository(
     private val webpageTableInterpretationTable: WebpageTableInterpretationCacheTable
 ) : IWebpageTableInterpretationRepository {
@@ -30,6 +32,22 @@ class ExposedWebpageTableInterpretationRepository(
             it[createdAtEpochMs] = interpretation.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = interpretation.updatedAt.toEpochMilliseconds()
             it[version] = interpretation.version
+        }
+    }
+
+    override suspend fun batchUpsert(interpretations: List<WebpageTableInterpretation>): Unit = suspendTransaction {
+        if (interpretations.isEmpty()) return@suspendTransaction
+
+        webpageTableInterpretationTable.batchUpsert(
+            data = interpretations,
+            keys = arrayOf(webpageTableInterpretationTable.tableDataHash)
+        ) { interpretation ->
+            val hashBase64 = Base64.encode(interpretation.tableDataHash)
+            this[webpageTableInterpretationTable.tableDataHash] = hashBase64
+            this[webpageTableInterpretationTable.markdown] = interpretation.markdown
+            this[webpageTableInterpretationTable.createdAtEpochMs] = interpretation.createdAt.toEpochMilliseconds()
+            this[webpageTableInterpretationTable.updatedAtEpochMs] = interpretation.updatedAt.toEpochMilliseconds()
+            this[webpageTableInterpretationTable.version] = interpretation.version
         }
     }
 

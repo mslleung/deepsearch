@@ -96,7 +96,7 @@ class PlaywrightBrowserPage(
             target.screenshot(
                 Locator.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
-                    timeout = 30000.0
+                    timeout = 3000.0
                 }
             )
         }
@@ -112,7 +112,7 @@ class PlaywrightBrowserPage(
             target.screenshot(
                 Locator.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
-                    timeout = 30000.0
+                    timeout = 3000.0
                 }
             )
         }

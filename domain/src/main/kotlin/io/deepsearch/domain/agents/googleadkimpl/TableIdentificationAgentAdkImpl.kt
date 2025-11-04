@@ -76,7 +76,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         )
         instruction(
             """
-            Your task is to identify all tables in the provided webpage and extract HTML snippets of their root containers.
+            Your task is to identify all tables in the provided webpage and extract their HTML snippets.
 
             Inputs:
             - A screenshot of the full webpage
@@ -85,7 +85,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             Instructions:
             - Analyze both the screenshot and HTML to identify every table in the webpage
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
-            - For every table you find, extract the entire HTML snippet with all its attributes (e.g., '<table class="data-table" id="results">').
+            - For every table you find, extract the entire table HTML snippet with all its attributes (e.g., '<table class="data-table" id="results"><div>...</div></table>').
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
             Expected output shape:
