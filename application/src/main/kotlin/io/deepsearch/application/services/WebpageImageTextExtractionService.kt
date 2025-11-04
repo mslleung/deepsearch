@@ -78,6 +78,8 @@ class WebpageImageTextExtractionService(
 					async { image to !ocrService.extractText(image.bytes, image.mimeType).isEmpty() }
 				}.awaitAll()
 
+				val imagesToCacheWithoutText = mutableListOf<WebpageImage>()
+				
 				ocrResults.forEach { (image, hasText) ->
 					if (hasText) {
 						imagesWithText.add(image)
@@ -85,7 +87,7 @@ class WebpageImageTextExtractionService(
 						logger.debug("No text detected in image by OCR, skipping LLM")
 						imagesWithoutText.add(image)
 						// Cache as having no text
-						webpageImageRepository.upsert(
+						imagesToCacheWithoutText.add(
 							WebpageImage(
 								imageBytesHash = image.bytesHash,
 								extractedText = null
@@ -93,6 +95,10 @@ class WebpageImageTextExtractionService(
 						)
 						cachedResults[Base64.encode(image.bytesHash)] = null
 					}
+				}
+				
+				if (imagesToCacheWithoutText.isNotEmpty()) {
+					webpageImageRepository.batchUpsert(imagesToCacheWithoutText)
 				}
 			}
 
@@ -112,16 +118,15 @@ class WebpageImageTextExtractionService(
                 )
 
                 // Cache results
-                imagesWithText.forEachIndexed { index, image ->
+                val imagesToCache = imagesWithText.mapIndexed { index, image ->
                     val extractedText = extractionOutput.extractions[index].extractedText?.takeIf { it.isNotBlank() }
-                    webpageImageRepository.upsert(
-                        WebpageImage(
-                            imageBytesHash = image.bytesHash,
-                            extractedText = extractedText
-                        )
-                    )
                     cachedResults[Base64.encode(image.bytesHash)] = extractedText
+                    WebpageImage(
+                        imageBytesHash = image.bytesHash,
+                        extractedText = extractedText
+                    )
                 }
+                webpageImageRepository.batchUpsert(imagesToCache)
             }
         }
 

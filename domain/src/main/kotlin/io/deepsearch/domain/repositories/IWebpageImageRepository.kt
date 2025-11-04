@@ -4,5 +4,6 @@ import io.deepsearch.domain.models.entities.WebpageImage
 
 interface IWebpageImageRepository {
     suspend fun upsert(image: WebpageImage)
+    suspend fun batchUpsert(images: List<WebpageImage>)
     suspend fun findByHash(imageBytesHash: ByteArray): WebpageImage?
 }

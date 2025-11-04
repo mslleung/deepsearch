@@ -80,17 +80,16 @@ class WebpageIconInterpretationService(
             )
 
             // Cache results
-            uncachedIcons.forEachIndexed { index, icon ->
+            val iconsToCache = uncachedIcons.mapIndexed { index, icon ->
                 val bytesHash = MessageDigest.getInstance("SHA-256").digest(icon.bytes)
                 val label = interpreterAgentOutput.interpretations[index].label?.takeIf { it.isNotBlank() }
-                webpageIconRepository.upsert(
-                    WebpageIcon(
-                        imageBytesHash = bytesHash,
-                        label = label
-                    )
-                )
                 cachedResults[Base64.encode(bytesHash)] = label
+                WebpageIcon(
+                    imageBytesHash = bytesHash,
+                    label = label
+                )
             }
+            webpageIconRepository.batchUpsert(iconsToCache)
         }
 
         // Return results in original order

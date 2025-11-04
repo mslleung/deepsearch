@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.r2dbc.batchUpsert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
@@ -30,6 +31,22 @@ class ExposedWebpageImageRepository(
             it[createdAtEpochMs] = image.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = image.updatedAt.toEpochMilliseconds()
             it[version] = image.version
+        }
+    }
+
+    override suspend fun batchUpsert(images: List<WebpageImage>): Unit = suspendTransaction {
+        if (images.isEmpty()) return@suspendTransaction
+
+        webpageImageTable.batchUpsert(
+            data = images,
+            keys = arrayOf(webpageImageTable.imageBytesHash)
+        ) { image ->
+            val hashBase64 = Base64.encode(image.imageBytesHash)
+            this[webpageImageTable.imageBytesHash] = hashBase64
+            this[webpageImageTable.extractedText] = image.extractedText
+            this[webpageImageTable.createdAtEpochMs] = image.createdAt.toEpochMilliseconds()
+            this[webpageImageTable.updatedAtEpochMs] = image.updatedAt.toEpochMilliseconds()
+            this[webpageImageTable.version] = image.version
         }
     }
 
