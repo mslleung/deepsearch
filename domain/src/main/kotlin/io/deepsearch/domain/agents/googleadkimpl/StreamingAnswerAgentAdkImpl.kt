@@ -86,6 +86,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             - Only include information that directly addresses the user's query
             - Do not invent information not present in the content
             - Use markdown styling as applicable, such as headings/list etc.
+            - The answer should be in the same language as the input query.
             
             Instructions for completeness determination (IMPORTANT - be conservative):
             - Set isComplete=true ONLY if you are confident the answer comprehensively addresses all aspects of the user's query
