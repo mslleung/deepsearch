@@ -78,6 +78,13 @@ interface IBrowserPage {
     suspend fun isElementVisibleByCssSelector(cssSelector: String): Boolean
 
     /**
+     * Check if an element matching the provided XPath selector is visible.
+     * @param xpath XPath expression to match
+     * @return true if the element is visible; false otherwise
+     */
+    suspend fun isElementVisibleByXPath(xpath: String): Boolean
+
+    /**
      * Rendered web icon bitmap and metadata used for interpretation and caching.
      *
      * bytes: raw image bytes (typically WebP from canvas rendering).

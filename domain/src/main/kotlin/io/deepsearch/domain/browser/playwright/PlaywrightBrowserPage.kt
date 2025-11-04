@@ -188,6 +188,15 @@ class PlaywrightBrowserPage(
         }
     }
 
+    override suspend fun isElementVisibleByXPath(xpath: String): Boolean {
+        logger.debug("Checking element visibility by XPath: {}", xpath)
+        return apiMutex.withLock {
+            val locator = page.locator("xpath=$xpath")
+            val target = locator.last()
+            target.isVisible
+        }
+    }
+
     @Serializable
     private data class IconResult(val base64: String, val xPathSelectors: List<String>)
 
@@ -251,6 +260,10 @@ class PlaywrightBrowserPage(
             logger.info("Processing {} failed images using screenshot fallback", decoded.failed.size)
             decoded.failed.forEach { failedImage ->
                 try {
+                    val isVisible = isElementVisibleByXPath(failedImage.xPath)
+                    if (!isVisible) {
+                        throw Error("Skipping screenshot for invisible image at ${failedImage.xPath}")
+                    }
                     val screenshot = getElementScreenshotByXPath(failedImage.xPath)
                     results.add(
                         IBrowserPage.WebImage(
