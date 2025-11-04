@@ -4,8 +4,8 @@ import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.constants.ImageMimeType
 
 data class TableInterpretationInput(
-    val screenshotBytes: ByteArray,
-    val mimetype: ImageMimeType,
+    val screenshotBytes: ByteArray?,
+    val mimetype: ImageMimeType?,
     val auxiliaryInfo: String,
     val html: String,
 ) : IAgent.IAgentInput

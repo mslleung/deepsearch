@@ -179,6 +179,15 @@ class PlaywrightBrowserPage(
         }
     }
 
+    override suspend fun isElementVisibleByCssSelector(cssSelector: String): Boolean {
+        logger.debug("Checking element visibility by CSS selector: {}", cssSelector)
+        return apiMutex.withLock {
+            val locator = page.locator(cssSelector)
+            val target = locator.last()
+            target.isVisible
+        }
+    }
+
     @Serializable
     private data class IconResult(val base64: String, val xPathSelectors: List<String>)
 

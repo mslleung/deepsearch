@@ -161,11 +161,16 @@ class WebpageExtractionService(
         // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)
         val tableInputs = tables.mapNotNull { table ->
             try {
-                val elementScreenshot = webpage.getElementScreenshotByCssSelector(table.cssSelector)
+                val isVisible = webpage.isElementVisibleByCssSelector(table.cssSelector)
+                val elementScreenshot = if (isVisible) {
+                    webpage.getElementScreenshotByCssSelector(table.cssSelector)
+                } else {
+                    null
+                }
                 val elementHtml = webpage.getElementHtmlByCssSelector(table.cssSelector)
                 table.cssSelector to TableInterpretationInput(
-                    screenshotBytes = elementScreenshot.bytes,
-                    mimetype = elementScreenshot.mimeType,
+                    screenshotBytes = elementScreenshot?.bytes,
+                    mimetype = elementScreenshot?.mimeType,
                     auxiliaryInfo = table.auxiliaryInfo,
                     html = elementHtml
                 )
