@@ -255,11 +255,11 @@ class PrecacheJobRegistry(
                         if (e is UrlProcessingException) {
                             // URL processing failed - log and continue with next URL
                             logger.warn(
-                                "[{}] Failed to process {}: {} (reason: {})",
+                                "[{}] Failed to process {}: {} (type: {})",
                                 jobId,
                                 normalizedUrl,
                                 e.message,
-                                e.reason
+                                e::class.simpleName
                             )
                             // Still increment processed count for failed URLs
                             processedCount.incrementAndGet()

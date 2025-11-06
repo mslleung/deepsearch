@@ -37,15 +37,18 @@ class ExposedUrlAccessRepository(
             when (urlAccess) {
                 is CachedUrlAccess -> {
                     it[status] = UrlAccessStatus.CACHED.name
-                    it[failureReason] = null
+                    it[exceptionType] = null
+                    it[exceptionMessage] = null
                 }
                 is UncachedUrlAccess -> {
                     it[status] = UrlAccessStatus.UNCACHED.name
-                    it[failureReason] = null
+                    it[exceptionType] = null
+                    it[exceptionMessage] = null
                 }
                 is FailedUrlAccess -> {
                     it[status] = UrlAccessStatus.FAILED.name
-                    it[failureReason] = urlAccess.reason.name
+                    it[exceptionType] = urlAccess.exceptionType
+                    it[exceptionMessage] = urlAccess.message
                 }
             }
         }
@@ -118,10 +121,11 @@ class ExposedUrlAccessRepository(
             UrlAccessStatus.CACHED.name -> CachedUrlAccess(url, timestamp)
             UrlAccessStatus.UNCACHED.name -> UncachedUrlAccess(url, timestamp)
             UrlAccessStatus.FAILED.name -> {
-                val reasonName = row[urlAccessTable.failureReason]
-                    ?: throw IllegalStateException("FAILED status must have a failure reason")
-                val reason = UrlFailureReason.valueOf(reasonName)
-                FailedUrlAccess(url, timestamp, reason)
+                val exceptionType = row[urlAccessTable.exceptionType]
+                    ?: throw IllegalStateException("FAILED status must have an exception type")
+                val exceptionMessage = row[urlAccessTable.exceptionMessage]
+                    ?: throw IllegalStateException("FAILED status must have an exception message")
+                FailedUrlAccess(url, timestamp, exceptionType, exceptionMessage)
             }
             else -> throw IllegalStateException("Unknown URL access status: $status")
         }

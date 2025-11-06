@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.exceptions.*
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.request.*
@@ -8,6 +9,10 @@ import io.ktor.http.*
 import kotlinx.coroutines.CancellationException
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
 interface IHttpContentTypeResolutionService {
     suspend fun resolve(url: String): ContentTypeResult
@@ -62,12 +67,6 @@ sealed class ContentTypeResult {
         val statusCode: Int,
         val reasonPhrase: String
     ) : ContentTypeResult()
-    
-    data class Failed(
-        val url: String,
-        val statusCode: Int,
-        val reasonPhrase: String
-    ) : ContentTypeResult()
 }
 
 /**
@@ -86,7 +85,7 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
     override suspend fun resolve(url: String): ContentTypeResult {
         logger.debug("Resolving content type for URL: {}", url)
         
-        return try {
+        try {
             // Try HEAD request first to check content type without downloading
             val headResponse = client.head(url)
             val finalUrl = headResponse.request.url.toString()
@@ -101,17 +100,19 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
                 contentType
             )
             
-            // Check if request failed
+            // Throw exception if request failed
             if (statusCode !in 200..299) {
-                return ContentTypeResult.Failed(
-                    url = finalUrl,
-                    statusCode = statusCode,
-                    reasonPhrase = reasonPhrase
-                )
+                if (statusCode in 400..499) {
+                    throw HttpClientErrorException(finalUrl, statusCode, reasonPhrase)
+                } else if (statusCode in 500..599) {
+                    throw HttpServerErrorException(finalUrl, statusCode, reasonPhrase)
+                } else {
+                    throw HttpClientErrorException(finalUrl, statusCode, reasonPhrase)
+                }
             }
             
             // Route based on content type
-            when {
+            return when {
                 contentType.contains("text/html", ignoreCase = true) ||
                 contentType.contains("application/xhtml", ignoreCase = true) -> {
                     ContentTypeResult.Html(
@@ -146,13 +147,25 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: UrlProcessingException) {
+            // Already a typed exception, rethrow as-is
+            throw e
+        } catch (e: UnknownHostException) {
+            logger.error("DNS resolution failed for {}: {}", url, e.message)
+            throw DnsResolutionException(url, e)
+        } catch (e: ConnectException) {
+            logger.error("Connection refused for {}: {}", url, e.message)
+            throw ConnectionRefusedException(url, e)
+        } catch (e: SocketTimeoutException) {
+            logger.error("Network timeout for {}: {}", url, e.message)
+            throw NetworkTimeoutException(url, e)
+        } catch (e: SSLException) {
+            logger.error("SSL handshake failed for {}: {}", url, e.message)
+            throw SslHandshakeException(url, e)
         } catch (e: Exception) {
             logger.error("Failed to resolve content type for {}: {}", url, e.message)
-            ContentTypeResult.Failed(
-                url = url,
-                statusCode = 0,
-                reasonPhrase = e.message ?: "Unknown error"
-            )
+            // Wrap unexpected exceptions in a generic browser navigation exception
+            throw BrowserNavigationException(url, e)
         }
     }
 }

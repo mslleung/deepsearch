@@ -27,6 +27,7 @@ import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.UrlProcessingException
+import io.deepsearch.domain.exceptions.LlmException
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -182,6 +183,9 @@ class AgenticBrowserSearchOrchestrator(
 
             // Use CompletableDeferred to capture result immediately without waiting for flow cancellation
             val resultDeferred = CompletableDeferred<SearchResult>()
+            
+            // Track whether initial URL succeeded
+            val initialUrlProcessedDeferred = CompletableDeferred<Boolean>()
 
             // Launch flow processing in background, we don't mean to run this for a long period of time
             // but cooperative cancellation takes time, and we need to keep it running outside the request scope
@@ -190,7 +194,8 @@ class AgenticBrowserSearchOrchestrator(
                     extractRelevantMarkdowns(
                         sessionId = sessionId,
                         searchQuery = searchQuery,
-                        budget = budget
+                        budget = budget,
+                        initialUrlProcessedDeferred = initialUrlProcessedDeferred
                     )
                         .cancellable()  // Ensure flow respects cancellation
                         .filter { it.markdown.isNotBlank() }
@@ -235,7 +240,8 @@ class AgenticBrowserSearchOrchestrator(
     private fun extractRelevantMarkdowns(
         sessionId: String,
         searchQuery: SearchQuery,
-        budget: SearchBudget
+        budget: SearchBudget,
+        initialUrlProcessedDeferred: CompletableDeferred<Boolean>
     ): Flow<MarkdownResult> {
         val discoveredLinksFlow = MutableSharedFlow<WebpageLink>(
             extraBufferCapacity = Int.MAX_VALUE
@@ -257,7 +263,8 @@ class AgenticBrowserSearchOrchestrator(
                 sessionId = sessionId,
                 searchQuery = searchQuery,
                 budget = budget,
-                discoveredLinksFlow = discoveredLinksFlow
+                discoveredLinksFlow = discoveredLinksFlow,
+                initialUrlProcessedDeferred = initialUrlProcessedDeferred
             )
             .onCompletion { cause ->
                 if (cause != null) {
@@ -310,7 +317,8 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: String,
         searchQuery: SearchQuery,
         budget: SearchBudget,
-        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
+        discoveredLinksFlow: MutableSharedFlow<WebpageLink>,
+        initialUrlProcessedDeferred: CompletableDeferred<Boolean>
     ): Flow<MarkdownResult> =
         // Check budget before accepting each link
         transformWhile { link ->
@@ -325,13 +333,18 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                    val isInitialUrl = normalizedUrl == normalizeUrlService.normalize(searchQuery.url)
                     
                     if (shouldSkipUrl(sessionId, normalizedUrl)) {
+                        // If initial URL is already cached, mark it as processed successfully
+                        if (isInitialUrl && !initialUrlProcessedDeferred.isCompleted) {
+                            initialUrlProcessedDeferred.complete(true)
+                        }
                         return@flow
                     }
 
                     // Process URL and collect events as they're emitted
-                    // Use .catch{} to handle UrlProcessingException
+                    // Use .catch{} to handle all exceptions
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
                         .cancellable()
                         .catch { e ->
@@ -340,26 +353,56 @@ class AgenticBrowserSearchOrchestrator(
                                 throw e // Always propagate cancellation
                             }
                             
-                            if (e is UrlProcessingException) {
-                                // Error already categorized with typed exception
-                                val failedAccess = FailedUrlAccess(
-                                    url = e.url,
-                                    timestamp = Clock.System.now(),
-                                    reason = e.reason
-                                )
-                                urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                
-                                logger.error(
-                                    "[{}] Failed to process {}: {} (reason: {})",
-                                    sessionId,
-                                    e.url,
-                                    e.message,
-                                    e.reason
-                                )
-                            } else {
-                                // Unexpected exception type - log and rethrow
-                                logger.error("[{}] Unexpected error processing {}: {}", sessionId, normalizedUrl, e.message, e)
+                            // Handle initial URL failures specially
+                            if (isInitialUrl && !initialUrlProcessedDeferred.isCompleted) {
+                                logger.error("[{}] Initial URL {} failed: {}", sessionId, normalizedUrl, e.message)
+                                // Mark initial URL as failed and rethrow to fail the endpoint
+                                initialUrlProcessedDeferred.complete(false)
                                 throw e
+                            }
+                            
+                            // For non-initial URLs, record the error and continue processing other links
+                            when (e) {
+                                is UrlProcessingException -> {
+                                    // Error already categorized with typed exception
+                                    val failedAccess = FailedUrlAccess(
+                                        url = e.url,
+                                        timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!,
+                                        message = e.message!!
+                                    )
+                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                    
+                                    logger.warn(
+                                        "[{}] Failed to process {}: {} (type: {})",
+                                        sessionId,
+                                        e.url,
+                                        e.message,
+                                        e::class.simpleName
+                                    )
+                                }
+                                is LlmException -> {
+                                    // LLM errors should be recorded but allow processing to continue
+                                    val failedAccess = FailedUrlAccess(
+                                        url = normalizedUrl,
+                                        timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!,
+                                        message = e.message!!
+                                    )
+                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                    
+                                    logger.warn(
+                                        "[{}] LLM error processing {}: {}",
+                                        sessionId,
+                                        normalizedUrl,
+                                        e.message
+                                    )
+                                }
+                                else -> {
+                                    // Unexpected exception type - log and rethrow to terminate flow
+                                    logger.error("[{}] Unexpected error processing {}: {}", sessionId, normalizedUrl, e.message, e)
+                                    throw e
+                                }
                             }
                         }
                         .collect { event ->
@@ -378,6 +421,11 @@ class AgenticBrowserSearchOrchestrator(
                                 }
 
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                    // Mark initial URL as successfully processed
+                                    if (isInitialUrl && !initialUrlProcessedDeferred.isCompleted) {
+                                        initialUrlProcessedDeferred.complete(true)
+                                    }
+                                    
                                     // Track URL access with appropriate subclass
                                     val urlAccess = if (event.wasCached) {
                                         CachedUrlAccess(event.url, Clock.System.now())
@@ -472,7 +520,7 @@ class AgenticBrowserSearchOrchestrator(
                 // If answer is complete, emit result and stop (single() will cancel upstream)
                 if (output.isComplete) {
                     logger.info("[{}] Answer complete after {} pages", sessionId, allUrls.size)
-                    val answer: String = currentAnswer
+                    val answer = currentAnswer!!  // Non-null because we just assigned output.updatedAnswer
                     querySessionService.completeSessionWithAnswer(
                         sessionId,
                         answer,

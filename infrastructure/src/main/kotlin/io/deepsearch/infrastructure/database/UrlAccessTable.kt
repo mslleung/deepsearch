@@ -8,6 +8,9 @@ import org.jetbrains.exposed.v1.core.Table
  * 
  * The status column discriminates between cached, uncached, and failed accesses,
  * enabling proper object-relational mapping to the UrlAccess sealed class hierarchy.
+ * 
+ * For failed accesses, exceptionType stores the exception class name and
+ * exceptionMessage stores the detailed error message.
  */
 class UrlAccessTable(
     private val querySessionTable: QuerySessionTable
@@ -17,7 +20,8 @@ class UrlAccessTable(
     val url = varchar("url", 2048)
     val timestampEpochMs = long("timestamp_epoch_ms")
     val status = varchar("status", 20)  // "CACHED", "UNCACHED", "FAILED"
-    val failureReason = varchar("failure_reason", 50).nullable()  // Only populated when status = "FAILED"
+    val exceptionType = varchar("exception_type", 100).nullable()  // Exception class name (e.g., "NetworkTimeoutException")
+    val exceptionMessage = text("exception_message").nullable()  // Detailed error message
     
     override val primaryKey = PrimaryKey(id)
     
@@ -30,6 +34,9 @@ class UrlAccessTable(
         
         // Index for temporal queries
         index(isUnique = false, timestampEpochMs)
+        
+        // Index for querying by exception type
+        index(isUnique = false, exceptionType)
     }
 }
 

@@ -52,7 +52,8 @@ data class UrlAccessDto(
     val url: String,
     val timestamp: Long,
     val type: String,  // "CACHED", "UNCACHED", "FAILED"
-    val failureReason: String?  // Only populated for FAILED type
+    val exceptionType: String? = null,  // Exception class name (e.g., "NetworkTimeoutException"), only for FAILED type
+    val exceptionMessage: String? = null  // Detailed error message, only for FAILED type
 )
 
 @Serializable
@@ -86,7 +87,8 @@ fun QuerySession.toAdminDetailDto(urlAccesses: List<io.deepsearch.domain.models.
                     is UncachedUrlAccess -> "UNCACHED"
                     is FailedUrlAccess -> "FAILED"
                 },
-                failureReason = (urlAccess as? FailedUrlAccess)?.reason?.name
+                exceptionType = (urlAccess as? FailedUrlAccess)?.exceptionType,
+                exceptionMessage = (urlAccess as? FailedUrlAccess)?.message
             )
         },
         createdAt = this.createdAt.toEpochMilliseconds(),

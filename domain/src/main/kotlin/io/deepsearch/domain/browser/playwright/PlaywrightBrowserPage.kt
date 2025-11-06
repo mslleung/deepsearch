@@ -2,10 +2,18 @@ package io.deepsearch.domain.browser.playwright
 
 import com.microsoft.playwright.Locator
 import com.microsoft.playwright.Page
+import com.microsoft.playwright.PlaywrightException
 import com.microsoft.playwright.options.ScreenshotType
 import com.microsoft.playwright.options.LoadState
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.exceptions.BrowserNavigationException
+import io.deepsearch.domain.exceptions.ConnectionRefusedException
+import io.deepsearch.domain.exceptions.DnsResolutionException
+import io.deepsearch.domain.exceptions.NetworkTimeoutException
+import io.deepsearch.domain.exceptions.RedirectLoopException
+import io.deepsearch.domain.exceptions.SslHandshakeException
+import io.deepsearch.domain.exceptions.UrlProcessingException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -49,12 +57,16 @@ class PlaywrightBrowserPage(
     override suspend fun navigate(url: String) {
         logger.debug("Navigate to {}", url)
         apiMutex.withLock {
-            val navigationTime = measureTimeMillis {
-                page.navigate(url)
-                // Ensure baseline document readiness before any parsing calls
-                page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+            try {
+                val navigationTime = measureTimeMillis {
+                    page.navigate(url)
+                    // Ensure baseline document readiness before any parsing calls
+                    page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+                }
+                logger.debug("Navigate to {} took {} ms", url, navigationTime)
+            } catch (e: PlaywrightException) {
+                throw mapPlaywrightException(url, e)
             }
-            logger.debug("Navigate to {} took {} ms", url, navigationTime)
         }
     }
 
@@ -519,5 +531,27 @@ class PlaywrightBrowserPage(
         // Trim and strip any data URL prefix like: data:image/webp;base64,....
         val trimmed = input.trim()
         return trimmed.replace(Regex("^data:[^,]+,"), "")
+    }
+
+    /**
+     * Maps Playwright-specific exceptions to typed UrlProcessingException.
+     * Uses Playwright error codes (net::ERR_*) for precise categorization.
+     */
+    private fun mapPlaywrightException(url: String, e: Exception): UrlProcessingException {
+        // Check if it's a Playwright TimeoutError
+        if (e.javaClass.simpleName == "TimeoutError") {
+            return NetworkTimeoutException(url, e)
+        }
+
+        // Parse Playwright network error codes from exception message
+        val message = e.message ?: ""
+        return when {
+            message.contains("net::ERR_NAME_NOT_RESOLVED") -> DnsResolutionException(url, e)
+            message.contains("net::ERR_CONNECTION_REFUSED") -> ConnectionRefusedException(url, e)
+            message.contains("net::ERR_SSL") || message.contains("net::ERR_CERT") -> SslHandshakeException(url, e)
+            message.contains("net::ERR_TIMED_OUT") -> NetworkTimeoutException(url, e)
+            message.contains("net::ERR_TOO_MANY_REDIRECTS") -> RedirectLoopException(url, e)
+            else -> BrowserNavigationException(url, e)
+        }
     }
 }

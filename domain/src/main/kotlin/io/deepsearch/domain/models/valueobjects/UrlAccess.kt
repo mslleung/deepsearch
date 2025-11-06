@@ -40,13 +40,17 @@ data class UncachedUrlAccess(
 ) : UrlAccess()
 
 /**
- * URL processing failed - includes the reason for failure.
- * Type safety ensures failed URLs always have an associated reason.
+ * URL processing failed - includes the exception type and message.
+ * Type safety ensures failed URLs always have associated error information.
+ * 
+ * @property exceptionType The simple class name of the exception (e.g., "NetworkTimeoutException")
+ * @property message The error message describing what went wrong
  */
 @OptIn(ExperimentalTime::class)
 @Serializable
 data class FailedUrlAccess(
     override val url: String,
     override val timestamp: Instant,
-    val reason: UrlFailureReason
+    val exceptionType: String,
+    val message: String
 ) : UrlAccess()
