@@ -22,6 +22,12 @@ class ExposedUrlAccessRepository(
     private val urlAccessTable: UrlAccessTable
 ) : IUrlAccessRepository {
 
+    private enum class UrlAccessStatus {
+        CACHED,
+        UNCACHED,
+        FAILED
+    }
+
     override suspend fun save(urlAccess: UrlAccess, querySessionId: String): UrlAccess = suspendTransaction {
         urlAccessTable.insert {
             it[urlAccessTable.querySessionId] = querySessionId
@@ -30,15 +36,15 @@ class ExposedUrlAccessRepository(
             
             when (urlAccess) {
                 is CachedUrlAccess -> {
-                    it[status] = "CACHED"
+                    it[status] = UrlAccessStatus.CACHED.name
                     it[failureReason] = null
                 }
                 is UncachedUrlAccess -> {
-                    it[status] = "UNCACHED"
+                    it[status] = UrlAccessStatus.UNCACHED.name
                     it[failureReason] = null
                 }
                 is FailedUrlAccess -> {
-                    it[status] = "FAILED"
+                    it[status] = UrlAccessStatus.FAILED.name
                     it[failureReason] = urlAccess.reason.name
                 }
             }
@@ -50,6 +56,36 @@ class ExposedUrlAccessRepository(
         urlAccessTable.selectAll()
             .where { urlAccessTable.querySessionId eq querySessionId }
             .map { mapRowToUrlAccess(it) }
+            .toList()
+    }
+
+    override suspend fun findCachedByQuerySessionId(querySessionId: String): List<CachedUrlAccess> = suspendTransaction {
+        urlAccessTable.selectAll()
+            .where { 
+                (urlAccessTable.querySessionId eq querySessionId) and 
+                (urlAccessTable.status eq UrlAccessStatus.CACHED.name) 
+            }
+            .map { mapRowToUrlAccess(it) as CachedUrlAccess }
+            .toList()
+    }
+
+    override suspend fun findUncachedByQuerySessionId(querySessionId: String): List<UncachedUrlAccess> = suspendTransaction {
+        urlAccessTable.selectAll()
+            .where { 
+                (urlAccessTable.querySessionId eq querySessionId) and 
+                (urlAccessTable.status eq UrlAccessStatus.UNCACHED.name) 
+            }
+            .map { mapRowToUrlAccess(it) as UncachedUrlAccess }
+            .toList()
+    }
+
+    override suspend fun findFailedByQuerySessionId(querySessionId: String): List<FailedUrlAccess> = suspendTransaction {
+        urlAccessTable.selectAll()
+            .where { 
+                (urlAccessTable.querySessionId eq querySessionId) and 
+                (urlAccessTable.status eq UrlAccessStatus.FAILED.name) 
+            }
+            .map { mapRowToUrlAccess(it) as FailedUrlAccess }
             .toList()
     }
 
@@ -79,9 +115,9 @@ class ExposedUrlAccessRepository(
         val status = row[urlAccessTable.status]
 
         return when (status) {
-            "CACHED" -> CachedUrlAccess(url, timestamp)
-            "UNCACHED" -> UncachedUrlAccess(url, timestamp)
-            "FAILED" -> {
+            UrlAccessStatus.CACHED.name -> CachedUrlAccess(url, timestamp)
+            UrlAccessStatus.UNCACHED.name -> UncachedUrlAccess(url, timestamp)
+            UrlAccessStatus.FAILED.name -> {
                 val reasonName = row[urlAccessTable.failureReason]
                     ?: throw IllegalStateException("FAILED status must have a failure reason")
                 val reason = UrlFailureReason.valueOf(reasonName)

@@ -78,18 +78,15 @@ class UrlAccessService(
     }
 
     override suspend fun getCachedUrls(querySessionId: String): List<CachedUrlAccess> {
-        return urlAccessRepository.findByQuerySessionId(querySessionId)
-            .filterIsInstance<CachedUrlAccess>()
+        return urlAccessRepository.findCachedByQuerySessionId(querySessionId)
     }
 
     override suspend fun getUncachedUrls(querySessionId: String): List<UncachedUrlAccess> {
-        return urlAccessRepository.findByQuerySessionId(querySessionId)
-            .filterIsInstance<UncachedUrlAccess>()
+        return urlAccessRepository.findUncachedByQuerySessionId(querySessionId)
     }
 
     override suspend fun getFailedUrls(querySessionId: String): List<FailedUrlAccess> {
-        return urlAccessRepository.findByQuerySessionId(querySessionId)
-            .filterIsInstance<FailedUrlAccess>()
+        return urlAccessRepository.findFailedByQuerySessionId(querySessionId)
     }
 
     override suspend fun checkBudgetExceeded(

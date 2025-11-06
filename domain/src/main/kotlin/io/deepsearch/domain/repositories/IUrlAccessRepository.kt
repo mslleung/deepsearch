@@ -1,5 +1,8 @@
 package io.deepsearch.domain.repositories
 
+import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
+import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
+import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.UrlAccess
 
 /**
@@ -16,6 +19,21 @@ interface IUrlAccessRepository {
      * Find all URL accesses for a given query session.
      */
     suspend fun findByQuerySessionId(querySessionId: String): List<UrlAccess>
+
+    /**
+     * Find all cached URL accesses for a given query session.
+     */
+    suspend fun findCachedByQuerySessionId(querySessionId: String): List<CachedUrlAccess>
+
+    /**
+     * Find all uncached URL accesses for a given query session.
+     */
+    suspend fun findUncachedByQuerySessionId(querySessionId: String): List<UncachedUrlAccess>
+
+    /**
+     * Find all failed URL accesses for a given query session.
+     */
+    suspend fun findFailedByQuerySessionId(querySessionId: String): List<FailedUrlAccess>
 
     /**
      * Count total URL accesses for a given query session.
