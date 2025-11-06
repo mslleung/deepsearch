@@ -26,7 +26,39 @@ cd deepsearch
 - [IntelliJ IDEA Community Edition](https://www.jetbrains.com/idea/download/) - for Kotlin/Java development
 - [Cursor](https://cursor.sh/) with the Kotlin extension (`fwcd.kotlin`)
 - [DataGrip](https://www.jetbrains.com/datagrip/) or [DBeaver](https://dbeaver.io/) - for database management
-  - **Important:** Ensure the H2 driver version in your database tool matches the version used by Exposed in the project
+
+### 3. Database Setup
+
+#### PostgreSQL Installation
+
+1. **Download and Install PostgreSQL:**
+   - Download from [PostgreSQL Official Website](https://www.postgresql.org/)
+   - During installation, configure the following:
+     - **Superuser Password:** Set to `password` (for local development)
+     - **Port:** Use default port `5432`
+     - **Locale:** Use default locale
+
+2. **Verify Installation:**
+   - You can now connect to PostgreSQL using:
+     - **Username:** `postgres`
+     - **Password:** `password`
+     - **Host:** `localhost`
+     - **Port:** `5432`
+
+#### pgvector Extension
+
+pgvector is required for vector similarity search functionality.
+
+1. **Install pgvector:**
+   - Follow the installation guide at [pgvector GitHub](https://github.com/pgvector/pgvector)
+   
+2. **Windows Users:**
+   - You may need to install C++ support in Visual Studio before installing pgvector
+   - Download [Visual Studio](https://visualstudio.microsoft.com/) with C++ build tools if not already installed
+
+3. **Verify Installation:**
+   - Connect to your PostgreSQL database
+   - Run: `CREATE EXTENSION IF NOT EXISTS vector;`
 
 ## Environment Configuration
 
@@ -174,15 +206,23 @@ For quick manual testing during development:
 
 ### Common Issues
 
-1. **H2 Database Version Mismatch:**
-   - Ensure your database tool (DataGrip/DBeaver) uses the same H2 driver version as specified in the project's `build.gradle.kts`
+1. **PostgreSQL Connection Issues:**
+   - Verify PostgreSQL service is running
+   - Check connection credentials (username: `postgres`, password: `password`)
+   - Ensure port `5432` is not blocked by firewall
+   - Test connection using: `psql -U postgres -h localhost`
 
-2. **Gemini API Not Working:**
+2. **pgvector Extension Not Found:**
+   - Ensure pgvector is properly installed for your PostgreSQL version
+   - Windows users: Verify C++ build tools are installed
+   - Try creating the extension manually: `CREATE EXTENSION IF NOT EXISTS vector;`
+
+3. **Gemini API Not Working:**
    - Verify your VPN is connected to a supported region
    - Check that your API key is correctly set in `.env`
    - Ensure `GOOGLE_GENAI_USE_VERTEXAI=FALSE` for development
 
-3. **Build Failures:**
+4. **Build Failures:**
    - Verify JDK is correctly added to PATH
    - Run `./gradlew clean build` to rebuild from scratch
 

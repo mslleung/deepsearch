@@ -4,5 +4,5 @@ import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 
 interface ISearchOrchestrator {
-    suspend fun execute(searchQuery: SearchQuery): SearchResult
+    suspend fun execute(searchQuery: SearchQuery, maxUrls: Int? = null, searchDurationSeconds: Int? = null): SearchResult
 }

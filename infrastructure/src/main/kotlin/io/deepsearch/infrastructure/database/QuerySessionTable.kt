@@ -13,10 +13,7 @@ class QuerySessionTable(
     val finishReason = varchar("finish_reason", 50).nullable()
     val budgetTimeLimitMs = long("budget_time_limit_ms")
     val budgetMaxLinks = integer("budget_max_links")
-    val answerComplete = bool("answer_complete")
     val answer = text("answer").nullable()
-    val traversedUrls = text("traversed_urls")  // JSON array
-    val sourcesDiscovered = text("sources_discovered")  // JSON array
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

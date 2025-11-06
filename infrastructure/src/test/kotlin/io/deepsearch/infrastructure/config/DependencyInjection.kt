@@ -42,6 +42,7 @@ private val infrastructureCommonTestModule = module {
     singleOf(::WebpageMarkdownCacheTable)
     singleOf(::PdfMarkdownCacheTable)
     singleOf(::QuerySessionTable)
+    singleOf(::UrlAccessTable)
     singleOf(::PrecacheJobTable)
     singleOf(::SitemapCacheTable)
     
@@ -57,6 +58,7 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
     singleOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
     singleOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
+    singleOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
     singleOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
 }
 

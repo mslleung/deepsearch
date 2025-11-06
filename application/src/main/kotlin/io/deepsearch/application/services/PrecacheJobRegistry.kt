@@ -8,9 +8,12 @@ import io.deepsearch.domain.models.entities.PrecacheJobState
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.IPrecacheJobRepository
+import io.deepsearch.domain.exceptions.UrlProcessingException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.flatMapMerge
@@ -38,7 +41,7 @@ class PrecacheJobRegistry(
     private val webpageCacheService: IWebpageCacheService,
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
-    private val jobRepository: IPrecacheJobRepository,
+    private val precacheJobRepository: IPrecacheJobRepository,
     private val dispatchers: IDispatcherProvider,
     private val applicationScope: IApplicationCoroutineScope
 ) : IPrecacheJobRegistry {
@@ -55,7 +58,7 @@ class PrecacheJobRegistry(
     init {
         // Resume all in-progress jobs at startup
         applicationScope.scope.launch {
-            val active = jobRepository.listAll(PrecacheJobState.IN_PROGRESS)
+            val active = precacheJobRepository.listAll(PrecacheJobState.IN_PROGRESS)
             active.forEach { job ->
                 ensureRunning(job)
             }
@@ -78,9 +81,9 @@ class PrecacheJobRegistry(
 
     override suspend fun stop(jobId: Long) {
         runs.remove(jobId)?.job?.cancel()
-        val record = jobRepository.findById(jobId) ?: return
+        val record = precacheJobRepository.findById(jobId) ?: return
         record.markStopped()
-        jobRepository.update(record)
+        precacheJobRepository.update(record)
     }
 
     private fun normalize(url: String): String = normalizeUrlService.normalize(url) ?: url
@@ -109,7 +112,7 @@ class PrecacheJobRegistry(
             )
 
             job.markCompleted()
-            jobRepository.update(job)
+            precacheJobRepository.update(job)
             flow.emit(
                 IPrecacheService.PrecacheEvent(
                     jobId = jobId,
@@ -126,7 +129,7 @@ class PrecacheJobRegistry(
         } catch (t: Throwable) {
             logger.warn("Precache failed for {}: {}", job.baseUrl, t.message)
             job.markStopped()
-            jobRepository.update(job)
+            precacheJobRepository.update(job)
             flow.emit(
                 IPrecacheService.PrecacheEvent(
                     jobId = jobId,
@@ -241,7 +244,33 @@ class PrecacheJobRegistry(
                 }
 
                 // Process URL and collect events
+                // Use .catch{} to handle UrlProcessingException
                 urlContentProcessingService.processUrlAsFlow(normalizedUrl)
+                    .catch { e ->
+                        // Handle URL processing errors using Flow's catch operator
+                        if (e is CancellationException) {
+                            throw e // Always propagate cancellation
+                        }
+                        
+                        if (e is UrlProcessingException) {
+                            // URL processing failed - log and continue with next URL
+                            logger.warn(
+                                "[{}] Failed to process {}: {} (reason: {})",
+                                jobId,
+                                normalizedUrl,
+                                e.message,
+                                e.reason
+                            )
+                            // Still increment processed count for failed URLs
+                            processedCount.incrementAndGet()
+                            job.incrementProcessed()
+                            precacheJobRepository.update(job)
+                        } else {
+                            // Unexpected exception - log and rethrow
+                            logger.error("[{}] Unexpected error processing {}: {}", jobId, normalizedUrl, e.message, e)
+                            throw e
+                        }
+                    }
                     .collect { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
@@ -263,7 +292,7 @@ class PrecacheJobRegistry(
                                 // Markdown extraction complete, increment counter and emit result
                                 val count = processedCount.incrementAndGet()
                                 job.incrementProcessed()
-                                jobRepository.update(job)
+                                precacheJobRepository.update(job)
                                 
                                 logger.debug(
                                     "[{}] Markdown cached for {}: {} chars (progress: {}/{})",

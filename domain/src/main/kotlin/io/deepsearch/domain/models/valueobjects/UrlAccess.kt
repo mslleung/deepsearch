@@ -1,0 +1,52 @@
+package io.deepsearch.domain.models.valueobjects
+
+import kotlinx.serialization.Serializable
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
+
+/**
+ * Represents an access to a URL during a query session.
+ * Sealed class hierarchy provides type safety and encapsulates access-specific behavior.
+ * 
+ * Following DDD principles, the type itself indicates the cache status,
+ * and failure reasons are encapsulated within FailedUrlAccess.
+ * 
+ * Note: The sealed class itself is not serializable; subclasses handle serialization individually.
+ */
+@OptIn(ExperimentalTime::class)
+sealed class UrlAccess {
+    abstract val url: String
+    abstract val timestamp: Instant
+}
+
+/**
+ * URL was served from cache - fast retrieval without processing.
+ */
+@OptIn(ExperimentalTime::class)
+@Serializable
+data class CachedUrlAccess(
+    override val url: String,
+    override val timestamp: Instant
+) : UrlAccess()
+
+/**
+ * URL was processed on-the-spot - full extraction and processing performed.
+ */
+@OptIn(ExperimentalTime::class)
+@Serializable
+data class UncachedUrlAccess(
+    override val url: String,
+    override val timestamp: Instant
+) : UrlAccess()
+
+/**
+ * URL processing failed - includes the reason for failure.
+ * Type safety ensures failed URLs always have an associated reason.
+ */
+@OptIn(ExperimentalTime::class)
+@Serializable
+data class FailedUrlAccess(
+    override val url: String,
+    override val timestamp: Instant,
+    val reason: UrlFailureReason
+) : UrlAccess()

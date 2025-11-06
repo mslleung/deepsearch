@@ -45,6 +45,7 @@ val applicationModule = module {
         scopedOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
         scopedOf(::WebpageCacheService) bind IWebpageCacheService::class
         scopedOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
+        scopedOf(::UrlAccessService) bind IUrlAccessService::class
         scopedOf(::QuerySessionService) bind IQuerySessionService::class
     }
 }

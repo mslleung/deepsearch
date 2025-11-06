@@ -21,13 +21,12 @@ interface IQuerySessionService {
     suspend fun transitionToLinkTraversal(sessionId: String)
 
     /** 
-     * Complete the session with a final answer and sources.
-     * This marks the answer as complete, sets the finish reason, and transitions to FINISHED state.
+     * Complete the session with a final answer.
+     * This sets the answer, finish reason, and transitions to FINISHED state.
      */
     suspend fun completeSessionWithAnswer(
         sessionId: String, 
         answer: String, 
-        sources: List<String>, 
         finishReason: FinishReason
     )
 
@@ -36,15 +35,6 @@ interface IQuerySessionService {
      * Returns true if budget was exceeded (and finish reason was set), false otherwise.
      */
     suspend fun checkBudgetAndMarkIfExceeded(sessionId: String, budget: SearchBudget): Boolean
-
-    /** Mark answer as complete and update answer content (without finishing the session). */
-    suspend fun markAnswerComplete(sessionId: String, answer: String, sources: List<String>)
-
-    /** Add a traversed URL to the session. */
-    suspend fun addTraversedUrl(sessionId: String, url: String)
-
-    /** Add multiple traversed URLs to the session. */
-    suspend fun addTraversedUrls(sessionId: String, urls: Collection<String>)
 
     /** Transition session to FAILED with an error message (from any state). */
     suspend fun fail(sessionId: String, error: String)
@@ -61,7 +51,8 @@ interface IQuerySessionService {
  * delegating business rules to the `QuerySession` entity (rich domain model).
  */
 class QuerySessionService(
-    private val querySessionRepository: IQuerySessionRepository
+    private val querySessionRepository: IQuerySessionRepository,
+    private val urlAccessService: IUrlAccessService
 ) : IQuerySessionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -85,17 +76,15 @@ class QuerySessionService(
     override suspend fun completeSessionWithAnswer(
         sessionId: String,
         answer: String,
-        sources: List<String>,
         finishReason: FinishReason
     ) {
         val session = getSessionOrThrow(sessionId)
-        session.completeWithAnswer(answer, sources, finishReason)
+        session.completeWithAnswer(answer, finishReason)
         querySessionRepository.update(session)
         logger.info(
-            "[{}] Session completed: {} chars, {} sources, reason: {}",
+            "[{}] Session completed: {} chars, reason: {}",
             sessionId,
             answer.length,
-            sources.size,
             finishReason
         )
     }
@@ -105,7 +94,10 @@ class QuerySessionService(
         budget: SearchBudget
     ): Boolean {
         val session = getSessionOrThrow(sessionId)
-        val exceeded = session.checkAndApplyBudgetExceeded(budget)
+        
+        // Query URL access count from UrlAccessService
+        val urlAccessCount = urlAccessService.countUrlAccessesBySession(sessionId)
+        val exceeded = session.checkAndApplyBudgetExceeded(urlAccessCount, budget)
         
         if (exceeded) {
             querySessionRepository.update(session)
@@ -113,28 +105,6 @@ class QuerySessionService(
         }
         
         return exceeded
-    }
-
-    override suspend fun markAnswerComplete(sessionId: String, answer: String, sources: List<String>) {
-        val session = getSessionOrThrow(sessionId)
-        session.markAnswerComplete(answer, sources)
-        querySessionRepository.update(session)
-        logger.info("[{}] Answer completed: {} chars, {} sources", sessionId, answer.length, sources.size)
-    }
-
-    override suspend fun addTraversedUrl(sessionId: String, url: String) {
-        val session = getSessionOrThrow(sessionId)
-        session.addTraversedUrl(url)
-        querySessionRepository.update(session)
-        logger.debug("[{}] Added traversed URL: {} (total: {})", sessionId, url, session.traversedUrls.size)
-    }
-
-    override suspend fun addTraversedUrls(sessionId: String, urls: Collection<String>) {
-        if (urls.isEmpty()) return
-        val session = getSessionOrThrow(sessionId)
-        session.addTraversedUrls(urls)
-        querySessionRepository.update(session)
-        logger.debug("[{}] Added {} traversed URLs (total: {})", sessionId, urls.size, session.traversedUrls.size)
     }
 
     override suspend fun fail(sessionId: String, error: String) {

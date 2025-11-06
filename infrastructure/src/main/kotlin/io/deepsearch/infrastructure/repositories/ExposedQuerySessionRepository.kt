@@ -9,7 +9,6 @@ import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.infrastructure.database.QuerySessionTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
-import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -25,8 +24,6 @@ class ExposedQuerySessionRepository(
     private val querySessionTable: QuerySessionTable
 ) : IQuerySessionRepository {
 
-    private val json = Json { ignoreUnknownKeys = true }
-
     override suspend fun save(session: QuerySession): QuerySession = suspendTransaction {
         querySessionTable.insert {
             it[id] = session.id
@@ -36,14 +33,12 @@ class ExposedQuerySessionRepository(
             it[finishReason] = session.finishReason?.name
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
-            it[answerComplete] = session.answerComplete
             it[answer] = session.answer
-            it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
-            it[sourcesDiscovered] = json.encodeToString(session.sourcesDiscovered)
             it[createdAtEpochMs] = session.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
             it[version] = session.version
         }
+        
         session
     }
 
@@ -64,10 +59,7 @@ class ExposedQuerySessionRepository(
             it[finishReason] = session.finishReason?.name
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
-            it[answerComplete] = session.answerComplete
             it[answer] = session.answer
-            it[traversedUrls] = json.encodeToString(session.traversedUrls.toList())
-            it[sourcesDiscovered] = json.encodeToString(session.sourcesDiscovered)
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
             it[version] = session.version + 1
         }
@@ -91,11 +83,7 @@ class ExposedQuerySessionRepository(
                 maxLinks = row[querySessionTable.budgetMaxLinks]
             ),
             finishReason = row[querySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
-            answerComplete = row[querySessionTable.answerComplete],
             answer = row[querySessionTable.answer],
-            traversedUrls = json.decodeFromString<List<String>>(row[querySessionTable.traversedUrls]).toMutableSet(),
-            sourcesDiscovered = json.decodeFromString<List<String>>(row[querySessionTable.sourcesDiscovered])
-                .toMutableList(),
             createdAt = Instant.fromEpochMilliseconds(row[querySessionTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[querySessionTable.updatedAtEpochMs]),
             version = row[querySessionTable.version]

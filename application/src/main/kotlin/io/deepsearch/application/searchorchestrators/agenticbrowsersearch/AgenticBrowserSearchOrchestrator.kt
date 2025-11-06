@@ -3,6 +3,7 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.application.services.INormalizeUrlService
 import io.deepsearch.application.services.IQuerySessionService
+import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.domain.agents.AggregateSearchResultsInput
@@ -19,9 +20,15 @@ import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.SearchBudget
+import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
+import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
+import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
+import io.deepsearch.domain.exceptions.UrlProcessingException
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -35,9 +42,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.measureTimeMillis
 
-interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator {
-    override suspend fun execute(searchQuery: SearchQuery): SearchResult
-}
+interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator
 
 /**
  * Orchestrates agentic search using a reactive flow-based approach.
@@ -45,7 +50,7 @@ interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator {
  * concurrently using flatMapMerge for maximum throughput. Markdowns are batched
  * and fed to answer generation, which terminates early when complete.
  */
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, ExperimentalTime::class)
 class AgenticBrowserSearchOrchestrator(
     private val applicationScope: IApplicationCoroutineScope,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
@@ -56,15 +61,16 @@ class AgenticBrowserSearchOrchestrator(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
     private val querySessionService: IQuerySessionService,
+    private val urlAccessService: IUrlAccessService,
     private val dispatchers: IDispatcherProvider
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery): SearchResult = withContext(dispatchers.io) {
+    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?): SearchResult = withContext(dispatchers.io) {
         val result: SearchResult
         val executionTime = measureTimeMillis {
-            result = executeSearchForQuery(searchQuery)
+            result = executeSearchForQuery(searchQuery, maxUrls, searchDurationSeconds)
 //            // Break down the query into fulfillment requirements
 //            logger.info("Breaking down query: {}", searchQuery.query)
 //            val breakdownOutput = queryBreakdownAgent.generate(QueryBreakdownAgentInput(searchQuery))
@@ -158,10 +164,17 @@ class AgenticBrowserSearchOrchestrator(
      * Markdowns are extracted as links are discovered, batched, and fed to answer generation.
      * Flow cancellation propagates upstream when answer is complete or budget exceeded.
      */
-    private suspend fun executeSearchForQuery(searchQuery: SearchQuery): SearchResult {
+    private suspend fun executeSearchForQuery(
+        searchQuery: SearchQuery,
+        maxUrls: Int? = null,
+        searchDurationSeconds: Int? = null
+    ): SearchResult {
         val session = querySessionService.createSession(searchQuery.query, searchQuery.url)
         val sessionId = session.id
-        val budget = SearchBudget()
+        val budget = SearchBudget(
+            timeLimitMs = (searchDurationSeconds ?: 60) * 1000L,
+            maxLinks = maxUrls ?: 20
+        )
 
         try {
             logger.debug("[{}] Executing search for query: {}", sessionId, searchQuery.query)
@@ -224,7 +237,6 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         budget: SearchBudget
     ): Flow<MarkdownResult> {
-        val visitedUrls = ConcurrentHashMap.newKeySet<String>()
         val discoveredLinksFlow = MutableSharedFlow<WebpageLink>(
             extraBufferCapacity = Int.MAX_VALUE
         )
@@ -245,7 +257,6 @@ class AgenticBrowserSearchOrchestrator(
                 sessionId = sessionId,
                 searchQuery = searchQuery,
                 budget = budget,
-                visitedUrls = visitedUrls,
                 discoveredLinksFlow = discoveredLinksFlow
             )
             .onCompletion { cause ->
@@ -299,7 +310,6 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: String,
         searchQuery: SearchQuery,
         budget: SearchBudget,
-        visitedUrls: MutableSet<String>,
         discoveredLinksFlow: MutableSharedFlow<WebpageLink>
     ): Flow<MarkdownResult> =
         // Check budget before accepting each link
@@ -314,62 +324,81 @@ class AgenticBrowserSearchOrchestrator(
         }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
-                    try {
-                        val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                    val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                    
+                    if (shouldSkipUrl(sessionId, normalizedUrl)) {
+                        return@flow
+                    }
 
-                        if (shouldSkipUrl(sessionId, normalizedUrl, visitedUrls)) {
-                            return@flow
+                    // Process URL and collect events as they're emitted
+                    // Use .catch{} to handle UrlProcessingException
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
+                        .cancellable()
+                        .catch { e ->
+                            // Handle URL processing errors using Flow's catch operator
+                            if (e is CancellationException) {
+                                throw e // Always propagate cancellation
+                            }
+                            
+                            if (e is UrlProcessingException) {
+                                // Error already categorized with typed exception
+                                val failedAccess = FailedUrlAccess(
+                                    url = e.url,
+                                    timestamp = Clock.System.now(),
+                                    reason = e.reason
+                                )
+                                urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                
+                                logger.error(
+                                    "[{}] Failed to process {}: {} (reason: {})",
+                                    sessionId,
+                                    e.url,
+                                    e.message,
+                                    e.reason
+                                )
+                            } else {
+                                // Unexpected exception type - log and rethrow
+                                logger.error("[{}] Unexpected error processing {}: {}", sessionId, normalizedUrl, e.message, e)
+                                throw e
+                            }
                         }
-
-                        // Process URL and collect events as they're emitted
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
-                            .cancellable()
-                            .collect { event ->
-                                when (event) {
-                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                        // Emit discovered links immediately (~5 seconds)
-                                        logger.debug(
-                                            "[{}] Links discovered for {}: {} links",
-                                            sessionId,
-                                            event.url,
-                                            event.discoveredLinks.size
-                                        )
-                                        event.discoveredLinks.forEach { discoveredLink ->
-                                            discoveredLinksFlow.emit(discoveredLink)
-                                        }
-                                    }
-
-                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                        // Emit markdown for batching (~1 minute)
-                                        logger.debug(
-                                            "[{}] Markdown extracted for {}: {} chars",
-                                            sessionId,
-                                            event.url,
-                                            event.markdown.length
-                                        )
-                                        emit(MarkdownResult(event.url, event.markdown))
+                        .collect { event ->
+                            when (event) {
+                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                    // Emit discovered links immediately (~5 seconds)
+                                    logger.debug(
+                                        "[{}] Links discovered for {}: {} links",
+                                        sessionId,
+                                        event.url,
+                                        event.discoveredLinks.size
+                                    )
+                                    event.discoveredLinks.forEach { discoveredLink ->
+                                        discoveredLinksFlow.emit(discoveredLink)
                                     }
                                 }
-                            }
-                    } catch (e: Exception) {
-                        // CancellationException (including AbortFlowException) is a normal flow control mechanism
-                        // and should be propagated without logging as an error
-                        if (e is CancellationException) {
-                            throw e
-                        }
 
-                        logger.error(
-                            "[{}] Failed to process {}: {} : {}",
-                            sessionId,
-                            link.url,
-                            e.message,
-                            e.stackTraceToString()
-                        )
-                    }
+                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                    // Track URL access with appropriate subclass
+                                    val urlAccess = if (event.wasCached) {
+                                        CachedUrlAccess(event.url, Clock.System.now())
+                                    } else {
+                                        UncachedUrlAccess(event.url, Clock.System.now())
+                                    }
+                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    
+                                    // Emit markdown for batching (~1 minute)
+                                    logger.debug(
+                                        "[{}] Markdown extracted for {}: {} chars (cached: {})",
+                                        sessionId,
+                                        event.url,
+                                        event.markdown.length,
+                                        event.wasCached
+                                    )
+                                    emit(MarkdownResult(event.url, event.markdown))
+                                }
+                            }
+                        }
                 }
-            }
-            .onEach {
-                querySessionService.addTraversedUrl(sessionId, it.url)
             }
 
     /**
@@ -380,12 +409,11 @@ class AgenticBrowserSearchOrchestrator(
         val markdown: String
     )
 
-    private fun shouldSkipUrl(
+    private suspend fun shouldSkipUrl(
         sessionId: String,
-        normalizedUrl: String,
-        visitedUrls: MutableSet<String>
+        normalizedUrl: String
     ): Boolean {
-        if (!visitedUrls.add(normalizedUrl)) {
+        if (urlAccessService.hasVisitedUrl(sessionId, normalizedUrl)) {
             logger.debug("[{}] Skipping already visited URL: {}", sessionId, normalizedUrl)
             return true
         }
@@ -444,12 +472,10 @@ class AgenticBrowserSearchOrchestrator(
                 // If answer is complete, emit result and stop (single() will cancel upstream)
                 if (output.isComplete) {
                     logger.info("[{}] Answer complete after {} pages", sessionId, allUrls.size)
-                    // Extract to local variable to avoid smart cast issues with captured variable
                     val answer: String = currentAnswer
                     querySessionService.completeSessionWithAnswer(
                         sessionId,
                         answer,
-                        allUrls,
                         FinishReason.ANSWER_COMPLETE
                     )
 
@@ -474,7 +500,6 @@ class AgenticBrowserSearchOrchestrator(
             querySessionService.completeSessionWithAnswer(
                 sessionId,
                 answer,
-                allUrls,
                 FinishReason.LINKS_EXHAUSTED
             )
 

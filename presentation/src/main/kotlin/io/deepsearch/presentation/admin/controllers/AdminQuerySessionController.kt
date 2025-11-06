@@ -1,5 +1,6 @@
 package io.deepsearch.presentation.admin.controllers
 
+import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.presentation.admin.dto.toAdminDetailDto
 import io.ktor.http.*
@@ -7,7 +8,8 @@ import io.ktor.server.application.*
 import io.ktor.server.response.*
 
 class AdminQuerySessionController(
-    private val querySessionRepository: IQuerySessionRepository
+    private val querySessionRepository: IQuerySessionRepository,
+    private val urlAccessService: IUrlAccessService
 ) {
 
     suspend fun getQuerySessionById(call: ApplicationCall) {
@@ -24,7 +26,10 @@ class AdminQuerySessionController(
                 return
             }
 
-            call.respond(HttpStatusCode.OK, session.toAdminDetailDto())
+            // Query URL accesses separately
+            val urlAccesses = urlAccessService.getUrlAccessesBySession(sessionId)
+            
+            call.respond(HttpStatusCode.OK, session.toAdminDetailDto(urlAccesses))
         } catch (e: Exception) {
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }

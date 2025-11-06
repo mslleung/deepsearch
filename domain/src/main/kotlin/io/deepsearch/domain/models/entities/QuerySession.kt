@@ -20,10 +20,7 @@ class QuerySession(
     var state: QuerySessionState,
     var searchBudget: SearchBudget,
     var finishReason: FinishReason?,
-    var answerComplete: Boolean,
     var answer: String?,
-    val traversedUrls: MutableSet<String>,
-    var sourcesDiscovered: MutableList<String>,
     val createdAt: Instant,
     var updatedAt: Instant,
     var version: Long = 0
@@ -36,10 +33,7 @@ class QuerySession(
         state = QuerySessionState.EXPANDING_QUERY,
         searchBudget = SearchBudget(),
         finishReason = null,
-        answerComplete = false,
         answer = null,
-        traversedUrls = mutableSetOf(),
-        sourcesDiscovered = mutableListOf(),
         createdAt = Clock.System.now(),
         updatedAt = Clock.System.now(),
     )
@@ -53,35 +47,6 @@ class QuerySession(
             throw InvalidStateTransitionException(id, state, newState)
         }
         state = newState
-        updatedAt = Clock.System.now()
-    }
-
-    /**
-     * Mark answer as complete with the generated answer and sources.
-     * Does not change state - state transition should be done separately.
-     */
-    fun markAnswerComplete(answer: String, sources: List<String>) {
-        this.answerComplete = true
-        this.answer = answer
-        sourcesDiscovered.clear()
-        sourcesDiscovered.addAll(sources)
-        updatedAt = Clock.System.now()
-    }
-
-    /**
-     * Add a single traversed URL to the session.
-     */
-    fun addTraversedUrl(url: String) {
-        traversedUrls.add(url)
-        updatedAt = Clock.System.now()
-    }
-
-    /**
-     * Add multiple traversed URLs to the session.
-     */
-    fun addTraversedUrls(urls: Collection<String>) {
-        if (urls.isEmpty()) return
-        traversedUrls.addAll(urls)
         updatedAt = Clock.System.now()
     }
 
@@ -106,12 +71,15 @@ class QuerySession(
     /**
      * Check whether the search budget has been exceeded at this moment.
      * Returns the corresponding FinishReason if exceeded, or null otherwise.
+     * 
+     * @param urlAccessCount The current number of URL accesses for this session
+     * @param budget The search budget to check against
      */
-    fun checkSearchBudget(budget: SearchBudget = searchBudget): FinishReason? {
+    fun checkSearchBudget(urlAccessCount: Int, budget: SearchBudget = searchBudget): FinishReason? {
         val elapsedMs = Clock.System.now() - createdAt
         return when {
             elapsedMs.inWholeMilliseconds >= budget.timeLimitMs -> FinishReason.TIME_EXCEEDED
-            traversedUrls.size >= budget.maxLinks -> FinishReason.MAX_LINKS_EXCEEDED
+            urlAccessCount >= budget.maxLinks -> FinishReason.MAX_LINKS_EXCEEDED
             else -> null
         }
     }
@@ -119,9 +87,12 @@ class QuerySession(
     /**
      * Check if the search budget has been exceeded and apply the finish reason if so.
      * Returns true if budget was exceeded, false otherwise.
+     * 
+     * @param urlAccessCount The current number of URL accesses for this session
+     * @param budget The search budget to check against
      */
-    fun checkAndApplyBudgetExceeded(budget: SearchBudget = searchBudget): Boolean {
-        val exceededReason = checkSearchBudget(budget)
+    fun checkAndApplyBudgetExceeded(urlAccessCount: Int, budget: SearchBudget = searchBudget): Boolean {
+        val exceededReason = checkSearchBudget(urlAccessCount, budget)
         return if (exceededReason != null) {
             finish(exceededReason)
             true
@@ -131,11 +102,11 @@ class QuerySession(
     }
 
     /**
-     * Complete the session with a final answer and sources.
-     * This marks the answer as complete, sets the finish reason, and transitions to FINISHED state.
+     * Complete the session with a final answer.
+     * This sets the answer, finish reason, and transitions to FINISHED state.
      */
-    fun completeWithAnswer(answer: String, sources: List<String>, finishReason: FinishReason) {
-        markAnswerComplete(answer, sources)
+    fun completeWithAnswer(answer: String, finishReason: FinishReason) {
+        this.answer = answer
         finish(finishReason)
         transitionTo(QuerySessionState.FINISHED)
     }

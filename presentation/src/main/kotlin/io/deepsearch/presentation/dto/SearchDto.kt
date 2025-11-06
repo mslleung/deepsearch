@@ -8,6 +8,8 @@ data class SearchRequest(
     val query: String,
     val url: String,
     val sitemapUrl: String? = null,
+    val maxUrls: Int? = null,
+    val searchDurationSeconds: Int? = null,
 )
 
 @Serializable

@@ -80,10 +80,37 @@ class SearchController(
             
             val request = call.receive<SearchRequest>()
             
+            // Validate search budget parameters
+            request.maxUrls?.let { maxUrls ->
+                if (maxUrls !in 1..1000) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "maxUrls must be greater than 0 and at most 1000. Received: $maxUrls")
+                    )
+                    return
+                }
+            }
+            
+            request.searchDurationSeconds?.let { searchDurationSeconds ->
+                if (searchDurationSeconds !in 3..300) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "searchDurationSeconds must be at least 3 seconds and at most 300 seconds (5 minutes). Received: $searchDurationSeconds")
+                    )
+                    return
+                }
+            }
+            
             // Measure search duration
             var searchResult: io.deepsearch.domain.models.valueobjects.SearchResult
             val durationMs = measureTimeMillis {
-                searchResult = searchService.searchWebsite(request.query, request.url, request.sitemapUrl)
+                searchResult = searchService.searchWebsite(
+                    request.query, 
+                    request.url, 
+                    request.sitemapUrl,
+                    request.maxUrls,
+                    request.searchDurationSeconds
+                )
             }
             
             // Add duration to result
