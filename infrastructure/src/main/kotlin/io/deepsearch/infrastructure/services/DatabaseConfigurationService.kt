@@ -35,6 +35,7 @@ class DatabaseConfigurationService(
     private val querySessionTable: QuerySessionTable,
     private val precacheJobTable: PrecacheJobTable,
     private val sitemapCacheTable: SitemapCacheTable,
+    private val urlAccessTable: UrlAccessTable,
 ) : IDatabaseConfigurationService {
 
     init {
@@ -72,7 +73,8 @@ class DatabaseConfigurationService(
                     pdfMarkdownTable,
                     querySessionTable,
                     precacheJobTable,
-                    sitemapCacheTable
+                    sitemapCacheTable,
+                    urlAccessTable
                 )
             }
         }
