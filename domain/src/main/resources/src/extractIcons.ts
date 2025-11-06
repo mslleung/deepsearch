@@ -68,7 +68,7 @@
     const width = Math.ceil(Math.max(metrics.width, fontSizePx) * 1.5);
     const height = Math.ceil(fontSizePx * 1.8);
 
-    const scale = 2;
+    const scale = 1;
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.floor(width * scale));
     canvas.height = Math.max(1, Math.floor(height * scale));
@@ -88,7 +88,7 @@
     ctx.textBaseline = 'middle';
     ctx.fillText(glyph, width / 2, height / 2);
 
-    const dataUrl = canvas.toDataURL('image/webp', 0.9);
+    const dataUrl = canvas.toDataURL('image/webp', 1.0);
     const base64 = dataUrl.replace(/^data:[^,]+,/, '');
     return base64;
   };
@@ -163,7 +163,7 @@
     return new Promise<string | null>((resolve) => {
       const img = new Image();
       img.onload = () => {
-        const scale = 2;
+        const scale = 1;
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.floor(width * scale));
         canvas.height = Math.max(1, Math.floor(height * scale));
@@ -182,7 +182,7 @@
         
         ctx.drawImage(img, 0, 0, width, height);
         
-        const dataUrl = canvas.toDataURL('image/webp', 0.9);
+        const dataUrl = canvas.toDataURL('image/webp', 1.0);
         const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         resolve(base64);
       };

@@ -80,7 +80,7 @@
       // Skip if still no valid dimensions
       if (width === 0 || height === 0) return null;
       
-      const scale = 2;
+      const scale = 1;
       canvas.width = Math.max(1, Math.floor(width * scale));
       canvas.height = Math.max(1, Math.floor(height * scale));
       ctx.scale(scale, scale);
@@ -90,7 +90,7 @@
         ctx.drawImage(img, 0, 0, width, height);
         
         // Test if we can extract the data (this will throw SecurityError if tainted)
-        const dataUrl = canvas.toDataURL('image/webp', 0.9);
+        const dataUrl = canvas.toDataURL('image/webp', 1.0);
         const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         
         const xPathSelector = uniqueXPathFor(img);
@@ -114,7 +114,7 @@
             });
             
             ctx.drawImage(tempImg, 0, 0, width, height);
-            const dataUrl = canvas.toDataURL('image/webp', 0.9);
+            const dataUrl = canvas.toDataURL('image/webp', 1.0);
             const base64 = dataUrl.replace(/^data:[^,]+,/, '');
             
             const xPathSelector = uniqueXPathFor(img);
@@ -193,7 +193,7 @@
       const width = Math.ceil(rect.width);
       const height = Math.ceil(rect.height);
       
-      const scale = 2;
+      const scale = 1;
       canvas.width = Math.max(1, Math.floor(width * scale));
       canvas.height = Math.max(1, Math.floor(height * scale));
       ctx.scale(scale, scale);
@@ -222,7 +222,7 @@
         
         try {
           // Test if we can extract the data (this will throw SecurityError if tainted)
-          const dataUrl = canvas.toDataURL('image/webp', 0.9);
+          const dataUrl = canvas.toDataURL('image/webp', 1.0);
           const base64 = dataUrl.replace(/^data:[^,]+,/, '');
           
           const xPathSelector = uniqueXPathFor(element);
@@ -245,7 +245,7 @@
             });
             
             ctx.drawImage(corsImg, 0, 0, width, height);
-            const dataUrl = canvas.toDataURL('image/webp', 0.9);
+            const dataUrl = canvas.toDataURL('image/webp', 1.0);
             const base64 = dataUrl.replace(/^data:[^,]+,/, '');
             
             const xPathSelector = uniqueXPathFor(element);
