@@ -86,33 +86,56 @@
       ctx.scale(scale, scale);
       
       try {
-        // If the original image has a src, use it; otherwise try to get data URL
-        let imageSrc = img.src;
-        if (!imageSrc || imageSrc.startsWith('data:')) {
-          // For data URLs or images without src, try to draw directly
-          ctx.drawImage(img, 0, 0, width, height);
-        } else {
-          // For external images, use crossOrigin to avoid canvas taint
-          const tempImg = new Image();
-          tempImg.setAttribute('crossOrigin', 'anonymous');
-          
-          await new Promise<void>((resolve, reject) => {
-            tempImg.onload = () => resolve();
-            tempImg.onerror = () => reject(new Error('Failed to load image with crossOrigin'));
-            tempImg.src = imageSrc;
-            setTimeout(() => reject(new Error('Timeout loading image with crossOrigin')), 1000);
-          });
-          
-          ctx.drawImage(tempImg, 0, 0, width, height);
-        }
+        // Optimistically try to use the already-loaded image first
+        ctx.drawImage(img, 0, 0, width, height);
         
+        // Test if we can extract the data (this will throw SecurityError if tainted)
         const dataUrl = canvas.toDataURL('image/webp', 0.9);
         const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         
         const xPathSelector = uniqueXPathFor(img);
         return { base64, xPathSelector, failed: null };
       } catch (e) {
-        // Store failed images for fallback processing
+        // Canvas is tainted or drawing failed - try re-downloading with CORS
+        if (e instanceof DOMException && e.name === 'SecurityError' && img.src && !img.src.startsWith('data:')) {
+          try {
+            // Clear the tainted canvas
+            ctx.clearRect(0, 0, width, height);
+            
+            // Re-download with crossOrigin to avoid canvas taint
+            const tempImg = new Image();
+            tempImg.setAttribute('crossOrigin', 'anonymous');
+            
+            await new Promise<void>((resolve, reject) => {
+              tempImg.onload = () => resolve();
+              tempImg.onerror = () => reject(new Error('Failed to load image with crossOrigin'));
+              tempImg.src = img.src;
+              setTimeout(() => reject(new Error('Timeout loading image with crossOrigin')), 1000);
+            });
+            
+            ctx.drawImage(tempImg, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/webp', 0.9);
+            const base64 = dataUrl.replace(/^data:[^,]+,/, '');
+            
+            const xPathSelector = uniqueXPathFor(img);
+            return { base64, xPathSelector, failed: null };
+          } catch (retryError) {
+            // Re-download also failed
+            const errorMsg = retryError instanceof Error ? retryError.message : String(retryError);
+            console.warn(`Failed to extract image at ${uniqueXPathFor(img)} after retry: ${errorMsg}`);
+            return {
+              base64: null,
+              xPathSelector: null,
+              failed: {
+                element: img,
+                xPath: uniqueXPathFor(img),
+                reason: `CORS retry failed: ${errorMsg}`
+              }
+            };
+          }
+        }
+        
+        // Some other error (not SecurityError or not recoverable) - report it
         const errorMsg = e instanceof Error ? e.message : String(e);
         console.warn(`Failed to extract image at ${uniqueXPathFor(img)}: ${errorMsg}`);
         return {
@@ -176,32 +199,60 @@
       ctx.scale(scale, scale);
       
       try {
-        // Draw the element's background image
+        // Extract the background image URL
         const backgroundImage = computedStyle.backgroundImage;
         const urlMatch = backgroundImage.match(/url\(['"]?([^'"]+)['"]?\)/);
-        if (urlMatch) {
-          const imageUrl = urlMatch[1];
-          
-          // Use crossOrigin to avoid canvas taint
-          const tempImg = new Image();
-          tempImg.setAttribute('crossOrigin', 'anonymous');
-          
-          await new Promise<void>((resolve, reject) => {
-            tempImg.onload = () => resolve();
-            tempImg.onerror = () => reject(new Error('Failed to load background image with crossOrigin'));
-            tempImg.src = imageUrl;
-            setTimeout(() => reject(new Error('Timeout loading background image with crossOrigin')), 1000);
-          });
-          
-          ctx.drawImage(tempImg, 0, 0, width, height);
-          
+        if (!urlMatch) return null;
+        
+        const imageUrl = urlMatch[1];
+        
+        // Create a temporary image to render the background
+        const tempImg = new Image();
+        
+        // Try loading without crossOrigin first (optimistic approach)
+        await new Promise<void>((resolve, reject) => {
+          tempImg.onload = () => resolve();
+          tempImg.onerror = () => reject(new Error('Failed to load background image'));
+          tempImg.src = imageUrl;
+          setTimeout(() => reject(new Error('Timeout loading background image')), 1000);
+        });
+        
+        // Optimistically try to draw and extract
+        ctx.drawImage(tempImg, 0, 0, width, height);
+        
+        try {
+          // Test if we can extract the data (this will throw SecurityError if tainted)
           const dataUrl = canvas.toDataURL('image/webp', 0.9);
           const base64 = dataUrl.replace(/^data:[^,]+,/, '');
           
           const xPathSelector = uniqueXPathFor(element);
           return { base64, xPathSelector, failed: null };
+        } catch (securityError) {
+          // Canvas is tainted - retry with crossOrigin
+          if (securityError instanceof DOMException && securityError.name === 'SecurityError') {
+            // Clear the tainted canvas
+            ctx.clearRect(0, 0, width, height);
+            
+            // Re-download with crossOrigin to avoid canvas taint
+            const corsImg = new Image();
+            corsImg.setAttribute('crossOrigin', 'anonymous');
+            
+            await new Promise<void>((resolve, reject) => {
+              corsImg.onload = () => resolve();
+              corsImg.onerror = () => reject(new Error('Failed to load background image with crossOrigin'));
+              corsImg.src = imageUrl;
+              setTimeout(() => reject(new Error('Timeout loading background image with crossOrigin')), 1000);
+            });
+            
+            ctx.drawImage(corsImg, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/webp', 0.9);
+            const base64 = dataUrl.replace(/^data:[^,]+,/, '');
+            
+            const xPathSelector = uniqueXPathFor(element);
+            return { base64, xPathSelector, failed: null };
+          }
+          throw securityError;
         }
-        return null;
       } catch (e) {
         // Store failed background images for fallback processing
         const errorMsg = e instanceof Error ? e.message : String(e);
