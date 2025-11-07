@@ -20,6 +20,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
+import org.jsoup.nodes.TextNode
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.net.URI
@@ -61,7 +63,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         instruction(
             """
                 You are a link relevance analysis agent. Your task is to:
-                1. Identify all <a href> links in the provided HTML
+                1. Identify all <a href> links in the provided text
                 2. Using the surrounding context, analyze which links are most relevant to the user's query
                 3. Return all relevant links with reasons why they are relevant
                 4. The links must be unique
@@ -89,16 +91,13 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
     override suspend fun generate(input: LinkRelevanceAnalysisInput): LinkRelevanceAnalysisOutput {
         logger.debug("Analyzing link relevance for query: '{}'", input.query)
 
-        val cleanedHtml = cleanHtml(input.html, input.url)
-
-        // Extract all links from the cleaned HTML for validation
-        val extractedLinks = extractAndNormalizeLinks(cleanedHtml, input.url)
+        val (cleanedHtml, extractedLinks) = cleanHtml(input.html, input.url)
         logger.debug("Extracted {} unique links from cleaned HTML", extractedLinks.size)
 
         val userPrompt = buildString {
             appendLine("Query: ${input.query}")
             appendLine()
-            appendLine("Cleaned html:")
+            appendLine("Extracted html text:")
             appendLine(cleanedHtml)
         }
 
@@ -185,8 +184,9 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
      * Cleans HTML by removing non-content elements that don't contribute to link analysis.
      * Preserves anchor tags and their surrounding context for better link relevance analysis.
      * Filters anchor tags to only include those from the same domain as the url parameter.
+     * @return A Pair of (cleaned HTML text, set of extracted normalized links)
      */
-    private fun cleanHtml(rawHtml: String, url: String): String {
+    private fun cleanHtml(rawHtml: String, url: String): Pair<String, Set<String>> {
         val doc: Document = Jsoup.parse(rawHtml)
         val baseDomain = extractBaseDomain(url)
 
@@ -288,27 +288,13 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             }
         }
 
-        val cleanedHtml = doc.outerHtml()
-        logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
-        return cleanedHtml
-    }
-
-    /**
-     * Extracts all links from HTML and normalizes them to absolute URLs.
-     * @param html The HTML content to extract links from
-     * @param baseUrl The base URL to resolve relative links against
-     * @return A set of normalized absolute URLs
-     */
-    private fun extractAndNormalizeLinks(html: String, baseUrl: String): Set<String> {
-        val doc: Document = Jsoup.parse(html)
-        val baseUri = URI(baseUrl)
+        // Step 9: Extract and normalize all links before converting to text
+        val baseUri = URI(url)
         val normalizedLinks = mutableSetOf<String>()
-
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href").trim()
             if (href.isNotBlank()) {
                 try {
-                    // Resolve relative URLs to absolute URLs
                     val absoluteUrl = baseUri.resolve(href).toString()
                     normalizedLinks.add(absoluteUrl)
                 } catch (e: Exception) {
@@ -317,7 +303,76 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             }
         }
 
-        return normalizedLinks
+        // Step 10: Extract text content while preserving <a> tags
+        val cleanedHtml = extractTextWithLinks(doc.body())
+        logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
+        return Pair(cleanedHtml, normalizedLinks)
     }
+
+    /**
+     * Recursively extracts text content from an element while preserving <a> tags.
+     * All other HTML tags are stripped, leaving only text and anchor links.
+     * Each <a> tag is placed on its own line for better readability.
+     * 
+     * @param element The element to extract text and links from
+     * @param isRoot Whether this is the root call (for final trimming)
+     * @return A string containing text with embedded <a> tags, each link on its own line
+     */
+    private fun extractTextWithLinks(element: Element?, isRoot: Boolean = true): String {
+        if (element == null) return ""
+        
+        val result = StringBuilder()
+        
+        element.childNodes().forEach { node ->
+            when (node) {
+                // Text nodes: append directly with space management
+                is TextNode -> {
+                    val text = node.text().trim()
+                    if (text.isNotBlank()) {
+                        // Add space before text if needed (but not newline)
+                        if (result.isNotEmpty() && !result.endsWith(" ") && !result.endsWith("\n")) {
+                            result.append(" ")
+                        }
+                        result.append(text)
+                    }
+                }
+                // Anchor elements: preserve the tag with href on its own line
+                is Element if node.tagName() == "a" -> {
+                    val href = node.attr("href")
+                    val ariaLabel = node.attr("aria-label")
+                    val linkText = node.text()
+
+                    // Ensure we're on a new line before the anchor
+                    if (result.isNotEmpty() && !result.endsWith("\n")) {
+                        result.append("\n")
+                    }
+                    
+                    result.append("<a href=\"").append(href).append("\"")
+                    if (ariaLabel.isNotBlank()) {
+                        result.append(" aria-label=\"").append(ariaLabel).append("\"")
+                    }
+                    result.append(">").append(linkText).append("</a>")
+                    
+                    // Add newline after the anchor
+                    result.append("\n")
+                }
+                // All other elements: recurse but don't include the tag itself
+                is Element -> {
+                    val childContent = extractTextWithLinks(node, isRoot = false)
+                    if (childContent.isNotBlank()) {
+                        result.append(childContent)
+                    }
+                }
+            }
+        }
+        
+        // Only trim at the root level to preserve internal newlines
+        return if (isRoot) {
+            result.toString().trim()
+        } else {
+            result.toString()
+        }
+    }
+
 }
 
