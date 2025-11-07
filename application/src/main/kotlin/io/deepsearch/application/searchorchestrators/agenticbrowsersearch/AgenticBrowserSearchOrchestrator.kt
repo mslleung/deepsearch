@@ -223,6 +223,7 @@ class AgenticBrowserSearchOrchestrator(
 
             return result
         } catch (e: Exception) {
+            // final catch clause for the search pipeline
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
             querySessionService.fail(sessionId, e.message ?: "Unknown error")
             throw e
@@ -249,27 +250,34 @@ class AgenticBrowserSearchOrchestrator(
             extraBufferCapacity = Int.MAX_VALUE
         )
 
-        val initialLinkFlow = flowOf(
+        val initialLinkToMarkdownFlow = flowOf(
             WebpageLink(
                 url = searchQuery.url,
                 source = LinkSource.LINK_RELEVANCE,
                 reason = "Initial URL"
             )
-        )
+        ).processLinksToMarkdown(
+            sessionId = sessionId,
+            searchQuery = searchQuery,
+            budget = budget,
+            discoveredLinksFlow = discoveredLinksFlow,
+        ).onEmpty {
+            throw NoContentExtractedException("Failed to extract any content from any discovered links")
+        }
 
         val googleSearchLinksFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
         val sitemapLinksFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
 
-        return merge(initialLinkFlow, googleSearchLinksFlow, sitemapLinksFlow, discoveredLinksFlow.asSharedFlow())
-            .processLinksToMarkdown(
-                sessionId = sessionId,
-                searchQuery = searchQuery,
-                budget = budget,
-                discoveredLinksFlow = discoveredLinksFlow,
-            )
-            .onEmpty {
-                throw NoContentExtractedException("Failed to extract any content from any discovered links")
-            }
+        val secondaryLinksToMarkdownFlow =
+            merge(googleSearchLinksFlow, sitemapLinksFlow, discoveredLinksFlow.asSharedFlow())
+                .processLinksToMarkdown(
+                    sessionId = sessionId,
+                    searchQuery = searchQuery,
+                    budget = budget,
+                    discoveredLinksFlow = discoveredLinksFlow,
+                )
+
+        return merge(initialLinkToMarkdownFlow, secondaryLinksToMarkdownFlow)
             .onCompletion { cause ->
                 if (cause != null) {
                     logger.info("[{}] Link discovery cancelled: {}", sessionId, cause.message)
@@ -336,7 +344,6 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                    val isInitialUrl = normalizedUrl == normalizeUrlService.normalize(searchQuery.url)
 
                     if (shouldSkipUrl(sessionId, normalizedUrl)) {
                         return@flow
@@ -352,7 +359,7 @@ class AgenticBrowserSearchOrchestrator(
                                 throw e // Always propagate cancellation
                             }
 
-                            // For non-initial URLs, record the error and continue processing other links
+                            // record the error and continue processing other links
                             when (e) {
                                 is UrlProcessingException -> {
                                     // Error already categorized with typed exception
