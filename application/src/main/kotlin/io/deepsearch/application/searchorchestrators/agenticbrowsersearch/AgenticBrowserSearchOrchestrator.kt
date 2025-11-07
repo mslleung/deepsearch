@@ -36,12 +36,16 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.measureTimeMillis
+
+class NoContentExtractedException(message: String) : Exception(message)
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator
 
@@ -68,10 +72,11 @@ class AgenticBrowserSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?): SearchResult = withContext(dispatchers.io) {
-        val result: SearchResult
-        val executionTime = measureTimeMillis {
-            result = executeSearchForQuery(searchQuery, maxUrls, searchDurationSeconds)
+    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?): SearchResult =
+        withContext(dispatchers.io) {
+            val result: SearchResult
+            val executionTime = measureTimeMillis {
+                result = executeSearchForQuery(searchQuery, maxUrls, searchDurationSeconds)
 //            // Break down the query into fulfillment requirements
 //            logger.info("Breaking down query: {}", searchQuery.query)
 //            val breakdownOutput = queryBreakdownAgent.generate(QueryBreakdownAgentInput(searchQuery))
@@ -119,46 +124,46 @@ class AgenticBrowserSearchOrchestrator(
 //
 //            result = aggregationOutput.aggregatedResult
 
-            // COMMENTED OUT: Query expansion logic (replaced with query breakdown)
-            // // Expand the query into multiple sub-queries
-            // logger.info("Expanding query: {}", searchQuery.query)
-            // val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
-            // val expandedQueries = expansionOutput.expandedQueries
-            //
-            // logger.info("Query expanded into {} sub-queries", expandedQueries.size)
-            //
-            // // If only one query, execute directly without aggregation
-            // if (expandedQueries.size == 1) {
-            //     logger.info("Single query after expansion, executing directly")
-            //     result = executeSearchForQuery(expandedQueries[0])
-            //     return@measureTimeMillis
-            // }
-            //
-            // // Execute all expanded queries in parallel
-            // logger.info("Executing {} queries in parallel", expandedQueries.size)
-            // val searchResults = withContext(dispatchers.io) {
-            //     expandedQueries.map { query ->
-            //         async {
-            //             executeSearchForQuery(query)
-            //         }
-            //     }.awaitAll()
-            // }
-            //
-            // // Aggregate results from all sub-queries
-            // logger.info("Aggregating results from {} sub-queries", searchResults.size)
-            // val aggregationOutput = aggregateSearchResultsAgent.generate(
-            //     AggregateSearchResultsInput(
-            //         searchQuery = searchQuery,
-            //         searchResults = searchResults
-            //     )
-            // )
-            //
-            // result = aggregationOutput.aggregatedResult
-        }
+                // COMMENTED OUT: Query expansion logic (replaced with query breakdown)
+                // // Expand the query into multiple sub-queries
+                // logger.info("Expanding query: {}", searchQuery.query)
+                // val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
+                // val expandedQueries = expansionOutput.expandedQueries
+                //
+                // logger.info("Query expanded into {} sub-queries", expandedQueries.size)
+                //
+                // // If only one query, execute directly without aggregation
+                // if (expandedQueries.size == 1) {
+                //     logger.info("Single query after expansion, executing directly")
+                //     result = executeSearchForQuery(expandedQueries[0])
+                //     return@measureTimeMillis
+                // }
+                //
+                // // Execute all expanded queries in parallel
+                // logger.info("Executing {} queries in parallel", expandedQueries.size)
+                // val searchResults = withContext(dispatchers.io) {
+                //     expandedQueries.map { query ->
+                //         async {
+                //             executeSearchForQuery(query)
+                //         }
+                //     }.awaitAll()
+                // }
+                //
+                // // Aggregate results from all sub-queries
+                // logger.info("Aggregating results from {} sub-queries", searchResults.size)
+                // val aggregationOutput = aggregateSearchResultsAgent.generate(
+                //     AggregateSearchResultsInput(
+                //         searchQuery = searchQuery,
+                //         searchResults = searchResults
+                //     )
+                // )
+                //
+                // result = aggregationOutput.aggregatedResult
+            }
 
-        logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
-        result
-    }
+            logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
+            result
+        }
 
     /**
      * Execute the full search workflow for a single query using reactive flow composition.
@@ -183,9 +188,6 @@ class AgenticBrowserSearchOrchestrator(
 
             // Use CompletableDeferred to capture result immediately without waiting for flow cancellation
             val resultDeferred = CompletableDeferred<SearchResult>()
-            
-            // Track whether initial URL succeeded
-            val initialUrlProcessedDeferred = CompletableDeferred<Boolean>()
 
             // Launch flow processing in background, we don't mean to run this for a long period of time
             // but cooperative cancellation takes time, and we need to keep it running outside the request scope
@@ -195,7 +197,6 @@ class AgenticBrowserSearchOrchestrator(
                         sessionId = sessionId,
                         searchQuery = searchQuery,
                         budget = budget,
-                        initialUrlProcessedDeferred = initialUrlProcessedDeferred
                     )
                         .cancellable()  // Ensure flow respects cancellation
                         .filter { it.markdown.isNotBlank() }
@@ -212,8 +213,10 @@ class AgenticBrowserSearchOrchestrator(
                 }
             }
 
-            // Wait for the result (not for cancellation)
-            val result = resultDeferred.await()
+            // Wait for the result with timeout (not for cancellation)
+            val result = withTimeout(budget.timeLimitMs + 5000) {
+                resultDeferred.await()
+            }
 
             // Cancel the flow job asynchronously (don't wait)
             flowJob.cancel()
@@ -241,7 +244,6 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: String,
         searchQuery: SearchQuery,
         budget: SearchBudget,
-        initialUrlProcessedDeferred: CompletableDeferred<Boolean>
     ): Flow<MarkdownResult> {
         val discoveredLinksFlow = MutableSharedFlow<WebpageLink>(
             extraBufferCapacity = Int.MAX_VALUE
@@ -264,8 +266,10 @@ class AgenticBrowserSearchOrchestrator(
                 searchQuery = searchQuery,
                 budget = budget,
                 discoveredLinksFlow = discoveredLinksFlow,
-                initialUrlProcessedDeferred = initialUrlProcessedDeferred
             )
+            .onEmpty {
+                throw NoContentExtractedException("Failed to extract any content from any discovered links")
+            }
             .onCompletion { cause ->
                 if (cause != null) {
                     logger.info("[{}] Link discovery cancelled: {}", sessionId, cause.message)
@@ -317,8 +321,7 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: String,
         searchQuery: SearchQuery,
         budget: SearchBudget,
-        discoveredLinksFlow: MutableSharedFlow<WebpageLink>,
-        initialUrlProcessedDeferred: CompletableDeferred<Boolean>
+        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
     ): Flow<MarkdownResult> =
         // Check budget before accepting each link
         transformWhile { link ->
@@ -334,12 +337,8 @@ class AgenticBrowserSearchOrchestrator(
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
                     val isInitialUrl = normalizedUrl == normalizeUrlService.normalize(searchQuery.url)
-                    
+
                     if (shouldSkipUrl(sessionId, normalizedUrl)) {
-                        // If initial URL is already cached, mark it as processed successfully
-                        if (isInitialUrl && !initialUrlProcessedDeferred.isCompleted) {
-                            initialUrlProcessedDeferred.complete(true)
-                        }
                         return@flow
                     }
 
@@ -352,15 +351,7 @@ class AgenticBrowserSearchOrchestrator(
                             if (e is CancellationException) {
                                 throw e // Always propagate cancellation
                             }
-                            
-                            // Handle initial URL failures specially
-                            if (isInitialUrl && !initialUrlProcessedDeferred.isCompleted) {
-                                logger.error("[{}] Initial URL {} failed: {}", sessionId, normalizedUrl, e.message)
-                                // Mark initial URL as failed and rethrow to fail the endpoint
-                                initialUrlProcessedDeferred.complete(false)
-                                throw e
-                            }
-                            
+
                             // For non-initial URLs, record the error and continue processing other links
                             when (e) {
                                 is UrlProcessingException -> {
@@ -372,7 +363,7 @@ class AgenticBrowserSearchOrchestrator(
                                         message = e.message!!
                                     )
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                    
+
                                     logger.warn(
                                         "[{}] Failed to process {}: {} (type: {})",
                                         sessionId,
@@ -381,6 +372,7 @@ class AgenticBrowserSearchOrchestrator(
                                         e::class.simpleName
                                     )
                                 }
+
                                 is LlmException -> {
                                     // LLM errors should be recorded but allow processing to continue
                                     val failedAccess = FailedUrlAccess(
@@ -390,7 +382,7 @@ class AgenticBrowserSearchOrchestrator(
                                         message = e.message!!
                                     )
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                    
+
                                     logger.warn(
                                         "[{}] LLM error processing {}: {}",
                                         sessionId,
@@ -398,9 +390,16 @@ class AgenticBrowserSearchOrchestrator(
                                         e.message
                                     )
                                 }
+
                                 else -> {
                                     // Unexpected exception type - log and rethrow to terminate flow
-                                    logger.error("[{}] Unexpected error processing {}: {}", sessionId, normalizedUrl, e.message, e)
+                                    logger.error(
+                                        "[{}] Unexpected error processing {}: {}",
+                                        sessionId,
+                                        normalizedUrl,
+                                        e.message,
+                                        e
+                                    )
                                     throw e
                                 }
                             }
@@ -421,11 +420,6 @@ class AgenticBrowserSearchOrchestrator(
                                 }
 
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    // Mark initial URL as successfully processed
-                                    if (isInitialUrl && !initialUrlProcessedDeferred.isCompleted) {
-                                        initialUrlProcessedDeferred.complete(true)
-                                    }
-                                    
                                     // Track URL access with appropriate subclass
                                     val urlAccess = if (event.wasCached) {
                                         CachedUrlAccess(event.url, Clock.System.now())
@@ -433,7 +427,7 @@ class AgenticBrowserSearchOrchestrator(
                                         UncachedUrlAccess(event.url, Clock.System.now())
                                     }
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                    
+
                                     // Emit markdown for batching (~1 minute)
                                     logger.debug(
                                         "[{}] Markdown extracted for {}: {} chars (cached: {})",

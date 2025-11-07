@@ -98,8 +98,8 @@ class UrlAccessService(
         val elapsedMs = Clock.System.now() - sessionCreatedAt
 
         return when {
-            elapsedMs.inWholeMilliseconds >= budget.timeLimitMs -> FinishReason.TIME_EXCEEDED
-            urlAccessCount >= budget.maxLinks -> FinishReason.MAX_LINKS_EXCEEDED
+            elapsedMs.inWholeMilliseconds >= budget.timeLimitMs -> FinishReason.TIME_BUDGET_EXCEEDED
+            urlAccessCount >= budget.maxLinks -> FinishReason.MAX_LINKS_BUDGET_EXCEEDED
             else -> null
         }
     }

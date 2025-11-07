@@ -78,8 +78,8 @@ class QuerySession(
     fun checkSearchBudget(urlAccessCount: Int, budget: SearchBudget = searchBudget): FinishReason? {
         val elapsedMs = Clock.System.now() - createdAt
         return when {
-            elapsedMs.inWholeMilliseconds >= budget.timeLimitMs -> FinishReason.TIME_EXCEEDED
-            urlAccessCount >= budget.maxLinks -> FinishReason.MAX_LINKS_EXCEEDED
+            elapsedMs.inWholeMilliseconds >= budget.timeLimitMs -> FinishReason.TIME_BUDGET_EXCEEDED
+            urlAccessCount >= budget.maxLinks -> FinishReason.MAX_LINKS_BUDGET_EXCEEDED
             else -> null
         }
     }
@@ -169,10 +169,12 @@ enum class QuerySessionState {
  * Reason why a session finished.
  */
 enum class FinishReason {
-    TIME_EXCEEDED,
-    MAX_LINKS_EXCEEDED,
+    TIME_BUDGET_EXCEEDED,
+    MAX_LINKS_BUDGET_EXCEEDED,
     ANSWER_COMPLETE,
-    LINKS_EXHAUSTED
+    LINKS_EXHAUSTED,
+    NO_CONTENT_EXTRACTED,
+    EXECUTION_TIME_EXCEEDED
 }
 
 /**
