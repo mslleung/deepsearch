@@ -61,8 +61,8 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         instruction(
             """
                 You are a link relevance analysis agent. Your task is to:
-                1. Extract all <a href> links from the provided HTML
-                2. Analyze which links are most relevant to the user's query
+                1. Identify all <a href> links in the provided HTML
+                2. Using the surrounding context, analyze which links are most relevant to the user's query
                 3. Return all relevant links with reasons why they are relevant
                 
                 Focus on links that would help answer the user's query or provide more detailed information.
@@ -89,6 +89,10 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         logger.debug("Analyzing link relevance for query: '{}'", input.query)
 
         val cleanedHtml = cleanHtml(input.html, input.url)
+        
+        // Extract all links from the cleaned HTML for validation
+        val extractedLinks = extractAndNormalizeLinks(cleanedHtml, input.url)
+        logger.debug("Extracted {} unique links from cleaned HTML", extractedLinks.size)
 
         val userPrompt = buildString {
             appendLine("Query: ${input.query}")
@@ -135,13 +139,27 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
 
         val links = try {
             val response = Json.decodeFromStringWithCodeBlocks<LinkAnalysisResponse>(responseText)
-            response.links.map { linkJson ->
-                WebpageLink(
-                    url = linkJson.url,
-                    source = LinkSource.LINK_RELEVANCE,
-                    reason = linkJson.reason
-                )
+            
+            // Validate that all returned links exist in the extracted links to prevent hallucinations
+            val validatedLinks = response.links.mapNotNull { linkJson ->
+                if (linkJson.url in extractedLinks) {
+                    WebpageLink(
+                        url = linkJson.url,
+                        source = LinkSource.LINK_RELEVANCE,
+                        reason = linkJson.reason
+                    )
+                } else {
+                    logger.warn("LLM returned hallucinated link not found in original HTML: '{}'", linkJson.url)
+                    null
+                }
             }
+            
+            val hallucinatedCount = response.links.size - validatedLinks.size
+            if (hallucinatedCount > 0) {
+                logger.warn("Filtered out {} hallucinated link(s) from LLM response", hallucinatedCount)
+            }
+            
+            validatedLinks
         } catch (e: Exception) {
             logger.warn("Failed to parse link analysis response: {}", e.message)
             logger.debug("Response text: {}", responseText)
@@ -271,6 +289,33 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         val cleanedHtml = doc.outerHtml()
         logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
         return cleanedHtml
+    }
+
+    /**
+     * Extracts all links from HTML and normalizes them to absolute URLs.
+     * @param html The HTML content to extract links from
+     * @param baseUrl The base URL to resolve relative links against
+     * @return A set of normalized absolute URLs
+     */
+    private fun extractAndNormalizeLinks(html: String, baseUrl: String): Set<String> {
+        val doc: Document = Jsoup.parse(html)
+        val baseUri = URI(baseUrl)
+        val normalizedLinks = mutableSetOf<String>()
+
+        doc.select("a[href]").forEach { anchor ->
+            val href = anchor.attr("href").trim()
+            if (href.isNotBlank()) {
+                try {
+                    // Resolve relative URLs to absolute URLs
+                    val absoluteUrl = baseUri.resolve(href).toString()
+                    normalizedLinks.add(absoluteUrl)
+                } catch (e: Exception) {
+                    logger.debug("Failed to normalize link '{}': {}", href, e.message)
+                }
+            }
+        }
+
+        return normalizedLinks
     }
 }
 
