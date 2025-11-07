@@ -64,6 +64,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
                 1. Identify all <a href> links in the provided HTML
                 2. Using the surrounding context, analyze which links are most relevant to the user's query
                 3. Return all relevant links with reasons why they are relevant
+                4. The links must be unique
                 
                 Focus on links that would help answer the user's query or provide more detailed information.
                 
@@ -89,7 +90,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         logger.debug("Analyzing link relevance for query: '{}'", input.query)
 
         val cleanedHtml = cleanHtml(input.html, input.url)
-        
+
         // Extract all links from the cleaned HTML for validation
         val extractedLinks = extractAndNormalizeLinks(cleanedHtml, input.url)
         logger.debug("Extracted {} unique links from cleaned HTML", extractedLinks.size)
@@ -139,9 +140,9 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
 
         val links = try {
             val response = Json.decodeFromStringWithCodeBlocks<LinkAnalysisResponse>(responseText)
-            
+
             // Validate that all returned links exist in the extracted links to prevent hallucinations
-            val validatedLinks = response.links.mapNotNull { linkJson ->
+            val validatedLinks = response.links.distinctBy { it.url }.mapNotNull { linkJson ->
                 if (linkJson.url in extractedLinks) {
                     WebpageLink(
                         url = linkJson.url,
@@ -153,12 +154,12 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
                     null
                 }
             }
-            
+
             val hallucinatedCount = response.links.size - validatedLinks.size
             if (hallucinatedCount > 0) {
                 logger.warn("Filtered out {} hallucinated link(s) from LLM response", hallucinatedCount)
             }
-            
+
             validatedLinks
         } catch (e: Exception) {
             logger.warn("Failed to parse link analysis response: {}", e.message)
@@ -192,7 +193,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         // Step 1: Remove obvious non-content elements (scripts, styles, etc.)
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link[rel], iframe, object, embed, " +
-            "head, title, base"
+                    "head, title, base"
         ).remove()
 
         // Step 2: Filter anchor tags to only include those from the same domain
@@ -235,10 +236,10 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         // For anchors: keep href (critical) and aria-label (provides context)
         // For other elements: keep only semantic role attributes that indicate navigation structure
         val semanticRoles = setOf(
-            "navigation", "menu", "menuitem", "main", 
+            "navigation", "menu", "menuitem", "main",
             "complementary", "contentinfo", "banner"
         )
-        
+
         doc.select("*").forEach { element ->
             val attrsToKeep = when {
                 element.tagName() == "a" -> {
@@ -247,6 +248,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
                         attr.key in setOf("href", "aria-label")
                     }
                 }
+
                 else -> {
                     // For other elements: keep only semantic role attributes
                     element.attributes().filter { attr ->
@@ -276,9 +278,9 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             changed = false
             val emptyElements = doc.select("*").filter { element ->
                 element.tagName() != "a" && // Keep all anchor tags
-                element.children().isEmpty() &&
-                element.ownText().isBlank() &&
-                element.tagName() !in setOf("br", "hr")
+                        element.children().isEmpty() &&
+                        element.ownText().isBlank() &&
+                        element.tagName() !in setOf("br", "hr")
             }
             if (emptyElements.isNotEmpty()) {
                 emptyElements.forEach { it.remove() }

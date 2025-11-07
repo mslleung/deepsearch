@@ -200,7 +200,7 @@ class AgenticBrowserSearchOrchestrator(
                     )
                         .cancellable()  // Ensure flow respects cancellation
                         .filter { it.markdown.isNotBlank() }
-                        .chunkFirstThenBySize(1, 3)
+                        .chunked(1)
                         .generateAnswerFromBatches(sessionId, searchQuery, resultDeferred)
                         .single()
                 } catch (e: CancellationException) {
@@ -486,85 +486,80 @@ class AgenticBrowserSearchOrchestrator(
         val allUrls = mutableListOf<String>()
         val allMarkdowns = mutableListOf<String>()
 
-        try {
-            transformWhile { batch ->
-                // Track URLs and markdowns
-                batch.forEach { result ->
-                    allUrls.add(result.url)
-                    allMarkdowns.add(result.markdown)
-                }
+        return@flow transformWhile { batch ->
+            // Track URLs and markdowns
+            batch.forEach { result ->
+                allUrls.add(result.url)
+                allMarkdowns.add(result.markdown)
+            }
 
-                logger.debug(
-                    "[{}] Processing batch of {} markdowns (total: {})",
-                    sessionId,
-                    batch.size,
-                    allMarkdowns.size
-                )
-
-                // Generate/update answer
-                val output = streamingAnswerAgent.generate(
-                    StreamingAnswerInput(
-                        query = searchQuery.query,
-                        currentAnswer = currentAnswer,
-                        markdownBatch = batch.map { it.markdown }
-                    )
-                )
-
-                currentAnswer = output.updatedAnswer
-                logger.debug(
-                    "[{}] Answer updated: {} chars, complete: {}",
-                    sessionId,
-                    output.updatedAnswer.length,
-                    output.isComplete
-                )
-
-                // If answer is complete, emit result and stop (single() will cancel upstream)
-                if (output.isComplete) {
-                    logger.info("[{}] Answer complete after {} pages", sessionId, allUrls.size)
-                    val answer = currentAnswer!!  // Non-null because we just assigned output.updatedAnswer
-                    querySessionService.completeSessionWithAnswer(
-                        sessionId,
-                        answer,
-                        FinishReason.ANSWER_COMPLETE
-                    )
-
-                    val result = SearchResult(
-                        originalQuery = searchQuery,
-                        answer = answer,
-                        content = allMarkdowns.joinToString("\n\n---\n\n"),
-                        sources = allUrls
-                    )
-
-                    resultDeferred.complete(result)  // Signal immediately
-                    emit(result)
-                    false  // Stop processing more batches
-                } else {
-                    true  // Continue processing
-                }
-            }.collect()
-
-            // This code only runs if transformWhile completed without emitting (LINKS_EXHAUSTED)
-            logger.info("[{}] Links exhausted: {} pages total", sessionId, allUrls.size)
-            val answer = currentAnswer ?: "No information found"
-            querySessionService.completeSessionWithAnswer(
+            logger.debug(
+                "[{}] Processing batch of {} markdowns (total: {})",
                 sessionId,
-                answer,
-                FinishReason.LINKS_EXHAUSTED
+                batch.size,
+                allMarkdowns.size
             )
 
-            val result = SearchResult(
-                originalQuery = searchQuery,
-                answer = answer,
-                content = allMarkdowns.joinToString("\n\n---\n\n"),
-                sources = allUrls
+            // Generate/update answer
+            val output = streamingAnswerAgent.generate(
+                StreamingAnswerInput(
+                    query = searchQuery.query,
+                    currentAnswer = currentAnswer,
+                    markdownBatch = batch.map { it.markdown }
+                )
             )
 
-            resultDeferred.complete(result)  // Signal immediately
-            emit(result)
-        } catch (e: Exception) {
-            logger.error("[{}] Error during answer generation: {}", sessionId, e.message, e)
-            throw e
-        }
+            currentAnswer = output.updatedAnswer
+            logger.debug(
+                "[{}] Answer updated: {} chars, complete: {}",
+                sessionId,
+                output.updatedAnswer.length,
+                output.isComplete
+            )
+
+            // If answer is complete, emit result and stop (single() will cancel upstream)
+            if (output.isComplete) {
+                logger.info("[{}] Answer complete after {} pages", sessionId, allUrls.size)
+                val answer: String = currentAnswer
+                querySessionService.completeSessionWithAnswer(
+                    sessionId,
+                    answer,
+                    FinishReason.ANSWER_COMPLETE
+                )
+
+                val result = SearchResult(
+                    originalQuery = searchQuery,
+                    answer = answer,
+                    content = allMarkdowns.joinToString("\n\n---\n\n"),
+                    sources = allUrls
+                )
+
+                resultDeferred.complete(result)  // Signal immediately
+                emit(result)
+                false  // Stop processing more batches
+            } else {
+                true  // Continue processing
+            }
+        }.collect()
+
+/*        // This code only runs if transformWhile completed without emitting (LINKS_EXHAUSTED)
+        logger.info("[{}] Links exhausted: {} pages total", sessionId, allUrls.size)
+        val answer = currentAnswer ?: "No information found"
+        querySessionService.completeSessionWithAnswer(
+            sessionId,
+            answer,
+            FinishReason.LINKS_EXHAUSTED
+        )
+
+        val result = SearchResult(
+            originalQuery = searchQuery,
+            answer = answer,
+            content = allMarkdowns.joinToString("\n\n---\n\n"),
+            sources = allUrls
+        )
+
+        resultDeferred.complete(result)  // Signal immediately
+        emit(result)*/
     }
 
     /**
