@@ -18,9 +18,6 @@ interface IQuerySessionService {
     /** Create a new query session in EXPANDING_QUERY state. */
     suspend fun createSession(query: String, url: String): QuerySession
 
-    /** Transition session to LINK_TRAVERSAL (from EXPANDING_QUERY). */
-    suspend fun transitionToLinkTraversal(sessionId: String)
-
     /**
      * Complete the session with a final answer.
      * This sets the answer, finish reason, and transitions to FINISHED state.
@@ -45,11 +42,7 @@ interface IQuerySessionService {
         budget: SearchBudget
     )
 
-    /** Transition session to FAILED with an error message (from any state). */
-    suspend fun fail(sessionId: String, error: String)
-
-    /** Get current state of session. */
-    suspend fun getState(sessionId: String): QuerySessionState
+    suspend fun hardTimeout(sessionId: String, error: String)
 
     /** Get complete session. */
     suspend fun getSession(sessionId: String): QuerySession
@@ -78,14 +71,6 @@ class QuerySessionService(
             QuerySessionState.EXPANDING_QUERY
         )
         return saved
-    }
-
-    override suspend fun transitionToLinkTraversal(sessionId: String) {
-        val session = getSessionOrThrow(sessionId)
-        val previousState = session.state
-        session.startLinkTraversal()
-        querySessionRepository.update(session)
-        logger.info("[{}] State transition: {} → {}", sessionId, previousState, session.state)
     }
 
     override suspend fun completeSessionAnswerComplete(
@@ -140,15 +125,11 @@ class QuerySessionService(
         }
     }
 
-    override suspend fun fail(sessionId: String, error: String) {
+    override suspend fun hardTimeout(sessionId: String, error: String) {
         val session = getSessionOrThrow(sessionId)
-        session.markFailed()
+        session.finish(FinishReason.EXECUTION_TIME_EXCEEDED)
         querySessionRepository.update(session)
-        logger.error("[{}] Session failed: {} (from state: {})", sessionId, error, session.state)
-    }
-
-    override suspend fun getState(sessionId: String): QuerySessionState {
-        return getSessionOrThrow(sessionId).state
+        logger.error("[{}] Session time out: {} ", sessionId, error)
     }
 
     override suspend fun getSession(sessionId: String): QuerySession {

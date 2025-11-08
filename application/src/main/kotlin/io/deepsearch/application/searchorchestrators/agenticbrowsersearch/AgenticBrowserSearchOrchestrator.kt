@@ -92,7 +92,6 @@ class AgenticBrowserSearchOrchestrator(
 
         try {
             logger.debug("[{}] Executing search for query: {}", sessionId, searchQuery.query)
-            querySessionService.transitionToLinkTraversal(sessionId)
 
             // Use CompletableDeferred to capture result immediately without waiting for flow cancellation
             val resultDeferred = CompletableDeferred<SearchResult>()
@@ -146,7 +145,7 @@ class AgenticBrowserSearchOrchestrator(
             return result
         } catch (e: Exception) {
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
-            querySessionService.fail(sessionId, e.message ?: "Unknown error")
+            querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
             throw e
         }
     }

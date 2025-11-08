@@ -29,7 +29,6 @@ class ExposedQuerySessionRepository(
             it[id] = session.id
             it[query] = session.query
             it[url] = session.url
-            it[state] = session.state.name
             it[finishReason] = session.finishReason?.name
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
@@ -55,7 +54,6 @@ class ExposedQuerySessionRepository(
         }) {
             it[query] = session.query
             it[url] = session.url
-            it[state] = session.state.name
             it[finishReason] = session.finishReason?.name
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
@@ -77,7 +75,6 @@ class ExposedQuerySessionRepository(
             id = row[querySessionTable.id],
             query = row[querySessionTable.query],
             url = row[querySessionTable.url],
-            state = QuerySessionState.valueOf(row[querySessionTable.state]),
             searchBudget = SearchBudget(
                 timeLimitMs = row[querySessionTable.budgetTimeLimitMs],
                 maxLinks = row[querySessionTable.budgetMaxLinks]

@@ -18,7 +18,6 @@ class QuerySession(
     val id: String,
     val query: String,
     val url: String,
-    var state: QuerySessionState,
     var searchBudget: SearchBudget,
     var finishReason: FinishReason?,
     var answer: String?,
@@ -31,34 +30,12 @@ class QuerySession(
         id = id,
         query = query,
         url = url,
-        state = QuerySessionState.EXPANDING_QUERY,
         searchBudget = SearchBudget(),
         finishReason = null,
         answer = null,
         createdAt = Clock.System.now(),
         updatedAt = Clock.System.now(),
     )
-
-    /**
-     * Transition to a new state with validation.
-     * Throws InvalidStateTransitionException if transition is not valid.
-     */
-    fun transitionTo(newState: QuerySessionState) {
-        if (!isValidTransition(state, newState)) {
-            throw InvalidStateTransitionException(id, state, newState)
-        }
-        state = newState
-        updatedAt = Clock.System.now()
-    }
-
-    /**
-     * Mark session as failed.
-     * This transition is valid from any state.
-     */
-    fun markFailed() {
-        state = QuerySessionState.FAILED
-        updatedAt = Clock.System.now()
-    }
 
     /**
      * Set the finish reason if it hasn't been set already.
@@ -80,14 +57,6 @@ class QuerySession(
     fun completeWithAnswer(answer: String, finishReason: FinishReason) {
         this.answer = answer
         finish(finishReason)
-        transitionTo(QuerySessionState.FINISHED)
-    }
-
-    /**
-     * Transition to LINK_TRAVERSAL state (from EXPANDING_QUERY).
-     */
-    fun startLinkTraversal() {
-        transitionTo(QuerySessionState.LINK_TRAVERSAL)
     }
 
     companion object {

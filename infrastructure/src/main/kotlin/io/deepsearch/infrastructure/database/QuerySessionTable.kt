@@ -9,7 +9,6 @@ class QuerySessionTable(
     val id = varchar("id", 255)
     val query = text("query")
     val url = varchar("url", 2048)
-    val state = varchar("state", 50)
     val finishReason = varchar("finish_reason", 50).nullable()
     val budgetTimeLimitMs = long("budget_time_limit_ms")
     val budgetMaxLinks = integer("budget_max_links")
