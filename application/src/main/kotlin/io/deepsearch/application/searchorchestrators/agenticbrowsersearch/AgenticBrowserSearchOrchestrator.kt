@@ -97,7 +97,7 @@ class AgenticBrowserSearchOrchestrator(
             val resultDeferred = CompletableDeferred<SearchResult>()
 
             // for deduping links
-            val processedUrls = ConcurrentHashMap.newKeySet<String>()
+            val visitedUrls = ConcurrentHashMap.newKeySet<String>()
 
             // Channel for discovered links
             val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
@@ -112,27 +112,27 @@ class AgenticBrowserSearchOrchestrator(
                         processInitialLinkFlow(
                             sessionId,
                             searchQuery,
-                            processedUrls,
+                            visitedUrls,
                             initialDiscoveredLinksChannel
                         ),
                         processGoogleSearchLinksFlow(
                             sessionId,
                             searchQuery,
-                            processedUrls,
+                            visitedUrls,
                             budget,
                             googleSearchDiscoveredLinksChannel
                         ),
                         processSitemapLinksFlow(
                             sessionId,
                             searchQuery,
-                            processedUrls,
+                            visitedUrls,
                             budget,
                             sitemapDiscoveredLinksChannel
                         ),
                         processRecursiveDiscoveredLinksFlow(
                             sessionId,
                             searchQuery,
-                            processedUrls,
+                            visitedUrls,
                             budget,
                             initialDiscoveredLinksChannel,
                             googleSearchDiscoveredLinksChannel,
@@ -190,7 +190,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processInitialLinkFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
         return flowOf(searchQuery.url)
@@ -202,7 +202,7 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { link ->
                         val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                        if (processedUrls.contains(normalizedUrl)) {
+                        if (visitedUrls.contains(normalizedUrl)) {
                             logger.debug(
                                 "processInitialLinkFlow [{}] Skipping already seen URL: {}",
                                 sessionId,
@@ -210,7 +210,7 @@ class AgenticBrowserSearchOrchestrator(
                             )
                             false
                         } else {
-                            processedUrls.add(normalizedUrl)
+                            visitedUrls.add(normalizedUrl)
                             true
                         }
                     }
@@ -259,7 +259,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processGoogleSearchLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
@@ -273,7 +273,7 @@ class AgenticBrowserSearchOrchestrator(
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                if (processedUrls.contains(normalizedUrl)) {
+                if (visitedUrls.contains(normalizedUrl)) {
                     logger.debug(
                         "processGoogleSearchLinksFlow [{}] Skipping already seen URL: {}",
                         sessionId,
@@ -281,7 +281,7 @@ class AgenticBrowserSearchOrchestrator(
                     )
                     false
                 } else {
-                    processedUrls.add(normalizedUrl)
+                    visitedUrls.add(normalizedUrl)
                     true
                 }
             }
@@ -338,7 +338,6 @@ class AgenticBrowserSearchOrchestrator(
                                     event.discoveredLinks.forEach { discoveredLink ->
                                         googleSearchDiscoveredLinksChannel.send(discoveredLink)
                                     }
-                                    googleSearchDiscoveredLinksChannel.close()
                                 }
 
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
@@ -386,7 +385,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processSitemapLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
@@ -400,7 +399,7 @@ class AgenticBrowserSearchOrchestrator(
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                if (processedUrls.contains(normalizedUrl)) {
+                if (visitedUrls.contains(normalizedUrl)) {
                     logger.debug(
                         "processSitemapLinksFlow [{}] Skipping already seen URL: {}",
                         sessionId,
@@ -408,7 +407,7 @@ class AgenticBrowserSearchOrchestrator(
                     )
                     false
                 } else {
-                    processedUrls.add(normalizedUrl)
+                    visitedUrls.add(normalizedUrl)
                     true
                 }
             }
@@ -465,7 +464,6 @@ class AgenticBrowserSearchOrchestrator(
                                     event.discoveredLinks.forEach { discoveredLink ->
                                         sitemapDiscoveredLinksChannel.send(discoveredLink)
                                     }
-                                    sitemapDiscoveredLinksChannel.close()
                                 }
 
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
@@ -509,7 +507,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processRecursiveDiscoveredLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
@@ -526,6 +524,9 @@ class AgenticBrowserSearchOrchestrator(
             )
                 .onCompletion {
                     // in case none of them emit any discovered links, we will do a check to close the recursive channel properly
+                    if (inFlightLinkDiscoveryProcessing.isEmpty()) {
+                        recursiveDiscoveredLinksChannel.close()
+                    }
                 },
             recursiveDiscoveredLinksChannel.receiveAsFlow()
         )
@@ -538,7 +539,7 @@ class AgenticBrowserSearchOrchestrator(
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                if (processedUrls.contains(normalizedUrl)) {
+                if (visitedUrls.contains(normalizedUrl)) {
                     logger.debug(
                         "processRecursiveDiscoveredLinksFlow [{}] Skipping already seen URL: {}",
                         sessionId,
@@ -546,7 +547,7 @@ class AgenticBrowserSearchOrchestrator(
                     )
                     false
                 } else {
-                    processedUrls.add(normalizedUrl)
+                    visitedUrls.add(normalizedUrl)
                     true
                 }
             }
@@ -571,6 +572,13 @@ class AgenticBrowserSearchOrchestrator(
                                     )
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
                                     inFlightLinkDiscoveryProcessing.remove(e.url)
+                                    if (initialDiscoveredLinksChannel.isClosedForSend &&
+                                        googleSearchDiscoveredLinksChannel.isClosedForSend &&
+                                        sitemapDiscoveredLinksChannel.isClosedForSend &&
+                                        inFlightLinkDiscoveryProcessing.isEmpty()
+                                    ) {
+                                        recursiveDiscoveredLinksChannel.close()
+                                    }
 
                                     logger.warn(
                                         "processRecursiveDiscoveredLinksFlow [{}] Failed to process discovered link {}: {} (type: {})",
@@ -604,6 +612,11 @@ class AgenticBrowserSearchOrchestrator(
                                     )
                                     event.discoveredLinks.forEach { discoveredLink ->
                                         recursiveDiscoveredLinksChannel.send(discoveredLink)
+
+                                        val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                                        if (!visitedUrls.contains(normalizedUrl)) {
+                                            inFlightLinkDiscoveryProcessing.add(normalizedUrl)
+                                        }
                                     }
                                     inFlightLinkDiscoveryProcessing.remove(event.url)
                                     if (initialDiscoveredLinksChannel.isClosedForSend &&
