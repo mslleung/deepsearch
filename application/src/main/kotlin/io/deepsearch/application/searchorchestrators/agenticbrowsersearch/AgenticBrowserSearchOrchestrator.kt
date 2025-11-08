@@ -77,88 +77,6 @@ class AgenticBrowserSearchOrchestrator(
             val result: SearchResult
             val executionTime = measureTimeMillis {
                 result = executeSearchForQuery(searchQuery, maxUrls, searchDurationSeconds)
-//            // Break down the query into fulfillment requirements
-//            logger.info("Breaking down query: {}", searchQuery.query)
-//            val breakdownOutput = queryBreakdownAgent.generate(QueryBreakdownAgentInput(searchQuery))
-//            val breakdownPoints = breakdownOutput.breakdownPoints
-//
-//            logger.info("Query broken down into {} requirements", breakdownPoints.size)
-//
-//            // If 5 or fewer points, execute as a single query without chunking
-//            if (breakdownPoints.size <= 5) {
-//                logger.info("5 or fewer requirements, executing as single query")
-//                val formattedQuery = breakdownPoints.mapIndexed { index, point ->
-//                    "${index + 1}. $point"
-//                }.joinToString("\n")
-//                val combinedSearchQuery = SearchQuery(formattedQuery, searchQuery.url, searchQuery.sitemapUrl)
-//                result = executeSearchForQuery(combinedSearchQuery)
-//                return@measureTimeMillis
-//            }
-//
-//            // Chunk points into groups of 5 and execute in parallel
-//            val chunks = breakdownPoints.chunked(5)
-//            logger.info("Chunking {} requirements into {} groups of max 5", breakdownPoints.size, chunks.size)
-//
-//            val chunkSearchQueries = chunks.map { chunk ->
-//                val formattedQuery = chunk.mapIndexed { index, point ->
-//                    "${index + 1}. $point"
-//                }.joinToString("\n")
-//                SearchQuery(formattedQuery, searchQuery.url, searchQuery.sitemapUrl)
-//            }
-//
-//            logger.info("Executing {} chunked queries in parallel", chunkSearchQueries.size)
-//            val searchResults = chunkSearchQueries.map { query ->
-//                async {
-//                    executeSearchForQuery(query)
-//                }
-//            }.awaitAll()
-//
-//            // Aggregate results from all chunks
-//            logger.info("Aggregating results from {} chunks", searchResults.size)
-//            val aggregationOutput = aggregateSearchResultsAgent.generate(
-//                AggregateSearchResultsInput(
-//                    searchQuery = searchQuery,
-//                    searchResults = searchResults
-//                )
-//            )
-//
-//            result = aggregationOutput.aggregatedResult
-
-                // COMMENTED OUT: Query expansion logic (replaced with query breakdown)
-                // // Expand the query into multiple sub-queries
-                // logger.info("Expanding query: {}", searchQuery.query)
-                // val expansionOutput = queryExpansionAgent.generate(QueryExpansionAgentInput(searchQuery))
-                // val expandedQueries = expansionOutput.expandedQueries
-                //
-                // logger.info("Query expanded into {} sub-queries", expandedQueries.size)
-                //
-                // // If only one query, execute directly without aggregation
-                // if (expandedQueries.size == 1) {
-                //     logger.info("Single query after expansion, executing directly")
-                //     result = executeSearchForQuery(expandedQueries[0])
-                //     return@measureTimeMillis
-                // }
-                //
-                // // Execute all expanded queries in parallel
-                // logger.info("Executing {} queries in parallel", expandedQueries.size)
-                // val searchResults = withContext(dispatchers.io) {
-                //     expandedQueries.map { query ->
-                //         async {
-                //             executeSearchForQuery(query)
-                //         }
-                //     }.awaitAll()
-                // }
-                //
-                // // Aggregate results from all sub-queries
-                // logger.info("Aggregating results from {} sub-queries", searchResults.size)
-                // val aggregationOutput = aggregateSearchResultsAgent.generate(
-                //     AggregateSearchResultsInput(
-                //         searchQuery = searchQuery,
-                //         searchResults = searchResults
-                //     )
-                // )
-                //
-                // result = aggregationOutput.aggregatedResult
             }
 
             logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
@@ -229,6 +147,32 @@ class AgenticBrowserSearchOrchestrator(
             throw e
         }
     }
+
+//    private fun createLinkDiscoveryFlow(
+//        sessionId: String,
+//        searchQuery: SearchQuery,
+//        budget: SearchBudget,
+//    ): Flow<WebpageLink> {
+//        val initialLinkToMarkdownFlow = flowOf(
+//            WebpageLink(
+//                url = searchQuery.url,
+//                source = LinkSource.LINK_RELEVANCE,
+//                reason = "Initial URL"
+//            )
+//        )
+//
+//        val googleSearchLinksFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
+//        val sitemapLinksFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
+//
+//        val secondaryLinksToMarkdownFlow =
+//            merge(googleSearchLinksFlow, sitemapLinksFlow, discoveredLinksFlow.asSharedFlow())
+//                .processLinksToMarkdown(
+//                    sessionId = sessionId,
+//                    searchQuery = searchQuery,
+//                    budget = budget,
+//                    discoveredLinksFlow = discoveredLinksFlow,
+//                )
+//    }
 
     /**
      * Reactive flow that produces markdown results as links are discovered.
@@ -310,9 +254,12 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: String,
         searchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {
-        val sitemapUrl = searchQuery.sitemapUrl ?: return@flow
         try {
-            val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
+            if (searchQuery.sitemapUrl.isNullOrBlank()) {
+                return@flow
+            }
+
+            val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(searchQuery.sitemapUrl!!)
             logger.debug("[{}] Sitemap discovered {} links", sessionId, sitemapLinks.size)
             sitemapLinks.forEach { emit(it) }
         } catch (e: Exception) {
@@ -542,24 +489,24 @@ class AgenticBrowserSearchOrchestrator(
             }
         }.collect()
 
-/*        // This code only runs if transformWhile completed without emitting (LINKS_EXHAUSTED)
-        logger.info("[{}] Links exhausted: {} pages total", sessionId, allUrls.size)
-        val answer = currentAnswer ?: "No information found"
-        querySessionService.completeSessionWithAnswer(
-            sessionId,
-            answer,
-            FinishReason.LINKS_EXHAUSTED
-        )
+        /*        // This code only runs if transformWhile completed without emitting (LINKS_EXHAUSTED)
+                logger.info("[{}] Links exhausted: {} pages total", sessionId, allUrls.size)
+                val answer = currentAnswer ?: "No information found"
+                querySessionService.completeSessionWithAnswer(
+                    sessionId,
+                    answer,
+                    FinishReason.LINKS_EXHAUSTED
+                )
 
-        val result = SearchResult(
-            originalQuery = searchQuery,
-            answer = answer,
-            content = allMarkdowns.joinToString("\n\n---\n\n"),
-            sources = allUrls
-        )
+                val result = SearchResult(
+                    originalQuery = searchQuery,
+                    answer = answer,
+                    content = allMarkdowns.joinToString("\n\n---\n\n"),
+                    sources = allUrls
+                )
 
-        resultDeferred.complete(result)  // Signal immediately
-        emit(result)*/
+                resultDeferred.complete(result)  // Signal immediately
+                emit(result)*/
     }
 
     /**
