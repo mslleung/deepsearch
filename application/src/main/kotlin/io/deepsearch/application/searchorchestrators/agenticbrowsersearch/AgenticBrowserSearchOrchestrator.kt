@@ -6,15 +6,11 @@ import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
-import io.deepsearch.domain.agents.AggregateSearchResultsInput
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
-import io.deepsearch.domain.agents.QueryExpansionAgentInput
-import io.deepsearch.domain.agents.QueryBreakdownAgentInput
 import io.deepsearch.domain.agents.StreamingAnswerInput
-import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -28,20 +24,17 @@ import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.UrlProcessingException
 import io.deepsearch.domain.exceptions.LlmException
+import io.deepsearch.domain.exceptions.MarkdownExtractionException
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.TimeoutCancellationException
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.measureTimeMillis
 
@@ -111,7 +104,7 @@ class AgenticBrowserSearchOrchestrator(
             // but cooperative cancellation takes time, and we need to keep it running outside the request scope
             val flowJob = applicationScope.scope.launch {
                 try {
-                    extractRelevantMarkdowns(
+                    createWebsiteToMarkdownFlow(
                         sessionId = sessionId,
                         searchQuery = searchQuery,
                         budget = budget,
@@ -148,32 +141,6 @@ class AgenticBrowserSearchOrchestrator(
         }
     }
 
-//    private fun createLinkDiscoveryFlow(
-//        sessionId: String,
-//        searchQuery: SearchQuery,
-//        budget: SearchBudget,
-//    ): Flow<WebpageLink> {
-//        val initialLinkToMarkdownFlow = flowOf(
-//            WebpageLink(
-//                url = searchQuery.url,
-//                source = LinkSource.LINK_RELEVANCE,
-//                reason = "Initial URL"
-//            )
-//        )
-//
-//        val googleSearchLinksFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
-//        val sitemapLinksFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
-//
-//        val secondaryLinksToMarkdownFlow =
-//            merge(googleSearchLinksFlow, sitemapLinksFlow, discoveredLinksFlow.asSharedFlow())
-//                .processLinksToMarkdown(
-//                    sessionId = sessionId,
-//                    searchQuery = searchQuery,
-//                    budget = budget,
-//                    discoveredLinksFlow = discoveredLinksFlow,
-//                )
-//    }
-
     /**
      * Reactive flow that produces markdown results as links are discovered.
      * Cancellation propagates through all merged flows automatically.
@@ -185,7 +152,7 @@ class AgenticBrowserSearchOrchestrator(
      * 4. All flows merge and process concurrently (Flow C)
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private fun extractRelevantMarkdowns(
+    private fun createWebsiteToMarkdownFlow(
         sessionId: String,
         searchQuery: SearchQuery,
         budget: SearchBudget,
@@ -390,6 +357,7 @@ class AgenticBrowserSearchOrchestrator(
                                         event.markdown.length,
                                         event.wasCached
                                     )
+
                                     emit(MarkdownResult(event.url, event.markdown))
                                 }
                             }
@@ -489,24 +457,24 @@ class AgenticBrowserSearchOrchestrator(
             }
         }.collect()
 
-        /*        // This code only runs if transformWhile completed without emitting (LINKS_EXHAUSTED)
-                logger.info("[{}] Links exhausted: {} pages total", sessionId, allUrls.size)
-                val answer = currentAnswer ?: "No information found"
-                querySessionService.completeSessionWithAnswer(
-                    sessionId,
-                    answer,
-                    FinishReason.LINKS_EXHAUSTED
-                )
-
-                val result = SearchResult(
-                    originalQuery = searchQuery,
-                    answer = answer,
-                    content = allMarkdowns.joinToString("\n\n---\n\n"),
-                    sources = allUrls
-                )
-
-                resultDeferred.complete(result)  // Signal immediately
-                emit(result)*/
+//        // This code only runs if transformWhile completed without emitting (LINKS_EXHAUSTED)
+//        logger.info("[{}] Links exhausted: {} pages total", sessionId, allUrls.size)
+//        val answer = currentAnswer ?: "No information found"
+//        querySessionService.completeSessionWithAnswer(
+//            sessionId,
+//            answer,
+//            FinishReason.LINKS_EXHAUSTED
+//        )
+//
+//        val result = SearchResult(
+//            originalQuery = searchQuery,
+//            answer = answer,
+//            content = allMarkdowns.joinToString("\n\n---\n\n"),
+//            sources = allUrls
+//        )
+//
+//        resultDeferred.complete(result)  // Signal immediately
+//        emit(result)
     }
 
     /**
