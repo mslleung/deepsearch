@@ -23,8 +23,9 @@ import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.UrlProcessingException
+import io.deepsearch.domain.exceptions.NetworkConnectionException
+import io.deepsearch.domain.exceptions.MarkdownConversionException
 import io.deepsearch.domain.exceptions.LlmException
-import io.deepsearch.domain.exceptions.MarkdownExtractionException
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -37,8 +38,6 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.measureTimeMillis
-
-class NoContentExtractedException(message: String) : Exception(message)
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator
 
@@ -100,22 +99,25 @@ class AgenticBrowserSearchOrchestrator(
             // Use CompletableDeferred to capture result immediately without waiting for flow cancellation
             val resultDeferred = CompletableDeferred<SearchResult>()
 
-            // Launch flow processing in background, we don't mean to run this for a long period of time
-            // but cooperative cancellation takes time, and we need to keep it running outside the request scope
+            // Shared flow for discovered links
+            val discoveredLinksFlow = MutableSharedFlow<WebpageLink>(
+                extraBufferCapacity = Int.MAX_VALUE
+            )
+
+            // Launch flow processing in background
             val flowJob = applicationScope.scope.launch {
                 try {
-                    createWebsiteToMarkdownFlow(
-                        sessionId = sessionId,
-                        searchQuery = searchQuery,
-                        budget = budget,
+                    val markdownFlow = merge(
+                        processInitialLinkFlow(sessionId, searchQuery, discoveredLinksFlow),
+                        processDiscoveredLinksFlow(sessionId, searchQuery, budget, discoveredLinksFlow)
                     )
-                        .cancellable()  // Ensure flow respects cancellation
+                        .cancellable()
                         .filter { it.markdown.isNotBlank() }
                         .chunked(1)
-                        .generateAnswerFromBatches(sessionId, searchQuery, resultDeferred)
+                    
+                    generateAnswerFromBatches(markdownFlow, sessionId, searchQuery, resultDeferred)
                         .single()
                 } catch (e: CancellationException) {
-                    // Normal cancellation after result is found
                     logger.debug("[{}] Flow cancelled after result obtained", sessionId)
                 } catch (e: Exception) {
                     if (!resultDeferred.isCompleted) {
@@ -124,17 +126,16 @@ class AgenticBrowserSearchOrchestrator(
                 }
             }
 
-            // Wait for the result with timeout (not for cancellation)
+            // Wait for the result with timeout
             val result = withTimeout(budget.timeLimitMs + 5000) {
                 resultDeferred.await()
             }
 
-            // Cancel the flow job asynchronously (don't wait)
+            // Cancel the flow job asynchronously
             flowJob.cancel()
 
             return result
         } catch (e: Exception) {
-            // final catch clause for the search pipeline
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
             querySessionService.fail(sessionId, e.message ?: "Unknown error")
             throw e
@@ -142,58 +143,229 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Reactive flow that produces markdown results as links are discovered.
-     * Cancellation propagates through all merged flows automatically.
-     *
-     * This function orchestrates parallel link discovery and processing using flow composition:
-     * 1. Initial URL flow (seed)
-     * 2. Google search flow (Flow A)
-     * 3. Discovered links feedback flow (Flow B)
-     * 4. All flows merge and process concurrently (Flow C)
+     * Process the initial user-provided URL.
+     * Network and markdown conversion errors are NOT caught - they fail the entire search.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private fun createWebsiteToMarkdownFlow(
+    private fun processInitialLinkFlow(
+        sessionId: String,
+        searchQuery: SearchQuery,
+        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
+    ): Flow<MarkdownResult> {
+        return flowOf(searchQuery.url)
+            .flatMapMerge { url ->
+                val normalizedUrl = normalizeUrlService.normalize(url) ?: url
+                
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
+                    .cancellable()
+                    .onEach { event ->
+                        when (event) {
+                            is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                logger.debug(
+                                    "[{}] Initial URL discovered {} links",
+                                    sessionId,
+                                    event.discoveredLinks.size
+                                )
+                                event.discoveredLinks.forEach { link ->
+                                    discoveredLinksFlow.emit(link)
+                                }
+                            }
+                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                val urlAccess = if (event.wasCached) {
+                                    CachedUrlAccess(event.url, Clock.System.now())
+                                } else {
+                                    UncachedUrlAccess(event.url, Clock.System.now())
+                                }
+                                urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                
+                                logger.debug(
+                                    "[{}] Initial URL markdown extracted: {} chars (cached: {})",
+                                    sessionId,
+                                    event.markdown.length,
+                                    event.wasCached
+                                )
+                            }
+                        }
+                    }
+                    .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
+                    .map { event -> MarkdownResult(event.url, event.markdown) }
+            }
+    }
+
+    /**
+     * Process discovered links from Google search, sitemap, and on-page analysis.
+     * Network and markdown conversion errors are caught and recorded, allowing other links to continue.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun processDiscoveredLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
         budget: SearchBudget,
+        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
     ): Flow<MarkdownResult> {
-        val discoveredLinksFlow = MutableSharedFlow<WebpageLink>(
-            extraBufferCapacity = Int.MAX_VALUE
-        )
-
-        val initialLinkToMarkdownFlow = flowOf(
-            WebpageLink(
-                url = searchQuery.url,
-                source = LinkSource.LINK_RELEVANCE,
-                reason = "Initial URL"
-            )
-        ).processLinksToMarkdown(
-            sessionId = sessionId,
-            searchQuery = searchQuery,
-            budget = budget,
-            discoveredLinksFlow = discoveredLinksFlow,
-        ).onEmpty {
-            throw NoContentExtractedException("Failed to extract any content from any discovered links")
-        }
-
-        val googleSearchLinksFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
-        val sitemapLinksFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
-
-        val secondaryLinksToMarkdownFlow =
-            merge(googleSearchLinksFlow, sitemapLinksFlow, discoveredLinksFlow.asSharedFlow())
-                .processLinksToMarkdown(
-                    sessionId = sessionId,
-                    searchQuery = searchQuery,
-                    budget = budget,
-                    discoveredLinksFlow = discoveredLinksFlow,
-                )
-
-        return merge(initialLinkToMarkdownFlow, secondaryLinksToMarkdownFlow)
+        val googleSearchFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
+        val sitemapFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
+        
+        return merge(googleSearchFlow, sitemapFlow, discoveredLinksFlow.asSharedFlow())
+            .takeWhile { !isBudgetExceeded(sessionId, budget) }
+            .flatMapMerge(concurrency = 100) { link ->
+                flow {
+                    val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                    
+                    if (shouldSkipUrl(sessionId, normalizedUrl)) {
+                        return@flow
+                    }
+                    
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
+                        .cancellable()
+                        .catch { e ->
+                            when (e) {
+                                is CancellationException -> {
+                                    throw e
+                                }
+                                is NetworkConnectionException, is MarkdownConversionException -> {
+                                    val failedAccess = FailedUrlAccess(
+                                        url = e.url,
+                                        timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!,
+                                        message = e.message!!
+                                    )
+                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                    
+                                    logger.warn(
+                                        "[{}] Failed to process discovered link {}: {} (type: {})",
+                                        sessionId,
+                                        e.url,
+                                        e.message,
+                                        e::class.simpleName
+                                    )
+                                }
+                                else -> {
+                                    logger.error(
+                                        "[{}] Unexpected error processing discovered link {}: {}",
+                                        sessionId,
+                                        normalizedUrl,
+                                        e.message,
+                                        e
+                                    )
+                                    throw e
+                                }
+                            }
+                        }
+                        .onEach { event ->
+                            when (event) {
+                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                    logger.debug(
+                                        "[{}] Links discovered for {}: {} links",
+                                        sessionId,
+                                        event.url,
+                                        event.discoveredLinks.size
+                                    )
+                                    event.discoveredLinks.forEach { discoveredLink ->
+                                        discoveredLinksFlow.emit(discoveredLink)
+                                    }
+                                }
+                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                    val urlAccess = if (event.wasCached) {
+                                        CachedUrlAccess(event.url, Clock.System.now())
+                                    } else {
+                                        UncachedUrlAccess(event.url, Clock.System.now())
+                                    }
+                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    
+                                    logger.debug(
+                                        "[{}] Markdown extracted for {}: {} chars (cached: {})",
+                                        sessionId,
+                                        event.url,
+                                        event.markdown.length,
+                                        event.wasCached
+                                    )
+                                }
+                            }
+                        }
+                        .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
+                        .map { event -> MarkdownResult(event.url, event.markdown) }
+                        .collect { emit(it) }
+                }
+            }
             .onCompletion { cause ->
                 if (cause != null) {
-                    logger.info("[{}] Link discovery cancelled: {}", sessionId, cause.message)
+                    logger.info("[{}] Discovered link processing cancelled: {}", sessionId, cause.message)
                 } else {
-                    logger.info("[{}] Link discovery complete", sessionId)
+                    logger.info("[{}] Discovered link processing complete", sessionId)
+                }
+            }
+    }
+
+    /**
+     * Generate answer from batches of markdown results.
+     * Uses standard flow operators to accumulate state and terminate when complete.
+     */
+    private fun generateAnswerFromBatches(
+        batches: Flow<List<MarkdownResult>>,
+        sessionId: String,
+        searchQuery: SearchQuery,
+        resultDeferred: CompletableDeferred<SearchResult>
+    ): Flow<SearchResult> {
+        data class AnswerState(
+            val currentAnswer: String?,
+            val allUrls: List<String>,
+            val allMarkdowns: List<String>,
+            val isComplete: Boolean
+        )
+        
+        return batches
+            .scan(AnswerState(null, emptyList(), emptyList(), false)) { state, batch ->
+                val newUrls = state.allUrls + batch.map { it.url }
+                val newMarkdowns = state.allMarkdowns + batch.map { it.markdown }
+                
+                logger.debug(
+                    "[{}] Processing batch of {} markdowns (total: {})",
+                    sessionId,
+                    batch.size,
+                    newMarkdowns.size
+                )
+                
+                val output = streamingAnswerAgent.generate(
+                    StreamingAnswerInput(
+                        query = searchQuery.query,
+                        currentAnswer = state.currentAnswer,
+                        markdownBatch = batch.map { it.markdown }
+                    )
+                )
+                
+                logger.debug(
+                    "[{}] Answer updated: {} chars, complete: {}",
+                    sessionId,
+                    output.updatedAnswer.length,
+                    output.isComplete
+                )
+                
+                AnswerState(output.updatedAnswer, newUrls, newMarkdowns, output.isComplete)
+            }
+            .drop(1) // Drop the initial empty state
+            .transformWhile { state ->
+                if (state.isComplete) {
+                    val answer = state.currentAnswer ?: "No information found"
+                    logger.info("[{}] Answer complete after {} pages", sessionId, state.allUrls.size)
+                    querySessionService.completeSessionWithAnswer(
+                        sessionId,
+                        answer,
+                        FinishReason.ANSWER_COMPLETE
+                    )
+                    
+                    val result = SearchResult(
+                        originalQuery = searchQuery,
+                        answer = answer,
+                        content = state.allMarkdowns.joinToString("\n\n---\n\n"),
+                        sources = state.allUrls
+                    )
+                    
+                    resultDeferred.complete(result)
+                    emit(result)
+                    false // Stop processing
+                } else {
+                    true // Continue processing more batches
                 }
             }
     }
@@ -234,136 +406,6 @@ class AgenticBrowserSearchOrchestrator(
         }
     }
 
-    /**
-     * Flow C: Link processing with markdown conversion and discovered link feedback (Flow B).
-     * Budget checks cause flow termination which propagates to all merged flows.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun Flow<WebpageLink>.processLinksToMarkdown(
-        sessionId: String,
-        searchQuery: SearchQuery,
-        budget: SearchBudget,
-        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
-    ): Flow<MarkdownResult> =
-        // Check budget before accepting each link
-        transformWhile { link ->
-            if (isBudgetExceeded(sessionId, budget)) {
-                logger.info("[{}] Budget exceeded, terminating link processing", sessionId)
-                false  // Stop accepting links
-            } else {
-                emit(link)
-                true  // Continue
-            }
-        }
-            .flatMapMerge(concurrency = 100) { link ->
-                flow {
-                    val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-
-                    if (shouldSkipUrl(sessionId, normalizedUrl)) {
-                        return@flow
-                    }
-
-                    // Process URL and collect events as they're emitted
-                    // Use .catch{} to handle all exceptions
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
-                        .cancellable()
-                        .catch { e ->
-                            // Handle URL processing errors using Flow's catch operator
-                            if (e is CancellationException) {
-                                throw e // Always propagate cancellation
-                            }
-
-                            // record the error and continue processing other links
-                            when (e) {
-                                is UrlProcessingException -> {
-                                    // Error already categorized with typed exception
-                                    val failedAccess = FailedUrlAccess(
-                                        url = e.url,
-                                        timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!,
-                                        message = e.message!!
-                                    )
-                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
-
-                                    logger.warn(
-                                        "[{}] Failed to process {}: {} (type: {})",
-                                        sessionId,
-                                        e.url,
-                                        e.message,
-                                        e::class.simpleName
-                                    )
-                                }
-
-                                is LlmException -> {
-                                    // LLM errors should be recorded but allow processing to continue
-                                    val failedAccess = FailedUrlAccess(
-                                        url = normalizedUrl,
-                                        timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!,
-                                        message = e.message!!
-                                    )
-                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
-
-                                    logger.warn(
-                                        "[{}] LLM error processing {}: {}",
-                                        sessionId,
-                                        normalizedUrl,
-                                        e.message
-                                    )
-                                }
-
-                                else -> {
-                                    // Unexpected exception type - log and rethrow to terminate flow
-                                    logger.error(
-                                        "[{}] Unexpected error processing {}: {}",
-                                        sessionId,
-                                        normalizedUrl,
-                                        e.message,
-                                        e
-                                    )
-                                    throw e
-                                }
-                            }
-                        }
-                        .collect { event ->
-                            when (event) {
-                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    // Emit discovered links immediately (~5 seconds)
-                                    logger.debug(
-                                        "[{}] Links discovered for {}: {} links",
-                                        sessionId,
-                                        event.url,
-                                        event.discoveredLinks.size
-                                    )
-                                    event.discoveredLinks.forEach { discoveredLink ->
-                                        discoveredLinksFlow.emit(discoveredLink)
-                                    }
-                                }
-
-                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    // Track URL access with appropriate subclass
-                                    val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(event.url, Clock.System.now())
-                                    } else {
-                                        UncachedUrlAccess(event.url, Clock.System.now())
-                                    }
-                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
-
-                                    // Emit markdown for batching (~1 minute)
-                                    logger.debug(
-                                        "[{}] Markdown extracted for {}: {} chars (cached: {})",
-                                        sessionId,
-                                        event.url,
-                                        event.markdown.length,
-                                        event.wasCached
-                                    )
-
-                                    emit(MarkdownResult(event.url, event.markdown))
-                                }
-                            }
-                        }
-                }
-            }
 
     /**
      * Result containing only markdown data for downstream processing.
@@ -388,124 +430,6 @@ class AgenticBrowserSearchOrchestrator(
         return querySessionService.checkBudgetAndMarkIfExceeded(sessionId, budget)
     }
 
-    /**
-     * Generate answer from batches of markdowns, terminating early when complete.
-     * When this flow completes, the single() operator cancels all upstream flows.
-     */
-    private fun Flow<List<MarkdownResult>>.generateAnswerFromBatches(
-        sessionId: String,
-        searchQuery: SearchQuery,
-        resultDeferred: CompletableDeferred<SearchResult>
-    ): Flow<SearchResult> = flow {
-        var currentAnswer: String? = null
-        val allUrls = mutableListOf<String>()
-        val allMarkdowns = mutableListOf<String>()
-
-        return@flow transformWhile { batch ->
-            // Track URLs and markdowns
-            batch.forEach { result ->
-                allUrls.add(result.url)
-                allMarkdowns.add(result.markdown)
-            }
-
-            logger.debug(
-                "[{}] Processing batch of {} markdowns (total: {})",
-                sessionId,
-                batch.size,
-                allMarkdowns.size
-            )
-
-            // Generate/update answer
-            val output = streamingAnswerAgent.generate(
-                StreamingAnswerInput(
-                    query = searchQuery.query,
-                    currentAnswer = currentAnswer,
-                    markdownBatch = batch.map { it.markdown }
-                )
-            )
-
-            currentAnswer = output.updatedAnswer
-            logger.debug(
-                "[{}] Answer updated: {} chars, complete: {}",
-                sessionId,
-                output.updatedAnswer.length,
-                output.isComplete
-            )
-
-            // If answer is complete, emit result and stop (single() will cancel upstream)
-            if (output.isComplete) {
-                logger.info("[{}] Answer complete after {} pages", sessionId, allUrls.size)
-                val answer: String = currentAnswer
-                querySessionService.completeSessionWithAnswer(
-                    sessionId,
-                    answer,
-                    FinishReason.ANSWER_COMPLETE
-                )
-
-                val result = SearchResult(
-                    originalQuery = searchQuery,
-                    answer = answer,
-                    content = allMarkdowns.joinToString("\n\n---\n\n"),
-                    sources = allUrls
-                )
-
-                resultDeferred.complete(result)  // Signal immediately
-                emit(result)
-                false  // Stop processing more batches
-            } else {
-                true  // Continue processing
-            }
-        }.collect()
-
-//        // This code only runs if transformWhile completed without emitting (LINKS_EXHAUSTED)
-//        logger.info("[{}] Links exhausted: {} pages total", sessionId, allUrls.size)
-//        val answer = currentAnswer ?: "No information found"
-//        querySessionService.completeSessionWithAnswer(
-//            sessionId,
-//            answer,
-//            FinishReason.LINKS_EXHAUSTED
-//        )
-//
-//        val result = SearchResult(
-//            originalQuery = searchQuery,
-//            answer = answer,
-//            content = allMarkdowns.joinToString("\n\n---\n\n"),
-//            sources = allUrls
-//        )
-//
-//        resultDeferred.complete(result)  // Signal immediately
-//        emit(result)
-    }
-
-    /**
-     * Custom chunking operator that emits the first N items as a single chunk,
-     * then chunks subsequent items by a different size.
-     *
-     * @param firstChunkSize Number of items in the first chunk
-     * @param subsequentChunkSize Number of items in subsequent chunks
-     */
-    private fun <T> Flow<T>.chunkFirstThenBySize(firstChunkSize: Int, subsequentChunkSize: Int): Flow<List<T>> = flow {
-        val buffer = mutableListOf<T>()
-        var isFirstChunkEmitted = false
-
-        collect { item ->
-            buffer.add(item)
-
-            if (!isFirstChunkEmitted && buffer.size >= firstChunkSize) {
-                emit(buffer.take(firstChunkSize))
-                buffer.subList(0, firstChunkSize).clear()
-                isFirstChunkEmitted = true
-            } else if (isFirstChunkEmitted && buffer.size >= subsequentChunkSize) {
-                emit(buffer.take(subsequentChunkSize))
-                buffer.subList(0, subsequentChunkSize).clear()
-            }
-        }
-
-        // Emit remaining items if any
-        if (buffer.isNotEmpty()) {
-            emit(buffer.toList())
-        }
-    }
 }
 
 

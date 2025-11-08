@@ -13,7 +13,17 @@ sealed class UrlProcessingException(
     cause: Throwable? = null
 ) : Exception("$url: $message", cause)
 
-// Network-level exceptions (out of our control)
+// Network/connection exceptions (out of our control) - fail discovered links gracefully
+
+/**
+ * Base class for network and connection-related failures.
+ * These exceptions are expected when processing discovered links and should be handled gracefully.
+ */
+sealed class NetworkConnectionException(
+    url: String,
+    message: String,
+    cause: Throwable? = null
+) : UrlProcessingException(url, message, cause)
 
 /**
  * Network timeout while attempting to reach the URL.
@@ -21,7 +31,7 @@ sealed class UrlProcessingException(
 class NetworkTimeoutException(
     url: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, "Network timeout", cause)
+) : NetworkConnectionException(url, "Network timeout", cause)
 
 /**
  * Connection refused by the remote server.
@@ -29,7 +39,7 @@ class NetworkTimeoutException(
 class ConnectionRefusedException(
     url: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, "Connection refused", cause)
+) : NetworkConnectionException(url, "Connection refused", cause)
 
 /**
  * DNS resolution failed for the domain.
@@ -37,7 +47,7 @@ class ConnectionRefusedException(
 class DnsResolutionException(
     url: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, "DNS resolution failed", cause)
+) : NetworkConnectionException(url, "DNS resolution failed", cause)
 
 /**
  * SSL/TLS handshake failed.
@@ -45,7 +55,7 @@ class DnsResolutionException(
 class SslHandshakeException(
     url: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, "SSL handshake failed", cause)
+) : NetworkConnectionException(url, "SSL handshake failed", cause)
 
 /**
  * Too many redirects or redirect loop detected.
@@ -53,9 +63,7 @@ class SslHandshakeException(
 class RedirectLoopException(
     url: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, "Redirect loop detected", cause)
-
-// HTTP-level exceptions (out of our control)
+) : NetworkConnectionException(url, "Redirect loop detected", cause)
 
 /**
  * HTTP 4xx client error (e.g., 404, 403, 401).
@@ -65,7 +73,7 @@ class HttpClientErrorException(
     val statusCode: Int,
     val reasonPhrase: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, "HTTP $statusCode: $reasonPhrase", cause)
+) : NetworkConnectionException(url, "HTTP $statusCode: $reasonPhrase", cause)
 
 /**
  * HTTP 5xx server error.
@@ -75,9 +83,7 @@ class HttpServerErrorException(
     val statusCode: Int,
     val reasonPhrase: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, "HTTP $statusCode: $reasonPhrase", cause)
-
-// Content-related exceptions (partially in our control)
+) : NetworkConnectionException(url, "HTTP $statusCode: $reasonPhrase", cause)
 
 /**
  * Content type not supported (e.g., video, audio).
@@ -86,7 +92,7 @@ class UnsupportedContentTypeException(
     url: String,
     val contentType: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, "Unsupported content type: $contentType", cause)
+) : NetworkConnectionException(url, "Unsupported content type: $contentType", cause)
 
 /**
  * Content size exceeds processing limits.
@@ -95,9 +101,7 @@ class ContentTooLargeException(
     url: String,
     val sizeBytes: Long,
     cause: Throwable? = null
-) : UrlProcessingException(url, "Content too large: $sizeBytes bytes", cause)
-
-// Processing exceptions (in our control)
+) : NetworkConnectionException(url, "Content too large: $sizeBytes bytes", cause)
 
 /**
  * Browser failed to navigate to the URL.
@@ -106,7 +110,19 @@ class ContentTooLargeException(
 class BrowserNavigationException(
     url: String,
     cause: Throwable
-) : UrlProcessingException(url, "Browser navigation failed: ${cause.message}", cause)
+) : NetworkConnectionException(url, "Browser navigation failed: ${cause.message}", cause)
+
+// Markdown conversion exceptions (in our control) - fail discovered links gracefully
+
+/**
+ * Base class for markdown extraction and parsing failures.
+ * These exceptions indicate issues in our processing logic.
+ */
+sealed class MarkdownConversionException(
+    url: String,
+    message: String,
+    cause: Throwable
+) : UrlProcessingException(url, message, cause)
 
 /**
  * Markdown extraction from page failed.
@@ -114,7 +130,7 @@ class BrowserNavigationException(
 class MarkdownExtractionException(
     url: String,
     cause: Throwable
-) : UrlProcessingException(url, "Markdown extraction failed: ${cause.message}", cause)
+) : MarkdownConversionException(url, "Markdown extraction failed: ${cause.message}", cause)
 
 /**
  * Parsing error during content processing.
@@ -122,4 +138,4 @@ class MarkdownExtractionException(
 class ParsingException(
     url: String,
     cause: Throwable
-) : UrlProcessingException(url, "Parsing error: ${cause.message}", cause)
+) : MarkdownConversionException(url, "Parsing error: ${cause.message}", cause)
