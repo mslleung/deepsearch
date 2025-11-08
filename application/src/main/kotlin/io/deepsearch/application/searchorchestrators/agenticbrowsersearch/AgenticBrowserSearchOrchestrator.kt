@@ -20,12 +20,9 @@ import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.entities.FinishReason
-import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import io.deepsearch.domain.exceptions.UrlProcessingException
 import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.exceptions.MarkdownConversionException
-import io.deepsearch.domain.exceptions.LlmException
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -107,15 +104,25 @@ class AgenticBrowserSearchOrchestrator(
             // Launch flow processing in background
             val flowJob = applicationScope.scope.launch {
                 try {
-                    val markdownFlow = merge(
+                    merge(
                         processInitialLinkFlow(sessionId, searchQuery, discoveredLinksFlow),
                         processDiscoveredLinksFlow(sessionId, searchQuery, budget, discoveredLinksFlow)
                     )
                         .cancellable()
                         .filter { it.markdown.isNotBlank() }
                         .chunked(1)
-                    
-                    generateAnswerFromBatches(markdownFlow, sessionId, searchQuery, resultDeferred)
+                        .runningFold(AnswerAccumulator()) { state, markdownResults ->
+                            aggregateMarkdownResultIntoAnswer(
+                                sessionId,
+                                searchQuery,
+                                state,
+                                markdownResults
+                            )
+                        }
+                        .takeWhile { !it.isComplete }
+                        .onEach { finalAnswerAccumulator -> // should only be one emission
+                            finishQuerySession(sessionId, searchQuery, finalAnswerAccumulator, resultDeferred)
+                        }
                         .single()
                 } catch (e: CancellationException) {
                     logger.debug("[{}] Flow cancelled after result obtained", sessionId)
@@ -155,7 +162,7 @@ class AgenticBrowserSearchOrchestrator(
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
-                
+
                 urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
                     .cancellable()
                     .onEach { event ->
@@ -170,6 +177,7 @@ class AgenticBrowserSearchOrchestrator(
                                     discoveredLinksFlow.emit(link)
                                 }
                             }
+
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                 val urlAccess = if (event.wasCached) {
                                     CachedUrlAccess(event.url, Clock.System.now())
@@ -177,7 +185,7 @@ class AgenticBrowserSearchOrchestrator(
                                     UncachedUrlAccess(event.url, Clock.System.now())
                                 }
                                 urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                
+
                                 logger.debug(
                                     "[{}] Initial URL markdown extracted: {} chars (cached: {})",
                                     sessionId,
@@ -205,17 +213,17 @@ class AgenticBrowserSearchOrchestrator(
     ): Flow<MarkdownResult> {
         val googleSearchFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
         val sitemapFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
-        
+
         return merge(googleSearchFlow, sitemapFlow, discoveredLinksFlow.asSharedFlow())
             .takeWhile { !isBudgetExceeded(sessionId, budget) }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                    
+
                     if (shouldSkipUrl(sessionId, normalizedUrl)) {
                         return@flow
                     }
-                    
+
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
                         .cancellable()
                         .catch { e ->
@@ -223,6 +231,7 @@ class AgenticBrowserSearchOrchestrator(
                                 is CancellationException -> {
                                     throw e
                                 }
+
                                 is NetworkConnectionException, is MarkdownConversionException -> {
                                     val failedAccess = FailedUrlAccess(
                                         url = e.url,
@@ -231,7 +240,7 @@ class AgenticBrowserSearchOrchestrator(
                                         message = e.message!!
                                     )
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                    
+
                                     logger.warn(
                                         "[{}] Failed to process discovered link {}: {} (type: {})",
                                         sessionId,
@@ -240,6 +249,7 @@ class AgenticBrowserSearchOrchestrator(
                                         e::class.simpleName
                                     )
                                 }
+
                                 else -> {
                                     logger.error(
                                         "[{}] Unexpected error processing discovered link {}: {}",
@@ -265,6 +275,7 @@ class AgenticBrowserSearchOrchestrator(
                                         discoveredLinksFlow.emit(discoveredLink)
                                     }
                                 }
+
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     val urlAccess = if (event.wasCached) {
                                         CachedUrlAccess(event.url, Clock.System.now())
@@ -272,7 +283,7 @@ class AgenticBrowserSearchOrchestrator(
                                         UncachedUrlAccess(event.url, Clock.System.now())
                                     }
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                    
+
                                     logger.debug(
                                         "[{}] Markdown extracted for {}: {} chars (cached: {})",
                                         sessionId,
@@ -298,76 +309,81 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Generate answer from batches of markdown results.
-     * Uses standard flow operators to accumulate state and terminate when complete.
+     * State accumulated during answer generation from markdown batches.
      */
-    private fun generateAnswerFromBatches(
-        batches: Flow<List<MarkdownResult>>,
+    private data class AnswerAccumulator(
+        val currentAnswer: String?,
+        val allUrls: List<String>,
+        val allMarkdowns: List<String>,
+        val isComplete: Boolean
+    ) {
+        constructor() : this(null, emptyList(), emptyList(), false)
+    }
+
+    /**
+     * Flow operator that aggregates markdown batches into a complete answer.
+     * Transforms Flow<List<MarkdownResult>> into Flow<SearchResult> that emits once.
+     */
+    private suspend fun aggregateMarkdownResultIntoAnswer(
         sessionId: String,
         searchQuery: SearchQuery,
-        resultDeferred: CompletableDeferred<SearchResult>
-    ): Flow<SearchResult> {
-        data class AnswerState(
-            val currentAnswer: String?,
-            val allUrls: List<String>,
-            val allMarkdowns: List<String>,
-            val isComplete: Boolean
+        state: AnswerAccumulator,
+        markdownResults: List<MarkdownResult>,
+    ): AnswerAccumulator {
+        val newUrls = state.allUrls + markdownResults.map { it.url }
+        val newMarkdowns = state.allMarkdowns + markdownResults.map { it.markdown }
+
+        logger.debug(
+            "[{}] Processing batch of {} markdowns (total: {})",
+            sessionId,
+            markdownResults.size,
+            newMarkdowns.size
         )
-        
-        return batches
-            .scan(AnswerState(null, emptyList(), emptyList(), false)) { state, batch ->
-                val newUrls = state.allUrls + batch.map { it.url }
-                val newMarkdowns = state.allMarkdowns + batch.map { it.markdown }
-                
-                logger.debug(
-                    "[{}] Processing batch of {} markdowns (total: {})",
-                    sessionId,
-                    batch.size,
-                    newMarkdowns.size
-                )
-                
-                val output = streamingAnswerAgent.generate(
-                    StreamingAnswerInput(
-                        query = searchQuery.query,
-                        currentAnswer = state.currentAnswer,
-                        markdownBatch = batch.map { it.markdown }
-                    )
-                )
-                
-                logger.debug(
-                    "[{}] Answer updated: {} chars, complete: {}",
-                    sessionId,
-                    output.updatedAnswer.length,
-                    output.isComplete
-                )
-                
-                AnswerState(output.updatedAnswer, newUrls, newMarkdowns, output.isComplete)
-            }
-            .drop(1) // Drop the initial empty state
-            .transformWhile { state ->
-                if (state.isComplete) {
-                    val answer = state.currentAnswer ?: "No information found"
-                    logger.info("[{}] Answer complete after {} pages", sessionId, state.allUrls.size)
-                    querySessionService.completeSessionWithAnswer(
-                        sessionId,
-                        answer,
-                        FinishReason.ANSWER_COMPLETE
-                    )
-                    
-                    val result = SearchResult(
-                        originalQuery = searchQuery,
-                        answer = answer,
-                        content = state.allMarkdowns.joinToString("\n\n---\n\n"),
-                        sources = state.allUrls
-                    )
-                    
-                    resultDeferred.complete(result)
-                    emit(result)
-                    false // Stop processing
-                } else {
-                    true // Continue processing more batches
-                }
-            }
+
+        val output = streamingAnswerAgent.generate(
+            StreamingAnswerInput(
+                query = searchQuery.query,
+                currentAnswer = state.currentAnswer,
+                markdownBatch = markdownResults.map { it.markdown }
+            )
+        )
+
+        logger.debug(
+            "[{}] Answer updated: {} chars, complete: {}",
+            sessionId,
+            output.updatedAnswer.length,
+            output.isComplete
+        )
+
+        return AnswerAccumulator(output.updatedAnswer, newUrls, newMarkdowns, output.isComplete)
+    }
+
+    private suspend fun finishQuerySession(
+        sessionId: String,
+        searchQuery: SearchQuery,
+        finalAnswerAccumulator: AnswerAccumulator,
+        resultDeferred: CompletableDeferred<SearchResult>,
+    ) {
+        val answer = finalAnswerAccumulator.currentAnswer ?: "No information found"
+        val finishReason = if (finalAnswerAccumulator.isComplete) FinishReason.ANSWER_COMPLETE else FinishReason.LINKS_EXHAUSTED
+
+        logger.info(
+            "[{}] Answer generation complete after {} pages (reason: {})",
+            sessionId,
+            finalAnswerAccumulator.allUrls.size,
+            finishReason
+        )
+
+        querySessionService.completeSessionWithAnswer(sessionId, answer, finishReason)
+
+        val result = SearchResult(
+            originalQuery = searchQuery,
+            answer = answer,
+            content = finalAnswerAccumulator.allMarkdowns.joinToString("\n\n---\n\n"),
+            sources = finalAnswerAccumulator.allUrls
+        )
+
+        resultDeferred.complete(result)
     }
 
     /**
