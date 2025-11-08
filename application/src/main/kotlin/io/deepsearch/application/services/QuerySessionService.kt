@@ -42,6 +42,14 @@ interface IQuerySessionService {
         budget: SearchBudget
     )
 
+    /**
+     * Complete the session when all links have been exhausted without completing the answer.
+     */
+    suspend fun completeSessionLinksExhausted(
+        sessionId: String,
+        answer: String
+    )
+
     suspend fun hardTimeout(sessionId: String, error: String)
 
     /** Get complete session. */
@@ -123,6 +131,17 @@ class QuerySessionService(
                 answer.length
             )
         }
+    }
+
+    override suspend fun completeSessionLinksExhausted(sessionId: String, answer: String) {
+        val session = getSessionOrThrow(sessionId)
+        session.completeWithAnswer(answer, FinishReason.LINKS_EXHAUSTED)
+        querySessionRepository.update(session)
+        logger.info(
+            "[{}] Session completed: {} chars, links exhausted",
+            sessionId,
+            answer.length
+        )
     }
 
     override suspend fun hardTimeout(sessionId: String, error: String) {

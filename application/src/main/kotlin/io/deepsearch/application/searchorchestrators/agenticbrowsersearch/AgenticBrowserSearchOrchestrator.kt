@@ -31,11 +31,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.measureTimeMillis
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator
 
@@ -96,17 +98,15 @@ class AgenticBrowserSearchOrchestrator(
             // Use CompletableDeferred to capture result immediately without waiting for flow cancellation
             val resultDeferred = CompletableDeferred<SearchResult>()
 
-            // Shared flow for discovered links
-            val discoveredLinksFlow = MutableSharedFlow<WebpageLink>(
-                extraBufferCapacity = Int.MAX_VALUE
-            )
+            // Channel for discovered links
+            val discoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
             // Launch flow processing in background
             val flowJob = applicationScope.scope.launch {
                 try {
                     merge(
-                        processInitialLinkFlow(sessionId, searchQuery, discoveredLinksFlow),
-                        processDiscoveredLinksFlow(sessionId, searchQuery, budget, discoveredLinksFlow)
+                        processInitialLinkFlow(sessionId, searchQuery, discoveredLinksChannel),
+                        processDiscoveredLinksFlow(sessionId, searchQuery, budget, discoveredLinksChannel)
                     )
                         .cancellable()
                         .filter { it.markdown.isNotBlank() }
@@ -158,7 +158,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processInitialLinkFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
+        discoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
@@ -175,7 +175,7 @@ class AgenticBrowserSearchOrchestrator(
                                     event.discoveredLinks.size
                                 )
                                 event.discoveredLinks.forEach { link ->
-                                    discoveredLinksFlow.emit(link)
+                                    discoveredLinksChannel.send(link)
                                 }
                             }
 
@@ -210,14 +210,14 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: String,
         searchQuery: SearchQuery,
         budget: SearchBudget,
-        discoveredLinksFlow: MutableSharedFlow<WebpageLink>
+        discoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
         val googleSearchFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
         val sitemapFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
 
         val processedUrls = ConcurrentHashMap.newKeySet<String>()
 
-        return merge(googleSearchFlow, sitemapFlow, discoveredLinksFlow.asSharedFlow())
+        return merge(googleSearchFlow, sitemapFlow, discoveredLinksChannel.receiveAsFlow())
             .takeWhile {
                 !querySessionService.isBudgetExceeded(
                     sessionId,
@@ -282,7 +282,7 @@ class AgenticBrowserSearchOrchestrator(
                                         event.discoveredLinks.size
                                     )
                                     event.discoveredLinks.forEach { discoveredLink ->
-                                        discoveredLinksFlow.emit(discoveredLink)
+                                        discoveredLinksChannel.send(discoveredLink)
                                     }
                                 }
 
@@ -390,6 +390,9 @@ class AgenticBrowserSearchOrchestrator(
             querySessionService.completeSessionAnswerComplete(sessionId, answer)
         } else if (querySessionService.isBudgetExceeded(sessionId, budget)) {
             querySessionService.completeSessionBudgetExceeded(sessionId, answer, budget)
+        } else {
+            // Flow completed naturally - all links exhausted
+            querySessionService.completeSessionLinksExhausted(sessionId, answer)
         }
 
         val result = SearchResult(
@@ -426,11 +429,12 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {
         try {
-            if (searchQuery.sitemapUrl.isNullOrBlank()) {
+            val sitemapUrl = searchQuery.sitemapUrl
+            if (sitemapUrl.isNullOrBlank()) {
                 return@flow
             }
 
-            val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(searchQuery.sitemapUrl!!)
+            val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
             logger.debug("[{}] Sitemap discovered {} links", sessionId, sitemapLinks.size)
             sitemapLinks.forEach { emit(it) }
         } catch (e: Exception) {

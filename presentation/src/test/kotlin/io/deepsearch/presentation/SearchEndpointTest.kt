@@ -33,7 +33,7 @@ class SearchEndpointTest {
         fun searchTestCases(): List<SearchTestCase> = listOf(
             SearchTestCase(
                 url = "https://www.otandp.com/",
-                query = "Are there any vhis plans?"
+                query = "Who is the CEO?"
             ),
 /*            SearchTestCase(
                 url = "https://www.wikipedia.org/",
