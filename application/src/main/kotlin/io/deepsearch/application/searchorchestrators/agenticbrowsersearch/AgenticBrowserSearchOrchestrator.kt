@@ -108,6 +108,8 @@ class AgenticBrowserSearchOrchestrator(
             // Launch flow processing in background
             val flowJob = applicationScope.scope.launch {
                 try {
+                    var answerAccumulator = AnswerAccumulator()
+
                     merge(
                         processInitialLinkFlow(
                             sessionId,
@@ -151,10 +153,14 @@ class AgenticBrowserSearchOrchestrator(
                                 markdownResults
                             )
                         }
-                        .filter { answerAccumulator -> isAnswerReady(sessionId, budget, answerAccumulator) }
+                        .onEach { answerAccumulator = it }
+                        .filter { answerAccumulator -> answerAccumulator.isComplete }
                         .take(1)
-                        .onEach { finalAnswerAccumulator -> // should only be one emission
-                            finishQuerySession(sessionId, searchQuery, finalAnswerAccumulator, budget, resultDeferred)
+                        .onEach { completedAnswerAccumulator -> // should only be one emission
+                            finishQuerySession(sessionId, searchQuery, completedAnswerAccumulator, budget, resultDeferred)
+                        }
+                        .onCompletion { // answer did not complete, but the upstream flow completed, return our incomplete answer
+                            finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, resultDeferred)
                         }
                         .single()
                 } catch (e: CancellationException) {
@@ -551,10 +557,10 @@ class AgenticBrowserSearchOrchestrator(
                     true
                 }
             }
-            .onEach { link -> inFlightLinkDiscoveryProcessing.add(link.url) }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                    inFlightLinkDiscoveryProcessing.add(normalizedUrl)
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query)
                         .cancellable()
                         .catch { e ->
@@ -612,13 +618,12 @@ class AgenticBrowserSearchOrchestrator(
                                     )
                                     event.discoveredLinks.forEach { discoveredLink ->
                                         recursiveDiscoveredLinksChannel.send(discoveredLink)
-
-                                        val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                                        if (!visitedUrls.contains(normalizedUrl)) {
-                                            inFlightLinkDiscoveryProcessing.add(normalizedUrl)
-                                        }
                                     }
                                     inFlightLinkDiscoveryProcessing.remove(event.url)
+                                    logger.debug(
+                                        "processRecursiveDiscoveredLinksFlow {}",
+                                        inFlightLinkDiscoveryProcessing
+                                    )
                                     if (initialDiscoveredLinksChannel.isClosedForSend &&
                                         googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         sitemapDiscoveredLinksChannel.isClosedForSend &&
@@ -715,15 +720,6 @@ class AgenticBrowserSearchOrchestrator(
         )
 
         return AnswerAccumulator(output.updatedAnswer, newUrls, newMarkdowns, output.isComplete)
-    }
-
-    private suspend fun isAnswerReady(
-        sessionId: String,
-        searchBudget: SearchBudget,
-        answerAccumulator: AnswerAccumulator
-    ): Boolean {
-        return answerAccumulator.isComplete
-                || querySessionService.isBudgetExceeded(sessionId, searchBudget)
     }
 
     private suspend fun finishQuerySession(

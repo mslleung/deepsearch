@@ -77,13 +77,15 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             You are a streaming answer agent that builds comprehensive answers incrementally as new markdown content arrives.
             
             Instructions for answer updates:
-            - If there's no current answer, create an initial answer from the markdown batch
-            - If there's a current answer, enhance it with any new relevant information from the batch
+            - If there's no current answer, create an initial answer from the markdowns
+            - If there's a current answer, enhance it with any new relevant information
             - If the new batch contains no relevant information, return the current answer unchanged
             
             Answer quality:
             - The answer should be as comprehensive as possible
             - The answer should be standalone and serve as a direct answer to the user query
+            - There is no temporal significance of the markdowns, the answer should not reveal our streaming approach
+              For example, prefer to say "from the information" instead of "from the new batch of information"
             - If there is a lack of information, the answer should just say so
             - Only include information that directly addresses the user's query
             - Do not invent information not present in the content

@@ -47,7 +47,8 @@ class WebpageLinkDiscoveryService(
     private val googleSearchLinkDiscoveryAgent: IGoogleSearchLinkDiscoveryAgent,
     private val linkRelevanceAnalysisAgent: ILinkRelevanceAnalysisAgent,
     private val sitemapCacheRepository: ISitemapCacheRepository,
-    private val sitemapLockRegistry: ISitemapLinkDiscoveryLockRegistry
+    private val sitemapLockRegistry: ISitemapLinkDiscoveryLockRegistry,
+    private val normalizeUrlService: INormalizeUrlService
 ) : IWebpageLinkDiscoveryService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -58,15 +59,18 @@ class WebpageLinkDiscoveryService(
     }
 
     /**
-     * Extracts the base domain from a URL (scheme + host).
+     * Extracts the base domain from a URL (scheme + host) and normalizes it.
      * For example: "https://example.com/path" -> "https://example.com"
      * 
      * Uses regex to extract the scheme and host, which handles URLs with
      * illegal characters (like unencoded spaces in query parameters).
+     * The extracted base domain is then normalized to ensure consistent comparison.
      */
     private fun extractBaseDomain(url: String): String? {
         val regex = Regex("^(https?://[^/]+)")
-        return regex.find(url)?.value
+        val baseDomain = regex.find(url)?.value ?: return null
+        // Normalize the base domain to ensure consistent comparison
+        return normalizeUrlService.normalize(baseDomain) ?: baseDomain
     }
 
     override suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery): List<WebpageLink> {
@@ -97,7 +101,11 @@ class WebpageLinkDiscoveryService(
             )
         ).links
 
-        val filteredLinks = links.filter { it.url.startsWith(baseDomain) }
+        val filteredLinks = links.filter { link ->
+            val normalizedLinkUrl = normalizeUrlService.normalize(link.url) ?: link.url
+            val normalizedLinkBaseDomain = extractBaseDomain(normalizedLinkUrl)
+            normalizedLinkBaseDomain == baseDomain
+        }
         logger.debug("Discovered {} links from on-page analysis (filtered to {} same-domain links)", links.size, filteredLinks.size)
         return filteredLinks
     }
@@ -120,7 +128,11 @@ class WebpageLinkDiscoveryService(
             )
         }
         
-        val filteredLinks = links.filter { it.url.startsWith(baseDomain) }
+        val filteredLinks = links.filter { link ->
+            val normalizedLinkUrl = normalizeUrlService.normalize(link.url) ?: link.url
+            val normalizedLinkBaseDomain = extractBaseDomain(normalizedLinkUrl)
+            normalizedLinkBaseDomain == baseDomain
+        }
         logger.debug("Discovered {} links total (filtered to {} same-domain links)", links.size, filteredLinks.size)
         return filteredLinks
     }
