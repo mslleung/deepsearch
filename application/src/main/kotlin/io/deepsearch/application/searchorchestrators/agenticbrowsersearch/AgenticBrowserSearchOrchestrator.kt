@@ -35,6 +35,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.measureTimeMillis
+import java.util.concurrent.ConcurrentHashMap
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator
 
@@ -214,13 +215,17 @@ class AgenticBrowserSearchOrchestrator(
         val googleSearchFlow = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery)
         val sitemapFlow = createSitemapLinkDiscoveryFlow(sessionId, searchQuery)
 
+        val processedUrls = ConcurrentHashMap.newKeySet<String>()
+
         return merge(googleSearchFlow, sitemapFlow, discoveredLinksFlow.asSharedFlow())
             .takeWhile { !isBudgetExceeded(sessionId, budget) }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                    if (shouldSkipUrl(sessionId, normalizedUrl)) {
+                    // Atomic check-and-add: skip if already processing
+                    if (!processedUrls.add(normalizedUrl)) {
+                        logger.debug("[{}] Skipping already queued URL: {}", sessionId, normalizedUrl)
                         return@flow
                     }
 
@@ -430,17 +435,6 @@ class AgenticBrowserSearchOrchestrator(
         val url: String,
         val markdown: String
     )
-
-    private suspend fun shouldSkipUrl(
-        sessionId: String,
-        normalizedUrl: String
-    ): Boolean {
-        if (urlAccessService.hasVisitedUrl(sessionId, normalizedUrl)) {
-            logger.debug("[{}] Skipping already visited URL: {}", sessionId, normalizedUrl)
-            return true
-        }
-        return false
-    }
 
     private suspend fun isBudgetExceeded(sessionId: String, budget: SearchBudget): Boolean {
         return querySessionService.checkBudgetAndMarkIfExceeded(sessionId, budget)
