@@ -120,9 +120,10 @@ class AgenticBrowserSearchOrchestrator(
                                 markdownResults
                             )
                         }
-                        .takeWhile { !it.isComplete }
+                        .takeWhile { answerAccumulator -> isAnswerReady(sessionId, budget, answerAccumulator) }
+                        .take(1)
                         .onEach { finalAnswerAccumulator -> // should only be one emission
-                            finishQuerySession(sessionId, searchQuery, finalAnswerAccumulator, resultDeferred)
+                            finishQuerySession(sessionId, searchQuery, finalAnswerAccumulator, budget, resultDeferred)
                         }
                         .single()
                 } catch (e: CancellationException) {
@@ -218,7 +219,12 @@ class AgenticBrowserSearchOrchestrator(
         val processedUrls = ConcurrentHashMap.newKeySet<String>()
 
         return merge(googleSearchFlow, sitemapFlow, discoveredLinksFlow.asSharedFlow())
-            .takeWhile { !isBudgetExceeded(sessionId, budget) }
+            .takeWhile {
+                !querySessionService.isBudgetExceeded(
+                    sessionId,
+                    budget
+                )
+            } // check the budget instead of processedUrls size, because the link may fail and will not be counted
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
@@ -363,23 +369,29 @@ class AgenticBrowserSearchOrchestrator(
         return AnswerAccumulator(output.updatedAnswer, newUrls, newMarkdowns, output.isComplete)
     }
 
+    private suspend fun isAnswerReady(
+        sessionId: String,
+        searchBudget: SearchBudget,
+        answerAccumulator: AnswerAccumulator
+    ): Boolean {
+        return answerAccumulator.isComplete
+                || querySessionService.isBudgetExceeded(sessionId, searchBudget)
+    }
+
     private suspend fun finishQuerySession(
         sessionId: String,
         searchQuery: SearchQuery,
         finalAnswerAccumulator: AnswerAccumulator,
+        budget: SearchBudget,
         resultDeferred: CompletableDeferred<SearchResult>,
     ) {
         val answer = finalAnswerAccumulator.currentAnswer ?: "No information found"
-        val finishReason = if (finalAnswerAccumulator.isComplete) FinishReason.ANSWER_COMPLETE else FinishReason.LINKS_EXHAUSTED
 
-        logger.info(
-            "[{}] Answer generation complete after {} pages (reason: {})",
-            sessionId,
-            finalAnswerAccumulator.allUrls.size,
-            finishReason
-        )
-
-        querySessionService.completeSessionWithAnswer(sessionId, answer, finishReason)
+        if (finalAnswerAccumulator.isComplete) {
+            querySessionService.completeSessionAnswerComplete(sessionId, answer)
+        } else if (querySessionService.isBudgetExceeded(sessionId, budget)) {
+            querySessionService.completeSessionBudgetExceeded(sessionId, answer, budget)
+        }
 
         val result = SearchResult(
             originalQuery = searchQuery,
@@ -435,10 +447,6 @@ class AgenticBrowserSearchOrchestrator(
         val url: String,
         val markdown: String
     )
-
-    private suspend fun isBudgetExceeded(sessionId: String, budget: SearchBudget): Boolean {
-        return querySessionService.checkBudgetAndMarkIfExceeded(sessionId, budget)
-    }
 
 }
 

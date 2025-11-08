@@ -1,19 +1,14 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.valueobjects.*
 import io.deepsearch.domain.repositories.IUrlAccessRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import kotlin.time.Clock
-import kotlin.time.ExperimentalTime
-import kotlin.time.Instant
 
 /**
  * Application service for managing UrlAccess aggregate root.
  * Provides business logic for recording and querying URL accesses.
  */
-@OptIn(ExperimentalTime::class)
 interface IUrlAccessService {
     /** Record a URL access for a query session. */
     suspend fun recordUrlAccess(querySessionId: String, urlAccess: UrlAccess)
@@ -36,19 +31,14 @@ interface IUrlAccessService {
     /** Get all failed URL accesses for a query session. */
     suspend fun getFailedUrls(querySessionId: String): List<FailedUrlAccess>
 
-    /** Check if the search budget has been exceeded for a query session. */
-    suspend fun checkBudgetExceeded(
-        querySessionId: String,
-        budget: SearchBudget,
-        sessionCreatedAt: Instant
-    ): FinishReason?
+    /** Check if the maximum link budget has been exceeded for a query session. */
+    suspend fun checkMaxLinkBudget(querySessionId: String, maxLinks: Int): Boolean
 }
 
 /**
  * Implementation of UrlAccessService that coordinates UrlAccess persistence
  * and provides business logic for URL access tracking.
  */
-@OptIn(ExperimentalTime::class)
 class UrlAccessService(
     private val urlAccessRepository: IUrlAccessRepository
 ) : IUrlAccessService {
@@ -89,19 +79,9 @@ class UrlAccessService(
         return urlAccessRepository.findFailedByQuerySessionId(querySessionId)
     }
 
-    override suspend fun checkBudgetExceeded(
-        querySessionId: String,
-        budget: SearchBudget,
-        sessionCreatedAt: Instant
-    ): FinishReason? {
+    override suspend fun checkMaxLinkBudget(querySessionId: String, maxLinks: Int): Boolean {
         val urlAccessCount = countUrlAccessesBySession(querySessionId)
-        val elapsedMs = Clock.System.now() - sessionCreatedAt
-
-        return when {
-            elapsedMs.inWholeMilliseconds >= budget.timeLimitMs -> FinishReason.TIME_BUDGET_EXCEEDED
-            urlAccessCount >= budget.maxLinks -> FinishReason.MAX_LINKS_BUDGET_EXCEEDED
-            else -> null
-        }
+        return urlAccessCount >= maxLinks
     }
 }
 

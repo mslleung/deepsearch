@@ -8,6 +8,7 @@ import io.deepsearch.domain.repositories.IQuerySessionRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.UUID
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Application-level coordinator for `QuerySession` persistence and lifecycle orchestration.
@@ -20,21 +21,29 @@ interface IQuerySessionService {
     /** Transition session to LINK_TRAVERSAL (from EXPANDING_QUERY). */
     suspend fun transitionToLinkTraversal(sessionId: String)
 
-    /** 
+    /**
      * Complete the session with a final answer.
      * This sets the answer, finish reason, and transitions to FINISHED state.
      */
-    suspend fun completeSessionWithAnswer(
-        sessionId: String, 
-        answer: String, 
-        finishReason: FinishReason
+    suspend fun completeSessionAnswerComplete(
+        sessionId: String,
+        answer: String
     )
 
     /**
-     * Check if the search budget has been exceeded and mark the session accordingly.
-     * Returns true if budget was exceeded (and finish reason was set), false otherwise.
+     * Check if the search budget has been exceeded.
+     * Returns true if budget was exceeded, false otherwise.
      */
-    suspend fun checkBudgetAndMarkIfExceeded(sessionId: String, budget: SearchBudget): Boolean
+    suspend fun isBudgetExceeded(sessionId: String, budget: SearchBudget): Boolean
+
+    /**
+     * Mark the session as having exceeded budget with appropriate finish reason.
+     */
+    suspend fun completeSessionBudgetExceeded(
+        sessionId: String,
+        answer: String,
+        budget: SearchBudget
+    )
 
     /** Transition session to FAILED with an error message (from any state). */
     suspend fun fail(sessionId: String, error: String)
@@ -61,7 +70,13 @@ class QuerySessionService(
         val sessionId = UUID.randomUUID().toString()
         val session = QuerySession(sessionId, query, url)
         val saved = querySessionRepository.save(session)
-        logger.info("[{}] Session created: query='{}', url='{}', state={}", sessionId, query, url, QuerySessionState.EXPANDING_QUERY)
+        logger.info(
+            "[{}] Session created: query='{}', url='{}', state={}",
+            sessionId,
+            query,
+            url,
+            QuerySessionState.EXPANDING_QUERY
+        )
         return saved
     }
 
@@ -73,38 +88,56 @@ class QuerySessionService(
         logger.info("[{}] State transition: {} → {}", sessionId, previousState, session.state)
     }
 
-    override suspend fun completeSessionWithAnswer(
+    override suspend fun completeSessionAnswerComplete(
         sessionId: String,
-        answer: String,
-        finishReason: FinishReason
+        answer: String
     ) {
         val session = getSessionOrThrow(sessionId)
-        session.completeWithAnswer(answer, finishReason)
+        session.completeWithAnswer(answer, FinishReason.ANSWER_COMPLETE)
         querySessionRepository.update(session)
         logger.info(
-            "[{}] Session completed: {} chars, reason: {}",
+            "[{}] Session completed: {} chars, answer complete",
             sessionId,
-            answer.length,
-            finishReason
+            answer.length
         )
     }
 
-    override suspend fun checkBudgetAndMarkIfExceeded(
-        sessionId: String,
-        budget: SearchBudget
-    ): Boolean {
+    override suspend fun isBudgetExceeded(sessionId: String, budget: SearchBudget): Boolean {
         val session = getSessionOrThrow(sessionId)
-        
-        // Query URL access count from UrlAccessService
-        val urlAccessCount = urlAccessService.countUrlAccessesBySession(sessionId)
-        val exceeded = session.checkAndApplyBudgetExceeded(urlAccessCount, budget)
-        
-        if (exceeded) {
+
+        // Check time budget in domain entity
+        val isTimeBudgetExceeded = session.getDuration() > budget.timeLimitMs.milliseconds
+        val isMaxLinksBudgetExceeded = urlAccessService.checkMaxLinkBudget(sessionId, budget.maxLinks)
+
+        return isTimeBudgetExceeded || isMaxLinksBudgetExceeded
+    }
+
+    override suspend fun completeSessionBudgetExceeded(sessionId: String, answer: String, budget: SearchBudget) {
+        val session = getSessionOrThrow(sessionId)
+
+        // Determine which budget was exceeded
+        val isTimeBudgetExceeded = session.getDuration() > budget.timeLimitMs.milliseconds
+        val isMaxLinksBudgetExceeded = urlAccessService.checkMaxLinkBudget(sessionId, budget.maxLinks)
+
+        if (isTimeBudgetExceeded) {
+            val session = getSessionOrThrow(sessionId)
+            session.completeWithAnswer(answer, FinishReason.TIME_BUDGET_EXCEEDED)
             querySessionRepository.update(session)
-            logger.info("[{}] Budget exceeded: {}", sessionId, session.finishReason)
+            logger.info(
+                "[{}] Session completed: {} chars, time budget exceeded",
+                sessionId,
+                answer.length
+            )
+        } else if (isMaxLinksBudgetExceeded) {
+            val session = getSessionOrThrow(sessionId)
+            session.completeWithAnswer(answer, FinishReason.MAX_LINKS_BUDGET_EXCEEDED)
+            querySessionRepository.update(session)
+            logger.info(
+                "[{}] Session completed: {} chars, max links budget exceeded",
+                sessionId,
+                answer.length
+            )
         }
-        
-        return exceeded
     }
 
     override suspend fun fail(sessionId: String, error: String) {

@@ -2,6 +2,7 @@ package io.deepsearch.domain.models.entities
 
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -68,37 +69,8 @@ class QuerySession(
         updatedAt = Clock.System.now()
     }
 
-    /**
-     * Check whether the search budget has been exceeded at this moment.
-     * Returns the corresponding FinishReason if exceeded, or null otherwise.
-     * 
-     * @param urlAccessCount The current number of URL accesses for this session
-     * @param budget The search budget to check against
-     */
-    fun checkSearchBudget(urlAccessCount: Int, budget: SearchBudget = searchBudget): FinishReason? {
-        val elapsedMs = Clock.System.now() - createdAt
-        return when {
-            elapsedMs.inWholeMilliseconds >= budget.timeLimitMs -> FinishReason.TIME_BUDGET_EXCEEDED
-            urlAccessCount >= budget.maxLinks -> FinishReason.MAX_LINKS_BUDGET_EXCEEDED
-            else -> null
-        }
-    }
-
-    /**
-     * Check if the search budget has been exceeded and apply the finish reason if so.
-     * Returns true if budget was exceeded, false otherwise.
-     * 
-     * @param urlAccessCount The current number of URL accesses for this session
-     * @param budget The search budget to check against
-     */
-    fun checkAndApplyBudgetExceeded(urlAccessCount: Int, budget: SearchBudget = searchBudget): Boolean {
-        val exceededReason = checkSearchBudget(urlAccessCount, budget)
-        return if (exceededReason != null) {
-            finish(exceededReason)
-            true
-        } else {
-            false
-        }
+    fun getDuration(): Duration {
+        return Clock.System.now() - createdAt
     }
 
     /**
@@ -173,8 +145,7 @@ enum class FinishReason {
     MAX_LINKS_BUDGET_EXCEEDED,
     ANSWER_COMPLETE,
     LINKS_EXHAUSTED,
-    NO_CONTENT_EXTRACTED,
-    EXECUTION_TIME_EXCEEDED
+    EXECUTION_TIME_EXCEEDED, // hard coded fallback timeout
 }
 
 /**
