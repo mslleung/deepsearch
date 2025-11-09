@@ -227,16 +227,10 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             
             return structure
         }
-        
-        val snippetStructure = extractStructure(snippetElement, 1, 3)
-        val candidateStructure = extractStructure(candidateElement, 1, 3)
-        
-        // Compare structures: they should match exactly since both are from cleaned HTML
-        val matches = snippetStructure == candidateStructure
-        
-        logger.debug("Structural match: {} (snippet: {} elements, candidate: {} elements)", 
-            matches, snippetStructure.size, candidateStructure.size)
-        
+
+        // if a candidate in the original html has the base selector and the first 1000 characters look exactly the same, consider it a match
+        val matches = snippetElement.outerHtml().take(1000) == candidateElement.outerHtml().take(1000)
+
         return matches
     }
     
