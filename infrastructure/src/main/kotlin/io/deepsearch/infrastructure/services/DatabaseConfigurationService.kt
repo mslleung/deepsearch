@@ -24,14 +24,14 @@ class DatabaseConfigurationService(
     private val rawApiKeyTable: RawApiKeyTable,
     private val apiKeyUsageTable: ApiKeyUsageTable,
     private val userSubscriptionTable: UserSubscriptionTable,
-    private val webpageIconTable: WebpageIconCacheTable,
-    private val webpageImageTable: WebpageImageCacheTable,
-    private val webpagePopupTable: WebpagePopupCacheTable,
-    private val webpageTableTable: WebpageTableCacheTable,
-    private val webpageTableInterpretationTable: WebpageTableInterpretationCacheTable,
-    private val webpageSemanticElementTable: WebpageSemanticElementCacheTable,
-    private val webpageMarkdownTable: WebpageMarkdownCacheTable,
-    private val pdfMarkdownTable: PdfMarkdownCacheTable,
+    private val webpageIconCacheTable: WebpageIconCacheTable,
+    private val webpageImageCacheTable: WebpageImageCacheTable,
+    private val webpagePopupCacheTable: WebpagePopupCacheTable,
+    private val webpageTableCacheTable: WebpageTableCacheTable,
+    private val webpageTableInterpretationCacheTable: WebpageTableInterpretationCacheTable,
+    private val webpageSemanticElementCacheTable: WebpageSemanticElementCacheTable,
+    private val webpageMarkdownCacheTable: WebpageMarkdownCacheTable,
+    private val pdfMarkdownCacheTable: PdfMarkdownCacheTable,
     private val querySessionTable: QuerySessionTable,
     private val precacheJobTable: PrecacheJobTable,
     private val sitemapCacheTable: SitemapCacheTable,
@@ -63,14 +63,14 @@ class DatabaseConfigurationService(
                     rawApiKeyTable,
                     apiKeyUsageTable,
                     userSubscriptionTable,
-                    webpageIconTable,
-                    webpageImageTable,
-                    webpagePopupTable,
-                    webpageTableTable,
-                    webpageTableInterpretationTable,
-                    webpageSemanticElementTable,
-                    webpageMarkdownTable,
-                    pdfMarkdownTable,
+                    webpageIconCacheTable,
+                    webpageImageCacheTable,
+                    webpagePopupCacheTable,
+                    webpageTableCacheTable,
+                    webpageTableInterpretationCacheTable,
+                    webpageSemanticElementCacheTable,
+                    webpageMarkdownCacheTable,
+                    pdfMarkdownCacheTable,
                     querySessionTable,
                     precacheJobTable,
                     sitemapCacheTable,
@@ -136,11 +136,12 @@ class DatabaseConfigurationService(
      * Uses R2DBC with environment variables or default connection parameters.
      */
     private fun configurePostgreSqlDatabase(): R2dbcDatabase {
-        val host = System.getenv("DB_HOST") ?: "localhost"
-        val port = System.getenv("DB_PORT") ?: "5432"
-        val database = System.getenv("DB_NAME") ?: "deepsearch"
-        val username = System.getenv("DB_USERNAME") ?: "deepsearch"
-        val password = System.getenv("DB_PASSWORD") ?: "deepsearch"
+        // TODO use config instead of System.getenv
+        val host = System.getenv("DB_HOST") ?: throw IllegalArgumentException("DB_HOST is not set")
+        val port = System.getenv("DB_PORT") ?: throw IllegalArgumentException("DB_PORT is not set")
+        val database = System.getenv("DB_NAME") ?: throw IllegalArgumentException("DB_NAME is not set")
+        val username = System.getenv("DB_USERNAME") ?: throw IllegalArgumentException("DB_USERNAME is not set")
+        val password = System.getenv("DB_PASSWORD") ?: throw IllegalArgumentException("DB_PASSWORD is not set")
 
         val url = "r2dbc:postgresql://$host:$port/$database"
         return R2dbcDatabase.connect(
