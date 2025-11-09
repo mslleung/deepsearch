@@ -118,6 +118,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     /**
      * Constructs CSS selectors from an HTML snippet by parsing the root element's attributes
      * and finding all matching elements in the full HTML DOM using hierarchical parent context.
+     * Only generates selectors for elements with matching structural hierarchy.
      * 
      * @param htmlSnippet The complete HTML of the table element
      * @param fullHtml The full HTML document to search within
@@ -147,15 +148,29 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
                 return emptyList()
             }
             
+            // Filter elements by structural match to find the specific element(s) intended by the LLM
+            val structurallyMatchingElements = matchingElements.filter { candidate ->
+                hasMatchingStructure(rootElement, candidate)
+            }
+            
+            logger.debug("Filtered {} candidates to {} structurally-matching elements", 
+                matchingElements.size, structurallyMatchingElements.size)
+            
+            if (structurallyMatchingElements.isEmpty()) {
+                logger.warn("No structurally-matching elements found for snippet: {}", htmlSnippet.take(100))
+                return emptyList()
+            }
+            
             // If single match, return the base selector
-            if (matchingElements.size == 1) {
-                logger.debug("Single match found for selector: {}", baseSelector)
+            if (structurallyMatchingElements.size == 1) {
+                logger.debug("Single structurally-matching element found for selector: {}", baseSelector)
                 return listOf(baseSelector)
             }
             
             // Multiple matches: construct hierarchical selectors using parent chain context
-            logger.debug("Found {} matches for selector: {}, creating hierarchical selectors", matchingElements.size, baseSelector)
-            return matchingElements.mapNotNull { element ->
+            logger.debug("Found {} structurally-matching elements for selector: {}, creating hierarchical selectors", 
+                structurallyMatchingElements.size, baseSelector)
+            return structurallyMatchingElements.mapNotNull { element ->
                 buildHierarchicalSelector(element, fullDoc)
             }
         } catch (e: Exception) {
@@ -173,6 +188,41 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             classes.isNotEmpty() -> "$tagName.${classes.joinToString(".")}"
             else -> tagName
         }
+    }
+    
+    /**
+     * Compares structural similarity between snippet element and candidate element.
+     * Checks if both elements have the same child tag structure (same tags in same order).
+     * 
+     * @param snippetElement The root element from the LLM-provided HTML snippet
+     * @param candidateElement The candidate element from the full document
+     * @return true if structures match (same child tags in same order and depth)
+     */
+    private fun hasMatchingStructure(snippetElement: Element, candidateElement: Element): Boolean {
+        // Extract child tag hierarchy up to a certain depth for performance
+        val maxDepth = 5
+        
+        fun extractStructure(element: Element, depth: Int): List<String> {
+            if (depth > maxDepth) return emptyList()
+            
+            val structure = mutableListOf<String>()
+            
+            // Add immediate children tags
+            element.children().forEach { child ->
+                structure.add(child.tagName())
+                // Recursively add nested structure with depth indicator
+                val childStructure = extractStructure(child, depth + 1)
+                structure.addAll(childStructure.map { "${depth}:$it" })
+            }
+            
+            return structure
+        }
+        
+        val snippetStructure = extractStructure(snippetElement, 1)
+        val candidateStructure = extractStructure(candidateElement, 1)
+        
+        // Compare structures: they must match exactly (same tags in same order)
+        return snippetStructure == candidateStructure
     }
     
     /**

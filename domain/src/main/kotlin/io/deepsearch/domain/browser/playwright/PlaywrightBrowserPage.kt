@@ -295,7 +295,30 @@ class PlaywrightBrowserPage(
             "extractImages produced {} unique images ({} canvas-based, {} screenshot-based)",
             results.size, decoded.successful.size, decoded.failed.size
         )
-        return results
+        
+        // Deduplicate by bytesHash to prevent constraint violations in batch upsert
+        // Keep first occurrence and merge xPathSelectors
+        // even though we already dedup in extractImages.ts, our screenshot fallback may introduce duplicates again
+        val deduplicatedResults = results
+            .groupBy { Base64.encode(it.bytesHash) }
+            .map { (_, duplicates) ->
+                if (duplicates.size > 1) {
+                    // Merge xPathSelectors from all duplicates
+                    IBrowserPage.WebImage(
+                        bytes = duplicates.first().bytes,
+                        mimeType = duplicates.first().mimeType,
+                        xPathSelectors = duplicates.flatMap { it.xPathSelectors }.distinct()
+                    )
+                } else {
+                    duplicates.first()
+                }
+            }
+
+        logger.debug(
+            "extractImages returned {} unique images (deduplicated from {} total)",
+            deduplicatedResults.size, results.size
+        )
+        return deduplicatedResults
     }
 
 
