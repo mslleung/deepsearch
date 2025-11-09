@@ -6,7 +6,7 @@ import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOr
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.SerperConfig
-import io.deepsearch.application.services.INormalizeUrlService
+import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupContainerIdentificationService
 import io.deepsearch.application.services.ISearchService
@@ -25,7 +25,7 @@ import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.NavigationElementRemovalService
 import io.deepsearch.application.services.PdfConversionService
-import io.deepsearch.application.services.NormalizeUrlService
+import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.application.services.PopupContainerIdentificationService
 import io.deepsearch.application.services.SearchService
 import io.deepsearch.application.services.SemanticIdentificationService

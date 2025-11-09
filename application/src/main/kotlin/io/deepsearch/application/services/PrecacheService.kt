@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.models.entities.PrecacheJob
 import io.deepsearch.domain.models.entities.PrecacheJobState
 import io.deepsearch.domain.repositories.IPrecacheJobRepository
+import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger

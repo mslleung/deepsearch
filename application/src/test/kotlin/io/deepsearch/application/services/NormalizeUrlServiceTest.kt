@@ -1,5 +1,7 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.services.NormalizeUrlService
+import io.deepsearch.domain.services.UrlNormalizationConfig
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Nested

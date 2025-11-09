@@ -1,4 +1,4 @@
-package io.deepsearch.application.services
+package io.deepsearch.domain.services
 
 import java.net.IDN
 import java.net.URI

@@ -1,0 +1,53 @@
+package io.deepsearch.domain.services
+
+import io.deepsearch.domain.config.domainTestModule
+import io.deepsearch.domain.models.valueobjects.LinkSource
+import io.deepsearch.domain.models.valueobjects.SearchQuery
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.extension.RegisterExtension
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
+import org.koin.test.KoinTest
+import org.koin.test.inject
+import org.koin.test.junit5.KoinTestExtension
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class SerperServiceTest : KoinTest {
+
+    @JvmField
+    @RegisterExtension
+    val koinTestExtension = KoinTestExtension.create {
+        modules(domainTestModule)
+    }
+
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
+    private val serperService by inject<ISerperService>()
+
+    @ParameterizedTest
+    @CsvSource(
+        "pricing information, https://www.egltours.com/",
+//        "company overview, https://www.egltours.com/",
+//        "contact details, https://www.egltours.com/"
+    )
+    fun `discovers relevant links from site using SERP API`(query: String, url: String) = runTest(testCoroutineDispatcher) {
+        // Given
+        val searchQuery = SearchQuery(
+            query = query,
+            url = url
+        )
+
+        // When
+        val links = serperService.searchLinks(searchQuery)
+
+        // Then
+        assertTrue(links.isNotEmpty(), "Should discover links via SERP search")
+        links.forEach { link ->
+            assertEquals(LinkSource.SERPER_SEARCH, link.source)
+            assertTrue(link.url.startsWith(searchQuery.url), "Link should be from the target site: ${link.url}")
+            assertTrue(link.reason.isNotBlank(), "Should provide reason for link inclusion")
+        }
+    }
+}
+

@@ -6,6 +6,7 @@ import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -42,6 +43,9 @@ class SerperService(
     
     private val client = HttpClient(OkHttp) {
         expectSuccess = false
+        install(HttpTimeout) {
+            requestTimeoutMillis = 5000
+        }
     }
     
     private val json = Json {

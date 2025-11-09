@@ -51,8 +51,10 @@ import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IJwtService
+import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
 import io.deepsearch.domain.services.JwtService
+import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -101,6 +103,7 @@ private val domainCommonTestModule = module {
     singleOf(::JwtService) bind IJwtService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::SerperService) bind ISerperService::class
+    singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
 }
 
 val domainTestModule = module {

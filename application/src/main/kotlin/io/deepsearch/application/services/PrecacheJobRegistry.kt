@@ -9,6 +9,7 @@ import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.IPrecacheJobRepository
 import io.deepsearch.domain.exceptions.UrlProcessingException
+import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job

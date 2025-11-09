@@ -12,7 +12,11 @@ import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IJwtService
+import io.deepsearch.domain.services.INormalizeUrlService
+import io.deepsearch.domain.services.ISerperService
 import io.deepsearch.domain.services.JwtService
+import io.deepsearch.domain.services.NormalizeUrlService
+import io.deepsearch.domain.services.SerperService
 import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -56,5 +60,6 @@ val domainModule = module {
         scopedOf(::JwtService) bind IJwtService::class
         scopedOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
         scopedOf(::SerperService) bind ISerperService::class
+        scopedOf(::NormalizeUrlService) bind INormalizeUrlService::class
     }
 }

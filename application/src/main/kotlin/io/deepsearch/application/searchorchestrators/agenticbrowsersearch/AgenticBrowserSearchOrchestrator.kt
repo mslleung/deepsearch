@@ -1,7 +1,7 @@
 package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
-import io.deepsearch.application.services.INormalizeUrlService
+import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService

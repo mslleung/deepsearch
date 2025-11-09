@@ -1,6 +1,5 @@
 package io.deepsearch.application.services
 
-import com.microsoft.playwright.PlaywrightException
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.*
@@ -12,6 +11,7 @@ import kotlinx.coroutines.flow.onCompletion
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.IUrlContentProcessingService.*
+import io.deepsearch.domain.services.INormalizeUrlService
 
 interface IUrlContentProcessingService {
     /**

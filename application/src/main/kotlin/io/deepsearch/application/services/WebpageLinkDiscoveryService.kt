@@ -9,6 +9,7 @@ import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.ISitemapCacheRepository
+import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
