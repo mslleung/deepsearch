@@ -49,7 +49,11 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
                 "isComplete" to Schema.builder()
                     .type("BOOLEAN")
                     .description("Whether the answer is comprehensive enough to fully address the user's query")
-                    .build()
+                    .build(),
+                "reason" to Schema.builder()
+                    .type("STRING")
+                    .description("Reason for the isComplete decision")
+                    .build(),
             )
         )
         .required(listOf("answer", "isComplete"))
@@ -84,6 +88,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             Answer quality:
             - The answer should be as comprehensive as possible
             - The answer should be standalone and serve as a direct answer to the user query
+            - If the user query is a statement instead of a question, focus on supplying relevant information
             - There is no temporal significance of the markdowns, the answer should not reveal our streaming approach
               For example, prefer to say "from the information" instead of "from the new batch of information"
             - If there is a lack of information, the answer should just say so
@@ -98,11 +103,19 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             - Err on the side of caution: if unsure, set isComplete=false to allow more information gathering
             - It's better to process more content than to stop too early with an incomplete answer
             - If the query asks for multiple pieces of information, ensure all are covered before marking complete
-            
+
+            Exceptional cases:
+            - If the query is entirely invalid or gibberish, complete right away
+              Examples of invalid queries:
+              Good morning! (invalid)
+              Hello (invalid)
+              *f&dbst4$ (gibberish)
+
             Expected output shape:
             {
-                "answer": "your comprehensive answer text",
+                "answer": "your comprehensive answer text"
                 "isComplete": true/false
+                "reason": "reason for the isComplete decision"
             }
             """.trimIndent()
         )
@@ -183,7 +196,8 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
     @Serializable
     private data class StreamingAnswerResponse(
         val answer: String,
-        val isComplete: Boolean
+        val isComplete: Boolean,
+        val reason: String
     )
 
     override suspend fun generate(input: StreamingAnswerInput): StreamingAnswerOutput {
@@ -303,9 +317,10 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
         val response = Json.decodeFromStringWithCodeBlocks<StreamingAnswerResponse>(llmResponse)
 
         logger.debug(
-            "Batch processed: answer {} chars, complete: {}",
+            "Batch processed: answer {} chars, complete: {}, reason: {}",
             response.answer.length,
-            response.isComplete
+            response.isComplete,
+            response.reason
         )
         
         return StreamingAnswerOutput(
