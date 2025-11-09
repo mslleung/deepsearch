@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.services
 
+import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.infrastructure.database.*
 import io.r2dbc.spi.IsolationLevel
 import kotlinx.coroutines.runBlocking
@@ -19,6 +20,7 @@ interface IDatabaseConfigurationService {
  * Service for configuring database connection and schema initialization.
  */
 class DatabaseConfigurationService(
+    private val postgresConfig: PostgresConfig,
     private val userTable: UserTable,
     private val apiKeyTable: ApiKeyTable,
     private val rawApiKeyTable: RawApiKeyTable,
@@ -49,7 +51,8 @@ class DatabaseConfigurationService(
      */
     override fun configureDatabase(): R2dbcDatabase {
         val database = if (isDevelopmentMode()) {
-            configureH2Database()
+//             configureH2Database()
+            configurePostgreSqlDatabase()
         } else {
             configurePostgreSqlDatabase()
         }
@@ -133,21 +136,14 @@ class DatabaseConfigurationService(
 
     /**
      * Configures PostgreSQL database for production.
-     * Uses R2DBC with environment variables or default connection parameters.
+     * Uses R2DBC with configuration loaded from application.yaml.
      */
     private fun configurePostgreSqlDatabase(): R2dbcDatabase {
-        // TODO use config instead of System.getenv
-        val host = System.getenv("DB_HOST") ?: throw IllegalArgumentException("DB_HOST is not set")
-        val port = System.getenv("DB_PORT") ?: throw IllegalArgumentException("DB_PORT is not set")
-        val database = System.getenv("DB_NAME") ?: throw IllegalArgumentException("DB_NAME is not set")
-        val username = System.getenv("DB_USERNAME") ?: throw IllegalArgumentException("DB_USERNAME is not set")
-        val password = System.getenv("DB_PASSWORD") ?: throw IllegalArgumentException("DB_PASSWORD is not set")
-
-        val url = "r2dbc:postgresql://$host:$port/$database"
+        val url = "r2dbc:postgresql://${postgresConfig.host}:${postgresConfig.port}/${postgresConfig.database}"
         return R2dbcDatabase.connect(
             url = url,
-            user = username,
-            password = password,
+            user = postgresConfig.username,
+            password = postgresConfig.password,
             databaseConfig = R2dbcDatabaseConfig {
                 defaultMaxAttempts = 1
                 defaultR2dbcIsolationLevel = IsolationLevel.READ_COMMITTED

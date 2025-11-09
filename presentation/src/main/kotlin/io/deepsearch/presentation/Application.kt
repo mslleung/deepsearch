@@ -6,6 +6,7 @@ import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.config.OAuthConfig
+import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.domain.config.GoogleOAuthConfig
 import io.deepsearch.presentation.config.presentationModule
@@ -126,6 +127,15 @@ private fun Application.configureDependencyInjection() {
                 single {
                     SerperConfig(
                         apiKey = environment.config.property("serper.apiKey").getString()
+                    )
+                }
+                single {
+                    PostgresConfig(
+                        host = environment.config.property("database.postgres.host").getString(),
+                        port = environment.config.property("database.postgres.port").getString().toInt(),
+                        database = environment.config.property("database.postgres.database").getString(),
+                        username = environment.config.property("database.postgres.username").getString(),
+                        password = environment.config.property("database.postgres.password").getString()
                     )
                 }
                 single {

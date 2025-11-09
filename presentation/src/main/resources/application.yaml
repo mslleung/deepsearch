@@ -20,5 +20,11 @@ apiKey:
     hmacSecret: ${API_KEY_HMAC_SECRET}  # For HMAC-SHA256 hashing of API keys
 database:
     encryptionSecret: ${DATABASE_ENCRYPTION_SECRET}  # For AES-256-GCM encryption of sensitive database columns
+    postgres:
+        host: ${DB_HOST}
+        port: ${DB_PORT}
+        database: ${DB_NAME}
+        username: ${DB_USERNAME}
+        password: ${DB_PASSWORD}
 serper:
     apiKey: ${SERPER_API_KEY}
