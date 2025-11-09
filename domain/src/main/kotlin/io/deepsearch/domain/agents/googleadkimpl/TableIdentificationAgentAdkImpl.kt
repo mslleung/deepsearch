@@ -120,11 +120,12 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
      * and finding all matching elements in the full HTML DOM using hierarchical parent context.
      * Only generates selectors for elements with matching structural hierarchy.
      * 
-     * @param htmlSnippet The complete HTML of the table element
-     * @param fullHtml The full HTML document to search within
+     * @param htmlSnippet The complete HTML of the table element (from cleaned HTML)
+     * @param cleanedHtml The cleaned HTML document that the LLM saw
+     * @param fullHtml The full HTML document (original, uncleaned)
      * @return List of CSS selectors, one for each matching element. Empty list if snippet is invalid.
      */
-    private fun constructCssSelectorsFromSnippet(htmlSnippet: String, fullHtml: String): List<String> {
+    private fun constructCssSelectorsFromSnippet(htmlSnippet: String, cleanedHtml: String, fullHtml: String): List<String> {
         return try {
             // Parse the snippet to extract the root element's attributes
             val snippetDoc = Jsoup.parseBodyFragment(htmlSnippet)
@@ -139,39 +140,50 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             
             logger.debug("Constructed base selector: {} from snippet", baseSelector)
             
-            // Parse full HTML and find all matching elements
-            val fullDoc = Jsoup.parse(fullHtml)
-            val matchingElements = fullDoc.select(baseSelector)
+            // First, find matching elements in the CLEANED HTML (which the LLM saw)
+            val cleanedDoc = Jsoup.parse(cleanedHtml)
+            val cleanedMatchingElements = cleanedDoc.select(baseSelector)
             
-            if (matchingElements.isEmpty()) {
-                logger.warn("No elements found in full HTML for selector: {}", baseSelector)
+            if (cleanedMatchingElements.isEmpty()) {
+                logger.warn("No elements found in cleaned HTML for selector: {}", baseSelector)
                 return emptyList()
             }
             
-            // Filter elements by structural match to find the specific element(s) intended by the LLM
-            val structurallyMatchingElements = matchingElements.filter { candidate ->
+            // Filter by structural match in cleaned HTML
+            val structurallyMatchingElements = cleanedMatchingElements.filter { candidate ->
                 hasMatchingStructure(rootElement, candidate)
             }
             
-            logger.debug("Filtered {} candidates to {} structurally-matching elements", 
-                matchingElements.size, structurallyMatchingElements.size)
+            logger.debug("Filtered {} candidates to {} structurally-matching elements in cleaned HTML", 
+                cleanedMatchingElements.size, structurallyMatchingElements.size)
             
             if (structurallyMatchingElements.isEmpty()) {
                 logger.warn("No structurally-matching elements found for snippet: {}", htmlSnippet.take(100))
                 return emptyList()
             }
             
-            // If single match, return the base selector
+            // Now find the same elements in the ORIGINAL HTML using their selectors
+            val fullDoc = Jsoup.parse(fullHtml)
+            
+            // If single match in cleaned HTML, use the base selector
             if (structurallyMatchingElements.size == 1) {
                 logger.debug("Single structurally-matching element found for selector: {}", baseSelector)
                 return listOf(baseSelector)
             }
             
-            // Multiple matches: construct hierarchical selectors using parent chain context
-            logger.debug("Found {} structurally-matching elements for selector: {}, creating hierarchical selectors", 
-                structurallyMatchingElements.size, baseSelector)
-            return structurallyMatchingElements.mapNotNull { element ->
-                buildHierarchicalSelector(element, fullDoc)
+            // Multiple matches: construct hierarchical selectors from cleaned HTML elements
+            // but validate they work on the original HTML
+            return structurallyMatchingElements.mapNotNull { cleanedElement ->
+                val hierarchicalSelector = buildHierarchicalSelector(cleanedElement, cleanedDoc)
+                
+                // Verify the selector works on original HTML
+                val originalMatches = fullDoc.select(hierarchicalSelector)
+                if (originalMatches.isEmpty()) {
+                    logger.warn("Selector {} from cleaned HTML doesn't match original HTML", hierarchicalSelector)
+                    null
+                } else {
+                    hierarchicalSelector
+                }
             }
         } catch (e: Exception) {
             logger.error("Failed to construct CSS selector from HTML snippet: {}", htmlSnippet.take(100), e)
@@ -192,37 +204,40 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     
     /**
      * Compares structural similarity between snippet element and candidate element.
-     * Checks if both elements have the same child tag structure (same tags in same order).
+     * Both elements are from cleaned HTML, so we can do a direct structural comparison.
      * 
-     * @param snippetElement The root element from the LLM-provided HTML snippet
-     * @param candidateElement The candidate element from the full document
-     * @return true if structures match (same child tags in same order and depth)
+     * @param snippetElement The root element from the LLM-provided HTML snippet (from cleaned HTML)
+     * @param candidateElement The candidate element from cleaned HTML
+     * @return true if structures match exactly
      */
     private fun hasMatchingStructure(snippetElement: Element, candidateElement: Element): Boolean {
-        // Extract child tag hierarchy up to a certain depth for performance
-        val maxDepth = 5
-        
-        fun extractStructure(element: Element, depth: Int): List<String> {
+        // Extract child tag hierarchy for comparison
+        fun extractStructure(element: Element, depth: Int, maxDepth: Int): List<String> {
             if (depth > maxDepth) return emptyList()
             
             val structure = mutableListOf<String>()
             
-            // Add immediate children tags
+            // Add immediate children tags with depth prefix
             element.children().forEach { child ->
-                structure.add(child.tagName())
-                // Recursively add nested structure with depth indicator
-                val childStructure = extractStructure(child, depth + 1)
-                structure.addAll(childStructure.map { "${depth}:$it" })
+                structure.add("${depth}:${child.tagName()}")
+                // Recursively add nested structure
+                val childStructure = extractStructure(child, depth + 1, maxDepth)
+                structure.addAll(childStructure)
             }
             
             return structure
         }
         
-        val snippetStructure = extractStructure(snippetElement, 1)
-        val candidateStructure = extractStructure(candidateElement, 1)
+        val snippetStructure = extractStructure(snippetElement, 1, 3)
+        val candidateStructure = extractStructure(candidateElement, 1, 3)
         
-        // Compare structures: they must match exactly (same tags in same order)
-        return snippetStructure == candidateStructure
+        // Compare structures: they should match exactly since both are from cleaned HTML
+        val matches = snippetStructure == candidateStructure
+        
+        logger.debug("Structural match: {} (snippet: {} elements, candidate: {} elements)", 
+            matches, snippetStructure.size, candidateStructure.size)
+        
+        return matches
     }
     
     /**
@@ -238,7 +253,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
      * @param doc The full document (for validating selector uniqueness)
      * @return A hierarchical CSS selector, or null if unable to construct a unique one
      */
-    private fun buildHierarchicalSelector(element: Element, doc: Document): String? {
+    private fun buildHierarchicalSelector(element: Element, doc: Document): String {
         val selectorParts = mutableListOf<String>()
         var currentElement: Element? = element
         var foundUniqueAncestor = false
@@ -378,8 +393,9 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         logger.debug("Table identification found {} HTML snippets from LLM", response.tables.size)
 
         // Convert HTML snippets to CSS selectors and expand if multiple matches
+        // Note: Snippets come from cleaned HTML, match against cleaned, but selectors work on original HTML
         val tableIdentifications = response.tables.flatMap { llmResult ->
-            val cssSelectors = constructCssSelectorsFromSnippet(llmResult.htmlSnippet, input.html)
+            val cssSelectors = constructCssSelectorsFromSnippet(llmResult.htmlSnippet, cleanedHtml, input.html)
             
             if (cssSelectors.isEmpty()) {
                 logger.warn("Skipping table with snippet '{}' - could not construct valid CSS selector", 
