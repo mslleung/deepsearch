@@ -6,6 +6,7 @@ import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.config.OAuthConfig
+import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.domain.config.GoogleOAuthConfig
 import io.deepsearch.presentation.config.presentationModule
 import io.deepsearch.presentation.routes.*
@@ -120,6 +121,11 @@ private fun Application.configureDependencyInjection() {
                 single {
                     DatabaseEncryptionConfig(
                         encryptionSecret = environment.config.property("database.encryptionSecret").getString()
+                    )
+                }
+                single {
+                    SerperConfig(
+                        apiKey = environment.config.property("serper.apiKey").getString()
                     )
                 }
                 single {

@@ -5,6 +5,7 @@ import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgent
 import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.domain.config.ApiKeyConfig
+import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.application.services.INormalizeUrlService
 import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupContainerIdentificationService
@@ -58,6 +59,11 @@ private val applicationCommonTestModule = module {
     single {
         ApiKeyConfig(
             hmacSecret = "test-hmac-secret-for-testing-purposes-only"
+        )
+    }
+    single {
+        SerperConfig(
+            apiKey = System.getenv("SERPER_API_KEY") ?: "test-serper-api-key"
         )
     }
 

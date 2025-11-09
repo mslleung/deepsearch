@@ -1,5 +1,6 @@
 package io.deepsearch.domain.services
 
+import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
@@ -33,7 +34,9 @@ interface ISerperService {
  * Service for interacting with serper.dev search API.
  * This is a domain service that handles the technical operation of calling the SERP API.
  */
-class SerperService : ISerperService {
+class SerperService(
+    private val serperConfig: SerperConfig
+) : ISerperService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     
@@ -62,12 +65,6 @@ class SerperService : ISerperService {
         val (query, url) = searchQuery
         logger.debug("SERP search: '{}' on site {}", query, url)
 
-        val apiKey = System.getenv("SERPER_API_KEY")
-        if (apiKey.isNullOrBlank()) {
-            logger.warn("SERPER_API_KEY not set, returning empty results")
-            return emptyList()
-        }
-
         try {
             val searchQueryText = "$query $url"
             val requestBody = """{"q":"$searchQueryText"}"""
@@ -75,7 +72,7 @@ class SerperService : ISerperService {
             val response = client.post("https://google.serper.dev/search") {
                 contentType(ContentType.Application.Json)
                 headers {
-                    append("X-API-KEY", apiKey)
+                    append("X-API-KEY", serperConfig.apiKey)
                 }
                 setBody(requestBody)
             }

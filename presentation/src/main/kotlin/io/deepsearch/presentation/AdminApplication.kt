@@ -2,6 +2,7 @@ package io.deepsearch.presentation
 
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
+import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.presentation.admin.config.adminPresentationModule
 import io.deepsearch.presentation.admin.routes.*
 import io.ktor.client.*
@@ -82,6 +83,11 @@ private fun Application.configureDependencyInjection() {
                 single {
                     DatabaseEncryptionConfig(
                         encryptionSecret = environment.config.property("database.encryptionSecret").getString()
+                    )
+                }
+                single {
+                    SerperConfig(
+                        apiKey = environment.config.property("serper.apiKey").getString()
                     )
                 }
                 single {

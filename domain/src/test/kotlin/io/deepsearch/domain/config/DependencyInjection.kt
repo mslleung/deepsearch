@@ -51,7 +51,9 @@ import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IJwtService
+import io.deepsearch.domain.services.ISerperService
 import io.deepsearch.domain.services.JwtService
+import io.deepsearch.domain.services.SerperService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.scopedOf
@@ -60,6 +62,13 @@ import org.koin.dsl.bind
 import org.koin.dsl.module
 
 private val domainCommonTestModule = module {
+    // Test configuration
+    single {
+        SerperConfig(
+            apiKey = System.getenv("SERPER_API_KEY") ?: "test-serper-api-key"
+        )
+    }
+
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
     singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) bind ITesseractPool::class
@@ -91,6 +100,7 @@ private val domainCommonTestModule = module {
     singleOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
     singleOf(::JwtService) bind IJwtService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
+    singleOf(::SerperService) bind ISerperService::class
 }
 
 val domainTestModule = module {
