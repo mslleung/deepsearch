@@ -458,6 +458,7 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
+        TODO("Only call this for precache! Do not use for browser search as it will emit potentially thousands of link unrelated to the input query!")
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
             searchQuery = searchQuery,

@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.services
 
+import io.deepsearch.domain.config.EnvironmentConfig
 import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.infrastructure.database.*
 import io.r2dbc.spi.IsolationLevel
@@ -20,6 +21,7 @@ interface IDatabaseConfigurationService {
  * Service for configuring database connection and schema initialization.
  */
 class DatabaseConfigurationService(
+    private val environmentConfig: EnvironmentConfig,
     private val postgresConfig: PostgresConfig,
     private val userTable: UserTable,
     private val apiKeyTable: ApiKeyTable,
@@ -50,7 +52,7 @@ class DatabaseConfigurationService(
      * For production: PostgreSQL with R2DBC
      */
     override fun configureDatabase(): R2dbcDatabase {
-        val database = if (isDevelopmentMode()) {
+        val database = if (environmentConfig.isDevelopmentMode) {
 //             configureH2Database()
             configurePostgreSqlDatabase()
         } else {
@@ -83,32 +85,6 @@ class DatabaseConfigurationService(
         }
 
         return database
-    }
-
-    /**
-     * Determines if the application is running in development mode.
-     * Checks for various development mode indicators in order of precedence:
-     * 1. io.ktor.development system property
-     * 2. io.ktor.development environment variable
-     * 3. IDE debugging mode (-ea flag)
-     * 4. Defaults to false for production
-     */
-    private fun isDevelopmentMode(): Boolean {
-        // Check system property first (highest precedence)
-        val systemProperty = System.getProperty("io.ktor.development")?.toBoolean()
-        if (systemProperty != null) return systemProperty
-
-        // Check environment variable
-        val envVariable = System.getenv("io.ktor.development")?.toBoolean()
-        if (envVariable != null) return envVariable
-
-        // Check if assertions are enabled (indicates -ea flag, common in development)
-        var assertionsEnabled = false
-        assert({ assertionsEnabled = true; true }())
-        if (assertionsEnabled) return true
-
-        // Default to production mode
-        return false
     }
 
     /**

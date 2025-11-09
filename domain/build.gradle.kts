@@ -35,6 +35,8 @@ dependencies {
     // Ktor HTTP Client (CIO) for safe redirect resolution
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
 
     // OCR support
     implementation(libs.tesseract)

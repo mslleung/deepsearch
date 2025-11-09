@@ -8,4 +8,6 @@ enum class ModelIds(val modelId: String) {
     GEMINI_2_5_FLASH_LITE_PREVIEW("gemini-2.5-flash-lite-preview-09-2025"),
     GEMINI_2_0_FLASH("gemini-2.0-flash"),
     GEMINI_2_0_FLASH_LITE("gemini-2.0-flash-lite"),
+
+    GEMINI_EMBEDDING_001("gemini-embedding-001"),
 }

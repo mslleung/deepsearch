@@ -4,6 +4,7 @@ import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
+import io.deepsearch.domain.config.EnvironmentConfig
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.config.OAuthConfig
 import io.deepsearch.domain.config.PostgresConfig
@@ -136,6 +137,11 @@ private fun Application.configureDependencyInjection() {
                         database = environment.config.property("database.postgres.database").getString(),
                         username = environment.config.property("database.postgres.username").getString(),
                         password = environment.config.property("database.postgres.password").getString()
+                    )
+                }
+                single {
+                    EnvironmentConfig(
+                        isDevelopmentMode = environment.config.property("ktor.development").getString().toBoolean()
                     )
                 }
                 single {
