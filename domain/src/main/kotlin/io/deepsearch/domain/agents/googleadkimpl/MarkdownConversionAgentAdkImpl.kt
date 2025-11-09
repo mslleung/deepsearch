@@ -50,7 +50,7 @@ class MarkdownConversionAgentAdkImpl : IMarkdownConversionAgent {
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("markdownConversionAgent")
         description("Convert webpage screenshot and HTML to well-structured markdown")
-        model(ModelIds.GEMINI_2_5_FLASH_PREVIEW.modelId)
+        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
         disallowTransferToParent(true)
