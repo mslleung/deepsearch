@@ -36,7 +36,8 @@ interface ISerperService {
  * This is a domain service that handles the technical operation of calling the SERP API.
  */
 class SerperService(
-    private val serperConfig: SerperConfig
+    private val serperConfig: SerperConfig,
+    private val normalizeUrlService: INormalizeUrlService
 ) : ISerperService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -70,7 +71,28 @@ class SerperService(
         logger.debug("SERP search: '{}' on site {}", query, url)
 
         try {
-            val searchQueryText = "$query $url"
+            // Normalize the target URL
+            val normalizedTargetUrl = normalizeUrlService.normalize(url)
+            if (normalizedTargetUrl == null) {
+                logger.error("Failed to normalize target URL: {}", url)
+                return emptyList()
+            }
+            
+            logger.debug("Normalized target URL: {}", normalizedTargetUrl)
+            
+            // Extract host and path from normalized URL for site: operator
+            val uri = java.net.URI(normalizedTargetUrl)
+            val hostWithPath = buildString {
+                append(uri.host)
+                if (uri.path.isNotEmpty() && uri.path != "/") {
+                    append(uri.path)
+                }
+            }
+            
+            // Build search query with site: operator
+            val searchQueryText = "$query site:$hostWithPath"
+            logger.debug("Search query with site operator: {}", searchQueryText)
+            
             val requestBody = """{"q":"$searchQueryText"}"""
             
             val response = client.post("https://google.serper.dev/search") {
@@ -93,13 +115,22 @@ class SerperService(
 
             logger.debug("SERP API returned {} organic results", organicResults.size)
 
-            // Extract links and filter by URL prefix
+            // Extract links, normalize them, and filter by normalized URL prefix
             val links = organicResults.mapNotNull { result ->
-                val link = result.link
-                if (link != null && link.startsWith(url)) {
+                val link = result.link ?: return@mapNotNull null
+                
+                // Normalize the returned link
+                val normalizedLink = normalizeUrlService.normalize(link)
+                if (normalizedLink == null) {
+                    logger.debug("Failed to normalize returned link: {}", link)
+                    return@mapNotNull null
+                }
+                
+                // Filter by normalized URL prefix
+                if (normalizedLink.startsWith(normalizedTargetUrl)) {
                     val reason = result.snippet ?: result.title ?: "Found via SERP search"
                     WebpageLink(
-                        url = link,
+                        url = normalizedLink,
                         source = LinkSource.SERPER_SEARCH,
                         reason = reason
                     )

@@ -24,6 +24,7 @@ class SerperServiceTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val serperService by inject<ISerperService>()
+    private val normalizeUrlService by inject<INormalizeUrlService>()
 
     @ParameterizedTest
     @CsvSource(
@@ -43,9 +44,12 @@ class SerperServiceTest : KoinTest {
 
         // Then
         assertTrue(links.isNotEmpty(), "Should discover links via SERP search")
+        
+        // Normalize the target URL for comparison
+        val normalizedTargetUrl = normalizeUrlService.normalize(searchQuery.url)
         links.forEach { link ->
             assertEquals(LinkSource.SERPER_SEARCH, link.source)
-            assertTrue(link.url.startsWith(searchQuery.url), "Link should be from the target site: ${link.url}")
+            assertTrue(link.url.startsWith(normalizedTargetUrl!!), "Link should be from the target site: ${link.url}")
             assertTrue(link.reason.isNotBlank(), "Should provide reason for link inclusion")
         }
     }
