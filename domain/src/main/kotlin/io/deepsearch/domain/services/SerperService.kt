@@ -1,0 +1,119 @@
+package io.deepsearch.domain.services
+
+import io.deepsearch.domain.models.valueobjects.LinkSource
+import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.WebpageLink
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.request.headers
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+
+/**
+ * Service for interacting with serper.dev search API
+ */
+interface ISerperService {
+    /**
+     * Searches using serper.dev API and returns relevant links filtered by the target URL.
+     *
+     * @param searchQuery The search query containing the query text and target URL
+     * @return List of WebpageLinks from organic search results
+     */
+    suspend fun searchLinks(searchQuery: SearchQuery): List<WebpageLink>
+}
+
+/**
+ * Service for interacting with serper.dev search API.
+ * This is a domain service that handles the technical operation of calling the SERP API.
+ */
+class SerperService : ISerperService {
+
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+    
+    private val client = HttpClient(OkHttp) {
+        expectSuccess = false
+    }
+    
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
+
+    @Serializable
+    data class SerperResponse(
+        val organic: List<OrganicResult>? = null
+    )
+
+    @Serializable
+    data class OrganicResult(
+        val title: String? = null,
+        val link: String? = null,
+        val snippet: String? = null
+    )
+
+    override suspend fun searchLinks(searchQuery: SearchQuery): List<WebpageLink> {
+        val (query, url) = searchQuery
+        logger.debug("SERP search: '{}' on site {}", query, url)
+
+        val apiKey = System.getenv("SERPER_API_KEY")
+        if (apiKey.isNullOrBlank()) {
+            logger.warn("SERPER_API_KEY not set, returning empty results")
+            return emptyList()
+        }
+
+        try {
+            val searchQueryText = "$query $url"
+            val requestBody = """{"q":"$searchQueryText"}"""
+            
+            val response = client.post("https://google.serper.dev/search") {
+                contentType(ContentType.Application.Json)
+                headers {
+                    append("X-API-KEY", apiKey)
+                }
+                setBody(requestBody)
+            }
+            
+            if (response.status.value !in 200..299) {
+                logger.error("SERP API returned error: ${response.status.value}")
+                return emptyList()
+            }
+
+            val responseBody = response.bodyAsText()
+
+            val serperResponse = json.decodeFromString<SerperResponse>(responseBody)
+            val organicResults = serperResponse.organic ?: emptyList()
+
+            logger.debug("SERP API returned {} organic results", organicResults.size)
+
+            // Extract links and filter by URL prefix
+            val links = organicResults.mapNotNull { result ->
+                val link = result.link
+                if (link != null && link.startsWith(url)) {
+                    val reason = result.snippet ?: result.title ?: "Found via SERP search"
+                    WebpageLink(
+                        url = link,
+                        source = LinkSource.SERPER_SEARCH,
+                        reason = reason
+                    )
+                } else {
+                    null
+                }
+            }.distinctBy { it.url }
+
+            logger.debug("SERP search found {} links", links.size)
+
+            return links
+        } catch (e: Exception) {
+            logger.error("Error during SERP search: {}", e.message, e)
+            return emptyList()
+        }
+    }
+}
+

@@ -102,6 +102,7 @@ class AgenticBrowserSearchOrchestrator(
             // Channel for discovered links
             val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val googleSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+            val serperSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val sitemapDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
@@ -124,6 +125,13 @@ class AgenticBrowserSearchOrchestrator(
 //                            budget,
 //                            googleSearchDiscoveredLinksChannel
 //                        ),
+                        processSerperSearchLinksFlow(
+                            sessionId,
+                            searchQuery,
+                            visitedUrls,
+                            budget,
+                            serperSearchDiscoveredLinksChannel
+                        ),
                         processSitemapLinksFlow(
                             sessionId,
                             searchQuery,
@@ -138,6 +146,7 @@ class AgenticBrowserSearchOrchestrator(
                             budget,
                             initialDiscoveredLinksChannel,
                             googleSearchDiscoveredLinksChannel,
+                            serperSearchDiscoveredLinksChannel,
                             sitemapDiscoveredLinksChannel,
                             recursiveDiscoveredLinksChannel
                         )
@@ -415,6 +424,29 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
+     * Process discovered links from SERP search.
+     * Network and markdown conversion errors are caught and recorded, allowing other links to continue.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun processSerperSearchLinksFlow(
+        sessionId: String,
+        searchQuery: SearchQuery,
+        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        budget: SearchBudget,
+        serperSearchDiscoveredLinksChannel: Channel<WebpageLink>
+    ): Flow<MarkdownResult> {
+        return processDiscoveredLinksFlow(
+            sessionId = sessionId,
+            searchQuery = searchQuery,
+            visitedUrls = visitedUrls,
+            budget = budget,
+            linkSource = createSerperSearchLinkDiscoveryFlow(sessionId, searchQuery),
+            discoveredLinksChannel = serperSearchDiscoveredLinksChannel,
+            flowName = "processSerperSearchLinksFlow"
+        )
+    }
+
+    /**
      * Process discovered links from sitemap.
      * Network and markdown conversion errors are caught and recorded, allowing other links to continue.
      */
@@ -445,6 +477,7 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
+        serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
@@ -454,6 +487,7 @@ class AgenticBrowserSearchOrchestrator(
             merge(
                 initialDiscoveredLinksChannel.receiveAsFlow(),
                 googleSearchDiscoveredLinksChannel.receiveAsFlow(),
+                serperSearchDiscoveredLinksChannel.receiveAsFlow(),
                 sitemapDiscoveredLinksChannel.receiveAsFlow()
             )
                 .onCompletion {
@@ -508,6 +542,7 @@ class AgenticBrowserSearchOrchestrator(
                                     inFlightLinkDiscoveryProcessing.remove(e.url)
                                     if (initialDiscoveredLinksChannel.isClosedForSend &&
                                         googleSearchDiscoveredLinksChannel.isClosedForSend &&
+                                        serperSearchDiscoveredLinksChannel.isClosedForSend &&
                                         sitemapDiscoveredLinksChannel.isClosedForSend &&
                                         inFlightLinkDiscoveryProcessing.isEmpty()
                                     ) {
@@ -554,6 +589,7 @@ class AgenticBrowserSearchOrchestrator(
                                     )
                                     if (initialDiscoveredLinksChannel.isClosedForSend &&
                                         googleSearchDiscoveredLinksChannel.isClosedForSend &&
+                                        serperSearchDiscoveredLinksChannel.isClosedForSend &&
                                         sitemapDiscoveredLinksChannel.isClosedForSend &&
                                         inFlightLinkDiscoveryProcessing.isEmpty()
                                     ) {
@@ -691,6 +727,22 @@ class AgenticBrowserSearchOrchestrator(
             googleLinks.forEach { emit(it) }
         } catch (e: Exception) {
             logger.error("[{}] Failed Google search: {}", sessionId, e.message, e)
+        }
+    }
+
+    /**
+     * SERP search link discovery flow
+     */
+    private fun createSerperSearchLinkDiscoveryFlow(
+        sessionId: String,
+        searchQuery: SearchQuery
+    ): Flow<WebpageLink> = flow {
+        try {
+            val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery)
+            logger.debug("[{}] SERP search discovered {} links", sessionId, serperLinks.size)
+            serperLinks.forEach { emit(it) }
+        } catch (e: Exception) {
+            logger.error("[{}] Failed SERP search: {}", sessionId, e.message, e)
         }
     }
 

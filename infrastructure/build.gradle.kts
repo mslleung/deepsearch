@@ -42,6 +42,7 @@ tasks.test {
     
     // Pass environment variables to tests
     environment("GOOGLE_API_KEY", System.getenv("GOOGLE_API_KEY") ?: "")
+    environment("SERPER_API_KEY", System.getenv("SERPER_API_KEY") ?: "")
 }
 
 // Create a test JAR to allow other modules to depend on test classes

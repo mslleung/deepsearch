@@ -9,6 +9,7 @@ import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.ISitemapCacheRepository
+import io.deepsearch.domain.services.ISerperService
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
@@ -25,6 +26,11 @@ interface IWebpageLinkDiscoveryService {
      * Discovers relevant links using Google search
      */
     suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery): List<WebpageLink>
+
+    /**
+     * Discovers relevant links using SERP search (serper.dev API)
+     */
+    suspend fun discoverRelevantLinksBySerper(searchQuery: SearchQuery): List<WebpageLink>
 
     /**
      * Discovers relevant links by analyzing links on the current webpage
@@ -45,6 +51,7 @@ interface IWebpageLinkDiscoveryService {
 @OptIn(ExperimentalTime::class)
 class WebpageLinkDiscoveryService(
     private val googleSearchLinkDiscoveryAgent: IGoogleSearchLinkDiscoveryAgent,
+    private val serperService: ISerperService,
     private val linkRelevanceAnalysisAgent: ILinkRelevanceAnalysisAgent,
     private val sitemapCacheRepository: ISitemapCacheRepository,
     private val sitemapLockRegistry: ISitemapLinkDiscoveryLockRegistry,
@@ -81,6 +88,15 @@ class WebpageLinkDiscoveryService(
         ).links
 
         logger.debug("Discovered {} links from Google search", links.size)
+        return links
+    }
+
+    override suspend fun discoverRelevantLinksBySerper(searchQuery: SearchQuery): List<WebpageLink> {
+        logger.debug("Discovering links via SERP search for query: '{}' on {}", searchQuery.query, searchQuery.url)
+
+        val links = serperService.searchLinks(searchQuery)
+
+        logger.debug("Discovered {} links from SERP search", links.size)
         return links
     }
 

@@ -55,5 +55,6 @@ val domainModule = module {
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
         scopedOf(::JwtService) bind IJwtService::class
         scopedOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
+        scopedOf(::SerperService) bind ISerperService::class
     }
 }
