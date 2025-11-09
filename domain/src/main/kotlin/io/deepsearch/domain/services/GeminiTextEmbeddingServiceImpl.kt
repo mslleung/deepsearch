@@ -1,24 +1,18 @@
 package io.deepsearch.domain.services
 
+import com.google.genai.Client
+import com.google.genai.types.EmbedContentConfig
 import io.deepsearch.domain.config.GeminiApiConfig
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.headers
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
  * Gemini API implementation of text embedding service.
  * 
- * This implementation uses the Gemini API directly via HTTP requests,
+ * This implementation uses the Google GenAI SDK Client to call the Gemini API,
  * suitable for development environments.
  */
 class GeminiTextEmbeddingServiceImpl(
@@ -27,55 +21,11 @@ class GeminiTextEmbeddingServiceImpl(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     
-    private val client = HttpClient(OkHttp) {
-        expectSuccess = false
-        install(HttpTimeout) {
-            requestTimeoutMillis = 30000 // 30 seconds for embedding requests
-        }
+    private val client: Client by lazy {
+        Client.builder()
+            .apiKey(geminiApiConfig.apiKey)
+            .build()
     }
-    
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
-
-    @Serializable
-    data class EmbedContentRequest(
-        val model: String,
-        val content: Content,
-        val taskType: String? = null,
-        val outputDimensionality: Int? = null
-    )
-
-    @Serializable
-    data class Content(
-        val parts: List<Part>
-    )
-
-    @Serializable
-    data class Part(
-        val text: String
-    )
-
-    @Serializable
-    data class EmbedContentResponse(
-        val embedding: Embedding
-    )
-
-    @Serializable
-    data class Embedding(
-        val values: List<Float>
-    )
-
-    @Serializable
-    data class BatchEmbedContentsRequest(
-        val requests: List<EmbedContentRequest>
-    )
-
-    @Serializable
-    data class BatchEmbedContentsResponse(
-        val embeddings: List<Embedding>
-    )
 
     override suspend fun embedDocuments(texts: List<String>): List<List<Float>> {
         if (texts.isEmpty()) {
@@ -84,41 +34,18 @@ class GeminiTextEmbeddingServiceImpl(
 
         logger.debug("Embedding {} documents with Gemini API", texts.size)
 
-        try {
-            // Create batch request for multiple documents
-            val requests = texts.map { text ->
-                EmbedContentRequest(
-                    model = "models/gemini-embedding-001",
-                    content = Content(parts = listOf(Part(text = text))),
-                    taskType = "RETRIEVAL_DOCUMENT",
-                    outputDimensionality = 1536
-                )
+        return try {
+            // Process each document individually (not using batch API)
+            coroutineScope {
+                texts.map { text ->
+                    async {
+                        embedSingleText(
+                            text = text,
+                            taskType = "RETRIEVAL_DOCUMENT"
+                        )
+                    }
+                }.awaitAll()
             }
-
-            val requestBody = BatchEmbedContentsRequest(requests = requests)
-            val requestJson = json.encodeToString(BatchEmbedContentsRequest.serializer(), requestBody)
-
-            val response = client.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents") {
-                contentType(ContentType.Application.Json)
-                headers {
-                    append("x-goog-api-key", geminiApiConfig.apiKey)
-                }
-                setBody(requestJson)
-            }
-
-            if (response.status.value !in 200..299) {
-                logger.error("Gemini API returned error: ${response.status.value}")
-                val errorBody = response.bodyAsText()
-                logger.error("Error response: $errorBody")
-                throw RuntimeException("Failed to generate embeddings: HTTP ${response.status.value}")
-            }
-
-            val responseBody = response.bodyAsText()
-            val batchResponse = json.decodeFromString<BatchEmbedContentsResponse>(responseBody)
-
-            logger.debug("Successfully generated {} embeddings", batchResponse.embeddings.size)
-
-            return batchResponse.embeddings.map { it.values }
         } catch (e: Exception) {
             logger.error("Error generating document embeddings: ${e.message}", e)
             throw e
@@ -128,40 +55,41 @@ class GeminiTextEmbeddingServiceImpl(
     override suspend fun embedQuery(text: String): List<Float> {
         logger.debug("Embedding query with Gemini API")
 
-        try {
-            val requestBody = EmbedContentRequest(
-                model = "models/gemini-embedding-001",
-                content = Content(parts = listOf(Part(text = text))),
-                taskType = "RETRIEVAL_QUERY",
-                outputDimensionality = 1536
+        return try {
+            embedSingleText(
+                text = text,
+                taskType = "RETRIEVAL_QUERY"
             )
-
-            val requestJson = json.encodeToString(EmbedContentRequest.serializer(), requestBody)
-
-            val response = client.post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent") {
-                contentType(ContentType.Application.Json)
-                headers {
-                    append("x-goog-api-key", geminiApiConfig.apiKey)
-                }
-                setBody(requestJson)
-            }
-
-            if (response.status.value !in 200..299) {
-                logger.error("Gemini API returned error: ${response.status.value}")
-                val errorBody = response.bodyAsText()
-                logger.error("Error response: $errorBody")
-                throw RuntimeException("Failed to generate query embedding: HTTP ${response.status.value}")
-            }
-
-            val responseBody = response.bodyAsText()
-            val embedResponse = json.decodeFromString<EmbedContentResponse>(responseBody)
-
-            logger.debug("Successfully generated query embedding with {} dimensions", embedResponse.embedding.values.size)
-
-            return embedResponse.embedding.values
         } catch (e: Exception) {
             logger.error("Error generating query embedding: ${e.message}", e)
             throw e
+        }
+    }
+
+    /**
+     * Embed a single text using the Gemini API via REST.
+     */
+    private suspend fun embedSingleText(text: String, taskType: String): List<Float> {
+        // Use the SDK's REST embedContent method with proper configuration
+        val config = EmbedContentConfig.builder()
+            .taskType(taskType)
+            .outputDimensionality(1536)
+            .build()
+
+        val response = client.models.embedContent("gemini-embedding-001", text, config)
+
+        logger.debug("Successfully generated embedding for task type {}", taskType)
+
+        // Extract the embedding values from the response
+        // The response contains embeddings as an Optional wrapping a list
+        val embeddingsList = response.embeddings().orElseThrow { 
+            RuntimeException("No embedding returned from API") 
+        }
+        if (embeddingsList.isEmpty()) {
+            throw RuntimeException("No embedding returned from API")
+        }
+        return embeddingsList[0].values().orElseThrow {
+            RuntimeException("No values in embedding")
         }
     }
 }

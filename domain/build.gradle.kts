@@ -21,6 +21,7 @@ dependencies {
 
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
+    implementation(libs.google.genai)
     
     implementation(libs.apache.pdfbox)
 
