@@ -28,3 +28,8 @@ database:
         password: ${DB_PASSWORD}
 serper:
     apiKey: ${SERPER_API_KEY}
+gemini:
+    apiKey: ${GOOGLE_API_KEY}
+vertexai:
+    projectId: ${GOOGLE_CLOUD_PROJECT}
+    location: ${GOOGLE_CLOUD_LOCATION}

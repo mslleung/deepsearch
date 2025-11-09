@@ -49,10 +49,12 @@ import io.deepsearch.domain.ocr.ITesseractPool
 import io.deepsearch.domain.services.OcrImageTextExtractionService
 import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.services.ApiKeyCryptoService
+import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
+import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
@@ -68,6 +70,16 @@ private val domainCommonTestModule = module {
     single {
         SerperConfig(
             apiKey = System.getenv("SERPER_API_KEY") ?: "test-serper-api-key"
+        )
+    }
+    single {
+        GeminiApiConfig(
+            apiKey = System.getenv("GOOGLE_API_KEY")?.ifBlank { "test-gemini-api-key" } ?: "test-gemini-api-key"
+        )
+    }
+    single {
+        EnvironmentConfig(
+            isDevelopmentMode = true
         )
     }
 
@@ -104,6 +116,7 @@ private val domainCommonTestModule = module {
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::SerperService) bind ISerperService::class
     singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
+    singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
 }
 
 val domainTestModule = module {

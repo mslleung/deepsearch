@@ -10,13 +10,16 @@ import io.deepsearch.domain.ocr.ITesseractPool
 import io.deepsearch.domain.services.OcrImageTextExtractionService
 import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.services.ApiKeyCryptoService
+import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
+import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
+import io.deepsearch.domain.services.VertexAiTextEmbeddingServiceImpl
 import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -61,5 +64,15 @@ val domainModule = module {
         scopedOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
         scopedOf(::SerperService) bind ISerperService::class
         scopedOf(::NormalizeUrlService) bind INormalizeUrlService::class
+        
+        // Text embedding service - environment-based selection
+        scoped<ITextEmbeddingService> {
+            val environmentConfig = get<EnvironmentConfig>()
+            if (environmentConfig.isDevelopmentMode) {
+                GeminiTextEmbeddingServiceImpl(get())
+            } else {
+                VertexAiTextEmbeddingServiceImpl(get())
+            }
+        }
     }
 }
