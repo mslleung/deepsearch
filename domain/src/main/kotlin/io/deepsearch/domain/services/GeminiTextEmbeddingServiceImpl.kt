@@ -8,6 +8,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.math.sqrt
 
 /**
  * Gemini API implementation of text embedding service.
@@ -88,8 +89,26 @@ class GeminiTextEmbeddingServiceImpl(
         if (embeddingsList.isEmpty()) {
             throw RuntimeException("No embedding returned from API")
         }
-        return embeddingsList[0].values().orElseThrow {
+        val embedding = embeddingsList[0].values().orElseThrow {
             RuntimeException("No values in embedding")
+        }
+        
+        // Normalize the embedding for dimensions other than 3072
+        // See: https://ai.google.dev/gemini-api/docs/embeddings#quality-for-smaller-dimensions
+        return normalizeEmbedding(embedding)
+    }
+
+    /**
+     * Normalize an embedding vector to unit length.
+     * Required for outputDimensionality < 3072 to ensure accurate semantic similarity.
+     * Normalized embeddings allow cosine similarity to focus on direction rather than magnitude.
+     */
+    private fun normalizeEmbedding(embedding: List<Float>): List<Float> {
+        val norm = sqrt(embedding.sumOf { (it * it).toDouble() }).toFloat()
+        return if (norm > 0) {
+            embedding.map { it / norm }
+        } else {
+            embedding
         }
     }
 }
