@@ -97,7 +97,7 @@ class AgenticBrowserSearchOrchestrator(
             val resultDeferred = CompletableDeferred<SearchResult>()
 
             // for deduping links
-            val visitedUrls = ConcurrentHashMap.newKeySet<String>()
+            val seenUrls = ConcurrentHashMap.newKeySet<String>()
 
             // Channel for discovered links
             val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
@@ -115,34 +115,34 @@ class AgenticBrowserSearchOrchestrator(
                         processInitialLinkFlow(
                             sessionId,
                             searchQuery,
-                            visitedUrls,
+                            seenUrls,
                             initialDiscoveredLinksChannel
                         ),
 //                        processGoogleSearchLinksFlow(
 //                            sessionId,
 //                            searchQuery,
-//                            visitedUrls,
+//                            seenUrls,
 //                            budget,
 //                            googleSearchDiscoveredLinksChannel
 //                        ),
                         processSerperSearchLinksFlow(
                             sessionId,
                             searchQuery,
-                            visitedUrls,
+                            seenUrls,
                             budget,
                             serperSearchDiscoveredLinksChannel
                         ),
                         processSitemapLinksFlow(
                             sessionId,
                             searchQuery,
-                            visitedUrls,
+                            seenUrls,
                             budget,
                             sitemapDiscoveredLinksChannel
                         ),
                         processRecursiveDiscoveredLinksFlow(
                             sessionId,
                             searchQuery,
-                            visitedUrls,
+                            seenUrls,
                             budget,
                             initialDiscoveredLinksChannel,
                             googleSearchDiscoveredLinksChannel,
@@ -205,7 +205,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processInitialLinkFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
         return flowOf(searchQuery.url)
@@ -217,7 +217,7 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { link ->
                         val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                        if (visitedUrls.contains(normalizedUrl)) {
+                        if (seenUrls.contains(normalizedUrl)) {
                             logger.debug(
                                 "processInitialLinkFlow [{}] Skipping already seen URL: {}",
                                 sessionId,
@@ -225,7 +225,7 @@ class AgenticBrowserSearchOrchestrator(
                             )
                             false
                         } else {
-                            visitedUrls.add(normalizedUrl)
+                            seenUrls.add(normalizedUrl)
                             true
                         }
                     }
@@ -274,7 +274,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processDiscoveredLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         linkSource: Flow<WebpageLink>,
         discoveredLinksChannel: Channel<WebpageLink>,
@@ -290,7 +290,7 @@ class AgenticBrowserSearchOrchestrator(
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                if (visitedUrls.contains(normalizedUrl)) {
+                if (seenUrls.contains(normalizedUrl)) {
                     logger.debug(
                         "{} [{}] Skipping already seen URL: {}",
                         flowName,
@@ -299,7 +299,7 @@ class AgenticBrowserSearchOrchestrator(
                     )
                     false
                 } else {
-                    visitedUrls.add(normalizedUrl)
+                    seenUrls.add(normalizedUrl)
                     true
                 }
             }
@@ -408,14 +408,14 @@ class AgenticBrowserSearchOrchestrator(
     private fun processGoogleSearchLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
             searchQuery = searchQuery,
-            visitedUrls = visitedUrls,
+            seenUrls = seenUrls,
             budget = budget,
             linkSource = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery),
             discoveredLinksChannel = googleSearchDiscoveredLinksChannel,
@@ -431,14 +431,14 @@ class AgenticBrowserSearchOrchestrator(
     private fun processSerperSearchLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         serperSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
             searchQuery = searchQuery,
-            visitedUrls = visitedUrls,
+            seenUrls = seenUrls,
             budget = budget,
             linkSource = createSerperSearchLinkDiscoveryFlow(sessionId, searchQuery),
             discoveredLinksChannel = serperSearchDiscoveredLinksChannel,
@@ -454,14 +454,14 @@ class AgenticBrowserSearchOrchestrator(
     private fun processSitemapLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
             searchQuery = searchQuery,
-            visitedUrls = visitedUrls,
+            seenUrls = seenUrls,
             budget = budget,
             linkSource = createSitemapLinkDiscoveryFlow(sessionId, searchQuery),
             discoveredLinksChannel = sitemapDiscoveredLinksChannel,
@@ -473,7 +473,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processRecursiveDiscoveredLinksFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        visitedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
@@ -507,7 +507,7 @@ class AgenticBrowserSearchOrchestrator(
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
-                if (visitedUrls.contains(normalizedUrl)) {
+                if (seenUrls.contains(normalizedUrl)) {
                     logger.debug(
                         "processRecursiveDiscoveredLinksFlow [{}] Skipping already seen URL: {}",
                         sessionId,
@@ -515,7 +515,7 @@ class AgenticBrowserSearchOrchestrator(
                     )
                     false
                 } else {
-                    visitedUrls.add(normalizedUrl)
+                    seenUrls.add(normalizedUrl)
                     true
                 }
             }
