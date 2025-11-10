@@ -16,19 +16,19 @@ interface IWebpageMarkdownRepository {
      *
      * Only searches within webpages that:
      * - Have the specified URL prefix (to limit search to a specific domain/path)
-     * - Were updated after the specified timestamp (to respect cache expiry)
+     * - Were updated after the specified timestamp (if minUpdatedAtEpochMs is non-null)
      * - Have non-null embeddings
      *
      * @param queryEmbedding The embedding vector to search with (1536 dimensions)
      * @param urlPrefix The URL prefix to filter by (e.g., "https://example.com")
-     * @param minUpdatedAtEpochMs Minimum timestamp in epoch milliseconds (for cache expiry)
+     * @param minUpdatedAtEpochMs Minimum timestamp in epoch milliseconds (null means no timestamp filtering)
      * @param limit Maximum number of results to return
      * @return List of WebpageMarkdown objects, ordered by similarity (most similar first)
      */
     suspend fun searchSimilar(
         queryEmbedding: List<Float>,
         urlPrefix: String,
-        minUpdatedAtEpochMs: Long,
+        minUpdatedAtEpochMs: Long?,
         limit: Int
     ): List<WebpageMarkdown>
 }

@@ -23,7 +23,6 @@ import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.exceptions.MarkdownConversionException
-import io.deepsearch.domain.models.valueobjects.LinkSource
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -66,7 +65,7 @@ class AgenticBrowserSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long): SearchResult =
+    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long?): SearchResult =
         withContext(dispatchers.io) {
             val result: SearchResult
             val executionTime = measureTimeMillis {
@@ -86,7 +85,7 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         maxUrls: Int? = null,
         searchDurationSeconds: Int? = null,
-        cacheExpiryMs: Long = 604800000L
+        cacheExpiryMs: Long?
     ): SearchResult {
         val session = querySessionService.createSession(searchQuery.query, searchQuery.url)
         val sessionId = session.id
@@ -151,8 +150,6 @@ class AgenticBrowserSearchOrchestrator(
                         processVectorSearchFlow(
                             sessionId,
                             searchQuery,
-                            seenUrls,
-                            budget,
                             cacheExpiryMs,
                             vectorSearchDiscoveredLinksChannel
                         ),
@@ -226,7 +223,7 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long
+        cacheExpiryMs: Long?
     ): Flow<MarkdownResult> {
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
@@ -299,7 +296,7 @@ class AgenticBrowserSearchOrchestrator(
         linkSource: Flow<WebpageLink>,
         discoveredLinksChannel: Channel<WebpageLink>,
         flowName: String,
-        cacheExpiryMs: Long
+        cacheExpiryMs: Long?
     ): Flow<MarkdownResult> {
         return linkSource
             .takeWhile {
@@ -457,7 +454,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long
+        cacheExpiryMs: Long?
     ): Flow<MarkdownResult> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
@@ -508,7 +505,7 @@ class AgenticBrowserSearchOrchestrator(
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
         vectorSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long
+        cacheExpiryMs: Long?
     ): Flow<MarkdownResult> {
         val inFlightLinkDiscoveryProcessing = ConcurrentHashMap.newKeySet<String>()
 
@@ -807,9 +804,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processVectorSearchFlow(
         sessionId: String,
         searchQuery: SearchQuery,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        budget: SearchBudget,
-        cacheExpiryMs: Long,
+        cacheExpiryMs: Long?,
         vectorSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> = flow {
         // Search for similar embeddings

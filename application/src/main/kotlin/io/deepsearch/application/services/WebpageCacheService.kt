@@ -23,10 +23,10 @@ interface IWebpageCacheService {
     /**
      * Get cached markdown for a URL, checking TTL expiration.
      * @param url The normalized URL to look up
-     * @param cacheExpiryMs Cache expiration time in milliseconds (default 7 days)
+     * @param cacheExpiryMs Cache expiration time in milliseconds (null means no expiry check)
      * @return CachedWebpageResult indicating hit, miss, or expired entry
      */
-    suspend fun getCachedMarkdown(url: String, cacheExpiryMs: Long = 604800000L): CachedWebpageResult
+    suspend fun getCachedMarkdown(url: String, cacheExpiryMs: Long?): CachedWebpageResult
 
     /**
      * Cache webpage markdown and metadata.
@@ -52,19 +52,19 @@ interface IWebpageCacheService {
      *
      * Only searches within webpages that:
      * - Have the specified URL prefix (to limit search to a specific domain/path)
-     * - Were updated within the cache expiry window
+     * - Were updated within the cache expiry window (if cacheExpiryMs is non-null)
      * - Have non-null embeddings
      *
      * @param query The search query text
      * @param baseUrl The base URL to filter by (will be normalized, e.g., "https://example.com")
-     * @param cacheExpiryMs Cache expiration time in milliseconds
+     * @param cacheExpiryMs Cache expiration time in milliseconds (null means no expiry filtering)
      * @param limit Maximum number of results to return
      * @return List of WebpageMarkdown objects, ordered by similarity (most similar first)
      */
     suspend fun searchSimilar(
         query: String,
         baseUrl: String,
-        cacheExpiryMs: Long,
+        cacheExpiryMs: Long?,
         limit: Int
     ): List<WebpageMarkdown>
 }
@@ -86,11 +86,17 @@ class WebpageCacheService(
      */
     private val maxMarkdownLength = 50_000
 
-    override suspend fun getCachedMarkdown(url: String, cacheExpiryMs: Long): CachedWebpageResult {
+    override suspend fun getCachedMarkdown(url: String, cacheExpiryMs: Long?): CachedWebpageResult {
         val cached = webpageMarkdownRepository.findByUrl(url)
             ?: return CachedWebpageResult.Miss.also {
                 logger.debug("Cache miss for URL: {}", url)
             }
+
+        // If no expiry time is specified, always return Hit
+        if (cacheExpiryMs == null) {
+            logger.debug("Cache hit for URL: {} (no expiry check)", url)
+            return CachedWebpageResult.Hit(cached)
+        }
 
         val currentTime = Clock.System.now()
         val age = currentTime - cached.updatedAt
@@ -205,7 +211,7 @@ class WebpageCacheService(
     override suspend fun searchSimilar(
         query: String,
         baseUrl: String,
-        cacheExpiryMs: Long,
+        cacheExpiryMs: Long?,
         limit: Int
     ): List<WebpageMarkdown> {
         // Normalize URL to get prefix for filtering
@@ -218,10 +224,16 @@ class WebpageCacheService(
         val queryEmbedding = textEmbeddingService.embedQuery("$query $baseUrl")
         logger.debug("Vector search: Generated query embedding with {} dimensions", queryEmbedding.size)
 
-        // Calculate minimum updated timestamp for cache expiry
-        val currentTime = Clock.System.now()
-        val minUpdatedAtEpochMs = currentTime.toEpochMilliseconds() - cacheExpiryMs
-        logger.debug("Vector search: Min timestamp = {}", minUpdatedAtEpochMs)
+        // Calculate minimum updated timestamp for cache expiry (null if no expiry filtering)
+        val minUpdatedAtEpochMs = if (cacheExpiryMs != null) {
+            val currentTime = Clock.System.now()
+            val timestamp = currentTime.toEpochMilliseconds() - cacheExpiryMs
+            logger.debug("Vector search: Min timestamp = {}", timestamp)
+            timestamp
+        } else {
+            logger.debug("Vector search: No timestamp filtering (cacheExpiryMs is null)")
+            null
+        }
 
         // Search for similar embeddings
         return webpageMarkdownRepository.searchSimilar(

@@ -246,7 +246,7 @@ class PrecacheJobRegistry(
 
                 // Process URL and collect events
                 // Use .catch{} to handle UrlProcessingException
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null)
                     .catch { e ->
                         // Handle URL processing errors using Flow's catch operator
                         if (e is CancellationException) {

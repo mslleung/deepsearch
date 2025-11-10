@@ -31,7 +31,6 @@ class SearchService(
         cacheExpiryMs: Long?
     ): SearchResult {
         val searchQuery = SearchQuery(query, url, sitemapUrl)
-        val effectiveCacheExpiryMs = cacheExpiryMs ?: 604800000L // Default 7 days
-        return agenticBrowserSearchOrchestrator.execute(searchQuery, maxUrls, searchDurationSeconds, effectiveCacheExpiryMs)
+        return agenticBrowserSearchOrchestrator.execute(searchQuery, maxUrls, searchDurationSeconds, cacheExpiryMs)
     }
 }

@@ -41,7 +41,7 @@ interface IUrlContentProcessingService {
     fun processUrlAsFlow(
         url: String,
         query: String,
-        cacheExpiryMs: Long = 604800000L
+        cacheExpiryMs: Long?
     ): Flow<UrlProcessingEvent>
 
     /**
@@ -50,7 +50,7 @@ interface IUrlContentProcessingService {
      */
     fun processUrlAsFlow(
         url: String,
-        cacheExpiryMs: Long = 604800000L
+        cacheExpiryMs: Long?
     ): Flow<UrlProcessingEvent>
 }
 
@@ -70,7 +70,7 @@ class UrlContentProcessingService(
     override fun processUrlAsFlow(
         url: String,
         query: String,
-        cacheExpiryMs: Long
+        cacheExpiryMs: Long?
     ): Flow<UrlProcessingEvent> {
         return processInternalAsFlow(url, cacheExpiryMs) { html ->
             webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url)
@@ -79,7 +79,7 @@ class UrlContentProcessingService(
 
     override fun processUrlAsFlow(
         url: String,
-        cacheExpiryMs: Long
+        cacheExpiryMs: Long?
     ): Flow<UrlProcessingEvent> {
         return processInternalAsFlow(url, cacheExpiryMs) { html ->
             webpageLinkDiscoveryService.discoverAllLinks(html, url)
@@ -88,7 +88,7 @@ class UrlContentProcessingService(
 
     private fun processInternalAsFlow(
         url: String,
-        cacheExpiryMs: Long,
+        cacheExpiryMs: Long?,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
         logger.debug("Processing URL: {}", url)

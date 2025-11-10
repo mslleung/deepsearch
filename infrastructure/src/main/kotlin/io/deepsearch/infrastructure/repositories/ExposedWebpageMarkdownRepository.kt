@@ -83,16 +83,21 @@ class ExposedWebpageMarkdownRepository(
     override suspend fun searchSimilar(
         queryEmbedding: List<Float>,
         urlPrefix: String,
-        minUpdatedAtEpochMs: Long,
+        minUpdatedAtEpochMs: Long?,
         limit: Int
     ): List<WebpageMarkdown> = suspendTransaction {
         // Fetch all candidates and compute cosine distance in Kotlin
         // This is not ideal for performance, but works without raw SQL
         webpageMarkdownTable.selectAll()
             .where {
-                (webpageMarkdownTable.url like "$urlPrefix%") and
-                        (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and
-                        (webpageMarkdownTable.embedding.isNotNull())
+                val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
+                val embeddingCondition = webpageMarkdownTable.embedding.isNotNull()
+                
+                if (minUpdatedAtEpochMs != null) {
+                    urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and embeddingCondition
+                } else {
+                    urlCondition and embeddingCondition
+                }
             }
             .map { row ->
                 val webpage = mapRowToWebpageMarkdown(row)
