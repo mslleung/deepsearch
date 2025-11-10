@@ -6,16 +6,10 @@ import io.deepsearch.infrastructure.database.WebpageMarkdownCacheTable
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
-import org.jetbrains.exposed.v1.core.ResultRow
-import org.jetbrains.exposed.v1.core.and
-import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.greaterEq
-import org.jetbrains.exposed.v1.core.isNotNull
-import org.jetbrains.exposed.v1.core.like
+import org.jetbrains.exposed.v1.core.*
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
-import kotlin.math.sqrt
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -86,9 +80,28 @@ class ExposedWebpageMarkdownRepository(
         minUpdatedAtEpochMs: Long?,
         limit: Int
     ): List<WebpageMarkdown> = suspendTransaction {
-        // Fetch all candidates and compute cosine distance in Kotlin
-        // This is not ideal for performance, but works without raw SQL
-        webpageMarkdownTable.selectAll()
+        // Configure HNSW iterative index scan for better recall with filters
+        // This ensures the index scans more candidates when our WHERE filters reduce results
+        exec("""
+            SET LOCAL hnsw.iterative_scan = 'strict_order';
+            SET LOCAL hnsw.max_scan_tuples = 20000;
+        """.trimIndent())
+        
+        // Use pgvector's native <=> operator for cosine distance
+        // This leverages the HNSW index for efficient O(log n) similarity search
+        
+        // Format query embedding as pgvector string: '[1.0,2.0,3.0,...]'
+        val embeddingStr = "[${queryEmbedding.joinToString(",")}]"
+        
+        // Create custom SQL expression for cosine distance using pgvector's <=> operator
+        val cosineDistanceExpr = object : Expression<Double>() {
+            override fun toQueryBuilder(queryBuilder: QueryBuilder) {
+                queryBuilder.append("(embedding <=> '$embeddingStr'::vector)")
+            }
+        }
+        
+        // Build query with WHERE conditions
+        val baseQuery = webpageMarkdownTable.selectAll()
             .where {
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
                 val embeddingCondition = webpageMarkdownTable.embedding.isNotNull()
@@ -99,37 +112,17 @@ class ExposedWebpageMarkdownRepository(
                     urlCondition and embeddingCondition
                 }
             }
-            .map { row ->
-                val webpage = mapRowToWebpageMarkdown(row)
-                val distance = cosinDistance(queryEmbedding, webpage.embedding!!)
-                webpage to distance
-            }
+            .orderBy(cosineDistanceExpr to SortOrder.ASC)  // Order by cosine distance (ascending = most similar)
+            .limit(limit)
+        
+        // Execute query and map results
+        baseQuery
+            .map { mapRowToWebpageMarkdown(it) }
             .toList()
-            .sortedBy { it.second } // Sort by distance (ascending = most similar first)
-            .take(limit)
-            .map { it.first } // Extract just the WebpageMarkdown objects
-    }
-
-    /**
-     * Calculate cosine distance between two vectors.
-     * Cosine distance = 1 - cosine similarity
-     * Lower distance = higher similarity
-     */
-    private fun cosinDistance(a: List<Float>, b: List<Float>): Float {
-        require(a.size == b.size) { "Vectors must have same dimension" }
-
-        var dotProduct = 0.0
-        var normA = 0.0
-        var normB = 0.0
-
-        for (i in a.indices) {
-            dotProduct += a[i] * b[i]
-            normA += a[i] * a[i]
-            normB += b[i] * b[i]
-        }
-
-        val cosineSimilarity = dotProduct / (sqrt(normA) * sqrt(normB))
-        return (1 - cosineSimilarity).toFloat()
+        
+        // Iterative index scans configured above improve recall when filters are applied
+        // Can tune hnsw.max_scan_tuples and hnsw.scan_mem_multiplier if needed
+        // Reference: https://github.com/pgvector/pgvector?tab=readme-ov-file#iterative-index-scans
     }
 
     private fun mapRowToWebpageMarkdown(row: ResultRow): WebpageMarkdown {

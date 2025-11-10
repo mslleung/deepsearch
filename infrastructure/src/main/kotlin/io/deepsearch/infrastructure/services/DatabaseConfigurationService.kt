@@ -82,8 +82,18 @@ class DatabaseConfigurationService(
                     urlAccessTable
                 )
                 
-                // TODO: Enable pgvector and create HNSW index when raw SQL queries are implemented
-                // For now, we compute cosine distance in Kotlin code
+                // Enable pgvector extension for vector similarity search
+                exec("CREATE EXTENSION IF NOT EXISTS vector")
+                
+                // Create HNSW index for efficient vector similarity search on webpage embeddings
+                // Using cosine distance operator (vector_cosine_ops) for cosine similarity
+                // HNSW parameters: m=16 (connections per layer), ef_construction=64 (quality vs speed tradeoff)
+                exec("""
+                    CREATE INDEX IF NOT EXISTS webpage_markdowns_embedding_idx 
+                    ON webpage_markdowns 
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
+                """.trimIndent())
             }
         }
 
