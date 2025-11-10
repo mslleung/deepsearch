@@ -123,14 +123,14 @@ class AgenticBrowserSearchOrchestrator(
                             initialDiscoveredLinksChannel,
                             cacheExpiryMs
                         ),
-//                        processGoogleSearchLinksFlow(
-//                            sessionId,
-//                            searchQuery,
-//                            seenUrls,
-//                            budget,
-//                            googleSearchDiscoveredLinksChannel,
-//                            cacheExpiryMs
-//                        ),
+                        processGoogleSearchLinksFlow(
+                            sessionId,
+                            searchQuery,
+                            seenUrls,
+                            budget,
+                            googleSearchDiscoveredLinksChannel,
+                            cacheExpiryMs
+                        ),
                         processSerperSearchLinksFlow(
                             sessionId,
                             searchQuery,
@@ -139,14 +139,14 @@ class AgenticBrowserSearchOrchestrator(
                             serperSearchDiscoveredLinksChannel,
                             cacheExpiryMs
                         ),
-/*                        processSitemapLinksFlow(
+                        processSitemapLinksFlow(
                             sessionId,
                             searchQuery,
                             seenUrls,
                             budget,
                             sitemapDiscoveredLinksChannel,
                             cacheExpiryMs
-                        ),*/
+                        ),
                         processVectorSearchFlow(
                             sessionId,
                             searchQuery,
@@ -429,7 +429,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long
+        cacheExpiryMs: Long?
     ): Flow<MarkdownResult> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
@@ -479,7 +479,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long
+        cacheExpiryMs: Long?
     ): Flow<MarkdownResult> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,

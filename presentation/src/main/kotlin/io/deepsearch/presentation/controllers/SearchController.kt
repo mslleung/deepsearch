@@ -8,6 +8,7 @@ import io.deepsearch.domain.exceptions.AiInterpretationException
 import io.deepsearch.domain.exceptions.InvalidUrlException
 import io.deepsearch.domain.exceptions.WebScrapeException
 import io.deepsearch.domain.exceptions.WebScrapeTimeoutException
+import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.presentation.dto.SearchRequest
 import io.deepsearch.presentation.dto.toResponse
 import io.ktor.http.*
@@ -113,7 +114,7 @@ class SearchController(
             }
             
             // Measure search duration
-            var searchResult: io.deepsearch.domain.models.valueobjects.SearchResult
+            var searchResult: SearchResult
             val durationMs = measureTimeMillis {
                 searchResult = searchService.searchWebsite(
                     request.query, 
