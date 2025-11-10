@@ -87,7 +87,6 @@ private val applicationCommonTestModule = module {
     singleOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
-    singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
     singleOf(::PdfConversionService) bind IPdfConversionService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class

@@ -45,13 +45,36 @@ interface IWebpageCacheService {
         httpReason: String,
         mimeType: String?
     )
+
+    /**
+     * Search for similar webpages using vector cosine distance.
+     * Returns webpages ordered by similarity (most similar first).
+     *
+     * Only searches within webpages that:
+     * - Have the specified URL prefix (to limit search to a specific domain/path)
+     * - Were updated within the cache expiry window
+     * - Have non-null embeddings
+     *
+     * @param query The search query text
+     * @param baseUrl The base URL to filter by (will be normalized, e.g., "https://example.com")
+     * @param cacheExpiryMs Cache expiration time in milliseconds
+     * @param limit Maximum number of results to return
+     * @return List of WebpageMarkdown objects, ordered by similarity (most similar first)
+     */
+    suspend fun searchSimilar(
+        query: String,
+        baseUrl: String,
+        cacheExpiryMs: Long,
+        limit: Int
+    ): List<WebpageMarkdown>
 }
 
 @OptIn(ExperimentalTime::class)
 class WebpageCacheService(
     private val webpageMarkdownRepository: IWebpageMarkdownRepository,
     private val applicationScope: IApplicationCoroutineScope,
-    private val textEmbeddingService: ITextEmbeddingService
+    private val textEmbeddingService: ITextEmbeddingService,
+    private val normalizeUrlService: io.deepsearch.domain.services.INormalizeUrlService
 ) : IWebpageCacheService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -176,6 +199,37 @@ class WebpageCacheService(
                 )
             }
         }
+    }
+
+
+    override suspend fun searchSimilar(
+        query: String,
+        baseUrl: String,
+        cacheExpiryMs: Long,
+        limit: Int
+    ): List<WebpageMarkdown> {
+        // Normalize URL to get prefix for filtering
+        val urlPrefix = normalizeUrlService.normalize(baseUrl) ?: baseUrl
+        logger.debug("Vector search: URL prefix = {}", urlPrefix)
+
+        // Generate query embedding
+        // Include the url in the query to increase the likelihood of getting documents with the url prefix
+        // This is because pgvector applies filtering after retrieving from vector db
+        val queryEmbedding = textEmbeddingService.embedQuery("$query $baseUrl")
+        logger.debug("Vector search: Generated query embedding with {} dimensions", queryEmbedding.size)
+
+        // Calculate minimum updated timestamp for cache expiry
+        val currentTime = Clock.System.now()
+        val minUpdatedAtEpochMs = currentTime.toEpochMilliseconds() - cacheExpiryMs
+        logger.debug("Vector search: Min timestamp = {}", minUpdatedAtEpochMs)
+
+        // Search for similar embeddings
+        return webpageMarkdownRepository.searchSimilar(
+            queryEmbedding = queryEmbedding,
+            urlPrefix = urlPrefix,
+            minUpdatedAtEpochMs = minUpdatedAtEpochMs,
+            limit = limit
+        )
     }
 }
 

@@ -2,11 +2,11 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.domain.services.INormalizeUrlService
-import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
+import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
@@ -21,9 +21,9 @@ import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.exceptions.MarkdownConversionException
+import io.deepsearch.domain.models.valueobjects.LinkSource
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -60,8 +60,7 @@ class AgenticBrowserSearchOrchestrator(
     private val streamingAnswerAgent: IStreamingAnswerAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
-    private val textEmbeddingService: ITextEmbeddingService,
-    private val webpageMarkdownRepository: IWebpageMarkdownRepository,
+    private val webpageCacheService: WebpageCacheService,
     private val dispatchers: IDispatcherProvider
 ) : IAgenticBrowserSearchOrchestrator {
 
@@ -141,14 +140,14 @@ class AgenticBrowserSearchOrchestrator(
                             serperSearchDiscoveredLinksChannel,
                             cacheExpiryMs
                         ),
-                        processSitemapLinksFlow(
+/*                        processSitemapLinksFlow(
                             sessionId,
                             searchQuery,
                             seenUrls,
                             budget,
                             sitemapDiscoveredLinksChannel,
                             cacheExpiryMs
-                        ),
+                        ),*/
                         processVectorSearchFlow(
                             sessionId,
                             searchQuery,
@@ -166,6 +165,7 @@ class AgenticBrowserSearchOrchestrator(
                             googleSearchDiscoveredLinksChannel,
                             serperSearchDiscoveredLinksChannel,
                             sitemapDiscoveredLinksChannel,
+                            vectorSearchDiscoveredLinksChannel,
                             recursiveDiscoveredLinksChannel,
                             cacheExpiryMs
                         )
@@ -484,7 +484,6 @@ class AgenticBrowserSearchOrchestrator(
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long
     ): Flow<MarkdownResult> {
-        TODO("Only call this for precache! Do not use for browser search as it will emit potentially thousands of link unrelated to the input query!")
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
             searchQuery = searchQuery,
@@ -507,6 +506,7 @@ class AgenticBrowserSearchOrchestrator(
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
+        vectorSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long
     ): Flow<MarkdownResult> {
@@ -517,7 +517,8 @@ class AgenticBrowserSearchOrchestrator(
                 initialDiscoveredLinksChannel.receiveAsFlow(),
                 googleSearchDiscoveredLinksChannel.receiveAsFlow(),
                 serperSearchDiscoveredLinksChannel.receiveAsFlow(),
-                sitemapDiscoveredLinksChannel.receiveAsFlow()
+                sitemapDiscoveredLinksChannel.receiveAsFlow(),
+                vectorSearchDiscoveredLinksChannel.receiveAsFlow(),
             )
                 .onCompletion {
                     // in case none of them emit any discovered links, we will do a check to close the recursive channel properly
@@ -573,6 +574,7 @@ class AgenticBrowserSearchOrchestrator(
                                         googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         serperSearchDiscoveredLinksChannel.isClosedForSend &&
                                         sitemapDiscoveredLinksChannel.isClosedForSend &&
+                                        vectorSearchDiscoveredLinksChannel.isClosedForSend &&
                                         inFlightLinkDiscoveryProcessing.isEmpty()
                                     ) {
                                         recursiveDiscoveredLinksChannel.close()
@@ -620,6 +622,7 @@ class AgenticBrowserSearchOrchestrator(
                                         googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         serperSearchDiscoveredLinksChannel.isClosedForSend &&
                                         sitemapDiscoveredLinksChannel.isClosedForSend &&
+                                        vectorSearchDiscoveredLinksChannel.isClosedForSend &&
                                         inFlightLinkDiscoveryProcessing.isEmpty()
                                     ) {
                                         recursiveDiscoveredLinksChannel.close()
@@ -809,61 +812,20 @@ class AgenticBrowserSearchOrchestrator(
         cacheExpiryMs: Long,
         vectorSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> = flow {
-        // Normalize URL to get prefix for filtering
-        val urlPrefix = normalizeUrlService.normalize(searchQuery.url) ?: searchQuery.url
-        logger.debug("[{}] Vector search: URL prefix = {}", sessionId, urlPrefix)
-
-        // Generate query embedding
-        val queryEmbedding = textEmbeddingService.embedQuery(searchQuery.query)
-        logger.debug("[{}] Vector search: Generated query embedding with {} dimensions", sessionId, queryEmbedding.size)
-
-        // Calculate minimum updated timestamp for cache expiry
-        val currentTime = Clock.System.now()
-        val minUpdatedAtEpochMs = currentTime.toEpochMilliseconds() - cacheExpiryMs
-        logger.debug("[{}] Vector search: Min timestamp = {}", sessionId, minUpdatedAtEpochMs)
-
-        // Find all non-expired cached URLs with the prefix and mark as seen
-        val allCachedUrls = webpageMarkdownRepository.findAllUrlsByPrefixWithEmbeddings(urlPrefix, minUpdatedAtEpochMs)
-        allCachedUrls.forEach { url ->
-            val normalizedUrl = normalizeUrlService.normalize(url) ?: url
-            seenUrls.add(normalizedUrl)
-        }
-        logger.debug("[{}] Vector search: Marked {} cached URLs as seen", sessionId, allCachedUrls.size)
-
         // Search for similar embeddings
-        val similarUrls = webpageMarkdownRepository.searchSimilar(
-            queryEmbedding,
-            urlPrefix,
-            minUpdatedAtEpochMs,
+        val similarWebpages = webpageCacheService.searchSimilar(
+            query = searchQuery.query,
+            baseUrl = searchQuery.url,
+            cacheExpiryMs = cacheExpiryMs,
             limit = 15
         )
-        logger.debug("[{}] Vector search: Found {} similar URLs", sessionId, similarUrls.size)
+        logger.debug("[{}] Vector search: Found {} similar webpages", sessionId, similarWebpages.size)
 
-        // Process similar URLs through the standard flow
-        val vectorSearchLinkFlow = flow {
-            similarUrls.forEach { (url, distance) ->
-                logger.debug("[{}] Vector search: Emitting URL {} (distance: {})", sessionId, url, distance)
-                emit(WebpageLink(
-                    url = url,
-                    source = io.deepsearch.domain.models.valueobjects.LinkSource.ALL_LINKS,
-                    reason = "Vector similarity search (distance: $distance)"
-                ))
-            }
-        }
-
-        // Use processDiscoveredLinksFlow to handle these URLs
-        processDiscoveredLinksFlow(
-            sessionId = sessionId,
-            searchQuery = searchQuery,
-            seenUrls = seenUrls,
-            budget = budget,
-            linkSource = vectorSearchLinkFlow,
-            discoveredLinksChannel = vectorSearchDiscoveredLinksChannel,
-            flowName = "processVectorSearchFlow",
-            cacheExpiryMs = cacheExpiryMs
-        ).collect { markdownResult ->
-            emit(markdownResult)
-        }
+        // Process similar webpages through the standard flow
+        // TODO: perform link relevance discovery on the 15 returned links in parallel
+        // emit the discovered links into vectorSearchDiscoveredLinksChannel
+        // this flow should emit the 15 markdowns and then complete
+        // similarWebpages now contains List<WebpageMarkdown> with full markdown content and metadata
     }
 
     /**

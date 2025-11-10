@@ -85,26 +85,26 @@ class ExposedWebpageMarkdownRepository(
         urlPrefix: String,
         minUpdatedAtEpochMs: Long,
         limit: Int
-    ): List<Pair<String, Float>> = suspendTransaction {
+    ): List<WebpageMarkdown> = suspendTransaction {
         // Fetch all candidates and compute cosine distance in Kotlin
         // This is not ideal for performance, but works without raw SQL
         webpageMarkdownTable.selectAll()
             .where {
                 (webpageMarkdownTable.url like "$urlPrefix%") and
-                (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and
-                (webpageMarkdownTable.embedding.isNotNull())
+                        (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and
+                        (webpageMarkdownTable.embedding.isNotNull())
             }
             .map { row ->
-                val url = row[webpageMarkdownTable.url]
-                val embedding = row[webpageMarkdownTable.embedding]!!
-                val distance = cosinDistance(queryEmbedding, embedding)
-                url to distance
+                val webpage = mapRowToWebpageMarkdown(row)
+                val distance = cosinDistance(queryEmbedding, webpage.embedding!!)
+                webpage to distance
             }
             .toList()
             .sortedBy { it.second } // Sort by distance (ascending = most similar first)
             .take(limit)
+            .map { it.first } // Extract just the WebpageMarkdown objects
     }
-    
+
     /**
      * Calculate cosine distance between two vectors.
      * Cosine distance = 1 - cosine similarity
@@ -112,33 +112,19 @@ class ExposedWebpageMarkdownRepository(
      */
     private fun cosinDistance(a: List<Float>, b: List<Float>): Float {
         require(a.size == b.size) { "Vectors must have same dimension" }
-        
+
         var dotProduct = 0.0
         var normA = 0.0
         var normB = 0.0
-        
+
         for (i in a.indices) {
             dotProduct += a[i] * b[i]
             normA += a[i] * a[i]
             normB += b[i] * b[i]
         }
-        
+
         val cosineSimilarity = dotProduct / (sqrt(normA) * sqrt(normB))
         return (1 - cosineSimilarity).toFloat()
-    }
-    
-    override suspend fun findAllUrlsByPrefixWithEmbeddings(
-        urlPrefix: String,
-        minUpdatedAtEpochMs: Long
-    ): List<String> = suspendTransaction {
-        webpageMarkdownTable.selectAll()
-            .where {
-                (webpageMarkdownTable.url like "$urlPrefix%") and
-                (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and
-                (webpageMarkdownTable.embedding.isNotNull())
-            }
-            .map { it[webpageMarkdownTable.url] }
-            .toList()
     }
 
     private fun mapRowToWebpageMarkdown(row: ResultRow): WebpageMarkdown {
