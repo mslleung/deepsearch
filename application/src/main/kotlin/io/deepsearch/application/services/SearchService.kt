@@ -12,7 +12,8 @@ interface ISearchService {
         url: String, 
         sitemapUrl: String? = null,
         maxUrls: Int? = null,
-        searchDurationSeconds: Int? = null
+        searchDurationSeconds: Int? = null,
+        cacheExpiryMs: Long? = null
     ): SearchResult
 }
 
@@ -26,9 +27,11 @@ class SearchService(
         url: String, 
         sitemapUrl: String?,
         maxUrls: Int?,
-        searchDurationSeconds: Int?
+        searchDurationSeconds: Int?,
+        cacheExpiryMs: Long?
     ): SearchResult {
         val searchQuery = SearchQuery(query, url, sitemapUrl)
-        return agenticBrowserSearchOrchestrator.execute(searchQuery, maxUrls, searchDurationSeconds)
+        val effectiveCacheExpiryMs = cacheExpiryMs ?: 604800000L // Default 7 days
+        return agenticBrowserSearchOrchestrator.execute(searchQuery, maxUrls, searchDurationSeconds, effectiveCacheExpiryMs)
     }
 }

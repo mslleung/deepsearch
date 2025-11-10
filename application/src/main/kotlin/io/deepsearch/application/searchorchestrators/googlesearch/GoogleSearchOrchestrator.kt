@@ -28,8 +28,8 @@ class GoogleSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?): SearchResult {
-        // Note: This orchestrator uses Google's search API and doesn't support custom budget parameters
+    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long): SearchResult {
+        // Note: This orchestrator uses Google's search API and doesn't support custom budget or cache expiry parameters
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
         // Previous implementation using the combined search agent (not supported yet):
         // val output = googleCombinedSearchAgent.generate(

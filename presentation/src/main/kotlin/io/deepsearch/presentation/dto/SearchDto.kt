@@ -10,6 +10,7 @@ data class SearchRequest(
     val sitemapUrl: String? = null,
     val maxUrls: Int? = null,
     val searchDurationSeconds: Int? = null,
+    val cacheExpiryMs: Long? = null, // Default 7 days = 604800000ms
 )
 
 @Serializable

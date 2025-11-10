@@ -12,6 +12,7 @@ data class WebpageMarkdown(
     val httpStatus: Int?,
     val httpReason: String?,
     val mimeType: String?,
+    val embedding: List<Float>? = null, // 1536-dimensional embedding vector for semantic search
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now(),
     var version: Long = 0

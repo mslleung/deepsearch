@@ -27,6 +27,9 @@ dependencies {
     implementation(libs.r2dbc.h2)
     implementation(libs.r2dbc.postgresql)
     
+    // pgvector support
+    implementation("com.pgvector:pgvector:0.1.6")
+    
     // Dependency injection
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)

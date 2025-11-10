@@ -81,6 +81,9 @@ class DatabaseConfigurationService(
                     sitemapCacheTable,
                     urlAccessTable
                 )
+                
+                // TODO: Enable pgvector and create HNSW index when raw SQL queries are implemented
+                // For now, we compute cosine distance in Kotlin code
             }
         }
 

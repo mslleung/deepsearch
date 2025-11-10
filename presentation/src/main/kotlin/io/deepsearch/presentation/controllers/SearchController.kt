@@ -101,6 +101,17 @@ class SearchController(
                 }
             }
             
+            request.cacheExpiryMs?.let { cacheExpiryMs ->
+                // Max 90 days = 7776000000ms
+                if (cacheExpiryMs <= 0 || cacheExpiryMs > 7776000000L) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "cacheExpiryMs must be positive and at most 90 days (7776000000ms). Received: $cacheExpiryMs")
+                    )
+                    return
+                }
+            }
+            
             // Measure search duration
             var searchResult: io.deepsearch.domain.models.valueobjects.SearchResult
             val durationMs = measureTimeMillis {
@@ -109,7 +120,8 @@ class SearchController(
                     request.url, 
                     request.sitemapUrl,
                     request.maxUrls,
-                    request.searchDurationSeconds
+                    request.searchDurationSeconds,
+                    request.cacheExpiryMs
                 )
             }
             
