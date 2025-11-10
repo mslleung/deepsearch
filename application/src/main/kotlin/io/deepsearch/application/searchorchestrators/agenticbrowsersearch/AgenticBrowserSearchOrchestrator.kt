@@ -821,11 +821,63 @@ class AgenticBrowserSearchOrchestrator(
         )
         logger.debug("[{}] Vector search: Found {} similar webpages", sessionId, similarWebpages.size)
 
+        // Filter to keep only valid webpages with markdown and html
+        val validWebpages = similarWebpages.filter { webpage ->
+            !webpage.markdown.isNullOrBlank() && !webpage.html.isNullOrBlank()
+        }
+        logger.debug("[{}] Vector search: {} valid webpages after filtering", sessionId, validWebpages.size)
+
         // Process similar webpages through the standard flow
-        // TODO: perform link relevance discovery on the 15 returned links in parallel
-        // emit the discovered links into vectorSearchDiscoveredLinksChannel
-        // this flow should emit the 15 markdowns and then complete
-        // similarWebpages now contains List<WebpageMarkdown> with full markdown content and metadata
+        validWebpages.asFlow()
+            .flatMapMerge(concurrency = 15) { webpage ->
+                flow {
+                    try {
+                        // Discover relevant links from this cached webpage
+                        val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
+                            query = searchQuery.query,
+                            html = webpage.html!!,
+                            url = webpage.url
+                        )
+                        logger.debug(
+                            "[{}] Vector search: Discovered {} links from cached page {}",
+                            sessionId,
+                            discoveredLinks.size,
+                            webpage.url
+                        )
+
+                        // Emit discovered links to the channel
+                        discoveredLinks.forEach { link ->
+                            vectorSearchDiscoveredLinksChannel.send(link)
+                        }
+
+                        // Emit the markdown result
+                        emit(MarkdownResult(webpage.url, webpage.markdown!!))
+                    } catch (e: Exception) {
+                        logger.warn(
+                            "[{}] Vector search: Failed to process cached webpage {}: {}",
+                            sessionId,
+                            webpage.url,
+                            e.message,
+                            e
+                        )
+                        // Still emit the markdown even if link discovery fails
+                        emit(MarkdownResult(webpage.url, webpage.markdown!!))
+                    }
+                }
+            }
+            .onCompletion { cause ->
+                if (cause != null) {
+                    logger.info(
+                        "[{}] Vector search processing cancelled: {}",
+                        sessionId,
+                        cause.message
+                    )
+                } else {
+                    logger.info("[{}] Vector search processing complete", sessionId)
+                }
+                vectorSearchDiscoveredLinksChannel.close()
+            }
+            .collect { emit(it) }
     }
 
     /**
