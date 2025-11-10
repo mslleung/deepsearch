@@ -78,13 +78,6 @@ class WebpageCacheService(
 ) : IWebpageCacheService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    
-    /**
-     * Maximum markdown length to embed (characters).
-     * Truncated to avoid hitting token limits and reduce embedding cost.
-     * 50K characters is roughly ~12.5K tokens for English text.
-     */
-    private val maxMarkdownLength = 50_000
 
     override suspend fun getCachedMarkdown(url: String, cacheExpiryMs: Long?): CachedWebpageResult {
         val cached = webpageMarkdownRepository.findByUrl(url)
@@ -157,21 +150,8 @@ class WebpageCacheService(
             try {
                 logger.debug("Generating embedding for URL: {}", url)
                 
-                // Truncate markdown to avoid token limits
-                val truncatedMarkdown = if (markdown.length > maxMarkdownLength) {
-                    logger.debug(
-                        "Truncating markdown from {} to {} chars for URL: {}", 
-                        markdown.length, 
-                        maxMarkdownLength, 
-                        url
-                    )
-                    markdown.substring(0, maxMarkdownLength)
-                } else {
-                    markdown
-                }
-                
                 // Generate embedding (returns list with single embedding)
-                val embeddings = textEmbeddingService.embedDocuments(listOf(truncatedMarkdown))
+                val embeddings = textEmbeddingService.embedDocuments(listOf(markdown))
                 
                 if (embeddings.isEmpty()) {
                     logger.error("No embedding returned for URL: {}", url)
