@@ -7,6 +7,7 @@ import io.deepsearch.domain.models.entities.QuerySessionState
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.infrastructure.database.QuerySessionTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -14,17 +15,17 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedQuerySessionRepository(
-    private val querySessionTable: QuerySessionTable
+    private val querySessionTable: QuerySessionTable,
+    private val transactionService: TransactionService
 ) : IQuerySessionRepository {
 
-    override suspend fun save(session: QuerySession): QuerySession = suspendTransaction {
+    override suspend fun save(session: QuerySession): QuerySession = transactionService.withTransaction {
         querySessionTable.insert {
             it[id] = session.id
             it[query] = session.query
@@ -41,14 +42,14 @@ class ExposedQuerySessionRepository(
         session
     }
 
-    override suspend fun findById(id: String): QuerySession? = suspendTransaction {
+    override suspend fun findById(id: String): QuerySession? = transactionService.withTransaction {
         querySessionTable.selectAll()
             .where { querySessionTable.id eq id }
             .map { mapRowToQuerySession(it) }
             .singleOrNull()
     }
 
-    override suspend fun update(session: QuerySession): QuerySession = suspendTransaction {
+    override suspend fun update(session: QuerySession): QuerySession = transactionService.withTransaction {
         val affectedRows = querySessionTable.update({ 
             (querySessionTable.id eq session.id) and (querySessionTable.version eq session.version) 
         }) {

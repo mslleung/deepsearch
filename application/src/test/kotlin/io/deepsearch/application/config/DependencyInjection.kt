@@ -6,7 +6,6 @@ import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOr
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.SerperConfig
-import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupContainerIdentificationService
 import io.deepsearch.application.services.ISearchService
@@ -25,7 +24,6 @@ import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.NavigationElementRemovalService
 import io.deepsearch.application.services.PdfConversionService
-import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.application.services.PopupContainerIdentificationService
 import io.deepsearch.application.services.SearchService
 import io.deepsearch.application.services.SemanticIdentificationService
@@ -42,9 +40,11 @@ import io.deepsearch.application.services.UrlContentProcessingService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IUrlProcessingLockRegistry
 import io.deepsearch.application.services.ISitemapLinkDiscoveryLockRegistry
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.application.services.PrecacheJobRegistry
 import io.deepsearch.application.services.QuerySessionService
 import io.deepsearch.application.services.SitemapLinkDiscoveryLockRegistry
+import io.deepsearch.infrastructure.services.TransactionService
 import io.deepsearch.application.services.UrlProcessingLockRegistry
 import io.deepsearch.domain.config.domainBenchmarkTestModule
 import io.deepsearch.domain.config.domainTestModule
@@ -90,6 +90,7 @@ private val applicationCommonTestModule = module {
     singleOf(::PdfConversionService) bind IPdfConversionService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class
+    singleOf(::TransactionService) bind ITransactionService::class
 }
 
 val applicationTestModule = module {

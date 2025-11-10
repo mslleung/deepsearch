@@ -3,29 +3,30 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.infrastructure.database.WebpageMarkdownCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.*
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageMarkdownRepository(
-    private val webpageMarkdownTable: WebpageMarkdownCacheTable
+    private val webpageMarkdownTable: WebpageMarkdownCacheTable,
+    private val transactionService: TransactionService
 ) : IWebpageMarkdownRepository {
 
-    override suspend fun findByUrl(url: String): WebpageMarkdown? = suspendTransaction {
+    override suspend fun findByUrl(url: String): WebpageMarkdown? = transactionService.withTransaction {
         webpageMarkdownTable.selectAll()
             .where { webpageMarkdownTable.url eq url }
             .map { mapRowToWebpageMarkdown(it) }
             .singleOrNull()
     }
 
-    override suspend fun upsert(webpage: WebpageMarkdown): Unit = suspendTransaction {
+    override suspend fun upsert(webpage: WebpageMarkdown): Unit = transactionService.withTransaction {
         webpageMarkdownTable.upsert(
             keys = arrayOf(webpageMarkdownTable.url)
         ) {
@@ -42,7 +43,7 @@ class ExposedWebpageMarkdownRepository(
         }
     }
 
-    override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = suspendTransaction {
+    override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
         webpageMarkdownTable.selectAll()
             .where { webpageMarkdownTable.url like ("$prefix%") }
             .limit(limit)
@@ -51,13 +52,13 @@ class ExposedWebpageMarkdownRepository(
             .toList()
     }
 
-    override suspend fun countByDomainPrefix(prefix: String): Long = suspendTransaction {
+    override suspend fun countByDomainPrefix(prefix: String): Long = transactionService.withTransaction {
         webpageMarkdownTable.selectAll()
             .where { webpageMarkdownTable.url like ("$prefix%") }
             .count()
     }
 
-    override suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown> = suspendTransaction {
+    override suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
         val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
         webpageMarkdownTable.selectAll()
             .where { webpageMarkdownTable.url like pattern }
@@ -67,7 +68,7 @@ class ExposedWebpageMarkdownRepository(
             .toList()
     }
 
-    override suspend fun countSearchByUrl(query: String): Long = suspendTransaction {
+    override suspend fun countSearchByUrl(query: String): Long = transactionService.withTransaction {
         val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
         webpageMarkdownTable.selectAll()
             .where { webpageMarkdownTable.url like pattern }
@@ -79,7 +80,7 @@ class ExposedWebpageMarkdownRepository(
         urlPrefix: String,
         minUpdatedAtEpochMs: Long?,
         limit: Int
-    ): List<WebpageMarkdown> = suspendTransaction {
+    ): List<WebpageMarkdown> = transactionService.withTransaction {
         // Configure HNSW iterative index scan for better recall with filters
         // This ensures the index scans more candidates when our WHERE filters reduce results
         exec("""

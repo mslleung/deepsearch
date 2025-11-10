@@ -3,13 +3,13 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageIcon
 import io.deepsearch.domain.repositories.IWebpageIconRepository
 import io.deepsearch.infrastructure.database.WebpageIconCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.batchUpsert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
@@ -17,10 +17,11 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageIconRepository(
-    private val webpageIconTable: WebpageIconCacheTable
+    private val webpageIconTable: WebpageIconCacheTable,
+    private val transactionService: TransactionService
 ) : IWebpageIconRepository {
 
-    override suspend fun upsert(icon: WebpageIcon): Unit = suspendTransaction {
+    override suspend fun upsert(icon: WebpageIcon): Unit = transactionService.withTransaction {
         val hashBase64 = Base64.encode(icon.imageBytesHash)
 
         webpageIconTable.upsert(
@@ -34,8 +35,8 @@ class ExposedWebpageIconRepository(
         }
     }
 
-    override suspend fun batchUpsert(icons: List<WebpageIcon>): Unit = suspendTransaction {
-        if (icons.isEmpty()) return@suspendTransaction
+    override suspend fun batchUpsert(icons: List<WebpageIcon>): Unit = transactionService.withTransaction {
+        if (icons.isEmpty()) return@withTransaction
 
         webpageIconTable.batchUpsert(
             data = icons,
@@ -50,7 +51,7 @@ class ExposedWebpageIconRepository(
         }
     }
 
-    override suspend fun findByHash(imageBytesHash: ByteArray): WebpageIcon? = suspendTransaction {
+    override suspend fun findByHash(imageBytesHash: ByteArray): WebpageIcon? = transactionService.withTransaction {
         val hashBase64 = Base64.encode(imageBytesHash)
         webpageIconTable.selectAll()
             .where { webpageIconTable.imageBytesHash eq hashBase64 }

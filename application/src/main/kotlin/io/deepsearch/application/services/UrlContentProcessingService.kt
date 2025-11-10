@@ -41,7 +41,7 @@ interface IUrlContentProcessingService {
     fun processUrlAsFlow(
         url: String,
         query: String,
-        cacheExpiryMs: Long?
+        cacheExpiryMs: Long? = null
     ): Flow<UrlProcessingEvent>
 
     /**
@@ -50,7 +50,7 @@ interface IUrlContentProcessingService {
      */
     fun processUrlAsFlow(
         url: String,
-        cacheExpiryMs: Long?
+        cacheExpiryMs: Long? = null
     ): Flow<UrlProcessingEvent>
 }
 

@@ -7,7 +7,7 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import io.deepsearch.infrastructure.database.ApiKeyTable
-import kotlinx.coroutines.flow.count
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
@@ -17,17 +17,17 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedApiKeyRepository(
-    private val apiKeyTable: ApiKeyTable
+    private val apiKeyTable: ApiKeyTable,
+    private val transactionService: TransactionService,
 ) : IApiKeyRepository {
 
-    override suspend fun save(apiKey: ApiKey): ApiKey = suspendTransaction {
+    override suspend fun save(apiKey: ApiKey): ApiKey = transactionService.withTransaction {
         val id = apiKeyTable.insert {
             it[userId] = apiKey.userId.value
             it[keyHash] = apiKey.keyHash
@@ -45,46 +45,46 @@ class ExposedApiKeyRepository(
         apiKey
     }
 
-    override suspend fun findById(id: ApiKeyId): ApiKey? = suspendTransaction {
+    override suspend fun findById(id: ApiKeyId): ApiKey? = transactionService.withTransaction {
         apiKeyTable.selectAll()
             .where { apiKeyTable.id eq id.value }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
-    override suspend fun findByKeyHash(hash: String): ApiKey? = suspendTransaction {
+    override suspend fun findByKeyHash(hash: String): ApiKey? = transactionService.withTransaction {
         apiKeyTable.selectAll()
             .where { apiKeyTable.keyHash eq hash }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
-    override suspend fun findByUserId(userId: UserId): List<ApiKey> = suspendTransaction {
+    override suspend fun findByUserId(userId: UserId): List<ApiKey> = transactionService.withTransaction {
         apiKeyTable.selectAll()
             .where { apiKeyTable.userId eq userId.value }
             .map { mapRowToApiKey(it) }
             .toList()
     }
 
-    override suspend fun findByUserIdAndType(userId: UserId, type: ApiKeyType): ApiKey? = suspendTransaction {
+    override suspend fun findByUserIdAndType(userId: UserId, type: ApiKeyType): ApiKey? = transactionService.withTransaction {
         apiKeyTable.selectAll()
             .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
-    override suspend fun countByUserIdAndType(userId: UserId, type: ApiKeyType): Long = suspendTransaction {
+    override suspend fun countByUserIdAndType(userId: UserId, type: ApiKeyType): Long = transactionService.withTransaction {
         apiKeyTable.selectAll()
             .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) }
             .count()
             .toLong()
     }
 
-    override suspend fun delete(id: ApiKeyId): Boolean = suspendTransaction {
+    override suspend fun delete(id: ApiKeyId): Boolean = transactionService.withTransaction {
         apiKeyTable.deleteWhere { apiKeyTable.id eq id.value } > 0
     }
 
-    override suspend fun update(apiKey: ApiKey): ApiKey = suspendTransaction {
+    override suspend fun update(apiKey: ApiKey): ApiKey = transactionService.withTransaction {
         val affectedRows = apiKeyTable.update({ 
             (apiKeyTable.id eq apiKey.id!!.value) and (apiKeyTable.version eq apiKey.version) 
         }) {

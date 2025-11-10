@@ -3,12 +3,12 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageTable
 import io.deepsearch.domain.repositories.IWebpageTableRepository
 import io.deepsearch.infrastructure.database.WebpageTableCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
@@ -16,10 +16,11 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageTableRepository(
-    private val webpageTableTable: WebpageTableCacheTable
+    private val webpageTableTable: WebpageTableCacheTable,
+    private val transactionService: TransactionService
 ) : IWebpageTableRepository {
 
-    override suspend fun upsert(table: WebpageTable): Unit = suspendTransaction {
+    override suspend fun upsert(table: WebpageTable): Unit = transactionService.withTransaction {
         val hashBase64 = Base64.encode(table.webpageHtmlHash)
 
         webpageTableTable.upsert(
@@ -33,7 +34,7 @@ class ExposedWebpageTableRepository(
         }
     }
 
-    override suspend fun findByHash(webpageHtmlHash: ByteArray): WebpageTable? = suspendTransaction {
+    override suspend fun findByHash(webpageHtmlHash: ByteArray): WebpageTable? = transactionService.withTransaction {
         val hashBase64 = Base64.encode(webpageHtmlHash)
         webpageTableTable.selectAll()
             .where { webpageTableTable.webpageHtmlHash eq hashBase64 }

@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.valueobjects.*
 import io.deepsearch.domain.repositories.IUrlAccessRepository
 import io.deepsearch.infrastructure.database.UrlAccessTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -10,7 +11,6 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import kotlin.time.ExperimentalTime
 
 /**
@@ -19,7 +19,8 @@ import kotlin.time.ExperimentalTime
  */
 @OptIn(ExperimentalTime::class)
 class ExposedUrlAccessRepository(
-    private val urlAccessTable: UrlAccessTable
+    private val urlAccessTable: UrlAccessTable,
+    private val transactionService: TransactionService
 ) : IUrlAccessRepository {
 
     private enum class UrlAccessStatus {
@@ -28,7 +29,7 @@ class ExposedUrlAccessRepository(
         FAILED
     }
 
-    override suspend fun save(urlAccess: UrlAccess, querySessionId: String): UrlAccess = suspendTransaction {
+    override suspend fun save(urlAccess: UrlAccess, querySessionId: String): UrlAccess = transactionService.withTransaction {
         urlAccessTable.insert {
             it[urlAccessTable.querySessionId] = querySessionId
             it[url] = urlAccess.url
@@ -55,14 +56,14 @@ class ExposedUrlAccessRepository(
         urlAccess
     }
 
-    override suspend fun findByQuerySessionId(querySessionId: String): List<UrlAccess> = suspendTransaction {
+    override suspend fun findByQuerySessionId(querySessionId: String): List<UrlAccess> = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { urlAccessTable.querySessionId eq querySessionId }
             .map { mapRowToUrlAccess(it) }
             .toList()
     }
 
-    override suspend fun findCachedByQuerySessionId(querySessionId: String): List<CachedUrlAccess> = suspendTransaction {
+    override suspend fun findCachedByQuerySessionId(querySessionId: String): List<CachedUrlAccess> = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { 
                 (urlAccessTable.querySessionId eq querySessionId) and 
@@ -72,7 +73,7 @@ class ExposedUrlAccessRepository(
             .toList()
     }
 
-    override suspend fun findUncachedByQuerySessionId(querySessionId: String): List<UncachedUrlAccess> = suspendTransaction {
+    override suspend fun findUncachedByQuerySessionId(querySessionId: String): List<UncachedUrlAccess> = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { 
                 (urlAccessTable.querySessionId eq querySessionId) and 
@@ -82,7 +83,7 @@ class ExposedUrlAccessRepository(
             .toList()
     }
 
-    override suspend fun findFailedByQuerySessionId(querySessionId: String): List<FailedUrlAccess> = suspendTransaction {
+    override suspend fun findFailedByQuerySessionId(querySessionId: String): List<FailedUrlAccess> = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { 
                 (urlAccessTable.querySessionId eq querySessionId) and 
@@ -92,14 +93,14 @@ class ExposedUrlAccessRepository(
             .toList()
     }
 
-    override suspend fun countByQuerySessionId(querySessionId: String): Int = suspendTransaction {
+    override suspend fun countByQuerySessionId(querySessionId: String): Int = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { urlAccessTable.querySessionId eq querySessionId }
             .count()
             .toInt()
     }
 
-    override suspend fun existsByQuerySessionIdAndUrl(querySessionId: String, url: String): Boolean = suspendTransaction {
+    override suspend fun existsByQuerySessionIdAndUrl(querySessionId: String, url: String): Boolean = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { 
                 (urlAccessTable.querySessionId eq querySessionId) and 

@@ -8,9 +8,12 @@ import io.deepsearch.infrastructure.services.DatabaseConfigurationService
 import io.deepsearch.infrastructure.services.DatabaseCryptoService
 import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
+import io.deepsearch.infrastructure.services.ITransactionService
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.createdAtStart
+import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -26,6 +29,7 @@ private val infrastructureCommonTestModule = module {
     // Database encryption service
     singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
+    singleOf(::TransactionService) bind ITransactionService::class
 
     // All table instances (singletons, depend on DatabaseCryptoService)
     singleOf(::UserTable)

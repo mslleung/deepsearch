@@ -1,6 +1,5 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.application.utils.withTransaction
 import io.deepsearch.domain.models.entities.User
 import io.deepsearch.domain.models.entities.SubscriptionPlan
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
@@ -8,6 +7,7 @@ import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.OAuthProvider
 import io.deepsearch.domain.models.valueobjects.PasswordHash
 import io.deepsearch.domain.repositories.IUserRepository
+import io.deepsearch.infrastructure.services.ITransactionService
 import org.mindrot.jbcrypt.BCrypt
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -31,10 +31,11 @@ interface IAuthService {
 class AuthService(
     private val userRepository: IUserRepository,
     private val apiKeyService: IApiKeyService,
-    private val subscriptionPlanService: IUserSubscriptionService
+    private val subscriptionPlanService: IUserSubscriptionService,
+    private val transactionService: ITransactionService,
 ) : IAuthService {
 
-    override suspend fun registerUser(email: Email, password: String): User = withTransaction {
+    override suspend fun registerUser(email: Email, password: String): User = transactionService.withTransaction {
         // Check if user already exists
         val existingUser = userRepository.findByEmail(email)
         if (existingUser != null) {
@@ -78,7 +79,7 @@ class AuthService(
         provider: OAuthProvider,
         providerId: String,
         email: Email
-    ): User = withTransaction {
+    ): User = transactionService.withTransaction {
         // Check if user already exists with this OAuth provider
         val existingUser = userRepository.findByOAuthProvider(provider, providerId)
         if (existingUser != null) {
@@ -110,7 +111,7 @@ class AuthService(
         provider: OAuthProvider,
         providerId: String,
         email: Email
-    ): User = withTransaction {
+    ): User = transactionService.withTransaction {
         // First, try to find by OAuth provider
         val existingUser = userRepository.findByOAuthProvider(provider, providerId)
         if (existingUser != null) {

@@ -4,12 +4,12 @@ import io.deepsearch.domain.models.entities.WebpageSemanticElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import io.deepsearch.infrastructure.database.WebpageSemanticElementCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlinx.serialization.json.Json
 import kotlin.io.encoding.Base64
@@ -18,10 +18,11 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageNavigationElementRepository(
-    private val webpageSemanticElementTable: WebpageSemanticElementCacheTable
+    private val webpageSemanticElementTable: WebpageSemanticElementCacheTable,
+    private val transactionService: TransactionService
 ) : IWebpageNavigationElementRepository {
 
-    override suspend fun findByHash(pageHash: ByteArray): WebpageSemanticElement? = suspendTransaction {
+    override suspend fun findByHash(pageHash: ByteArray): WebpageSemanticElement? = transactionService.withTransaction {
         val hashBase64 = Base64.encode(pageHash)
         webpageSemanticElementTable.selectAll()
             .where { webpageSemanticElementTable.pageHash eq hashBase64 }
@@ -29,7 +30,7 @@ class ExposedWebpageNavigationElementRepository(
             .singleOrNull()
     }
 
-    override suspend fun upsert(webpageSemanticElement: WebpageSemanticElement): Unit = suspendTransaction {
+    override suspend fun upsert(webpageSemanticElement: WebpageSemanticElement): Unit = transactionService.withTransaction {
         val hashBase64 = Base64.encode(webpageSemanticElement.pageHash)
 
         webpageSemanticElementTable.upsert(

@@ -3,13 +3,13 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageTableInterpretation
 import io.deepsearch.domain.repositories.IWebpageTableInterpretationRepository
 import io.deepsearch.infrastructure.database.WebpageTableInterpretationCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.batchUpsert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -18,10 +18,11 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class, ExperimentalEncodingApi::class)
 class ExposedWebpageTableInterpretationRepository(
-    private val webpageTableInterpretationTable: WebpageTableInterpretationCacheTable
+    private val webpageTableInterpretationTable: WebpageTableInterpretationCacheTable,
+    private val transactionService: TransactionService
 ) : IWebpageTableInterpretationRepository {
 
-    override suspend fun upsert(interpretation: WebpageTableInterpretation): Unit = suspendTransaction {
+    override suspend fun upsert(interpretation: WebpageTableInterpretation): Unit = transactionService.withTransaction {
         val hashBase64 = Base64.encode(interpretation.tableDataHash)
 
         webpageTableInterpretationTable.upsert(
@@ -35,8 +36,8 @@ class ExposedWebpageTableInterpretationRepository(
         }
     }
 
-    override suspend fun batchUpsert(interpretations: List<WebpageTableInterpretation>): Unit = suspendTransaction {
-        if (interpretations.isEmpty()) return@suspendTransaction
+    override suspend fun batchUpsert(interpretations: List<WebpageTableInterpretation>): Unit = transactionService.withTransaction {
+        if (interpretations.isEmpty()) return@withTransaction
 
         webpageTableInterpretationTable.batchUpsert(
             data = interpretations,
@@ -51,7 +52,7 @@ class ExposedWebpageTableInterpretationRepository(
         }
     }
 
-    override suspend fun findByHash(tableDataHash: ByteArray): WebpageTableInterpretation? = suspendTransaction {
+    override suspend fun findByHash(tableDataHash: ByteArray): WebpageTableInterpretation? = transactionService.withTransaction {
         val hashBase64 = Base64.encode(tableDataHash)
         webpageTableInterpretationTable.selectAll()
             .where { webpageTableInterpretationTable.tableDataHash eq hashBase64 }

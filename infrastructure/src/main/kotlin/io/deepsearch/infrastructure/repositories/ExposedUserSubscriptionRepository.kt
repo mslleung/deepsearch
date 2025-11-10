@@ -7,6 +7,7 @@ import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.models.valueobjects.UserSubscriptionId
 import io.deepsearch.domain.repositories.IUserSubscriptionRepository
 import io.deepsearch.infrastructure.database.UserSubscriptionTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.eq
@@ -15,24 +16,24 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.update
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedUserSubscriptionRepository(
-    private val userSubscriptionTable: UserSubscriptionTable
+    private val userSubscriptionTable: UserSubscriptionTable,
+    private val transactionService: TransactionService
 ) : IUserSubscriptionRepository {
 
-    override suspend fun findByUserId(userId: UserId): List<UserSubscription> = suspendTransaction {
+    override suspend fun findByUserId(userId: UserId): List<UserSubscription> = transactionService.withTransaction {
         userSubscriptionTable.selectAll()
             .where { userSubscriptionTable.userId eq userId.value }
             .map { row -> mapRowToUserSubscription(row) }
             .toList()
     }
 
-    override suspend fun findById(id: UserSubscriptionId): UserSubscription? = suspendTransaction {
+    override suspend fun findById(id: UserSubscriptionId): UserSubscription? = transactionService.withTransaction {
         userSubscriptionTable.selectAll()
             .where { userSubscriptionTable.id eq id.value }
             .map { row -> mapRowToUserSubscription(row) }
@@ -40,13 +41,13 @@ class ExposedUserSubscriptionRepository(
             .firstOrNull()
     }
 
-    override suspend fun findAll(): List<UserSubscription> = suspendTransaction {
+    override suspend fun findAll(): List<UserSubscription> = transactionService.withTransaction {
         userSubscriptionTable.selectAll()
             .map { row -> mapRowToUserSubscription(row) }
             .toList()
     }
 
-    override suspend fun save(subscription: UserSubscription): UserSubscription = suspendTransaction {
+    override suspend fun save(subscription: UserSubscription): UserSubscription = transactionService.withTransaction {
         val id = userSubscriptionTable.insert {
             it[userId] = subscription.userId.value
             it[planName] = subscription.planName
@@ -65,7 +66,7 @@ class ExposedUserSubscriptionRepository(
         subscription
     }
 
-    override suspend fun update(subscription: UserSubscription): UserSubscription = suspendTransaction {
+    override suspend fun update(subscription: UserSubscription): UserSubscription = transactionService.withTransaction {
         val affectedRows = userSubscriptionTable.update({ 
             (userSubscriptionTable.id eq subscription.id!!.value) and (userSubscriptionTable.version eq subscription.version) 
         }) {
@@ -82,7 +83,7 @@ class ExposedUserSubscriptionRepository(
         subscription
     }
 
-    override suspend fun delete(id: UserSubscriptionId): Boolean = suspendTransaction {
+    override suspend fun delete(id: UserSubscriptionId): Boolean = transactionService.withTransaction {
         userSubscriptionTable.deleteWhere { userSubscriptionTable.id eq id.value } > 0
     }
 

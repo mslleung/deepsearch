@@ -6,6 +6,7 @@ import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyUsageRepository
 import io.deepsearch.infrastructure.database.ApiKeyTable
 import io.deepsearch.infrastructure.database.ApiKeyUsageTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.and
@@ -15,17 +16,17 @@ import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedApiKeyUsageRepository(
     private val apiKeyUsageTable: ApiKeyUsageTable,
-    private val apiKeyTable: ApiKeyTable
+    private val apiKeyTable: ApiKeyTable,
+    private val transactionService: TransactionService
 ) : IApiKeyUsageRepository {
 
-    override suspend fun recordUsage(usage: ApiKeyUsage): ApiKeyUsage = suspendTransaction {
+    override suspend fun recordUsage(usage: ApiKeyUsage): ApiKeyUsage = transactionService.withTransaction {
         val id = apiKeyUsageTable.insert {
             it[apiKeyId] = usage.apiKeyId.value
             it[requestedAtEpochMs] = usage.requestedAt.toEpochMilliseconds()
@@ -36,7 +37,7 @@ class ExposedApiKeyUsageRepository(
         usage
     }
 
-    override suspend fun countRequestsSince(apiKeyId: ApiKeyId, since: Instant): Long = suspendTransaction {
+    override suspend fun countRequestsSince(apiKeyId: ApiKeyId, since: Instant): Long = transactionService.withTransaction {
         val results = apiKeyUsageTable.selectAll()
             .where { 
                 (apiKeyUsageTable.apiKeyId eq apiKeyId.value) and
@@ -47,13 +48,13 @@ class ExposedApiKeyUsageRepository(
         results.size.toLong()
     }
 
-    override suspend fun deleteRequestsBefore(before: Instant): Int = suspendTransaction {
+    override suspend fun deleteRequestsBefore(before: Instant): Int = transactionService.withTransaction {
         apiKeyUsageTable.deleteWhere { 
             apiKeyUsageTable.requestedAtEpochMs less before.toEpochMilliseconds() 
         }
     }
 
-    override suspend fun getUsageByDateRange(start: Instant, end: Instant): List<ApiKeyUsage> = suspendTransaction {
+    override suspend fun getUsageByDateRange(start: Instant, end: Instant): List<ApiKeyUsage> = transactionService.withTransaction {
         apiKeyUsageTable.selectAll()
             .where {
                 (apiKeyUsageTable.requestedAtEpochMs greaterEq start.toEpochMilliseconds()) and
@@ -70,7 +71,7 @@ class ExposedApiKeyUsageRepository(
             .toList()
     }
 
-    override suspend fun getUsageByUserIdAndDateRange(userId: UserId, start: Instant, end: Instant): List<ApiKeyUsage> = suspendTransaction {
+    override suspend fun getUsageByUserIdAndDateRange(userId: UserId, start: Instant, end: Instant): List<ApiKeyUsage> = transactionService.withTransaction {
         apiKeyUsageTable
             .innerJoin(apiKeyTable)
             .selectAll()
@@ -90,7 +91,7 @@ class ExposedApiKeyUsageRepository(
             .toList()
     }
 
-    override suspend fun getUsageByApiKeyIdAndDateRange(apiKeyId: ApiKeyId, start: Instant, end: Instant): List<ApiKeyUsage> = suspendTransaction {
+    override suspend fun getUsageByApiKeyIdAndDateRange(apiKeyId: ApiKeyId, start: Instant, end: Instant): List<ApiKeyUsage> = transactionService.withTransaction {
         apiKeyUsageTable.selectAll()
             .where {
                 (apiKeyUsageTable.apiKeyId eq apiKeyId.value) and

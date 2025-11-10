@@ -3,29 +3,30 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.PdfMarkdown
 import io.deepsearch.domain.repositories.IPdfMarkdownRepository
 import io.deepsearch.infrastructure.database.PdfMarkdownCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedPdfMarkdownRepository(
-    private val pdfMarkdownTable: PdfMarkdownCacheTable
+    private val pdfMarkdownTable: PdfMarkdownCacheTable,
+    private val transactionService: TransactionService
 ) : IPdfMarkdownRepository {
 
-    override suspend fun findByHash(pdfHash: String): PdfMarkdown? = suspendTransaction {
+    override suspend fun findByHash(pdfHash: String): PdfMarkdown? = transactionService.withTransaction {
         pdfMarkdownTable.selectAll()
             .where { pdfMarkdownTable.pdfHash eq pdfHash }
             .map { mapRowToPdfMarkdown(it) }
             .singleOrNull()
     }
 
-    override suspend fun upsert(pdfMarkdown: PdfMarkdown): Unit = suspendTransaction {
+    override suspend fun upsert(pdfMarkdown: PdfMarkdown): Unit = transactionService.withTransaction {
         pdfMarkdownTable.upsert(
             keys = arrayOf(pdfMarkdownTable.pdfHash)
         ) {

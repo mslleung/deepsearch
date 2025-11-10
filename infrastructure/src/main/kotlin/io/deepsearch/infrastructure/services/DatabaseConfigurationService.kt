@@ -14,7 +14,9 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 interface IDatabaseConfigurationService {
-    fun configureDatabase(): R2dbcDatabase
+
+    fun getDatabase(): R2dbcDatabase
+
 }
 
 /**
@@ -42,16 +44,16 @@ class DatabaseConfigurationService(
     private val urlAccessTable: UrlAccessTable,
 ) : IDatabaseConfigurationService {
 
-    init {
-        configureDatabase()
-    }
+    private val _database: R2dbcDatabase = configureDatabase()
+
+    override fun getDatabase() = _database
 
     /**
      * Configures database connection based on environment.
      * For development: H2 with R2DBC (SQLite-like, lightweight)
      * For production: PostgreSQL with R2DBC
      */
-    override fun configureDatabase(): R2dbcDatabase {
+    private fun configureDatabase(): R2dbcDatabase {
         val database = if (environmentConfig.isDevelopmentMode) {
 //             configureH2Database()
             configurePostgreSqlDatabase()
@@ -61,7 +63,7 @@ class DatabaseConfigurationService(
 
         // Initialize schema using R2DBC suspended transaction
         runBlocking {
-            suspendTransaction {
+            suspendTransaction(database) {
                 SchemaUtils.create(
                     userTable,
                     apiKeyTable,

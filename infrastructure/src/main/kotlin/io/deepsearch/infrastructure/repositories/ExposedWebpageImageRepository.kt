@@ -3,13 +3,13 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageImage
 import io.deepsearch.domain.repositories.IWebpageImageRepository
 import io.deepsearch.infrastructure.database.WebpageImageCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.batchUpsert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
@@ -17,10 +17,11 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageImageRepository(
-    private val webpageImageTable: WebpageImageCacheTable
+    private val webpageImageTable: WebpageImageCacheTable,
+    private val transactionService: TransactionService
 ) : IWebpageImageRepository {
 
-    override suspend fun upsert(image: WebpageImage): Unit = suspendTransaction {
+    override suspend fun upsert(image: WebpageImage): Unit = transactionService.withTransaction {
         val hashBase64 = Base64.encode(image.imageBytesHash)
 
         webpageImageTable.upsert(
@@ -34,8 +35,8 @@ class ExposedWebpageImageRepository(
         }
     }
 
-    override suspend fun batchUpsert(images: List<WebpageImage>): Unit = suspendTransaction {
-        if (images.isEmpty()) return@suspendTransaction
+    override suspend fun batchUpsert(images: List<WebpageImage>): Unit = transactionService.withTransaction {
+        if (images.isEmpty()) return@withTransaction
 
         webpageImageTable.batchUpsert(
             data = images,
@@ -50,7 +51,7 @@ class ExposedWebpageImageRepository(
         }
     }
 
-    override suspend fun findByHash(imageBytesHash: ByteArray): WebpageImage? = suspendTransaction {
+    override suspend fun findByHash(imageBytesHash: ByteArray): WebpageImage? = transactionService.withTransaction {
         val hashBase64 = Base64.encode(imageBytesHash)
         webpageImageTable.selectAll()
             .where { webpageImageTable.imageBytesHash eq hashBase64 }

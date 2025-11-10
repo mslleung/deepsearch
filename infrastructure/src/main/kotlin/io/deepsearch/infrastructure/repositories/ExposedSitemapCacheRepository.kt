@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.SitemapCache
 import io.deepsearch.domain.repositories.ISitemapCacheRepository
 import io.deepsearch.infrastructure.database.SitemapCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.serialization.encodeToString
@@ -10,24 +11,24 @@ import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedSitemapCacheRepository(
-    private val sitemapCacheTable: SitemapCacheTable
+    private val sitemapCacheTable: SitemapCacheTable,
+    private val transactionService: TransactionService
 ) : ISitemapCacheRepository {
 
-    override suspend fun findByUrl(sitemapUrl: String): SitemapCache? = suspendTransaction {
+    override suspend fun findByUrl(sitemapUrl: String): SitemapCache? = transactionService.withTransaction {
         sitemapCacheTable.selectAll()
             .where { sitemapCacheTable.sitemapUrl eq sitemapUrl }
             .map { mapRowToSitemapCache(it) }
             .singleOrNull()
     }
 
-    override suspend fun upsert(cache: SitemapCache): Unit = suspendTransaction {
+    override suspend fun upsert(cache: SitemapCache): Unit = transactionService.withTransaction {
         sitemapCacheTable.upsert(
             keys = arrayOf(sitemapCacheTable.sitemapUrl)
         ) {

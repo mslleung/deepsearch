@@ -3,13 +3,13 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpagePopup
 import io.deepsearch.domain.repositories.IWebpagePopupRepository
 import io.deepsearch.infrastructure.database.WebpagePopupCacheTable
+import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
@@ -17,12 +17,13 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExposedWebpagePopupRepository(
-    private val webpagePopupTable: WebpagePopupCacheTable
+    private val webpagePopupTable: WebpagePopupCacheTable,
+    private val transactionService: TransactionService
 ) : IWebpagePopupRepository {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    override suspend fun findByHash(pageHash: ByteArray): WebpagePopup? = suspendTransaction {
+    override suspend fun findByHash(pageHash: ByteArray): WebpagePopup? = transactionService.withTransaction {
         val hashBase64 = Base64.encode(pageHash)
         webpagePopupTable.selectAll()
             .where { webpagePopupTable.pageHash eq hashBase64 }
@@ -30,7 +31,7 @@ class ExposedWebpagePopupRepository(
             .singleOrNull()
     }
 
-    override suspend fun upsert(webpagePopup: WebpagePopup): Unit = suspendTransaction {
+    override suspend fun upsert(webpagePopup: WebpagePopup): Unit = transactionService.withTransaction {
         val hashBase64 = Base64.encode(webpagePopup.pageHash)
 
         webpagePopupTable.upsert(
