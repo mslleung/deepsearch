@@ -47,21 +47,22 @@ interface IWebpageCacheService {
     )
 
     /**
-     * Search for similar webpages using vector cosine distance.
-     * Returns webpages ordered by similarity (most similar first).
+     * Search for similar webpages using hybrid search with Reciprocal Rank Fusion (RRF).
+     * Combines keyword-based full-text search with semantic vector similarity search.
+     * Returns webpages ordered by combined relevance score (most relevant first).
      *
      * Only searches within webpages that:
      * - Have the specified URL prefix (to limit search to a specific domain/path)
      * - Were updated within the cache expiry window (if cacheExpiryMs is non-null)
-     * - Have non-null embeddings
+     * - Have non-null embeddings and markdown content
      *
-     * @param query The search query text
+     * @param query The search query text (used for both keyword search and embedding generation)
      * @param baseUrl The base URL to filter by (will be normalized, e.g., "https://example.com")
      * @param cacheExpiryMs Cache expiration time in milliseconds (null means no expiry filtering)
      * @param limit Maximum number of results to return
-     * @return List of WebpageMarkdown objects, ordered by similarity (most similar first)
+     * @return List of WebpageMarkdown objects, ordered by RRF combined score (most relevant first)
      */
-    suspend fun searchSimilar(
+    suspend fun searchHybrid(
         query: String,
         baseUrl: String,
         cacheExpiryMs: Long?,
@@ -188,7 +189,7 @@ class WebpageCacheService(
     }
 
 
-    override suspend fun searchSimilar(
+    override suspend fun searchHybrid(
         query: String,
         baseUrl: String,
         cacheExpiryMs: Long?,
@@ -196,27 +197,28 @@ class WebpageCacheService(
     ): List<WebpageMarkdown> {
         // Normalize URL to get prefix for filtering
         val urlPrefix = normalizeUrlService.normalize(baseUrl) ?: baseUrl
-        logger.debug("Vector search: URL prefix = {}", urlPrefix)
+        logger.debug("Hybrid search: URL prefix = {}", urlPrefix)
 
         // Generate query embedding
         // Include the url in the query to increase the likelihood of getting documents with the url prefix
         // This is because pgvector applies filtering after retrieving from vector db
         val queryEmbedding = textEmbeddingService.embedQuery("$query $baseUrl")
-        logger.debug("Vector search: Generated query embedding with {} dimensions", queryEmbedding.size)
+        logger.debug("Hybrid search: Generated query embedding with {} dimensions", queryEmbedding.size)
 
         // Calculate minimum updated timestamp for cache expiry (null if no expiry filtering)
         val minUpdatedAtEpochMs = if (cacheExpiryMs != null) {
             val currentTime = Clock.System.now()
             val timestamp = currentTime.toEpochMilliseconds() - cacheExpiryMs
-            logger.debug("Vector search: Min timestamp = {}", timestamp)
+            logger.debug("Hybrid search: Min timestamp = {}", timestamp)
             timestamp
         } else {
-            logger.debug("Vector search: No timestamp filtering (cacheExpiryMs is null)")
+            logger.debug("Hybrid search: No timestamp filtering (cacheExpiryMs is null)")
             null
         }
 
-        // Search for similar embeddings
-        return webpageMarkdownRepository.searchSimilar(
+        // Search using hybrid search (RRF combining keyword + semantic search)
+        return webpageMarkdownRepository.searchHybrid(
+            textQuery = query,
             queryEmbedding = queryEmbedding,
             urlPrefix = urlPrefix,
             minUpdatedAtEpochMs = minUpdatedAtEpochMs,

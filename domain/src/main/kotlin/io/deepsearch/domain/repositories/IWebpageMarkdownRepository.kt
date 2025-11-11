@@ -11,21 +11,24 @@ interface IWebpageMarkdownRepository {
     suspend fun countSearchByUrl(query: String): Long
     
     /**
-     * Search for similar webpages using vector cosine distance.
-     * Returns webpages ordered by similarity (most similar first).
+     * Search for similar webpages using hybrid search with Reciprocal Rank Fusion (RRF).
+     * Combines keyword-based full-text search with semantic vector similarity search.
+     * Returns webpages ordered by combined relevance score (most relevant first).
      *
      * Only searches within webpages that:
      * - Have the specified URL prefix (to limit search to a specific domain/path)
      * - Were updated after the specified timestamp (if minUpdatedAtEpochMs is non-null)
-     * - Have non-null embeddings
+     * - Have non-null embeddings and markdown content
      *
-     * @param queryEmbedding The embedding vector to search with (1536 dimensions)
+     * @param textQuery The text query for both keyword search and embedding generation
+     * @param queryEmbedding The embedding vector for semantic search (1536 dimensions)
      * @param urlPrefix The URL prefix to filter by (e.g., "https://example.com")
      * @param minUpdatedAtEpochMs Minimum timestamp in epoch milliseconds (null means no timestamp filtering)
      * @param limit Maximum number of results to return
-     * @return List of WebpageMarkdown objects, ordered by similarity (most similar first)
+     * @return List of WebpageMarkdown objects, ordered by RRF combined score (most relevant first)
      */
-    suspend fun searchSimilar(
+    suspend fun searchHybrid(
+        textQuery: String,
         queryEmbedding: List<Float>,
         urlPrefix: String,
         minUpdatedAtEpochMs: Long?,

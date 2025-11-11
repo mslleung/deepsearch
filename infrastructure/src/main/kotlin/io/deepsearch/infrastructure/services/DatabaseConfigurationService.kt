@@ -96,6 +96,32 @@ class DatabaseConfigurationService(
                     USING hnsw (embedding vector_cosine_ops)
                     WITH (m = 16, ef_construction = 64)
                 """.trimIndent())
+                
+                // Create GIN index for full-text search on markdown content
+                exec("""
+                    CREATE INDEX IF NOT EXISTS webpage_markdowns_markdown_search_vector_idx
+                    ON webpage_markdowns 
+                    USING gin (markdown_search_vector)
+                """.trimIndent())
+                
+                // Create trigger function to auto-update tsvector when markdown changes
+                exec("""
+                    CREATE OR REPLACE FUNCTION webpage_markdowns_markdown_search_vector_update() 
+                    RETURNS trigger AS ${'$'}${'$'}
+                    BEGIN
+                      NEW.markdown_search_vector := to_tsvector('english', COALESCE(NEW.markdown, ''));
+                      RETURN NEW;
+                    END;
+                    ${'$'}${'$'} LANGUAGE plpgsql;
+                """.trimIndent())
+                
+                // Create trigger to automatically update tsvector on INSERT or UPDATE
+                exec("""
+                    DROP TRIGGER IF EXISTS webpage_markdowns_markdown_search_vector_trigger ON webpage_markdowns;
+                    CREATE TRIGGER webpage_markdowns_markdown_search_vector_trigger
+                    BEFORE INSERT OR UPDATE OF markdown ON webpage_markdowns
+                    FOR EACH ROW EXECUTE FUNCTION webpage_markdowns_markdown_search_vector_update();
+                """.trimIndent())
             }
         }
 

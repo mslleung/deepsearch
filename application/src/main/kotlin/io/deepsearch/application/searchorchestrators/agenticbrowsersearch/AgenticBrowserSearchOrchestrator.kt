@@ -811,14 +811,14 @@ class AgenticBrowserSearchOrchestrator(
         cacheExpiryMs: Long?,
         vectorSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> = flow {
-        // Search for similar embeddings
-        val similarWebpages = webpageCacheService.searchSimilar(
+        // Search using hybrid search (RRF combining keyword + semantic search)
+        val similarWebpages = webpageCacheService.searchHybrid(
             query = searchQuery.query,
             baseUrl = searchQuery.url,
             cacheExpiryMs = cacheExpiryMs,
             limit = 15
         )
-        logger.debug("[{}] Vector search: Found {} similar webpages", sessionId, similarWebpages.size)
+        logger.debug("[{}] Hybrid search: Found {} similar webpages", sessionId, similarWebpages.size)
 
         // Filter to keep only valid webpages with markdown and html
         val validWebpages = similarWebpages.filter { webpage ->
