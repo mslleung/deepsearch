@@ -1,6 +1,7 @@
 package io.deepsearch.domain.browser.playwright
 
 import com.microsoft.playwright.Browser
+import com.microsoft.playwright.BrowserContext
 import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Playwright
 import io.deepsearch.domain.browser.IBrowser
@@ -25,7 +26,24 @@ class PlaywrightBrowser(
     private val apiMutex: Mutex = Mutex()
 
     override suspend fun createContext(): IBrowserContext {
-        val context = apiMutex.withLock { playwrightBrowser.newContext() }
+        val context = apiMutex.withLock {
+            playwrightBrowser.newContext()
+        }
+
+        // Set up route blocking for expensive resource types
+        context.route("**/*") { route ->
+            val resourceType = route.request().resourceType()
+            when (resourceType) {
+                "media",      // video/audio
+                "manifest",   // app manifests
+                "eventsource",
+                "websocket",  // real-time connections
+                "texttrack"   // video subtitles
+                -> route.abort()
+                else -> route.resume()
+            }
+        }
+
         return PlaywrightBrowserContext(context, apiMutex)
     }
 

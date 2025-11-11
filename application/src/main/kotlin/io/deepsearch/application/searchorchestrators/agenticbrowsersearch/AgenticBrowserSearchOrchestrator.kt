@@ -204,7 +204,7 @@ class AgenticBrowserSearchOrchestrator(
             }
 
             // Wait for the result with timeout
-            val result = withTimeout(budget.timeLimitMs + 5000) {
+            val result = withTimeout(budget.timeLimitMs + 60000) {
                 resultDeferred.await()
             }
 

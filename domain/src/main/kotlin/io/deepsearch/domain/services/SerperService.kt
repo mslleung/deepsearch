@@ -89,8 +89,8 @@ class SerperService(
                 }
             }
             
-            // Build search query with site: operator
-            val searchQueryText = "$query site:$hostWithPath"
+            // Build search query
+            val searchQueryText = "$query $hostWithPath"
             logger.debug("Search query with site operator: {}", searchQueryText)
             
             val requestBody = """{"q":"$searchQueryText"}"""
