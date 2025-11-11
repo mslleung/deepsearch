@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.database.types
 
+import io.r2dbc.postgresql.codec.Vector
 import org.jetbrains.exposed.v1.core.Column
 import org.jetbrains.exposed.v1.core.ColumnType
 import org.jetbrains.exposed.v1.core.Table
@@ -8,9 +9,10 @@ import org.slf4j.LoggerFactory
 
 /**
  * Custom column type for PostgreSQL vector type using pgvector extension.
- * Supports R2DBC by using text format for vector representation.
+ * Supports R2DBC by using the native vector type support in r2dbc-postgresql 1.0.3+.
  * 
- * Vectors are stored and retrieved in pgvector's text format: "[1.0,2.0,3.0,...]"
+ * R2DBC PostgreSQL natively supports the vector type and accepts float[] arrays.
+ * See: https://github.com/pgjdbc/r2dbc-postgresql#data-type-mapping
  */
 class VectorColumnType(private val dimensions: Int) : ColumnType<List<Float>>() {
     
@@ -20,10 +22,13 @@ class VectorColumnType(private val dimensions: Int) : ColumnType<List<Float>>() 
     
     /**
      * Convert database value to Kotlin List<Float>.
-     * R2DBC returns vectors as strings in format "[1.0,2.0,3.0,...]"
+     * R2DBC PostgreSQL returns vectors as io.r2dbc.postgresql.codec.Vector objects.
+     * Also supports legacy string and byte array formats for compatibility.
      */
     override fun valueFromDB(value: Any): List<Float> {
         return when (value) {
+            is Vector -> value.getVector().toList()  // R2DBC PostgreSQL native Vector type
+            is FloatArray -> value.toList()
             is String -> parseVectorString(value)
             is ByteArray -> parseVectorString(String(value))
             else -> {
@@ -35,13 +40,14 @@ class VectorColumnType(private val dimensions: Int) : ColumnType<List<Float>>() 
     
     /**
      * Convert Kotlin List<Float> to database value.
-     * Returns vector in text format for R2DBC: "[1.0,2.0,3.0,...]"
+     * Returns FloatArray for R2DBC PostgreSQL's native vector support.
+     * R2DBC PostgreSQL 1.0.3+ natively handles float[] as vector type.
      */
-    override fun notNullValueToDB(value: List<Float>): String {
+    override fun notNullValueToDB(value: List<Float>): FloatArray {
         require(value.size == dimensions) {
             "Vector dimension mismatch: expected $dimensions, got ${value.size}"
         }
-        return "[${value.joinToString(",")}]"
+        return value.toFloatArray()
     }
     
     /**

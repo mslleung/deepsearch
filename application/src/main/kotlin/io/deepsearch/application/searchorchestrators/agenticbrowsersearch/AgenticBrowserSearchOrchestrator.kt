@@ -110,6 +110,10 @@ class AgenticBrowserSearchOrchestrator(
             val vectorSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
+            // To be removed:
+            googleSearchDiscoveredLinksChannel.close()
+            sitemapDiscoveredLinksChannel.close()
+
             // Launch flow processing in background
             val flowJob = applicationScope.scope.launch {
                 try {
@@ -123,14 +127,14 @@ class AgenticBrowserSearchOrchestrator(
                             initialDiscoveredLinksChannel,
                             cacheExpiryMs
                         ),
-                        processGoogleSearchLinksFlow(
-                            sessionId,
-                            searchQuery,
-                            seenUrls,
-                            budget,
-                            googleSearchDiscoveredLinksChannel,
-                            cacheExpiryMs
-                        ),
+//                        processGoogleSearchLinksFlow(
+//                            sessionId,
+//                            searchQuery,
+//                            seenUrls,
+//                            budget,
+//                            googleSearchDiscoveredLinksChannel,
+//                            cacheExpiryMs
+//                        ),
                         processSerperSearchLinksFlow(
                             sessionId,
                             searchQuery,
@@ -139,14 +143,14 @@ class AgenticBrowserSearchOrchestrator(
                             serperSearchDiscoveredLinksChannel,
                             cacheExpiryMs
                         ),
-                        processSitemapLinksFlow(
-                            sessionId,
-                            searchQuery,
-                            seenUrls,
-                            budget,
-                            sitemapDiscoveredLinksChannel,
-                            cacheExpiryMs
-                        ),
+//                        processSitemapLinksFlow(
+//                            sessionId,
+//                            searchQuery,
+//                            seenUrls,
+//                            budget,
+//                            sitemapDiscoveredLinksChannel,
+//                            cacheExpiryMs
+//                        ),
                         processVectorSearchFlow(
                             sessionId,
                             searchQuery,

@@ -64,6 +64,9 @@ class DatabaseConfigurationService(
         // Initialize schema using R2DBC suspended transaction
         runBlocking {
             suspendTransaction(database) {
+                // Enable pgvector extension for vector similarity search
+                exec("CREATE EXTENSION IF NOT EXISTS vector")
+
                 SchemaUtils.create(
                     userTable,
                     apiKeyTable,
@@ -83,10 +86,7 @@ class DatabaseConfigurationService(
                     sitemapCacheTable,
                     urlAccessTable
                 )
-                
-                // Enable pgvector extension for vector similarity search
-                exec("CREATE EXTENSION IF NOT EXISTS vector")
-                
+
                 // Create HNSW index for efficient vector similarity search on webpage embeddings
                 // Using cosine distance operator (vector_cosine_ops) for cosine similarity
                 // HNSW parameters: m=16 (connections per layer), ef_construction=64 (quality vs speed tradeoff)
