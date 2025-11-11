@@ -23,6 +23,7 @@ import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.exceptions.MarkdownConversionException
+import io.deepsearch.domain.ext.chunkedWithTimeout
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -174,7 +175,7 @@ class AgenticBrowserSearchOrchestrator(
                     )
                         .cancellable()
                         .filter { it.markdown.isNotBlank() }
-                        .chunked(1)
+                        .chunkedWithTimeout(chunkSize = 5, timeoutMs = 1000)
                         .runningFold(AnswerAccumulator()) { state, markdownResults ->
                             aggregateMarkdownResultIntoAnswer(
                                 sessionId,
