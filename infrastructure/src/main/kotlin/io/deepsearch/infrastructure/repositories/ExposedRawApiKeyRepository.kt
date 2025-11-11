@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IRawApiKeyRepository
 import io.deepsearch.infrastructure.database.RawApiKeyTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -19,7 +20,7 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
  */
 class ExposedRawApiKeyRepository(
     private val rawApiKeyTable: RawApiKeyTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IRawApiKeyRepository {
 
     override suspend fun save(userId: UserId, rawKey: String): Unit = transactionService.withTransaction {

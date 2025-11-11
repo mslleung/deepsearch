@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.SitemapCache
 import io.deepsearch.domain.repositories.ISitemapCacheRepository
 import io.deepsearch.infrastructure.database.SitemapCacheTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -18,7 +19,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedSitemapCacheRepository(
     private val sitemapCacheTable: SitemapCacheTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : ISitemapCacheRepository {
 
     override suspend fun findByUrl(sitemapUrl: String): SitemapCache? = transactionService.withTransaction {

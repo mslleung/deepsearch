@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpagePopup
 import io.deepsearch.domain.repositories.IWebpagePopupRepository
 import io.deepsearch.infrastructure.database.WebpagePopupCacheTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -18,7 +19,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedWebpagePopupRepository(
     private val webpagePopupTable: WebpagePopupCacheTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IWebpagePopupRepository {
 
     private val json = Json { ignoreUnknownKeys = true }

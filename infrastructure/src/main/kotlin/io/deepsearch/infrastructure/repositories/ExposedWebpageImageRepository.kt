@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageImage
 import io.deepsearch.domain.repositories.IWebpageImageRepository
 import io.deepsearch.infrastructure.database.WebpageImageCacheTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -18,7 +19,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageImageRepository(
     private val webpageImageTable: WebpageImageCacheTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IWebpageImageRepository {
 
     override suspend fun upsert(image: WebpageImage): Unit = transactionService.withTransaction {

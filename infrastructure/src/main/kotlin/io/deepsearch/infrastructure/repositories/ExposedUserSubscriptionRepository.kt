@@ -7,6 +7,7 @@ import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.models.valueobjects.UserSubscriptionId
 import io.deepsearch.domain.repositories.IUserSubscriptionRepository
 import io.deepsearch.infrastructure.database.UserSubscriptionTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -23,7 +24,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedUserSubscriptionRepository(
     private val userSubscriptionTable: UserSubscriptionTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IUserSubscriptionRepository {
 
     override suspend fun findByUserId(userId: UserId): List<UserSubscription> = transactionService.withTransaction {

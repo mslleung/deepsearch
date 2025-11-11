@@ -7,6 +7,7 @@ import io.deepsearch.domain.models.entities.QuerySessionState
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.infrastructure.database.QuerySessionTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -22,7 +23,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedQuerySessionRepository(
     private val querySessionTable: QuerySessionTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IQuerySessionRepository {
 
     override suspend fun save(session: QuerySession): QuerySession = transactionService.withTransaction {

@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.infrastructure.database.WebpageMarkdownCacheTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -16,7 +17,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageMarkdownRepository(
     private val webpageMarkdownTable: WebpageMarkdownCacheTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IWebpageMarkdownRepository {
 
     override suspend fun findByUrl(url: String): WebpageMarkdown? = transactionService.withTransaction {

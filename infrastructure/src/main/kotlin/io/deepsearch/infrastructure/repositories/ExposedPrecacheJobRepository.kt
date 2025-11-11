@@ -5,6 +5,7 @@ import io.deepsearch.domain.models.entities.PrecacheJob
 import io.deepsearch.domain.models.entities.PrecacheJobState
 import io.deepsearch.domain.repositories.IPrecacheJobRepository
 import io.deepsearch.infrastructure.database.PrecacheJobTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -21,7 +22,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedPrecacheJobRepository(
     private val precacheJobTable: PrecacheJobTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IPrecacheJobRepository {
 
     override suspend fun create(job: PrecacheJob): PrecacheJob = transactionService.withTransaction {

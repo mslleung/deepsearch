@@ -8,6 +8,7 @@ import io.deepsearch.domain.models.valueobjects.OAuthProvider
 import io.deepsearch.domain.models.valueobjects.PasswordHash
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.infrastructure.database.UserTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -25,7 +26,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedUserRepository(
     private val userTable: UserTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IUserRepository {
 
     override suspend fun save(user: User): User = transactionService.withTransaction {

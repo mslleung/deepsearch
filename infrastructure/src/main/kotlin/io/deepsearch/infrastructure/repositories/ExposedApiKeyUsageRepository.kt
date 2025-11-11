@@ -6,6 +6,7 @@ import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyUsageRepository
 import io.deepsearch.infrastructure.database.ApiKeyTable
 import io.deepsearch.infrastructure.database.ApiKeyUsageTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -23,7 +24,7 @@ import kotlin.time.Instant
 class ExposedApiKeyUsageRepository(
     private val apiKeyUsageTable: ApiKeyUsageTable,
     private val apiKeyTable: ApiKeyTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IApiKeyUsageRepository {
 
     override suspend fun recordUsage(usage: ApiKeyUsage): ApiKeyUsage = transactionService.withTransaction {

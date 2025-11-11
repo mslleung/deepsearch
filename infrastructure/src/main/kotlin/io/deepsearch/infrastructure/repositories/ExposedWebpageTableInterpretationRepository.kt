@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageTableInterpretation
 import io.deepsearch.domain.repositories.IWebpageTableInterpretationRepository
 import io.deepsearch.infrastructure.database.WebpageTableInterpretationCacheTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -19,7 +20,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class, ExperimentalEncodingApi::class)
 class ExposedWebpageTableInterpretationRepository(
     private val webpageTableInterpretationTable: WebpageTableInterpretationCacheTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IWebpageTableInterpretationRepository {
 
     override suspend fun upsert(interpretation: WebpageTableInterpretation): Unit = transactionService.withTransaction {

@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.valueobjects.*
 import io.deepsearch.domain.repositories.IUrlAccessRepository
 import io.deepsearch.infrastructure.database.UrlAccessTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -20,7 +21,7 @@ import kotlin.time.ExperimentalTime
 @OptIn(ExperimentalTime::class)
 class ExposedUrlAccessRepository(
     private val urlAccessTable: UrlAccessTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IUrlAccessRepository {
 
     private enum class UrlAccessStatus {

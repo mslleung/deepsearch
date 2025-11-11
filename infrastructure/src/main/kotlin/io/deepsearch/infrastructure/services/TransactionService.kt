@@ -8,8 +8,8 @@ interface ITransactionService {
 }
 
 class TransactionService(
-    private val databaseConfigurationService: IDatabaseConfigurationService
-): ITransactionService {
+    private val databaseConfigurationService: IDatabaseConfigurationService,
+) : ITransactionService {
 
     /**
      * Wraps a block of code in a database transaction.

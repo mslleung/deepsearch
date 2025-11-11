@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.models.entities.WebpageIcon
 import io.deepsearch.domain.repositories.IWebpageIconRepository
 import io.deepsearch.infrastructure.database.WebpageIconCacheTable
+import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -18,7 +19,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageIconRepository(
     private val webpageIconTable: WebpageIconCacheTable,
-    private val transactionService: TransactionService
+    private val transactionService: ITransactionService
 ) : IWebpageIconRepository {
 
     override suspend fun upsert(icon: WebpageIcon): Unit = transactionService.withTransaction {
