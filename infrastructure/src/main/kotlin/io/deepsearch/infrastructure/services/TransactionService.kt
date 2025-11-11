@@ -1,5 +1,7 @@
 package io.deepsearch.infrastructure.services
 
+import io.deepsearch.domain.config.IDispatcherProvider
+import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.v1.r2dbc.R2dbcTransaction
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 
@@ -9,6 +11,7 @@ interface ITransactionService {
 
 class TransactionService(
     private val databaseConfigurationService: IDatabaseConfigurationService,
+    private val dispatchProvider: IDispatcherProvider
 ) : ITransactionService {
 
     /**
@@ -23,8 +26,10 @@ class TransactionService(
      * @throws Exception if the transaction fails or the block throws an exception
      */
     override suspend fun <T> withTransaction(block: suspend R2dbcTransaction.() -> T): T {
-        return suspendTransaction(databaseConfigurationService.getDatabase()) {
-            block()
+        return withContext(dispatchProvider.io) {
+            suspendTransaction(databaseConfigurationService.getDatabase()) {
+                block()
+            }
         }
     }
 }

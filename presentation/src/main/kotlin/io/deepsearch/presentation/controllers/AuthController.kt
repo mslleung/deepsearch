@@ -2,14 +2,17 @@ package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IAuthService
-import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.application.services.IUserService
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.GoogleUserInfo
 import io.deepsearch.domain.models.valueobjects.OAuthProvider
 import io.deepsearch.domain.models.valueobjects.UserId
-import io.deepsearch.presentation.dto.*
+import io.deepsearch.domain.services.IJwtService
+import io.deepsearch.presentation.dto.LoginRequest
+import io.deepsearch.presentation.dto.LoginResponse
+import io.deepsearch.presentation.dto.RegisterRequest
+import io.deepsearch.presentation.dto.toUserResponse
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*

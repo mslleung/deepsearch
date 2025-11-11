@@ -10,6 +10,8 @@ import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.exceptions.BrowserNavigationException
 import io.deepsearch.domain.exceptions.ConnectionRefusedException
 import io.deepsearch.domain.exceptions.DnsResolutionException
+import io.deepsearch.domain.exceptions.HttpClientErrorException
+import io.deepsearch.domain.exceptions.HttpServerErrorException
 import io.deepsearch.domain.exceptions.NetworkTimeoutException
 import io.deepsearch.domain.exceptions.RedirectLoopException
 import io.deepsearch.domain.exceptions.SslHandshakeException
@@ -59,9 +61,19 @@ class PlaywrightBrowserPage(
         apiMutex.withLock {
             try {
                 val navigationTime = measureTimeMillis {
-                    page.navigate(url)
+                    val response = page.navigate(url)
                     // Ensure baseline document readiness before any parsing calls
                     page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+                    
+                    // Check HTTP status code
+                    response?.let {
+                        val statusCode = it.status()
+                        val reasonPhrase = it.statusText()
+                        when (statusCode) {
+                            in 400..499 -> throw HttpClientErrorException(url, statusCode, reasonPhrase)
+                            in 500..599 -> throw HttpServerErrorException(url, statusCode, reasonPhrase)
+                        }
+                    }
                 }
                 logger.debug("Navigate to {} took {} ms", url, navigationTime)
             } catch (e: PlaywrightException) {
