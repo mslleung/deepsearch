@@ -274,7 +274,7 @@ class PlaywrightBrowserPage(
                 try {
                     val isVisible = isElementVisibleByXPath(failedImage.xPath)
                     if (!isVisible) {
-                        throw Error("Skipping screenshot for invisible image at ${failedImage.xPath}")
+                        throw Exception("Skipping screenshot for invisible image at ${failedImage.xPath}")
                     }
                     val screenshot = getElementScreenshotByXPath(failedImage.xPath)
                     results.add(
