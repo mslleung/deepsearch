@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.database
 
+import io.deepsearch.infrastructure.database.types.tsvector
 import io.deepsearch.infrastructure.database.types.vector
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
@@ -14,7 +15,7 @@ class WebpageMarkdownCacheTable(
     val httpReason = varchar("http_reason", length = 256).nullable()
     val mimeType = varchar("mime_type", length = 256).nullable()
     val embedding = vector("embedding", dimensions = 1536).nullable() // gemini-embedding-001 produces 1536-dim vectors
-    val markdownSearchVector = text("markdown_search_vector").nullable() // tsvector for full-text search
+    val markdownSearchVector = tsvector("markdown_search_vector").nullable() // tsvector for full-text search
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

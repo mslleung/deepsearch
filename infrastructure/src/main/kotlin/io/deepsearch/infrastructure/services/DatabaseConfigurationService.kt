@@ -96,7 +96,7 @@ class DatabaseConfigurationService(
                     USING hnsw (embedding vector_cosine_ops)
                     WITH (m = 16, ef_construction = 64)
                 """.trimIndent())
-                
+
                 // Create GIN index for full-text search on markdown content
                 exec("""
                     CREATE INDEX IF NOT EXISTS webpage_markdowns_markdown_search_vector_idx

@@ -107,7 +107,7 @@ class AgenticBrowserSearchOrchestrator(
             val googleSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val serperSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val sitemapDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
-            val vectorSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+            val hybridSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
             // To be removed:
@@ -151,11 +151,12 @@ class AgenticBrowserSearchOrchestrator(
 //                            sitemapDiscoveredLinksChannel,
 //                            cacheExpiryMs
 //                        ),
-                        processVectorSearchFlow(
+                        processHybridSearchFlow(
                             sessionId,
                             searchQuery,
+                            seenUrls,
                             cacheExpiryMs,
-                            vectorSearchDiscoveredLinksChannel
+                            hybridSearchDiscoveredLinksChannel
                         ),
                         processRecursiveDiscoveredLinksFlow(
                             sessionId,
@@ -166,7 +167,7 @@ class AgenticBrowserSearchOrchestrator(
                             googleSearchDiscoveredLinksChannel,
                             serperSearchDiscoveredLinksChannel,
                             sitemapDiscoveredLinksChannel,
-                            vectorSearchDiscoveredLinksChannel,
+                            hybridSearchDiscoveredLinksChannel,
                             recursiveDiscoveredLinksChannel,
                             cacheExpiryMs
                         )
@@ -507,7 +508,7 @@ class AgenticBrowserSearchOrchestrator(
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
-        vectorSearchDiscoveredLinksChannel: Channel<WebpageLink>,
+        hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long?
     ): Flow<MarkdownResult> {
@@ -519,7 +520,7 @@ class AgenticBrowserSearchOrchestrator(
                 googleSearchDiscoveredLinksChannel.receiveAsFlow(),
                 serperSearchDiscoveredLinksChannel.receiveAsFlow(),
                 sitemapDiscoveredLinksChannel.receiveAsFlow(),
-                vectorSearchDiscoveredLinksChannel.receiveAsFlow(),
+                hybridSearchDiscoveredLinksChannel.receiveAsFlow(),
             )
                 .onCompletion {
                     // in case none of them emit any discovered links, we will do a check to close the recursive channel properly
@@ -575,7 +576,7 @@ class AgenticBrowserSearchOrchestrator(
                                         googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         serperSearchDiscoveredLinksChannel.isClosedForSend &&
                                         sitemapDiscoveredLinksChannel.isClosedForSend &&
-                                        vectorSearchDiscoveredLinksChannel.isClosedForSend &&
+                                        hybridSearchDiscoveredLinksChannel.isClosedForSend &&
                                         inFlightLinkDiscoveryProcessing.isEmpty()
                                     ) {
                                         recursiveDiscoveredLinksChannel.close()
@@ -623,7 +624,7 @@ class AgenticBrowserSearchOrchestrator(
                                         googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         serperSearchDiscoveredLinksChannel.isClosedForSend &&
                                         sitemapDiscoveredLinksChannel.isClosedForSend &&
-                                        vectorSearchDiscoveredLinksChannel.isClosedForSend &&
+                                        hybridSearchDiscoveredLinksChannel.isClosedForSend &&
                                         inFlightLinkDiscoveryProcessing.isEmpty()
                                     ) {
                                         recursiveDiscoveredLinksChannel.close()
@@ -801,13 +802,14 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Process vector similarity search over cached markdowns.
-     * Performs semantic search to find relevant cached pages and processes them.
+     * Process hybrid search over cached markdowns.
+     * Performs hybrid search to find relevant cached pages and processes them.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private fun processVectorSearchFlow(
+    private fun processHybridSearchFlow(
         sessionId: String,
         searchQuery: SearchQuery,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         cacheExpiryMs: Long?,
         vectorSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> = flow {
@@ -825,6 +827,8 @@ class AgenticBrowserSearchOrchestrator(
             !webpage.markdown.isNullOrBlank() && !webpage.html.isNullOrBlank()
         }
         logger.debug("[{}] Vector search: {} valid webpages after filtering", sessionId, validWebpages.size)
+
+        seenUrls.addAll(validWebpages.map { it.url })
 
         // Process similar webpages through the standard flow
         validWebpages.asFlow()
