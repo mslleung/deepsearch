@@ -25,7 +25,6 @@ val infrastructureModule = module {
     // All table instances (singletons, depend on DatabaseCryptoService)
     singleOf(::UserTable)
     singleOf(::ApiKeyTable)
-    singleOf(::ApiKeyUsageTable)
     singleOf(::UserSubscriptionTable)
     singleOf(::WebpageIconCacheTable)
     singleOf(::WebpageImageCacheTable)
@@ -42,7 +41,6 @@ val infrastructureModule = module {
 
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
-        scopedOf(::ExposedApiKeyUsageRepository) bind IApiKeyUsageRepository::class
         scopedOf(::ExposedPrecacheJobRepository) bind IPrecacheJobRepository::class
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class

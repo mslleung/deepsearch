@@ -4,11 +4,13 @@ import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
 class QuerySessionTable(
-    private val databaseCryptoService: IDatabaseCryptoService
+    private val databaseCryptoService: IDatabaseCryptoService,
+    private val apiKeyTable: ApiKeyTable
 ) : Table("query_sessions") {
     val id = varchar("id", 255)
     val query = text("query")
     val url = varchar("url", 2048)
+    val apiKeyId = integer("api_key_id").references(apiKeyTable.id)
     val finishReason = varchar("finish_reason", 50).nullable()
     val budgetTimeLimitMs = long("budget_time_limit_ms")
     val budgetMaxLinks = integer("budget_max_links")

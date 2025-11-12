@@ -7,6 +7,7 @@ import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.domain.agents.GoogleTextSearchInput
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
+import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -28,7 +29,7 @@ class GoogleSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long?): SearchResult {
+    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long?, apiKeyId: ApiKeyId): SearchResult {
         // Note: This orchestrator uses Google's search API and doesn't support custom budget or cache expiry parameters
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
         // Previous implementation using the combined search agent (not supported yet):

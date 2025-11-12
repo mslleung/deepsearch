@@ -3,7 +3,7 @@ package io.deepsearch.presentation.admin.controllers
 import io.deepsearch.application.services.IUsageService
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
-import io.deepsearch.domain.repositories.IApiKeyUsageRepository
+import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.domain.repositories.IUserRepository
 import io.deepsearch.domain.repositories.IUserSubscriptionRepository
 import io.deepsearch.presentation.admin.dto.AdminUsageStatsDto
@@ -20,7 +20,7 @@ import kotlin.time.ExperimentalTime
 class AdminUsageController(
     private val userRepository: IUserRepository,
     private val apiKeyRepository: IApiKeyRepository,
-    private val apiKeyUsageRepository: IApiKeyUsageRepository,
+    private val querySessionRepository: IQuerySessionRepository,
     private val userSubscriptionRepository: IUserSubscriptionRepository,
     private val usageService: IUsageService
 ) {
@@ -42,11 +42,11 @@ class AdminUsageController(
             // Get usage stats
             val now = Clock.System.now()
             val startDate = now - days.days
-            val usages = apiKeyUsageRepository.getUsageByDateRange(startDate, now)
+            val sessions = querySessionRepository.findByUserIdAndDateRange(UserId(0), startDate, now) // Get all sessions
             
-            val dailyUsage = usages.groupBy { usage ->
+            val dailyUsage = sessions.groupBy { session ->
                 // Format as YYYY-MM-DD from epoch millis
-                val instant = kotlinx.datetime.Instant.fromEpochMilliseconds(usage.requestedAt.toEpochMilliseconds())
+                val instant = kotlinx.datetime.Instant.fromEpochMilliseconds(session.createdAt.toEpochMilliseconds())
                 val localDateTime = instant.toLocalDateTime(kotlinx.datetime.TimeZone.UTC)
                 "${localDateTime.year}-${localDateTime.monthNumber.toString().padStart(2, '0')}-${localDateTime.dayOfMonth.toString().padStart(2, '0')}"
             }.mapValues { it.value.size }
@@ -89,7 +89,7 @@ class AdminUsageController(
             val response = AdminUsageStatsDto(
                 totalUsers = totalUsers,
                 totalApiKeys = totalApiKeys,
-                totalSearches = usages.size.toLong(),
+                totalSearches = sessions.size.toLong(),
                 dailyUsage = dailyUsage,
                 userUsageBreakdown = userUsageBreakdown
             )

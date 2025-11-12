@@ -76,9 +76,6 @@ class SearchController(
 
             apiKeyService.incrementApiKeyUsage(rawApiKey)
             
-            // Record the request
-            rateLimitService.recordUsage(apiKey.id!!)
-            
             val request = call.receive<SearchRequest>()
             
             // Validate search budget parameters
@@ -122,7 +119,8 @@ class SearchController(
                     request.sitemapUrl,
                     request.maxUrls,
                     request.searchDurationSeconds,
-                    request.cacheExpiryMs
+                    request.cacheExpiryMs,
+                    apiKey.id!!
                 )
             }
             

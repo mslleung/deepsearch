@@ -14,6 +14,7 @@ import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.StreamingAnswerInput
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.SearchBudget
@@ -66,11 +67,11 @@ class AgenticBrowserSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long?): SearchResult =
+    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long?, apiKeyId: ApiKeyId): SearchResult =
         withContext(dispatchers.io) {
             val result: SearchResult
             val executionTime = measureTimeMillis {
-                result = executeSearchForQuery(searchQuery, maxUrls, searchDurationSeconds, cacheExpiryMs)
+                result = executeSearchForQuery(searchQuery, maxUrls, searchDurationSeconds, cacheExpiryMs, apiKeyId)
             }
 
             logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
@@ -86,9 +87,10 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         maxUrls: Int? = null,
         searchDurationSeconds: Int? = null,
-        cacheExpiryMs: Long?
+        cacheExpiryMs: Long?,
+        apiKeyId: ApiKeyId
     ): SearchResult {
-        val session = querySessionService.createSession(searchQuery.query, searchQuery.url)
+        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
         val sessionId = session.id
         try {
             val budget = SearchBudget(

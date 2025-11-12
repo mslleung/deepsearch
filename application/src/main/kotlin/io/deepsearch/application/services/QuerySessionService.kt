@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.FinishReason
+import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import org.slf4j.Logger
@@ -15,7 +16,7 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 interface IQuerySessionService {
     /** Create a new query session in LINK_TRAVERSAL state. */
-    suspend fun createSession(query: String, url: String): QuerySession
+    suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId): QuerySession
 
     /**
      * Complete the session with a final answer.
@@ -66,15 +67,16 @@ class QuerySessionService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun createSession(query: String, url: String): QuerySession {
+    override suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId): QuerySession {
         val sessionId = UUID.randomUUID().toString()
-        val session = QuerySession(sessionId, query, url)
+        val session = QuerySession(sessionId, query, url, apiKeyId)
         val saved = querySessionRepository.save(session)
         logger.info(
-            "[{}] Session created: query='{}', url='{}'",
+            "[{}] Session created: query='{}', url='{}', apiKeyId={}",
             sessionId,
             query,
             url,
+            apiKeyId.value
         )
         return saved
     }

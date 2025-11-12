@@ -1,10 +1,10 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.models.entities.ApiKeyUsage
 import io.deepsearch.domain.models.entities.PlanTier
+import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.UserId
-import io.deepsearch.domain.repositories.IApiKeyUsageRepository
+import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.domain.repositories.IUserSubscriptionRepository
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
@@ -50,7 +50,7 @@ data class SubscriptionUsageDetail(
 
 @OptIn(ExperimentalTime::class)
 class UsageService(
-    private val apiKeyUsageRepository: IApiKeyUsageRepository,
+    private val querySessionRepository: IQuerySessionRepository,
     private val userSubscriptionRepository: IUserSubscriptionRepository,
     private val subscriptionPlanService: IUserSubscriptionService
 ) : IUsageService {
@@ -59,17 +59,17 @@ class UsageService(
         val now = Clock.System.now()
         val startDate = now - days.days
 
-        val usages = apiKeyUsageRepository.getUsageByUserIdAndDateRange(userId, startDate, now)
+        val sessions = querySessionRepository.findByUserIdAndDateRange(userId, startDate, now)
 
-        return aggregateUsageByDay(usages)
+        return aggregateUsageByDay(sessions)
     }
 
     override suspend fun getApiKeyUsageStats(apiKeyId: ApiKeyId, days: Int): ApiKeyUsageStats {
         val now = Clock.System.now()
         val startDate = now - days.days
 
-        val usages = apiKeyUsageRepository.getUsageByApiKeyIdAndDateRange(apiKeyId, startDate, now)
-        val stats = aggregateUsageByDay(usages)
+        val sessions = querySessionRepository.findByApiKeyIdAndDateRange(apiKeyId, startDate, now)
+        val stats = aggregateUsageByDay(sessions)
 
         return ApiKeyUsageStats(
             apiKeyId = apiKeyId,
@@ -111,17 +111,17 @@ class UsageService(
         )
     }
 
-    private fun aggregateUsageByDay(usages: List<ApiKeyUsage>): UsageStats {
+    private fun aggregateUsageByDay(sessions: List<QuerySession>): UsageStats {
         val dailyUsageMap = mutableMapOf<String, Int>()
 
-        usages.forEach { usage ->
-            val dateKey = formatDate(usage.requestedAt)
+        sessions.forEach { session ->
+            val dateKey = formatDate(session.createdAt)
             dailyUsageMap[dateKey] = dailyUsageMap.getOrDefault(dateKey, 0) + 1
         }
 
         return UsageStats(
             dailyUsage = dailyUsageMap,
-            totalUsage = usages.size
+            totalUsage = sessions.size
         )
     }
 

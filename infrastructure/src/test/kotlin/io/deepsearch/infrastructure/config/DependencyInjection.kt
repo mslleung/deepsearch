@@ -34,7 +34,6 @@ private val infrastructureCommonTestModule = module {
     // All table instances (singletons, depend on DatabaseCryptoService)
     singleOf(::UserTable)
     singleOf(::ApiKeyTable)
-    singleOf(::ApiKeyUsageTable)
     singleOf(::UserSubscriptionTable)
     singleOf(::WebpageIconCacheTable)
     singleOf(::WebpageImageCacheTable)
@@ -52,7 +51,6 @@ private val infrastructureCommonTestModule = module {
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
     singleOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
-    singleOf(::ExposedApiKeyUsageRepository) bind IApiKeyUsageRepository::class
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
     singleOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
