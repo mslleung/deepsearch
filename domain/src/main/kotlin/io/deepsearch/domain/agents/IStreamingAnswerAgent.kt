@@ -9,8 +9,7 @@ data class StreamingAnswerInput(
 ) : IAgent.IAgentInput
 
 data class StreamingAnswerOutput(
-    val updatedAnswer: String,
-    val isComplete: Boolean
+    val updatedAnswer: String
 ) : IAgent.IAgentOutput
 
 interface IStreamingAnswerAgent : IAgent<StreamingAnswerInput, StreamingAnswerOutput> {

@@ -2,6 +2,7 @@ package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googleadkimpl.*
+import io.deepsearch.domain.agents.googleadkimpl.AnswerReviewerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
 import io.deepsearch.domain.browser.BrowserRuntimePool
 import io.deepsearch.domain.browser.IBrowserRuntimePool
@@ -56,6 +57,7 @@ val domainModule = module {
         scopedOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
         scopedOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
         scopedOf(::StreamingAnswerAgentAdkImpl) bind IStreamingAnswerAgent::class
+        scopedOf(::AnswerReviewerAgentAdkImpl) bind IAnswerReviewerAgent::class
         scopedOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
 
         // domain services

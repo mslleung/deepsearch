@@ -72,7 +72,7 @@ class StreamingAnswerAgentAdkImplTest : KoinTest {
     }
 
     @Test
-    fun `should mark answer as complete when sufficient information is provided`() = runTest {
+    fun `should generate answer when sufficient information is provided`() = runTest {
         val input = StreamingAnswerInput(
             query = "What is 2+2?",
             currentAnswer = null,
@@ -85,23 +85,6 @@ class StreamingAnswerAgentAdkImplTest : KoinTest {
 
         assertNotNull(output.updatedAnswer)
         assertContains(output.updatedAnswer, "4")
-        assertTrue(output.isComplete, "Answer should be marked as complete for simple query with clear answer")
-    }
-
-    @Test
-    fun `should not mark answer as complete when information is insufficient`() = runTest {
-        val input = StreamingAnswerInput(
-            query = "Explain the complete history, architecture, cultural significance, visitor statistics, and construction details of the Eiffel Tower",
-            currentAnswer = null,
-            markdownBatch = listOf(
-                "The Eiffel Tower is in Paris."
-            )
-        )
-
-        val output = agent.generate(input)
-
-        assertNotNull(output.updatedAnswer)
-        assertFalse(output.isComplete, "Answer should not be complete with minimal information for complex query")
     }
 
     @Test
@@ -150,23 +133,6 @@ class StreamingAnswerAgentAdkImplTest : KoinTest {
 
         assertNotNull(output.updatedAnswer)
         assertTrue(output.updatedAnswer.isNotBlank())
-    }
-
-    @Test
-    fun `should be conservative about marking completeness`() = runTest {
-        val input = StreamingAnswerInput(
-            query = "Provide a comprehensive analysis of machine learning algorithms, their applications, limitations, and future trends",
-            currentAnswer = null,
-            markdownBatch = listOf(
-                "Machine learning is a subset of AI. Common algorithms include decision trees, neural networks, and support vector machines."
-            )
-        )
-
-        val output = agent.generate(input)
-
-        assertNotNull(output.updatedAnswer)
-        // Should not be complete - the query asks for comprehensive coverage including applications, limitations, and future trends
-        assertFalse(output.isComplete, "Agent should be conservative and not mark incomplete answers as complete")
     }
 
     @Test

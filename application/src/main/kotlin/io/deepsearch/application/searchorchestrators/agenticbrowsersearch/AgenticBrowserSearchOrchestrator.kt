@@ -8,6 +8,8 @@ import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
+import io.deepsearch.domain.agents.IAnswerReviewerAgent
+import io.deepsearch.domain.agents.AnswerReviewerInput
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
@@ -59,6 +61,7 @@ class AgenticBrowserSearchOrchestrator(
     private val aggregateSearchResultsAgent: IAggregateSearchResultsAgent,
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
+    private val answerReviewerAgent: IAnswerReviewerAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
@@ -705,7 +708,8 @@ class AgenticBrowserSearchOrchestrator(
             newMarkdowns.size
         )
 
-        val output = streamingAnswerAgent.generate(
+        // First, build/update the answer
+        val answerOutput = streamingAnswerAgent.generate(
             StreamingAnswerInput(
                 query = searchQuery.query,
                 currentAnswer = state.currentAnswer,
@@ -713,14 +717,23 @@ class AgenticBrowserSearchOrchestrator(
             )
         )
 
-        logger.debug(
-            "[{}] Answer updated: {} chars, complete: {}",
-            sessionId,
-            output.updatedAnswer.length,
-            output.isComplete
+        // Then, check if the answer is complete
+        val reviewOutput = answerReviewerAgent.generate(
+            AnswerReviewerInput(
+                query = searchQuery.query,
+                currentAnswer = answerOutput.updatedAnswer
+            )
         )
 
-        return AnswerAccumulator(output.updatedAnswer, newUrls, newMarkdowns, output.isComplete)
+        logger.debug(
+            "[{}] Answer updated: {} chars, complete: {}, reason: {}",
+            sessionId,
+            answerOutput.updatedAnswer.length,
+            reviewOutput.isComplete,
+            reviewOutput.reason
+        )
+
+        return AnswerAccumulator(answerOutput.updatedAnswer, newUrls, newMarkdowns, reviewOutput.isComplete)
     }
 
     private suspend fun finishQuerySession(

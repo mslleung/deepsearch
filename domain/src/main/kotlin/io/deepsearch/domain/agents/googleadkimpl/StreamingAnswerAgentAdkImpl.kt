@@ -25,9 +25,7 @@ import org.slf4j.LoggerFactory
 
 /**
  * Streaming Answer agent that incrementally builds an answer as new markdown batches arrive.
- * Determines when the answer is complete enough to address the user's query.
- * 
- * For large batches (>20 markdowns), processes them in parallel sub-batches and combines results.
+ * Focuses solely on building and improving the answer, not on determining completeness.
  */
 class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
 
@@ -35,29 +33,21 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Updated answer with completeness indicator")
+        .description("Updated answer")
         .properties(
             mapOf(
                 "answer" to Schema.builder()
                     .type("STRING")
                     .description("Updated comprehensive answer to the search query, incorporating new information from the markdown batch")
-                    .build(),
-                "isComplete" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("Whether the answer is comprehensive enough to fully address the user's query")
-                    .build(),
-                "reason" to Schema.builder()
-                    .type("STRING")
-                    .description("Reason for the isComplete decision")
-                    .build(),
+                    .build()
             )
         )
-        .required(listOf("answer", "isComplete"))
+        .required(listOf("answer"))
         .build()
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("streamingAnswerAgent")
-        description("Incrementally build answers from markdown batches and determine completeness")
+        description("Incrementally build answers from markdown batches")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -92,25 +82,10 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             - Do not invent information not present in the content
             - Use markdown styling as applicable, such as headings/list etc.
             - The answer should be in the same language as the input query.
-            
-            Completeness determination:
-            - The answer is considered complete only if it addresses all concerns and aspects of the query
-            - Be extremely strict, if there are any missing gaps, return false to allow more information gathering
-            - It's better to process more content than to stop too early with an incomplete answer
-            - If the query asks for multiple pieces of information, ensure all are covered before marking complete
-
-            Exceptional cases:
-            - If the query is entirely invalid or gibberish, complete right away
-              Examples of invalid queries:
-              Good morning! (invalid)
-              Hello (invalid)
-              *f&dbst4$ (gibberish)
 
             Expected output shape:
             {
                 "answer": "your comprehensive answer text"
-                "isComplete": true/false
-                "reason": "reason for the isComplete decision"
             }
             """.trimIndent()
         )
@@ -121,9 +96,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
 
     @Serializable
     private data class StreamingAnswerResponse(
-        val answer: String,
-        val isComplete: Boolean,
-        val reason: String
+        val answer: String
     )
 
     override suspend fun generate(input: StreamingAnswerInput): StreamingAnswerOutput {
@@ -137,8 +110,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
         if (input.markdownBatch.isEmpty()) {
             logger.warn("Empty markdown batch received, returning current answer or empty")
             return StreamingAnswerOutput(
-                updatedAnswer = input.currentAnswer ?: "",
-                isComplete = false
+                updatedAnswer = input.currentAnswer ?: ""
             )
         }
 
@@ -209,15 +181,12 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
         }
 
         logger.debug(
-            "Batch processed: answer {} chars, complete: {}, reason: {}",
-            response.answer.length,
-            response.isComplete,
-            response.reason
+            "Batch processed: answer {} chars",
+            response.answer.length
         )
         
         return StreamingAnswerOutput(
-            updatedAnswer = response.answer,
-            isComplete = response.isComplete
+            updatedAnswer = response.answer
         )
     }
 }

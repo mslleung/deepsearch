@@ -1,6 +1,7 @@
 package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
+import io.deepsearch.domain.agents.IAnswerReviewerAgent
 import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.agents.IMultiImageTextExtractionAgent
@@ -22,6 +23,7 @@ import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkImpl
+import io.deepsearch.domain.agents.googleadkimpl.AnswerReviewerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.BlinkTestAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
 import io.deepsearch.domain.agents.googleadkimpl.MultiImageTextExtractionAgentAdkImpl
@@ -105,6 +107,7 @@ private val domainCommonTestModule = module {
     singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
     singleOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
     singleOf(::StreamingAnswerAgentAdkImpl) bind IStreamingAnswerAgent::class
+    singleOf(::AnswerReviewerAgentAdkImpl) bind IAnswerReviewerAgent::class
     singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
     singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
