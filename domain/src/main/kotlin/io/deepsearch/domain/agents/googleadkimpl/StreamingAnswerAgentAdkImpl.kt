@@ -32,10 +32,6 @@ import org.slf4j.LoggerFactory
 class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    
-    companion object {
-        private const val BATCH_SIZE = 20
-    }
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
@@ -83,7 +79,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             Instructions for answer updates:
             - If there's no current answer, create an initial answer from the markdowns
             - If there's a current answer, enhance it with any new relevant information
-            - If the new batch contains no relevant information, return the current answer unchanged
+            - If the new content contains no relevant information, return the current answer unchanged
             
             Answer quality:
             - The answer should be as comprehensive as possible
@@ -98,8 +94,8 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             - The answer should be in the same language as the input query.
             
             Completeness determination:
-            - The answer is considered complete if it address All concerns and aspects of the query
-            - Err on the side of caution: if unsure, set isComplete=false to allow more information gathering
+            - The answer is considered complete only if it addresses all concerns and aspects of the query
+            - Be extremely strict, if there are any missing gaps, return false to allow more information gathering
             - It's better to process more content than to stop too early with an incomplete answer
             - If the query asks for multiple pieces of information, ensure all are covered before marking complete
 
@@ -122,75 +118,6 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
     }
 
     private val runner = InMemoryRunner(agent)
-
-    // Schema and agent for combining multiple partial answers
-    private val combineOutputSchema: Schema = Schema.builder()
-        .type("OBJECT")
-        .description("Combined answer from multiple partial answers with completeness indicator")
-        .properties(
-            mapOf(
-                "answer" to Schema.builder()
-                    .type("STRING")
-                    .description("Comprehensive answer combining all partial answers")
-                    .build(),
-                "isComplete" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("Whether the combined answer is comprehensive enough to fully address the user's query")
-                    .build()
-            )
-        )
-        .required(listOf("answer", "isComplete"))
-        .build()
-
-    private val combineAgent: LlmAgent = LlmAgent.builder().run {
-        name("combineAnswersAgent")
-        description("Combine multiple partial answers into a coherent final answer")
-        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
-        outputSchema(combineOutputSchema)
-        disallowTransferToPeers(true)
-        disallowTransferToParent(true)
-        generateContentConfig(
-            GenerateContentConfig.builder()
-                .temperature(0F)
-                .thinkingConfig(
-                    ThinkingConfig.builder()
-                        .thinkingBudget(0)
-                        .build()
-                )
-                .build()
-        )
-        instruction(
-            """
-            You are an answer combining agent that synthesizes multiple partial answers into one coherent comprehensive answer in response to a query.
-            
-            Your task:
-            1. Review the current answer (if any) and multiple partial answers from different sources
-            2. Combine all relevant information into a single, well-structured comprehensive answer
-            3. Remove redundant information while preserving all unique relevant details
-            4. Determine if the combined answer is complete enough to fully address the user's query
-            
-            Instructions for combining:
-            - Do not invent information not present in the partial answers
-            - If the current answer exists, integrate it with the new partial answers
-            
-            Instructions for completeness determination (IMPORTANT - be conservative):
-            - Set isComplete=true ONLY if you are confident the combined answer comprehensively addresses all aspects of the user's query
-            - Consider: Does the answer provide sufficient detail? Are there obvious gaps?
-            - Err on the side of caution: if unsure, set isComplete=false to allow more information gathering
-            - It's better to process more content than to stop too early with an incomplete answer
-            - If the query asks for multiple pieces of information, ensure all are covered before marking complete
-            
-            Expected output shape:
-            {
-                "answer": "your comprehensive combined answer text",
-                "isComplete": true/false
-            }
-            """.trimIndent()
-        )
-        build()
-    }
-
-    private val combineRunner = InMemoryRunner(combineAgent)
 
     @Serializable
     private data class StreamingAnswerResponse(
@@ -215,43 +142,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             )
         }
 
-        // Use parallel batching if we have more than BATCH_SIZE markdowns
-        return if (input.markdownBatch.size <= BATCH_SIZE) {
-            // Single batch - process directly with current behavior
-            processBatch(input.query, input.currentAnswer, input.markdownBatch)
-        } else {
-            // Multiple batches - process in parallel and combine
-            processInParallelBatches(input.query, input.currentAnswer, input.markdownBatch)
-        }
-    }
-
-    /**
-     * Process multiple batches of markdowns in parallel, then combine the partial answers.
-     */
-    private suspend fun processInParallelBatches(
-        query: String,
-        currentAnswer: String?,
-        markdowns: List<String>
-    ): StreamingAnswerOutput = coroutineScope {
-        val batches = markdowns.chunked(BATCH_SIZE)
-        logger.debug("Processing {} markdowns in {} parallel batches", markdowns.size, batches.size)
-
-        // Process all batches in parallel, each producing a partial answer
-        // Note: We don't pass currentAnswer to individual batches, as they work independently
-        val partialOutputs = batches.mapIndexed { index, batch ->
-            async {
-                logger.debug("Processing batch {} of {} ({} markdowns)", index + 1, batches.size, batch.size)
-                processBatch(query, null, batch)
-            }
-        }.awaitAll()
-
-        // Extract just the answer strings from the partial outputs
-        val partialAnswers = partialOutputs.map { it.updatedAnswer }
-
-        logger.debug("Combining {} partial answers into final answer", partialAnswers.size)
-
-        // Combine all partial answers into a final answer
-        combinePartialAnswers(query, currentAnswer, partialAnswers)
+        return processBatch(input.query, input.currentAnswer, input.markdownBatch)
     }
 
     /**
@@ -274,7 +165,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
                 appendLine(currentAnswer)
                 appendLine()
             }
-            appendLine("New Markdown Batch (${markdowns.size} pages):")
+            appendLine("New Markdown:")
             appendLine(markdownContent)
         }
 
@@ -322,83 +213,6 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             response.answer.length,
             response.isComplete,
             response.reason
-        )
-        
-        return StreamingAnswerOutput(
-            updatedAnswer = response.answer,
-            isComplete = response.isComplete
-        )
-    }
-
-    /**
-     * Combine multiple partial answers into a single coherent answer using the combine agent.
-     */
-    private suspend fun combinePartialAnswers(
-        query: String,
-        currentAnswer: String?,
-        partialAnswers: List<String>
-    ): StreamingAnswerOutput {
-        logger.debug("Combining {} partial answers", partialAnswers.size)
-
-        val userPrompt = buildString {
-            appendLine("Search Query: $query")
-            appendLine()
-            if (currentAnswer != null) {
-                appendLine("Current Answer:")
-                appendLine(currentAnswer)
-                appendLine()
-            }
-            appendLine("Partial Answers to Combine (${partialAnswers.size} answers):")
-            partialAnswers.forEachIndexed { index, partialAnswer ->
-                appendLine()
-                appendLine("=== Partial Answer ${index + 1} ===")
-                appendLine(partialAnswer)
-            }
-        }
-
-        val response = retryLlmCall<StreamingAnswerResponse> {
-            val session = combineRunner
-                .sessionService()
-                .createSession(
-                    "combineAnswersAgent",
-                    "combineAnswersAgent",
-                    null,
-                    null
-                )
-                .await()
-
-            var llmResponse = ""
-
-            val eventsFlow = combineRunner.runAsync(
-                session,
-                Content.fromParts(Part.fromText(userPrompt)),
-                RunConfig.builder().apply {
-                    setStreamingMode(RunConfig.StreamingMode.NONE)
-                    setMaxLlmCalls(1)
-                }.build()
-            ).asFlow()
-
-            eventsFlow.collect { event ->
-                if (event.finalResponse() && event.content().isPresent) {
-                    val content = event.content().get()
-                    if (content.parts().isPresent
-                        && !content.parts().get().isEmpty()
-                        && content.parts().get()[0].text().isPresent
-                    ) {
-                        if (!event.partial().orElse(false)) {
-                            llmResponse = content.parts().get()[0].text().get()
-                        }
-                    }
-                }
-            }
-
-            llmResponse
-        }
-
-        logger.debug(
-            "Combined answer: {} chars, complete: {}",
-            response.answer.length,
-            response.isComplete
         )
         
         return StreamingAnswerOutput(

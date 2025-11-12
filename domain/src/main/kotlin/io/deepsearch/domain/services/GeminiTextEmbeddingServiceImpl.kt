@@ -92,6 +92,10 @@ class GeminiTextEmbeddingServiceImpl(
         val embedding = embeddingsList[0].values().orElseThrow {
             RuntimeException("No values in embedding")
         }
+
+        if (embedding.size != 1536) {
+            throw RuntimeException("Expect 1536 dimensions but got ${embedding.size}")
+        }
         
         // Normalize the embedding for dimensions other than 3072
         // See: https://ai.google.dev/gemini-api/docs/embeddings#quality-for-smaller-dimensions
