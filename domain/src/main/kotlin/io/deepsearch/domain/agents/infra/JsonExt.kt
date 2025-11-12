@@ -27,7 +27,7 @@ inline fun <reified T> Json.decodeFromStringWithCodeBlocks(response: String): T 
 
         if (jsonContent.isNullOrBlank()) {
             throw LlmDeserializationException(
-                "No JSON content found in LLM response",
+                "No JSON content found in LLM response.",
                 IllegalStateException("Response was blank or null")
             )
         }

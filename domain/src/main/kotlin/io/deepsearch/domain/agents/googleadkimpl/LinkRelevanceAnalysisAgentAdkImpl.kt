@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.ext.toSafeUri
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.reactive.asFlow
@@ -289,7 +290,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         }
 
         // Step 9: Extract and normalize all links before converting to text
-        val baseUri = URI(url)
+        val baseUri = url.toSafeUri()
         val normalizedLinks = mutableSetOf<String>()
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href").trim()

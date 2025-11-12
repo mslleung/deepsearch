@@ -126,9 +126,8 @@ class UsageService(
     }
 
     private fun formatDate(instant: Instant): String {
-        // kotlin standard time instant does not allow date operation, so we have to cast to kotlinx datetime instant
-        val kotlinxInstant = kotlinx.datetime.Instant.fromEpochMilliseconds(instant.toEpochMilliseconds())
-        val datetimeInUtc: LocalDateTime = kotlinxInstant.toLocalDateTime(TimeZone.UTC)
+        val instant = Instant.fromEpochMilliseconds(instant.toEpochMilliseconds())
+        val datetimeInUtc: LocalDateTime = instant.toLocalDateTime(TimeZone.UTC)
 
         // Format as YYYY-MM-DD
         return datetimeInUtc.format(LocalDateTime.Format {
@@ -136,7 +135,7 @@ class UsageService(
             char('-')
             monthNumber()
             char('-')
-            dayOfMonth()
+            day()
         })
     }
 }

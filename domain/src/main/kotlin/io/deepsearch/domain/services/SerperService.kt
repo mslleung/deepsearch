@@ -1,18 +1,16 @@
 package io.deepsearch.domain.services
 
 import io.deepsearch.domain.config.SerperConfig
+import io.deepsearch.domain.ext.toSafeUri
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.headers
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
+import io.ktor.client.*
+import io.ktor.client.engine.okhttp.*
+import io.ktor.client.plugins.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
@@ -81,14 +79,14 @@ class SerperService(
             logger.debug("Normalized target URL: {}", normalizedTargetUrl)
             
             // Extract host and path from normalized URL for site: operator
-            val uri = java.net.URI(normalizedTargetUrl)
+            val uri = normalizedTargetUrl.toSafeUri()
             val hostWithPath = buildString {
                 append(uri.host)
                 if (uri.path.isNotEmpty() && uri.path != "/") {
                     append(uri.path)
                 }
             }
-            
+
             // Build search query
             val searchQueryText = "$query $hostWithPath site:$hostWithPath"
             logger.debug("Search query with site operator: {}", searchQueryText)

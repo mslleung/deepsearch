@@ -1,5 +1,6 @@
 package io.deepsearch.domain.services
 
+import io.deepsearch.domain.ext.toSafeUri
 import java.net.IDN
 import java.net.URI
 import java.net.URLDecoder
@@ -108,7 +109,7 @@ class NormalizeUrlService : INormalizeUrlService {
         return try {
             // First, try to convert any IDN domains to ASCII before parsing
             val asciiUrl = convertIdnToAscii(url.trim())
-            val uri = URI(asciiUrl)
+            val uri = asciiUrl.toSafeUri()
             
             // Only process http and https schemes
             val scheme = uri.scheme?.lowercase()
