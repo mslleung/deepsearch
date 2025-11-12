@@ -6,7 +6,6 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
-import io.deepsearch.domain.repositories.IRawApiKeyRepository
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -28,7 +27,6 @@ interface IApiKeyService {
 @OptIn(ExperimentalTime::class)
 class ApiKeyService(
     private val apiKeyRepository: IApiKeyRepository,
-    private val rawApiKeyRepository: IRawApiKeyRepository,
     private val apiKeyConfig: ApiKeyConfig,
     private val apiKeyCryptoService: IApiKeyCryptoService
 ) : IApiKeyService {
@@ -67,15 +65,11 @@ class ApiKeyService(
             rateLimitPerMinute = type.rateLimitPerMinute,
             createdAt = now,
             lastUsedAt = null,
-            usageCount = 0
+            usageCount = 0,
+            encryptedRawKey = if (type == ApiKeyType.PLAYGROUND) rawKey else null
         )
 
         val savedApiKey = apiKeyRepository.save(apiKey)
-        
-        // For playground keys, also store the raw key encrypted
-        if (type == ApiKeyType.PLAYGROUND) {
-            rawApiKeyRepository.save(userId, rawKey)
-        }
         
         return Pair(savedApiKey, rawKey)
     }
@@ -107,11 +101,11 @@ class ApiKeyService(
     }
 
     override suspend fun getOrCreatePlaygroundKey(userId: UserId): String {
-        // Try to find existing raw playground key
-        val existingRawKey = rawApiKeyRepository.findByUserId(userId)
+        // Try to find existing playground key
+        val existingApiKey = apiKeyRepository.findByUserIdAndType(userId, ApiKeyType.PLAYGROUND)
         
-        if (existingRawKey != null) {
-            return existingRawKey
+        if (existingApiKey != null && existingApiKey.encryptedRawKey != null) {
+            return existingApiKey.encryptedRawKey!!
         }
         
         // Create new playground key (first time)

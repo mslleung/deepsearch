@@ -27,7 +27,6 @@ class DatabaseConfigurationService(
     private val postgresConfig: PostgresConfig,
     private val userTable: UserTable,
     private val apiKeyTable: ApiKeyTable,
-    private val rawApiKeyTable: RawApiKeyTable,
     private val apiKeyUsageTable: ApiKeyUsageTable,
     private val userSubscriptionTable: UserSubscriptionTable,
     private val webpageIconCacheTable: WebpageIconCacheTable,
@@ -70,7 +69,6 @@ class DatabaseConfigurationService(
                 SchemaUtils.create(
                     userTable,
                     apiKeyTable,
-                    rawApiKeyTable,
                     apiKeyUsageTable,
                     userSubscriptionTable,
                     webpageIconCacheTable,

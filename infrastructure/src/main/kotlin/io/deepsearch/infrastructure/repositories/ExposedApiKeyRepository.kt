@@ -8,7 +8,6 @@ import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import io.deepsearch.infrastructure.database.ApiKeyTable
 import io.deepsearch.infrastructure.services.ITransactionService
-import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
@@ -40,6 +39,7 @@ class ExposedApiKeyRepository(
             it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
             it[version] = apiKey.version
+            it[encryptedRawKey] = apiKey.encryptedRawKey
         }[apiKeyTable.id]
 
         apiKey.id = ApiKeyId(id)
@@ -114,7 +114,8 @@ class ExposedApiKeyRepository(
             createdAt = Instant.fromEpochMilliseconds(row[apiKeyTable.createdAtEpochMs]),
             lastUsedAt = row[apiKeyTable.lastUsedAtEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
             usageCount = row[apiKeyTable.usageCount],
-            version = row[apiKeyTable.version]
+            version = row[apiKeyTable.version],
+            encryptedRawKey = row[apiKeyTable.encryptedRawKey]
         )
     }
 }
