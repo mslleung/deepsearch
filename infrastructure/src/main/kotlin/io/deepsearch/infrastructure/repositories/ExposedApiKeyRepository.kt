@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
@@ -40,6 +41,7 @@ class ExposedApiKeyRepository(
             it[usageCount] = apiKey.usageCount
             it[version] = apiKey.version
             it[encryptedRawKey] = apiKey.encryptedRawKey
+            it[deletedAtEpochMs] = apiKey.deletedAt?.toEpochMilliseconds()
         }[apiKeyTable.id]
 
         apiKey.id = ApiKeyId(id)
@@ -48,41 +50,45 @@ class ExposedApiKeyRepository(
 
     override suspend fun findById(id: ApiKeyId): ApiKey? = transactionService.withTransaction {
         apiKeyTable.selectAll()
-            .where { apiKeyTable.id eq id.value }
+            .where { (apiKeyTable.id eq id.value) and apiKeyTable.deletedAtEpochMs.isNull() }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
     override suspend fun findByKeyHash(hash: String): ApiKey? = transactionService.withTransaction {
         apiKeyTable.selectAll()
-            .where { apiKeyTable.keyHash eq hash }
+            .where { (apiKeyTable.keyHash eq hash) and apiKeyTable.deletedAtEpochMs.isNull() }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
     override suspend fun findByUserId(userId: UserId): List<ApiKey> = transactionService.withTransaction {
         apiKeyTable.selectAll()
-            .where { apiKeyTable.userId eq userId.value }
+            .where { (apiKeyTable.userId eq userId.value) and apiKeyTable.deletedAtEpochMs.isNull() }
             .map { mapRowToApiKey(it) }
             .toList()
     }
 
     override suspend fun findByUserIdAndType(userId: UserId, type: ApiKeyType): ApiKey? = transactionService.withTransaction {
         apiKeyTable.selectAll()
-            .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) }
+            .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) and apiKeyTable.deletedAtEpochMs.isNull() }
             .map { mapRowToApiKey(it) }
             .singleOrNull()
     }
 
     override suspend fun countByUserIdAndType(userId: UserId, type: ApiKeyType): Long = transactionService.withTransaction {
         apiKeyTable.selectAll()
-            .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) }
+            .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) and apiKeyTable.deletedAtEpochMs.isNull() }
             .count()
             .toLong()
     }
 
     override suspend fun delete(id: ApiKeyId): Boolean = transactionService.withTransaction {
-        apiKeyTable.deleteWhere { apiKeyTable.id eq id.value } > 0
+        // Perform soft delete by setting deletedAtEpochMs
+        val affectedRows = apiKeyTable.update({ apiKeyTable.id eq id.value }) {
+            it[deletedAtEpochMs] = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        }
+        affectedRows > 0
     }
 
     override suspend fun update(apiKey: ApiKey): ApiKey = transactionService.withTransaction {
@@ -91,6 +97,7 @@ class ExposedApiKeyRepository(
         }) {
             it[lastUsedAtEpochMs] = apiKey.lastUsedAt?.toEpochMilliseconds()
             it[usageCount] = apiKey.usageCount
+            it[deletedAtEpochMs] = apiKey.deletedAt?.toEpochMilliseconds()
             it[version] = apiKey.version + 1
         }
         
@@ -100,6 +107,27 @@ class ExposedApiKeyRepository(
         
         apiKey.version += 1
         apiKey
+    }
+
+    // Admin methods for accessing deleted keys
+    override suspend fun findByIdIncludingDeleted(id: ApiKeyId): ApiKey? = transactionService.withTransaction {
+        apiKeyTable.selectAll()
+            .where { apiKeyTable.id eq id.value }
+            .map { mapRowToApiKey(it) }
+            .singleOrNull()
+    }
+
+    override suspend fun findAllIncludingDeleted(): List<ApiKey> = transactionService.withTransaction {
+        apiKeyTable.selectAll()
+            .map { mapRowToApiKey(it) }
+            .toList()
+    }
+
+    override suspend fun findByUserIdIncludingDeleted(userId: UserId): List<ApiKey> = transactionService.withTransaction {
+        apiKeyTable.selectAll()
+            .where { apiKeyTable.userId eq userId.value }
+            .map { mapRowToApiKey(it) }
+            .toList()
     }
 
     private fun mapRowToApiKey(row: ResultRow): ApiKey {
@@ -115,7 +143,8 @@ class ExposedApiKeyRepository(
             lastUsedAt = row[apiKeyTable.lastUsedAtEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
             usageCount = row[apiKeyTable.usageCount],
             version = row[apiKeyTable.version],
-            encryptedRawKey = row[apiKeyTable.encryptedRawKey]
+            encryptedRawKey = row[apiKeyTable.encryptedRawKey],
+            deletedAt = row[apiKeyTable.deletedAtEpochMs]?.let { Instant.fromEpochMilliseconds(it) }
         )
     }
 }

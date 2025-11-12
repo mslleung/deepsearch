@@ -129,10 +129,17 @@ class ApiKeyService(
     override suspend fun deleteApiKey(userId: UserId, keyId: ApiKeyId): Boolean {
         // Verify the key belongs to the user
         val apiKey = apiKeyRepository.findById(keyId)
-        if (apiKey?.userId != userId) {
+        if (apiKey == null) {
+            return false
+        }
+        if (apiKey.userId != userId) {
             throw IllegalAccessError("$keyId does not belong to user $userId")
         }
-        return apiKeyRepository.delete(keyId)
+        
+        // Perform soft delete
+        apiKey.softDelete()
+        apiKeyRepository.update(apiKey)
+        return true
     }
 
     private fun generateRandomString(length: Int): String {

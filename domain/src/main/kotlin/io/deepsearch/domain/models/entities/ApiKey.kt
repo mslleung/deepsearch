@@ -20,7 +20,8 @@ class ApiKey(
     var lastUsedAt: Instant? = null,
     var usageCount: Long = 0,
     var version: Long = 0,
-    var encryptedRawKey: String? = null
+    var encryptedRawKey: String? = null,
+    var deletedAt: Instant? = null
 ) {
     init {
         require(keyHash.isNotBlank()) { "Key hash cannot be blank" }
@@ -41,6 +42,18 @@ class ApiKey(
     fun isExpired(): Boolean {
         // For now, API keys don't expire. Can add expiration logic later
         return false
+    }
+
+    fun softDelete() {
+        deletedAt = Clock.System.now()
+    }
+
+    fun isDeleted(): Boolean {
+        return deletedAt != null
+    }
+
+    fun restore() {
+        deletedAt = null
     }
 }
 

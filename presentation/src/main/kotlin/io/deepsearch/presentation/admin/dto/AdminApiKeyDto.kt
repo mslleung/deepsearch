@@ -15,7 +15,8 @@ data class AdminApiKeyDto(
     val rateLimitPerMinute: Int,
     val createdAt: Long, // epoch millis
     val lastUsedAt: Long?, // epoch millis
-    val usageCount: Long
+    val usageCount: Long,
+    val deletedAt: Long? // epoch millis
 )
 
 @OptIn(ExperimentalTime::class)
@@ -29,7 +30,8 @@ fun ApiKey.toAdminDto(): AdminApiKeyDto {
         rateLimitPerMinute = this.rateLimitPerMinute,
         createdAt = this.createdAt.toEpochMilliseconds(),
         lastUsedAt = this.lastUsedAt?.toEpochMilliseconds(),
-        usageCount = this.usageCount
+        usageCount = this.usageCount,
+        deletedAt = this.deletedAt?.toEpochMilliseconds()
     )
 }
 

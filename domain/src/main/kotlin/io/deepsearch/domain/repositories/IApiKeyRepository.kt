@@ -14,5 +14,10 @@ interface IApiKeyRepository {
     suspend fun countByUserIdAndType(userId: UserId, type: ApiKeyType): Long
     suspend fun delete(id: ApiKeyId): Boolean
     suspend fun update(apiKey: ApiKey): ApiKey
+    
+    // Admin methods for accessing deleted keys
+    suspend fun findByIdIncludingDeleted(id: ApiKeyId): ApiKey?
+    suspend fun findAllIncludingDeleted(): List<ApiKey>
+    suspend fun findByUserIdIncludingDeleted(userId: UserId): List<ApiKey>
 }
 

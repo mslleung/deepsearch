@@ -21,15 +21,23 @@ class AdminApiKeyController(
     suspend fun getAllApiKeys(call: ApplicationCall) {
         try {
             val userId = call.request.queryParameters["userId"]?.toIntOrNull()
+            val includeDeleted = call.request.queryParameters["includeDeleted"]?.toBoolean() ?: false
             
             val apiKeys = if (userId != null) {
-                apiKeyRepository.findByUserId(UserId(userId))
+                if (includeDeleted) {
+                    apiKeyRepository.findByUserIdIncludingDeleted(UserId(userId))
+                } else {
+                    apiKeyRepository.findByUserId(UserId(userId))
+                }
             } else {
                 // Get all API keys for all users
-                // Since there's no findAll method, we'll need to iterate through users
-                val users = userRepository.findAll()
-                users.flatMap { user ->
-                    apiKeyRepository.findByUserId(user.id!!)
+                if (includeDeleted) {
+                    apiKeyRepository.findAllIncludingDeleted()
+                } else {
+                    val users = userRepository.findAll()
+                    users.flatMap { user ->
+                        apiKeyRepository.findByUserId(user.id!!)
+                    }
                 }
             }
             
@@ -48,7 +56,8 @@ class AdminApiKeyController(
                 return
             }
 
-            val apiKey = apiKeyService.getApiKeyById(ApiKeyId(keyId))
+            // Admins can view deleted keys
+            val apiKey = apiKeyRepository.findByIdIncludingDeleted(ApiKeyId(keyId))
             if (apiKey == null) {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "API key not found"))
                 return
@@ -68,18 +77,49 @@ class AdminApiKeyController(
                 return
             }
 
-            val apiKey = apiKeyService.getApiKeyById(ApiKeyId(keyId))
+            val apiKey = apiKeyRepository.findByIdIncludingDeleted(ApiKeyId(keyId))
             if (apiKey == null) {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "API key not found"))
                 return
             }
 
-            val deleted = apiKeyRepository.delete(ApiKeyId(keyId))
-            if (deleted) {
-                call.respond(HttpStatusCode.OK, mapOf("message" to "API key revoked successfully"))
-            } else {
-                call.respond(HttpStatusCode.NotFound, mapOf("error" to "API key not found"))
+            if (apiKey.isDeleted()) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "API key is already deleted"))
+                return
             }
+
+            // Perform soft delete
+            apiKey.softDelete()
+            apiKeyRepository.update(apiKey)
+            call.respond(HttpStatusCode.OK, mapOf("message" to "API key revoked successfully"))
+        } catch (e: Exception) {
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        }
+    }
+
+    suspend fun restoreApiKey(call: ApplicationCall) {
+        try {
+            val keyId = call.parameters["id"]?.toIntOrNull()
+            if (keyId == null) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid API key ID"))
+                return
+            }
+
+            val apiKey = apiKeyRepository.findByIdIncludingDeleted(ApiKeyId(keyId))
+            if (apiKey == null) {
+                call.respond(HttpStatusCode.NotFound, mapOf("error" to "API key not found"))
+                return
+            }
+
+            if (!apiKey.isDeleted()) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "API key is not deleted"))
+                return
+            }
+
+            // Restore the API key
+            apiKey.restore()
+            apiKeyRepository.update(apiKey)
+            call.respond(HttpStatusCode.OK, mapOf("message" to "API key restored successfully"))
         } catch (e: Exception) {
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }

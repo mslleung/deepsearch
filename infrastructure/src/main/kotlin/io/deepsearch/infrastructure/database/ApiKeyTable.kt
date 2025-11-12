@@ -18,6 +18,7 @@ class ApiKeyTable(
     val lastUsedAtEpochMs = long("last_used_at_epoch_ms").nullable()
     val usageCount = long("usage_count").default(0)
     val version = long("version").default(0)
+    val deletedAtEpochMs = long("deleted_at_epoch_ms").nullable()
     
     // Store encrypted raw API key (encryption handled by transform)
     // Only populated for PLAYGROUND keys

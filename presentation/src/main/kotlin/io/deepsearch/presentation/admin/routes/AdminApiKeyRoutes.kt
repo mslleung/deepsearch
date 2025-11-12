@@ -23,6 +23,11 @@ fun Application.configureAdminApiKeyRoutes() {
                 controller.revokeApiKey(call)
             }
 
+            post("/{id}/restore") {
+                val controller = call.scope.get<AdminApiKeyController>()
+                controller.restoreApiKey(call)
+            }
+
             get("/{id}/usage") {
                 val controller = call.scope.get<AdminApiKeyController>()
                 controller.getApiKeyUsageStats(call)
