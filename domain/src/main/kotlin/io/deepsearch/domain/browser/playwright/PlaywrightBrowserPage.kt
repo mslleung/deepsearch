@@ -55,6 +55,7 @@ class PlaywrightBrowserPage(
 
     /**
      * Navigate to a new URL and wait for default load state.
+     * Enhanced with Cloudflare challenge handling and anti-bot measures.
      */
     override suspend fun navigate(url: String) {
         logger.debug("Navigate to {}", url)
@@ -62,8 +63,16 @@ class PlaywrightBrowserPage(
             try {
                 val navigationTime = measureTimeMillis {
                     val response = page.navigate(url)
-                    // Ensure baseline document readiness before any parsing calls
-                    page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+                    
+                    // Wait for network idle to handle Cloudflare challenges and dynamic content
+                    // This gives time for anti-bot challenges to complete
+                    try {
+                        page.waitForLoadState(LoadState.NETWORKIDLE, Page.WaitForLoadStateOptions().setTimeout(30000.0))
+                    } catch (e: Exception) {
+                        // If network idle times out, fall back to DOM content loaded
+                        logger.debug("Network idle timeout, falling back to DOM content loaded")
+                        page.waitForLoadState(LoadState.DOMCONTENTLOADED)
+                    }
                     
                     // Check HTTP status code
                     response?.let {

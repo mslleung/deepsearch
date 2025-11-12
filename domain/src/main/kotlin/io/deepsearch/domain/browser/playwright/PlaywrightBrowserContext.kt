@@ -16,8 +16,19 @@ class PlaywrightBrowserContext(
     private val apiMutex: Mutex
 ) : IBrowserContext {
 
+    private val stealthScript: String by lazy {
+        val stream = this::class.java.classLoader.getResourceAsStream("out/stealth.js")
+            ?: throw IllegalStateException("Resource not found: out/stealth.js")
+        stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+    }
+
     override suspend fun newPage(): IBrowserPage {
-        val page = apiMutex.withLock { context.newPage() }
+        val page = apiMutex.withLock { 
+            val p = context.newPage()
+            // Inject stealth script before any page navigation
+            p.addInitScript(stealthScript)
+            p
+        }
         return PlaywrightBrowserPage(page, apiMutex)
     }
     
