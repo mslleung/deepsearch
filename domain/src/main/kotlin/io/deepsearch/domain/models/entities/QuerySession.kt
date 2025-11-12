@@ -58,52 +58,6 @@ class QuerySession(
         this.answer = answer
         finish(finishReason)
     }
-
-    companion object {
-        /**
-         * Validate if a state transition is allowed.
-         */
-        private fun isValidTransition(from: QuerySessionState, to: QuerySessionState): Boolean {
-            // FAILED can be reached from any state
-            if (to == QuerySessionState.FAILED) return true
-
-            // Same state is always valid (no-op)
-            if (from == to) return true
-
-            return when (from) {
-                QuerySessionState.EXPANDING_QUERY ->
-                    to == QuerySessionState.LINK_TRAVERSAL
-
-                QuerySessionState.LINK_TRAVERSAL ->
-                    to == QuerySessionState.FINISHED
-
-                QuerySessionState.FINISHED, QuerySessionState.FAILED ->
-                    false // Terminal states - no transitions allowed
-            }
-        }
-    }
-}
-
-/**
- * State machine for query session lifecycle.
- *
- * Valid transitions:
- * - EXPANDING_QUERY → LINK_TRAVERSAL
- * - LINK_TRAVERSAL → FINISHED
- * - Any state → FAILED
- */
-enum class QuerySessionState {
-    /** Query is being expanded into sub-queries */
-    EXPANDING_QUERY,
-
-    /** Link traversal and answer generation happening concurrently */
-    LINK_TRAVERSAL,
-
-    /** Session completed successfully */
-    FINISHED,
-
-    /** Session failed due to error */
-    FAILED
 }
 
 /**
@@ -116,13 +70,3 @@ enum class FinishReason {
     LINKS_EXHAUSTED,
     EXECUTION_TIME_EXCEEDED, // hard coded fallback timeout
 }
-
-/**
- * Exception thrown when an invalid state transition is attempted.
- */
-class InvalidStateTransitionException(
-    val sessionId: String,
-    val fromState: QuerySessionState,
-    val toState: QuerySessionState
-) : IllegalStateException("Invalid state transition for session [$sessionId]: $fromState → $toState")
-

@@ -1,7 +1,6 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.QuerySession
-import io.deepsearch.domain.models.entities.QuerySessionState
 import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.repositories.IQuerySessionRepository
@@ -15,7 +14,7 @@ import kotlin.time.Duration.Companion.milliseconds
  * Business rules live inside the `QuerySession` entity.
  */
 interface IQuerySessionService {
-    /** Create a new query session in EXPANDING_QUERY state. */
+    /** Create a new query session in LINK_TRAVERSAL state. */
     suspend fun createSession(query: String, url: String): QuerySession
 
     /**
@@ -72,11 +71,10 @@ class QuerySessionService(
         val session = QuerySession(sessionId, query, url)
         val saved = querySessionRepository.save(session)
         logger.info(
-            "[{}] Session created: query='{}', url='{}', state={}",
+            "[{}] Session created: query='{}', url='{}'",
             sessionId,
             query,
             url,
-            QuerySessionState.EXPANDING_QUERY
         )
         return saved
     }

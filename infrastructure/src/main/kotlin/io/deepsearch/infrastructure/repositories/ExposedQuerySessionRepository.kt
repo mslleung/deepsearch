@@ -3,12 +3,10 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.FinishReason
-import io.deepsearch.domain.models.entities.QuerySessionState
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.infrastructure.database.QuerySessionTable
 import io.deepsearch.infrastructure.services.ITransactionService
-import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
