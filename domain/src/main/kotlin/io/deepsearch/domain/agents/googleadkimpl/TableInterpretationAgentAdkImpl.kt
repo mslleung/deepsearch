@@ -12,7 +12,7 @@ import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.agents.TableInterpretationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -93,50 +93,52 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         logger.debug("Interpreting table to markdown (screenshot: {} bytes, html length {})", 
             input.screenshotBytes?.size ?: "none", input.html.length)
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
+        val response = retryLlmCall<TableInterpretationResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName,
+                    null,
+                    null
+                )
+                .await()
 
-        var llmResponse = ""
+            var llmResponse = ""
 
-        val parts = buildList {
-            if (input.screenshotBytes != null && input.mimetype != null) {
-                add(Part.fromBytes(input.screenshotBytes, input.mimetype.value))
+            val parts = buildList {
+                if (input.screenshotBytes != null && input.mimetype != null) {
+                    add(Part.fromBytes(input.screenshotBytes, input.mimetype.value))
+                }
+                add(Part.fromText("Auxiliary context: " + input.auxiliaryInfo))
+                add(Part.fromText(input.html))
             }
-            add(Part.fromText("Auxiliary context: " + input.auxiliaryInfo))
-            add(Part.fromText(input.html))
-        }
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(*parts.toTypedArray()),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(*parts.toTypedArray()),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
 
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<TableInterpretationResponse>(llmResponse)
+            llmResponse
+        }
 
         val markdown = response.markdown.trim()
         logger.debug("Table interpreted to markdown ({} chars)", markdown.length)

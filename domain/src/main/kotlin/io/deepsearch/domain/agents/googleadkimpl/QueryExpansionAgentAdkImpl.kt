@@ -11,7 +11,7 @@ import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.QueryExpansionAgentOutput
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -125,42 +125,44 @@ class QueryExpansionAgentAdkImpl : IQueryExpansionAgent {
     override suspend fun generate(input: io.deepsearch.domain.agents.QueryExpansionAgentInput): io.deepsearch.domain.agents.QueryExpansionAgentOutput {
         logger.debug("Expand query: {}", input.searchQuery)
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName, // placeholder, we will have userid later
-                null,
-                null
-            )
-            .await()
+        val response = retryLlmCall<QueryExpansionResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName, // placeholder, we will have userid later
+                    null,
+                    null
+                )
+                .await()
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(Part.fromText(input.searchQuery.query)),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(Part.fromText(input.searchQuery.query)),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
 
-        var llmResponse = ""
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                logger.debug("Received final model response (partial={})", event.partial().orElse(false))
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            var llmResponse = ""
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    logger.debug("Received final model response (partial={})", event.partial().orElse(false))
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<QueryExpansionResponse>(llmResponse)
+            llmResponse
+        }
 
         val expandedQueries = response.queries.map { SearchQuery("${it.query} - ${it.rationale}", input.searchQuery.url) }
 

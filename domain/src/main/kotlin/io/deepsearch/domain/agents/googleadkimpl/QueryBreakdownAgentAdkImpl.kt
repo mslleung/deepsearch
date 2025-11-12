@@ -12,7 +12,7 @@ import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.QueryBreakdownAgentInput
 import io.deepsearch.domain.agents.QueryBreakdownAgentOutput
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -129,42 +129,44 @@ class QueryBreakdownAgentAdkImpl : IQueryBreakdownAgent {
     override suspend fun generate(input: QueryBreakdownAgentInput): QueryBreakdownAgentOutput {
         logger.debug("Breaking down query: {}", input.searchQuery)
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName, // placeholder, we will have userid later
-                null,
-                null
-            )
-            .await()
+        val response = retryLlmCall<QueryBreakdownResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName, // placeholder, we will have userid later
+                    null,
+                    null
+                )
+                .await()
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(Part.fromText(input.searchQuery.query)),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(Part.fromText(input.searchQuery.query)),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
 
-        var llmResponse = ""
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                logger.debug("Received final model response (partial={})", event.partial().orElse(false))
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            var llmResponse = ""
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    logger.debug("Received final model response (partial={})", event.partial().orElse(false))
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<QueryBreakdownResponse>(llmResponse)
+            llmResponse
+        }
 
         logger.debug("Breakdown points: {}", response.requirements)
 

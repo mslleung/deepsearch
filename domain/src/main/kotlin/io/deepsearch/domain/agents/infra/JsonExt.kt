@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents.infra
 import io.deepsearch.domain.exceptions.LlmDeserializationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 
 /**
  * Extension functions for JSON extraction from LLM responses that may contain code blocks.
@@ -41,4 +42,37 @@ inline fun <reified T> Json.decodeFromStringWithCodeBlocks(response: String): T 
     } catch (e: Exception) {
         throw LlmDeserializationException("Unexpected error deserializing LLM response: ${e.message}", e)
     }
+}
+
+/**
+ * Retries an LLM call up to [maxRetries] times if deserialization fails.
+ * 
+ * @param maxRetries Maximum number of attempts (default 3)
+ * @param llmCall Lambda that performs the LLM call and returns the response string
+ * @return Deserialized response of type T
+ * @throws LlmDeserializationException if all retries fail
+ */
+suspend inline fun <reified T> retryLlmCall(
+    maxRetries: Int = 3,
+    crossinline llmCall: suspend () -> String
+): T {
+    val logger = LoggerFactory.getLogger("io.deepsearch.domain.agents.infra.JsonExt")
+
+    var lastException: LlmDeserializationException? = null
+    
+    repeat(maxRetries) { attempt ->
+        try {
+            val response = llmCall()
+            return Json.decodeFromStringWithCodeBlocks<T>(response)
+        } catch (e: LlmDeserializationException) {
+            lastException = e
+            if (attempt < maxRetries - 1) {
+                logger.warn("LLM deserialization failed on attempt ${attempt + 1}/$maxRetries: ${e.message}. Retrying...")
+            } else {
+                logger.error("LLM deserialization failed after $maxRetries attempts: ${e.message}")
+            }
+        }
+    }
+    
+    throw lastException!!
 }

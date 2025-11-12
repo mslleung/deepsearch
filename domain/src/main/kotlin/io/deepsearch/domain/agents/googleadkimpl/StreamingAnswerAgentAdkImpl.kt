@@ -12,7 +12,7 @@ import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.StreamingAnswerInput
 import io.deepsearch.domain.agents.StreamingAnswerOutput
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -97,9 +97,8 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             - Use markdown styling as applicable, such as headings/list etc.
             - The answer should be in the same language as the input query.
             
-            Instructions for completeness determination (IMPORTANT - be conservative):
-            - Set isComplete=true ONLY if you are confident the answer comprehensively addresses all aspects of the user's query
-            - Consider: Does the answer provide sufficient detail? Are there obvious gaps?
+            Completeness determination:
+            - The answer is considered complete if it address All concerns and aspects of the query
             - Err on the side of caution: if unsure, set isComplete=false to allow more information gathering
             - It's better to process more content than to stop too early with an incomplete answer
             - If the query asks for multiple pieces of information, ensure all are covered before marking complete
@@ -265,18 +264,6 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
     ): StreamingAnswerOutput {
         logger.debug("Processing batch of {} markdowns", markdowns.size)
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
-
-        var llmResponse = ""
-
         val markdownContent = markdowns.joinToString("\n\n---\n\n")
         
         val userPrompt = buildString {
@@ -291,30 +278,44 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             appendLine(markdownContent)
         }
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(Part.fromText(userPrompt)),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+        val response = retryLlmCall<StreamingAnswerResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName,
+                    null,
+                    null
+                )
+                .await()
 
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            var llmResponse = ""
+
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(Part.fromText(userPrompt)),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
+
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<StreamingAnswerResponse>(llmResponse)
+            llmResponse
+        }
 
         logger.debug(
             "Batch processed: answer {} chars, complete: {}, reason: {}",
@@ -339,18 +340,6 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
     ): StreamingAnswerOutput {
         logger.debug("Combining {} partial answers", partialAnswers.size)
 
-        val session = combineRunner
-            .sessionService()
-            .createSession(
-                "combineAnswersAgent",
-                "combineAnswersAgent",
-                null,
-                null
-            )
-            .await()
-
-        var llmResponse = ""
-
         val userPrompt = buildString {
             appendLine("Search Query: $query")
             appendLine()
@@ -367,30 +356,44 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             }
         }
 
-        val eventsFlow = combineRunner.runAsync(
-            session,
-            Content.fromParts(Part.fromText(userPrompt)),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+        val response = retryLlmCall<StreamingAnswerResponse> {
+            val session = combineRunner
+                .sessionService()
+                .createSession(
+                    "combineAnswersAgent",
+                    "combineAnswersAgent",
+                    null,
+                    null
+                )
+                .await()
 
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            var llmResponse = ""
+
+            val eventsFlow = combineRunner.runAsync(
+                session,
+                Content.fromParts(Part.fromText(userPrompt)),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
+
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<StreamingAnswerResponse>(llmResponse)
+            llmResponse
+        }
 
         logger.debug(
             "Combined answer: {} chars, complete: {}",

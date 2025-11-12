@@ -12,7 +12,7 @@ import io.deepsearch.domain.agents.IMultiIconInterpreterAgent
 import io.deepsearch.domain.agents.MultiIconInterpreterInput
 import io.deepsearch.domain.agents.MultiIconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -192,18 +192,6 @@ class MultiIconInterpreterAgentAdkImpl : IMultiIconInterpreterAgent {
             )
         }
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
-
-        var llmResponse = ""
-
         // Build content with all images
         val contentParts = mutableListOf<Part>()
         
@@ -216,30 +204,44 @@ class MultiIconInterpreterAgentAdkImpl : IMultiIconInterpreterAgent {
             contentParts.add(Part.fromBytes(icon.bytes, icon.mimeType.value))
         }
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(*(contentParts.toTypedArray())),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+        val response = retryLlmCall<MultiIconInterpretationResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName,
+                    null,
+                    null
+                )
+                .await()
 
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            var llmResponse = ""
+
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(*(contentParts.toTypedArray())),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
+
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<MultiIconInterpretationResponse>(llmResponse)
+            llmResponse
+        }
 
         // Format the labels from LLM response
         val formattedLabels = response.icons.map { iconResponse ->

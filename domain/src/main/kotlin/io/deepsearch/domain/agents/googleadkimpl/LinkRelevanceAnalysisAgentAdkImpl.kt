@@ -11,7 +11,7 @@ import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisOutput
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.ext.toSafeUri
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
@@ -102,44 +102,46 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             appendLine(cleanedHtml)
         }
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
+        val links = try {
+            val response = retryLlmCall<LinkAnalysisResponse> {
+                val session = runner
+                    .sessionService()
+                    .createSession(
+                        this::class.simpleName,
+                        this::class.simpleName,
+                        null,
+                        null
+                    )
+                    .await()
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(Part.fromText(userPrompt)),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+                val eventsFlow = runner.runAsync(
+                    session,
+                    Content.fromParts(Part.fromText(userPrompt)),
+                    RunConfig.builder().apply {
+                        setStreamingMode(RunConfig.StreamingMode.NONE)
+                        setMaxLlmCalls(1)
+                    }.build()
+                ).asFlow()
 
-        var responseText = ""
-        eventsFlow.collect { event ->
-            if (event.finalResponse()) {
-                val contentOpt = event.content()
-                if (contentOpt.isPresent) {
-                    val content = contentOpt.get()
-                    val partsOpt = content.parts()
-                    if (partsOpt.isPresent && partsOpt.get().isNotEmpty()) {
-                        val textOpt = partsOpt.get()[0].text()
-                        if (textOpt.isPresent) {
-                            responseText = textOpt.get()
+                var responseText = ""
+                eventsFlow.collect { event ->
+                    if (event.finalResponse()) {
+                        val contentOpt = event.content()
+                        if (contentOpt.isPresent) {
+                            val content = contentOpt.get()
+                            val partsOpt = content.parts()
+                            if (partsOpt.isPresent && partsOpt.get().isNotEmpty()) {
+                                val textOpt = partsOpt.get()[0].text()
+                                if (textOpt.isPresent) {
+                                    responseText = textOpt.get()
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
 
-        val links = try {
-            val response = Json.decodeFromStringWithCodeBlocks<LinkAnalysisResponse>(responseText)
+                responseText
+            }
 
             // Validate that all returned links exist in the extracted links to prevent hallucinations
             val validatedLinks = response.links.distinctBy { it.url }.mapNotNull { linkJson ->
@@ -163,7 +165,6 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
             validatedLinks
         } catch (e: Exception) {
             logger.warn("Failed to parse link analysis response: {}", e.message)
-            logger.debug("Response text: {}", responseText)
             emptyList()
         }
 

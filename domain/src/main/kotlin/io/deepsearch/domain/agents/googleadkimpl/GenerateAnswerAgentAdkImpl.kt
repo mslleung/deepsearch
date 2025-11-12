@@ -12,7 +12,7 @@ import io.deepsearch.domain.agents.GenerateAnswerInput
 import io.deepsearch.domain.agents.GenerateAnswerOutput
 import io.deepsearch.domain.agents.IGenerateAnswerAgent
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -94,18 +94,6 @@ class GenerateAnswerAgentAdkImpl : IGenerateAnswerAgent {
             input.markdowns.length
         )
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
-
-        var llmResponse = ""
-
         val userPrompt = """
             Search Query: ${input.query}
             
@@ -113,30 +101,44 @@ class GenerateAnswerAgentAdkImpl : IGenerateAnswerAgent {
             ${input.markdowns}
         """.trimIndent()
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(Part.fromText(userPrompt)),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+        val response = retryLlmCall<GenerateAnswerResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName,
+                    null,
+                    null
+                )
+                .await()
 
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            var llmResponse = ""
+
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(Part.fromText(userPrompt)),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
+
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<GenerateAnswerResponse>(llmResponse)
+            llmResponse
+        }
 
         logger.debug("Generated answer: {} chars", response.answer.length)
         return GenerateAnswerOutput(answer = response.answer)

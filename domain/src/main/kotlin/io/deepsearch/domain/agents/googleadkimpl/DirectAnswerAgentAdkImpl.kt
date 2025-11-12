@@ -12,7 +12,7 @@ import io.deepsearch.domain.agents.DirectAnswerInput
 import io.deepsearch.domain.agents.DirectAnswerOutput
 import io.deepsearch.domain.agents.IDirectAnswerAgent
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -95,53 +95,55 @@ class DirectAnswerAgentAdkImpl : IDirectAnswerAgent {
         logger.debug("Generating direct answer for query: '{}' on URL: {}", 
             input.searchQuery.query, input.searchQuery.url)
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
-
-        var llmResponse = ""
-
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(
-                Part.fromBytes(input.screenshotBytes, "image/png"),
-                Part.fromText(
-                    """
-                    Search Query: ${input.searchQuery.query}
-                    URL: ${input.searchQuery.url}
-                    
-                    HTML Content:
-                    ${input.html}
-                    """.trimIndent()
+        val response = retryLlmCall<DirectAnswerResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName,
+                    null,
+                    null
                 )
-            ),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+                .await()
 
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            var llmResponse = ""
+
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(
+                    Part.fromBytes(input.screenshotBytes, "image/png"),
+                    Part.fromText(
+                        """
+                        Search Query: ${input.searchQuery.query}
+                        URL: ${input.searchQuery.url}
+                        
+                        HTML Content:
+                        ${input.html}
+                        """.trimIndent()
+                    )
+                ),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
+
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<DirectAnswerResponse>(llmResponse)
+            llmResponse
+        }
 
         logger.debug("Direct answer generated successfully")
         return DirectAnswerOutput(answer = response.answer)

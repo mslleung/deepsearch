@@ -10,7 +10,7 @@ import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -87,45 +87,47 @@ class BlinkTestAgentAdkImpl : IBlinkTestAgent {
             appendLine(input.searchQuery.query)
         }
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
+        val response = retryLlmCall<BlinkResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName,
+                    null,
+                    null
+                )
+                .await()
 
-        var llmResponse = ""
+            var llmResponse = ""
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(
-                Part.fromBytes(input.screenshotBytes, "image/jpeg"),
-                Part.fromText(userPrompt)
-            ),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(
+                    Part.fromBytes(input.screenshotBytes, "image/jpeg"),
+                    Part.fromText(userPrompt)
+                ),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
 
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<BlinkResponse>(llmResponse)
+            llmResponse
+        }
         val decision = when (response.decision.uppercase()) {
             "RELEVANT" -> IBlinkTestAgent.Decision.RELEVANT
             "IRRELEVANT" -> IBlinkTestAgent.Decision.IRRELEVANT

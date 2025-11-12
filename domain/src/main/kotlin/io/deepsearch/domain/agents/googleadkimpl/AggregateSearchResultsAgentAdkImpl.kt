@@ -12,7 +12,7 @@ import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.AggregateSearchResultsInput
 import io.deepsearch.domain.agents.AggregateSearchResultsOutput
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -115,42 +115,44 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
             appendLine(Json.encodeToString(jsonResults))
         }
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
+        val response = retryLlmCall<AggregatedResultResponse> {
+            val session = runner
+                .sessionService()
+                .createSession(
+                    this::class.simpleName,
+                    this::class.simpleName,
+                    null,
+                    null
+                )
+                .await()
 
-        var llmResponse = ""
+            var llmResponse = ""
 
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(Part.fromText(userPrompt)),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
+            val eventsFlow = runner.runAsync(
+                session,
+                Content.fromParts(Part.fromText(userPrompt)),
+                RunConfig.builder().apply {
+                    setStreamingMode(RunConfig.StreamingMode.NONE)
+                    setMaxLlmCalls(1)
+                }.build()
+            ).asFlow()
 
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
+            eventsFlow.collect { event ->
+                if (event.finalResponse() && event.content().isPresent) {
+                    val content = event.content().get()
+                    if (content.parts().isPresent
+                        && !content.parts().get().isEmpty()
+                        && content.parts().get()[0].text().isPresent
+                    ) {
+                        if (!event.partial().orElse(false)) {
+                            llmResponse = content.parts().get()[0].text().get()
+                        }
                     }
                 }
             }
-        }
 
-        val response = Json.decodeFromStringWithCodeBlocks<AggregatedResultResponse>(llmResponse)
+            llmResponse
+        }
 
         // Collect all unique sources from input search results
         val allSources = input.searchResults.flatMap { it.sources }.distinct()

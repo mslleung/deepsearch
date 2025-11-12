@@ -14,7 +14,7 @@ import io.deepsearch.domain.agents.IPdfToMarkdownAgent
 import io.deepsearch.domain.agents.PdfToMarkdownInput
 import io.deepsearch.domain.agents.PdfToMarkdownOutput
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.agents.infra.decodeFromStringWithCodeBlocks
+import io.deepsearch.domain.agents.infra.retryLlmCall
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -116,18 +116,6 @@ class PdfToMarkdownAgentAdkImpl : IPdfToMarkdownAgent {
             "PDF size ($pdfSizeBytes bytes) exceeds maximum allowed size ($FILE_API_MAX_SIZE_BYTES bytes / 50MB)"
         }
 
-        val session = runner
-            .sessionService()
-            .createSession(
-                this::class.simpleName,
-                this::class.simpleName,
-                null,
-                null
-            )
-            .await()
-
-        var llmResponse = ""
-
         // Create content with PDF - use File API for large files, inline for small files
         val pdfPart = if (pdfSizeBytes > INLINE_DATA_MAX_SIZE_BYTES) {
             logger.debug("PDF size exceeds 20MB, using File API for upload")
@@ -138,34 +126,48 @@ class PdfToMarkdownAgentAdkImpl : IPdfToMarkdownAgent {
         }
         
         val textPart = Part.fromText("Convert this PDF document to markdown format, preserving structure, headings, tables, and formatting.")
-        
-        val eventsFlow = runner.runAsync(
-            session,
-            Content.fromParts(pdfPart, textPart),
-            RunConfig.builder().apply {
-                setStreamingMode(RunConfig.StreamingMode.NONE)
-                setMaxLlmCalls(1)
-            }.build()
-        ).asFlow()
-
-        eventsFlow.collect { event ->
-            if (event.finalResponse() && event.content().isPresent) {
-                val content = event.content().get()
-                if (content.parts().isPresent
-                    && !content.parts().get().isEmpty()
-                    && content.parts().get()[0].text().isPresent
-                ) {
-                    if (!event.partial().orElse(false)) {
-                        llmResponse = content.parts().get()[0].text().get()
-                    }
-                }
-            }
-        }
 
         val response = try {
-            Json.decodeFromStringWithCodeBlocks<PdfToMarkdownResponse>(llmResponse)
+            retryLlmCall<PdfToMarkdownResponse> {
+                val session = runner
+                    .sessionService()
+                    .createSession(
+                        this::class.simpleName,
+                        this::class.simpleName,
+                        null,
+                        null
+                    )
+                    .await()
+
+                var llmResponse = ""
+                
+                val eventsFlow = runner.runAsync(
+                    session,
+                    Content.fromParts(pdfPart, textPart),
+                    RunConfig.builder().apply {
+                        setStreamingMode(RunConfig.StreamingMode.NONE)
+                        setMaxLlmCalls(1)
+                    }.build()
+                ).asFlow()
+
+                eventsFlow.collect { event ->
+                    if (event.finalResponse() && event.content().isPresent) {
+                        val content = event.content().get()
+                        if (content.parts().isPresent
+                            && !content.parts().get().isEmpty()
+                            && content.parts().get()[0].text().isPresent
+                        ) {
+                            if (!event.partial().orElse(false)) {
+                                llmResponse = content.parts().get()[0].text().get()
+                            }
+                        }
+                    }
+                }
+
+                llmResponse
+            }
         } catch (e: Exception) {
-            logger.error("Failed to parse PDF markdown response: {}", e.message)
+            logger.error("Failed to parse PDF markdown response after retries: {}", e.message)
             // Return empty markdown on parsing failure
             PdfToMarkdownResponse(markdown = "")
         }
