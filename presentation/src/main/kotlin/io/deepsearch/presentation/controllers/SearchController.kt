@@ -54,7 +54,7 @@ class SearchController(
                     HttpStatusCode.TooManyRequests,
                     mapOf(
                         "error" to "Rate limit exceeded",
-                        "limit" to apiKey.rateLimitPerMinute,
+                        "limit" to apiKey.rateLimitPerMinute.toString(),
                         "message" to "You have exceeded ${apiKey.rateLimitPerMinute} requests per minute"
                     )
                 )

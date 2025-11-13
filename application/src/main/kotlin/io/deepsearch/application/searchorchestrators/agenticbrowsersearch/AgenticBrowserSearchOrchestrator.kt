@@ -70,7 +70,13 @@ class AgenticBrowserSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long?, apiKeyId: ApiKeyId): SearchResult =
+    override suspend fun execute(
+        searchQuery: SearchQuery,
+        maxUrls: Int?,
+        searchDurationSeconds: Int?,
+        cacheExpiryMs: Long?,
+        apiKeyId: ApiKeyId
+    ): SearchResult =
         withContext(dispatchers.io) {
             val result: SearchResult
             val executionTime = measureTimeMillis {
@@ -193,9 +199,19 @@ class AgenticBrowserSearchOrchestrator(
                         .filter { answerAccumulator -> answerAccumulator.isComplete }
                         .take(1)
                         .onEach { completedAnswerAccumulator -> // should only be one emission
-                            finishQuerySession(sessionId, searchQuery, completedAnswerAccumulator, budget, resultDeferred)
+                            finishQuerySession(
+                                sessionId,
+                                searchQuery,
+                                completedAnswerAccumulator,
+                                budget,
+                                resultDeferred
+                            )
                         }
                         .onCompletion { // answer did not complete, but the upstream flow completed, return our incomplete answer
+                            if (answerAccumulator.isComplete) {
+                                // already called the early exit in the onEach above
+                                return@onCompletion
+                            }
                             finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, resultDeferred)
                         }
                         .single()
@@ -241,7 +257,6 @@ class AgenticBrowserSearchOrchestrator(
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
 
                 urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs)
-                    .cancellable()
                     .filter { link ->
                         val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
@@ -336,7 +351,6 @@ class AgenticBrowserSearchOrchestrator(
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs)
-                        .cancellable()
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> {
@@ -562,7 +576,6 @@ class AgenticBrowserSearchOrchestrator(
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs)
-                        .cancellable()
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> {
@@ -842,7 +855,7 @@ class AgenticBrowserSearchOrchestrator(
         val validWebpages = similarWebpages.filter { webpage ->
             !webpage.markdown.isNullOrBlank() && !webpage.html.isNullOrBlank()
         }
-        logger.debug("[{}] Vector search: {} valid webpages after filtering", sessionId, validWebpages.size)
+        logger.debug("[{}] Hybrid search: {} valid webpages after filtering", sessionId, validWebpages.size)
 
         seenUrls.addAll(validWebpages.map { it.url })
 
@@ -858,7 +871,7 @@ class AgenticBrowserSearchOrchestrator(
                             url = webpage.url
                         )
                         logger.debug(
-                            "[{}] Vector search: Discovered {} links from cached page {}",
+                            "[{}] Hybrid search: Discovered {} links from cached page {}",
                             sessionId,
                             discoveredLinks.size,
                             webpage.url
@@ -873,7 +886,7 @@ class AgenticBrowserSearchOrchestrator(
                         emit(MarkdownResult(webpage.url, webpage.markdown!!))
                     } catch (e: Exception) {
                         logger.warn(
-                            "[{}] Vector search: Failed to process cached webpage {}: {}",
+                            "[{}] Hybrid search: Failed to process cached webpage {}: {}",
                             sessionId,
                             webpage.url,
                             e.message,
@@ -887,12 +900,12 @@ class AgenticBrowserSearchOrchestrator(
             .onCompletion { cause ->
                 if (cause != null) {
                     logger.info(
-                        "[{}] Vector search processing cancelled: {}",
+                        "[{}] Hybrid search processing cancelled: {}",
                         sessionId,
                         cause.message
                     )
                 } else {
-                    logger.info("[{}] Vector search processing complete", sessionId)
+                    logger.info("[{}] Hybrid search processing complete", sessionId)
                 }
                 vectorSearchDiscoveredLinksChannel.close()
             }

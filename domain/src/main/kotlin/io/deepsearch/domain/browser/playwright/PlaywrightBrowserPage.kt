@@ -43,9 +43,9 @@ class PlaywrightBrowserPage(
             val message = consoleMessage.text()
             when (val type = consoleMessage.type()) {
                 "log", "info" -> logger.info("[JS Console] {}", message)
-                "warn" -> logger.warn("[JS Console] {}", message)
-                "error" -> logger.error("[JS Console] {}", message)
-                "debug" -> logger.debug("[JS Console] {}", message)
+                "warn" -> logger.info("[JS Console] {}", message)
+                "error" -> logger.info("[JS Console] {}", message)
+                "debug" -> logger.info("[JS Console] {}", message)
                 else -> logger.info("[JS Console] [{}] {}", type, message)
             }
         }
