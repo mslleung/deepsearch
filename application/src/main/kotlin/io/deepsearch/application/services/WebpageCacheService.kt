@@ -96,10 +96,20 @@ class WebpageCacheService(
         val age = currentTime - cached.updatedAt
 
         return if (age.inWholeMilliseconds < cacheExpiryMs) {
-            logger.debug("Cache hit for URL: {} (age: {} ms, expiry: {} ms)", url, age.inWholeMilliseconds, cacheExpiryMs)
+            logger.debug(
+                "Cache hit for URL: {} (age: {} ms, expiry: {} ms)",
+                url,
+                age.inWholeMilliseconds,
+                cacheExpiryMs
+            )
             CachedWebpageResult.Hit(cached)
         } else {
-            logger.debug("Cache expired for URL: {} (age: {} ms, expiry: {} ms)", url, age.inWholeMilliseconds, cacheExpiryMs)
+            logger.debug(
+                "Cache expired for URL: {} (age: {} ms, expiry: {} ms)",
+                url,
+                age.inWholeMilliseconds,
+                cacheExpiryMs
+            )
             CachedWebpageResult.Expired(cached)
         }
     }
@@ -130,18 +140,23 @@ class WebpageCacheService(
             )
         )
 
-        logger.debug("Cached webpage for URL: {} (status: {}, markdown: {} chars)", url, httpStatus, markdown?.length ?: 0)
-        
+        logger.debug(
+            "Cached webpage for URL: {} (status: {}, markdown: {} chars)",
+            url,
+            httpStatus,
+            markdown?.length ?: 0
+        )
+
         // Generate and store embedding asynchronously if markdown is available
         if (markdown != null && markdown.isNotBlank()) {
             generateAndStoreEmbeddingAsync(url, markdown)
         }
     }
-    
+
     /**
      * Generate and store an embedding for a markdown document asynchronously.
      * This method launches a coroutine and returns immediately (fire-and-forget).
-     * 
+     *
      * If embedding generation or storage fails, the error is logged but not propagated.
      * This ensures that embedding failures don't break the main request flow.
      */
@@ -150,18 +165,18 @@ class WebpageCacheService(
         applicationScope.scope.launch {
             try {
                 logger.debug("Generating embedding for URL: {}", url)
-                
+
                 // Generate embedding (returns list with single embedding)
                 val embeddings = textEmbeddingService.embedDocuments(listOf(markdown))
-                
+
                 if (embeddings.isEmpty()) {
                     logger.error("No embedding returned for URL: {}", url)
                     return@launch
                 }
-                
+
                 val embedding = embeddings[0]
                 logger.debug("Generated embedding with {} dimensions for URL: {}", embedding.size, url)
-                
+
                 // Fetch current webpage data and update with embedding
                 val existing = webpageMarkdownRepository.findByUrl(url)
                 if (existing != null) {
@@ -175,19 +190,18 @@ class WebpageCacheService(
                 } else {
                     logger.warn("Webpage not found for URL {} when trying to store embedding", url)
                 }
-                
+
             } catch (e: Exception) {
                 // Log error but don't propagate - embedding generation is best-effort
                 logger.error(
-                    "Failed to generate/store embedding for URL {}: {}", 
-                    url, 
-                    e.message, 
+                    "Failed to generate/store embedding for URL {}: {}",
+                    url,
+                    e.message,
                     e
                 )
             }
         }
     }
-
 
     override suspend fun searchHybrid(
         query: String,
@@ -195,35 +209,40 @@ class WebpageCacheService(
         cacheExpiryMs: Long?,
         limit: Int
     ): List<WebpageMarkdown> {
-        // Normalize URL to get prefix for filtering
-        val urlPrefix = normalizeUrlService.normalize(baseUrl) ?: baseUrl
-        logger.debug("Hybrid search: URL prefix = {}", urlPrefix)
+        try {
+            // Normalize URL to get prefix for filtering
+            val urlPrefix = normalizeUrlService.normalize(baseUrl) ?: baseUrl
+            logger.debug("Hybrid search: URL prefix = {}", urlPrefix)
 
-        // Generate query embedding
-        // Include the url in the query to increase the likelihood of getting documents with the url prefix
-        // This is because pgvector applies filtering after retrieving from vector db
-        val queryEmbedding = textEmbeddingService.embedQuery("$query $baseUrl")
-        logger.debug("Hybrid search: Generated query embedding with {} dimensions", queryEmbedding.size)
+            // Generate query embedding
+            // Include the url in the query to increase the likelihood of getting documents with the url prefix
+            // This is because pgvector applies filtering after retrieving from vector db
+            val queryEmbedding = textEmbeddingService.embedQuery("$query $baseUrl")
+            logger.debug("Hybrid search: Generated query embedding with {} dimensions", queryEmbedding.size)
 
-        // Calculate minimum updated timestamp for cache expiry (null if no expiry filtering)
-        val minUpdatedAtEpochMs = if (cacheExpiryMs != null) {
-            val currentTime = Clock.System.now()
-            val timestamp = currentTime.toEpochMilliseconds() - cacheExpiryMs
-            logger.debug("Hybrid search: Min timestamp = {}", timestamp)
-            timestamp
-        } else {
-            logger.debug("Hybrid search: No timestamp filtering (cacheExpiryMs is null)")
-            null
+            // Calculate minimum updated timestamp for cache expiry (null if no expiry filtering)
+            val minUpdatedAtEpochMs = if (cacheExpiryMs != null) {
+                val currentTime = Clock.System.now()
+                val timestamp = currentTime.toEpochMilliseconds() - cacheExpiryMs
+                logger.debug("Hybrid search: Min timestamp = {}", timestamp)
+                timestamp
+            } else {
+                logger.debug("Hybrid search: No timestamp filtering (cacheExpiryMs is null)")
+                null
+            }
+
+            // Search using hybrid search (RRF combining keyword + semantic search)
+            return webpageMarkdownRepository.searchHybrid(
+                textQuery = query,
+                queryEmbedding = queryEmbedding,
+                urlPrefix = urlPrefix,
+                minUpdatedAtEpochMs = minUpdatedAtEpochMs,
+                limit = limit
+            )
+        } catch (e: Exception) {
+            logger.error("Hybrid search failed: {}", e.message, e)
+            throw e
         }
-
-        // Search using hybrid search (RRF combining keyword + semantic search)
-        return webpageMarkdownRepository.searchHybrid(
-            textQuery = query,
-            queryEmbedding = queryEmbedding,
-            urlPrefix = urlPrefix,
-            minUpdatedAtEpochMs = minUpdatedAtEpochMs,
-            limit = limit
-        )
     }
 }
 
