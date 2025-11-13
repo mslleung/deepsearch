@@ -68,7 +68,8 @@ class AnswerReviewerAgentAdkImpl : IAnswerReviewerAgent {
             
             Completeness determination:
             - The answer is considered complete only if it addresses all concerns and aspects of the query
-            - If the answer suggests a lack of information to answer the query, return false to allow more information gathering
+            - The answer must explicitly address the user's query
+            - If the answer suggests a lack of information or any ambiguities, return false to allow more information gathering
             - It's better to process more content than to stop too early with an incomplete answer
             - If the query asks for multiple pieces of information, ensure all are covered before marking complete
 
@@ -170,4 +171,5 @@ class AnswerReviewerAgentAdkImpl : IAnswerReviewerAgent {
         )
     }
 }
+
 
