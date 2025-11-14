@@ -82,6 +82,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             - Do not invent information not present in the content
             - Use markdown styling as applicable, such as headings/list etc.
             - The answer should be in the same language as the input query.
+            - The answer should be placed in a json structured output
 
             Expected output shape:
             {

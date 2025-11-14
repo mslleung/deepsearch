@@ -13,7 +13,7 @@ class WebpageMarkdownCacheTable(
     val httpStatus = integer("http_status").nullable()
     val httpReason = text("http_reason").nullable()
     val mimeType = varchar("mime_type", length = 256).nullable()
-    val markdownSearchVector = tsvector("markdown_search_vector").nullable() // tsvector for full-text search
+    val markdownSearchVector = tsvector("markdown_search_vector") // tsvector for full-text search
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

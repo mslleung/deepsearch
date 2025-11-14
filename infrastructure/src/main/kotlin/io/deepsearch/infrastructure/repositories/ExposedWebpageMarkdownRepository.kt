@@ -201,12 +201,11 @@ class ExposedWebpageMarkdownRepository(
             .where {
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
                 val markdownCondition = webpageMarkdownTable.markdown.isNotNull()
-                val searchVectorCondition = webpageMarkdownTable.markdownSearchVector.isNotNull()
                 
                 if (minUpdatedAtEpochMs != null) {
-                    urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and markdownCondition and searchVectorCondition
+                    urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and markdownCondition
                 } else {
-                    urlCondition and markdownCondition and searchVectorCondition
+                    urlCondition and markdownCondition
                 }
             }
             .orderBy(tsRankExpr to SortOrder.DESC)

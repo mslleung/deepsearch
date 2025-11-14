@@ -103,14 +103,15 @@ class DatabaseConfigurationService(
                 """.trimIndent())
                 
                 // Create trigger function to auto-update tsvector when markdown changes
-                exec("""
+                exec(
+                    """
                     CREATE OR REPLACE FUNCTION webpage_markdowns_markdown_search_vector_update() 
-                    RETURNS trigger AS ${'$'}${'$'}
+                    RETURNS trigger AS $$
                     BEGIN
                       NEW.markdown_search_vector := to_tsvector('english', COALESCE(NEW.markdown, ''));
                       RETURN NEW;
                     END;
-                    ${'$'}${'$'} LANGUAGE plpgsql;
+                    $$ LANGUAGE plpgsql;
                 """.trimIndent())
                 
                 // Create trigger to automatically update tsvector on INSERT or UPDATE
