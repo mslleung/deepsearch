@@ -109,7 +109,7 @@ class ExposedWebpageMarkdownRepository(
         urlPrefix: String,
         minUpdatedAtEpochMs: Long?,
         limit: Int
-    ): List<WebpageMarkdown> = transactionService.withTransaction {
+    ): List<WebpageMarkdown> {
         val startTime = Clock.System.now()
         
         // Perform keyword and semantic searches in parallel
@@ -121,7 +121,7 @@ class ExposedWebpageMarkdownRepository(
 //        }
         val keywordResults = performKeywordSearch(textQuery, urlPrefix, minUpdatedAtEpochMs, limit)
         val semanticResults = performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit)
-
+//        val semanticResults = emptyList<WebpageMarkdown>()
 
         // Track URLs from each source
         val keywordUrls = keywordResults.map { it.url }.toSet()
@@ -175,7 +175,7 @@ class ExposedWebpageMarkdownRepository(
         val duration = Clock.System.now() - startTime
         logger.info("Hybrid search completed in {}ms, returned {} results", duration.inWholeMilliseconds, finalResults.size)
         
-        finalResults
+        return finalResults
     }
     
     /**

@@ -1,19 +1,14 @@
 package io.deepsearch.infrastructure.config
 
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
+import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.repositories.*
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
-import io.deepsearch.infrastructure.services.DatabaseConfigurationService
-import io.deepsearch.infrastructure.services.DatabaseCryptoService
-import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
-import io.deepsearch.infrastructure.services.IDatabaseCryptoService
-import io.deepsearch.infrastructure.services.ITransactionService
-import io.deepsearch.infrastructure.services.TransactionService
+import io.deepsearch.infrastructure.services.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.createdAtStart
-import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -23,6 +18,15 @@ private val infrastructureCommonTestModule = module {
     single {
         DatabaseEncryptionConfig(
             encryptionSecret = System.getenv("DATABASE_ENCRYPTION_SECRET")
+        )
+    }
+    single {
+        PostgresConfig(
+            host = System.getenv("DB_HOST"),
+            port = System.getenv("DB_PORT").toInt(),
+            database = System.getenv("DB_NAME"),
+            username = System.getenv("DB_USERNAME"),
+            password = System.getenv("DB_PASSWORD")
         )
     }
     
