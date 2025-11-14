@@ -5,7 +5,6 @@ import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.infrastructure.database.WebpageMarkdownCacheEmbeddingTable
 import io.deepsearch.infrastructure.database.WebpageMarkdownCacheTable
 import io.deepsearch.infrastructure.services.ITransactionService
-import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.map
@@ -188,6 +187,13 @@ class ExposedWebpageMarkdownRepository(
         // Escape single quotes for SQL safety
         val escapedQuery = textQuery.replace("'", "''")
         
+        // Create custom SQL expression for full-text search match using @@ operator
+        val tsMatchExpr = object : Expression<Boolean>() {
+            override fun toQueryBuilder(queryBuilder: QueryBuilder) {
+                queryBuilder.append("(markdown_search_vector @@ websearch_to_tsquery('english', '$escapedQuery'))")
+            }
+        }
+        
         // Create custom SQL expression for ts_rank
         val tsRankExpr = object : Expression<Double>() {
             override fun toQueryBuilder(queryBuilder: QueryBuilder) {
@@ -196,16 +202,16 @@ class ExposedWebpageMarkdownRepository(
         }
         
         // Build query with WHERE conditions
-        // Note: We filter for non-null markdown_search_vector which implicitly ensures full-text search capability
+        // Filter for documents that match the full-text search query
         webpageMarkdownTable.selectAll()
             .where {
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
                 val markdownCondition = webpageMarkdownTable.markdown.isNotNull()
-                
+
                 if (minUpdatedAtEpochMs != null) {
-                    urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and markdownCondition
+                    urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and markdownCondition and tsMatchExpr
                 } else {
-                    urlCondition and markdownCondition
+                    urlCondition and markdownCondition and tsMatchExpr
                 }
             }
             .orderBy(tsRankExpr to SortOrder.DESC)
