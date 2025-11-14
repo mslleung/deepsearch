@@ -113,15 +113,12 @@ class ExposedWebpageMarkdownRepository(
         val startTime = Clock.System.now()
         
         // Perform keyword and semantic searches in parallel
-//        val (keywordResults, semanticResults) = coroutineScope {
-//            val keywordDeferred = async { performKeywordSearch(textQuery, urlPrefix, minUpdatedAtEpochMs, limit) }
-//            val semanticDeferred = async { performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit) }
-//
-//            Pair(keywordDeferred.await(), semanticDeferred.await())
-//        }
-        val keywordResults = performKeywordSearch(textQuery, urlPrefix, minUpdatedAtEpochMs, limit)
-        val semanticResults = performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit)
-//        val semanticResults = emptyList<WebpageMarkdown>()
+        val (keywordResults, semanticResults) = coroutineScope {
+            val keywordDeferred = async { performKeywordSearch(textQuery, urlPrefix, minUpdatedAtEpochMs, limit) }
+            val semanticDeferred = async { performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit) }
+
+            Pair(keywordDeferred.await(), semanticDeferred.await())
+        }
 
         // Track URLs from each source
         val keywordUrls = keywordResults.map { it.url }.toSet()
