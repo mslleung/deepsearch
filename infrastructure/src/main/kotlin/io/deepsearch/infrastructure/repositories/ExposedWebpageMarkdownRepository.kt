@@ -113,13 +113,16 @@ class ExposedWebpageMarkdownRepository(
         val startTime = Clock.System.now()
         
         // Perform keyword and semantic searches in parallel
-        val (keywordResults, semanticResults) = coroutineScope {
-            val keywordDeferred = async { performKeywordSearch(textQuery, urlPrefix, minUpdatedAtEpochMs, limit) }
-            val semanticDeferred = async { performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit) }
-            
-            Pair(keywordDeferred.await(), semanticDeferred.await())
-        }
-        
+//        val (keywordResults, semanticResults) = coroutineScope {
+//            val keywordDeferred = async { performKeywordSearch(textQuery, urlPrefix, minUpdatedAtEpochMs, limit) }
+//            val semanticDeferred = async { performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit) }
+//
+//            Pair(keywordDeferred.await(), semanticDeferred.await())
+//        }
+        val keywordResults = performKeywordSearch(textQuery, urlPrefix, minUpdatedAtEpochMs, limit)
+        val semanticResults = performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit)
+
+
         // Track URLs from each source
         val keywordUrls = keywordResults.map { it.url }.toSet()
         val semanticUrls = semanticResults.map { it.url }.toSet()
@@ -176,7 +179,9 @@ class ExposedWebpageMarkdownRepository(
     }
     
     /**
-     * Perform keyword-based full-text search on markdown content
+     * Perform keyword-based full-text search on markdown content.
+     * Uses raw SQL via custom expressions to properly implement PostgreSQL full-text search operators.
+     * Reference: https://github.com/pgvector/pgvector?tab=readme-ov-file#hybrid-search
      */
     private suspend fun performKeywordSearch(
         textQuery: String,
@@ -188,26 +193,28 @@ class ExposedWebpageMarkdownRepository(
         val escapedQuery = textQuery.replace("'", "''")
         
         // Create custom SQL expression for full-text search match using @@ operator
+        // This ensures documents that don't match the query are filtered out
+        val tsQueryExpr = "websearch_to_tsquery('english', '$escapedQuery')"
+        
         val tsMatchExpr = object : Expression<Boolean>() {
             override fun toQueryBuilder(queryBuilder: QueryBuilder) {
-                queryBuilder.append("(markdown_search_vector @@ websearch_to_tsquery('english', '$escapedQuery'))")
+                queryBuilder.append("(${webpageMarkdownTable.tableName}.markdown_search_vector @@ $tsQueryExpr)")
             }
         }
         
-        // Create custom SQL expression for ts_rank
+        // Create custom SQL expression for ts_rank to sort by relevance
         val tsRankExpr = object : Expression<Double>() {
             override fun toQueryBuilder(queryBuilder: QueryBuilder) {
-                queryBuilder.append("ts_rank(markdown_search_vector, websearch_to_tsquery('english', '$escapedQuery'))")
+                queryBuilder.append("ts_rank(${webpageMarkdownTable.tableName}.markdown_search_vector, $tsQueryExpr)")
             }
         }
         
-        // Build query with WHERE conditions
-        // Filter for documents that match the full-text search query
+        // Build query with WHERE conditions - filter for documents matching the full-text search query
         webpageMarkdownTable.selectAll()
             .where {
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
                 val markdownCondition = webpageMarkdownTable.markdown.isNotNull()
-
+                
                 if (minUpdatedAtEpochMs != null) {
                     urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and markdownCondition and tsMatchExpr
                 } else {
