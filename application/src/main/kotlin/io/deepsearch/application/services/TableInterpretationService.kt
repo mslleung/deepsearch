@@ -4,6 +4,9 @@ import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.models.entities.WebpageTableInterpretation
 import io.deepsearch.domain.repositories.IWebpageTableInterpretationRepository
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
@@ -82,13 +85,17 @@ class TableInterpretationService(
             .filter { results[it] == null }
             .map { index -> Triple(index, inputs[index], hashes[index]) }
 
-        // Generate interpretations for uncached inputs
-        val newInterpretations = uncachedEntries.map { (index, input, hash) ->
-            val agentOutput = tableInterpretationAgent.generate(input)
-            index to WebpageTableInterpretation(
-                tableDataHash = hash,
-                markdown = agentOutput.markdown
-            )
+        // Generate interpretations for uncached inputs in parallel
+        val newInterpretations = coroutineScope {
+            uncachedEntries.map { (index, input, hash) ->
+                async {
+                    val agentOutput = tableInterpretationAgent.generate(input)
+                    index to WebpageTableInterpretation(
+                        tableDataHash = hash,
+                        markdown = agentOutput.markdown
+                    )
+                }
+            }.awaitAll()
         }
 
         // Batch upsert all new interpretations
