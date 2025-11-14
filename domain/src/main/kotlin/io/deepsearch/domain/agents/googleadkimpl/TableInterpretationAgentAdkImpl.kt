@@ -31,7 +31,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             mapOf(
                 "markdown" to Schema.builder()
                     .type("STRING")
-                    .description("The table expressed in GitHub-flavored Markdown. No surrounding commentary.")
+                    .description("The table expressed in GitHub-flavored Markdown.")
                     .build()
             )
         )
@@ -71,7 +71,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             - Normalize whitespace; remove decorative or layout-only characters.
             - Keep content concise; avoid verbose prose or explanations.
             - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
-            - Output only the Markdown string. Do not include any extra commentary before or after it.
+            - Output only the Markdown string, wrapped in JSON structured output
 
             Expected output shape:
             {

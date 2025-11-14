@@ -192,12 +192,37 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
     }
     
     /**
+     * Escapes special characters in CSS identifiers (IDs and class names) to make them
+     * safe for use in CSS selectors. According to CSS spec, certain characters need to be
+     * escaped with a backslash when used in selectors.
+     * 
+     * @param identifier The raw ID or class name from HTML
+     * @return The escaped identifier safe for use in CSS selectors
+     */
+    private fun escapeCssIdentifier(identifier: String): String {
+        // CSS special characters that need escaping:
+        // : . [ ] ( ) ~ ! @ $ % ^ & * + = , / ' " ; ? # space
+        val specialChars = setOf(
+            ':', '.', '[', ']', '(', ')', '~', '!', '@', '$', '%', '^', '&', '*', 
+            '+', '=', ',', '/', '\'', '"', ';', '?', '#', ' '
+        )
+        
+        return identifier.map { char ->
+            if (char in specialChars) {
+                "\\$char"
+            } else {
+                char.toString()
+            }
+        }.joinToString("")
+    }
+    
+    /**
      * Builds a base CSS selector for an element using its tag, id, and classes.
      */
     private fun buildBaseSelector(tagName: String, id: String, classes: Set<String>): String {
         return when {
-            id.isNotBlank() -> "#$id"
-            classes.isNotEmpty() -> "$tagName.${classes.joinToString(".")}"
+            id.isNotBlank() -> "#${escapeCssIdentifier(id)}"
+            classes.isNotEmpty() -> "$tagName.${classes.map { escapeCssIdentifier(it) }.joinToString(".")}"
             else -> tagName
         }
     }
@@ -265,11 +290,11 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
                 // If element has an ID, use it as an anchor point
                 id.isNotBlank() -> {
                     foundUniqueAncestor = true
-                    "#$id"
+                    "#${escapeCssIdentifier(id)}"
                 }
                 // If element has classes, include them
                 classes.isNotEmpty() -> {
-                    val classSelector = "$tagName.${classes.joinToString(".")}"
+                    val classSelector = "$tagName.${classes.map { escapeCssIdentifier(it) }.joinToString(".")}"
                     // Check if this selector is unique at this level
                     val parent = currentElement.parent()
                     if (parent != null) {

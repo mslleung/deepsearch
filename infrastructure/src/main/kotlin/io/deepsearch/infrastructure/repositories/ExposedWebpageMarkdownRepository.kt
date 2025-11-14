@@ -2,6 +2,7 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
+import io.deepsearch.infrastructure.database.WebpageMarkdownCacheEmbeddingTable
 import io.deepsearch.infrastructure.database.WebpageMarkdownCacheTable
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
@@ -22,19 +23,23 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class ExposedWebpageMarkdownRepository(
     private val webpageMarkdownTable: WebpageMarkdownCacheTable,
+    private val webpageMarkdownEmbeddingTable: WebpageMarkdownCacheEmbeddingTable,
     private val transactionService: ITransactionService
 ) : IWebpageMarkdownRepository {
 
     private val logger: Logger = LoggerFactory.getLogger(ExposedWebpageMarkdownRepository::class.java)
 
     override suspend fun findByUrl(url: String): WebpageMarkdown? = transactionService.withTransaction {
-        webpageMarkdownTable.selectAll()
+        webpageMarkdownTable
+            .leftJoin(webpageMarkdownEmbeddingTable)
+            .selectAll()
             .where { webpageMarkdownTable.url eq url }
             .map { mapRowToWebpageMarkdown(it) }
             .singleOrNull()
     }
 
     override suspend fun upsert(webpage: WebpageMarkdown): Unit = transactionService.withTransaction {
+        // Upsert main webpage markdown record
         webpageMarkdownTable.upsert(
             keys = arrayOf(webpageMarkdownTable.url)
         ) {
@@ -44,15 +49,29 @@ class ExposedWebpageMarkdownRepository(
             it[httpStatus] = webpage.httpStatus
             it[httpReason] = webpage.httpReason
             it[mimeType] = webpage.mimeType
-            it[embedding] = webpage.embedding
             it[createdAtEpochMs] = webpage.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpage.updatedAt.toEpochMilliseconds()
             it[version] = webpage.version
         }
+        
+        // Upsert embedding if present
+        if (webpage.embedding != null) {
+            webpageMarkdownEmbeddingTable.upsert(
+                keys = arrayOf(webpageMarkdownEmbeddingTable.url)
+            ) {
+                it[url] = webpage.url
+                it[embedding] = webpage.embedding!!
+                it[createdAtEpochMs] = webpage.createdAt.toEpochMilliseconds()
+                it[updatedAtEpochMs] = webpage.updatedAt.toEpochMilliseconds()
+                it[version] = webpage.version
+            }
+        }
     }
 
     override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
-        webpageMarkdownTable.selectAll()
+        webpageMarkdownTable
+            .leftJoin(webpageMarkdownEmbeddingTable)
+            .selectAll()
             .where { webpageMarkdownTable.url like ("$prefix%") }
             .limit(limit)
             .offset(offset.toLong())
@@ -68,7 +87,9 @@ class ExposedWebpageMarkdownRepository(
 
     override suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
         val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
-        webpageMarkdownTable.selectAll()
+        webpageMarkdownTable
+            .leftJoin(webpageMarkdownEmbeddingTable)
+            .selectAll()
             .where { webpageMarkdownTable.url like pattern }
             .limit(limit)
             .offset(offset.toLong())
@@ -213,23 +234,25 @@ class ExposedWebpageMarkdownRepository(
         val embeddingStr = "[${queryEmbedding.joinToString(",")}]"
         
         // Create custom SQL expression for cosine distance using pgvector's <=> operator
+        // Reference the embedding column from the embedding table
         val cosineDistanceExpr = object : Expression<Double>() {
             override fun toQueryBuilder(queryBuilder: QueryBuilder) {
-                queryBuilder.append("(embedding <=> '$embeddingStr'::vector)")
+                queryBuilder.append("(${webpageMarkdownEmbeddingTable.tableName}.embedding <=> '$embeddingStr'::vector)")
             }
         }
         
-        // Build query with WHERE conditions
-        webpageMarkdownTable.selectAll()
+        // Build query with INNER JOIN (embeddings are required for semantic search)
+        webpageMarkdownTable
+            .innerJoin(webpageMarkdownEmbeddingTable)
+            .selectAll()
             .where {
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
-                val embeddingCondition = webpageMarkdownTable.embedding.isNotNull()
                 val markdownCondition = webpageMarkdownTable.markdown.isNotNull()
                 
                 if (minUpdatedAtEpochMs != null) {
-                    urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and embeddingCondition and markdownCondition
+                    urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and markdownCondition
                 } else {
-                    urlCondition and embeddingCondition and markdownCondition
+                    urlCondition and markdownCondition
                 }
             }
             .orderBy(cosineDistanceExpr to SortOrder.ASC)  // Order by cosine distance (ascending = most similar)
@@ -246,7 +269,7 @@ class ExposedWebpageMarkdownRepository(
             httpStatus = row[webpageMarkdownTable.httpStatus],
             httpReason = row[webpageMarkdownTable.httpReason],
             mimeType = row[webpageMarkdownTable.mimeType],
-            embedding = row[webpageMarkdownTable.embedding],
+            embedding = row.getOrNull(webpageMarkdownEmbeddingTable.embedding),
             createdAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.updatedAtEpochMs]),
             version = row[webpageMarkdownTable.version]

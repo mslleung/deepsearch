@@ -35,6 +35,7 @@ class DatabaseConfigurationService(
     private val webpageTableInterpretationCacheTable: WebpageTableInterpretationCacheTable,
     private val webpageSemanticElementCacheTable: WebpageSemanticElementCacheTable,
     private val webpageMarkdownCacheTable: WebpageMarkdownCacheTable,
+    private val webpageMarkdownCacheEmbeddingTable: WebpageMarkdownCacheEmbeddingTable,
     private val pdfMarkdownCacheTable: PdfMarkdownCacheTable,
     private val querySessionTable: QuerySessionTable,
     private val precacheJobTable: PrecacheJobTable,
@@ -76,6 +77,7 @@ class DatabaseConfigurationService(
                     webpageTableInterpretationCacheTable,
                     webpageSemanticElementCacheTable,
                     webpageMarkdownCacheTable,
+                    webpageMarkdownCacheEmbeddingTable,
                     pdfMarkdownCacheTable,
                     querySessionTable,
                     precacheJobTable,
@@ -87,8 +89,8 @@ class DatabaseConfigurationService(
                 // Using cosine distance operator (vector_cosine_ops) for cosine similarity
                 // HNSW parameters: m=16 (connections per layer), ef_construction=64 (quality vs speed tradeoff)
                 exec("""
-                    CREATE INDEX IF NOT EXISTS webpage_markdowns_embedding_idx 
-                    ON webpage_markdowns 
+                    CREATE INDEX IF NOT EXISTS webpage_markdown_embeddings_embedding_idx 
+                    ON webpage_markdown_embeddings 
                     USING hnsw (embedding vector_cosine_ops)
                     WITH (m = 16, ef_construction = 64)
                 """.trimIndent())

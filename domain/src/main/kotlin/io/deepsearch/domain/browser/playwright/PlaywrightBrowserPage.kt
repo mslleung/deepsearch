@@ -67,7 +67,7 @@ class PlaywrightBrowserPage(
                     // Wait for network idle to handle Cloudflare challenges and dynamic content
                     // This gives time for anti-bot challenges to complete
                     try {
-                        page.waitForLoadState(LoadState.NETWORKIDLE, Page.WaitForLoadStateOptions().setTimeout(30000.0))
+                        page.waitForLoadState(LoadState.NETWORKIDLE, Page.WaitForLoadStateOptions().setTimeout(5000.0))
                     } catch (e: Exception) {
                         // If network idle times out, fall back to DOM content loaded
                         logger.debug("Network idle timeout, falling back to DOM content loaded")
