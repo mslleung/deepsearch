@@ -305,7 +305,10 @@ class AgenticBrowserSearchOrchestrator(
                     }
                     .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
                     .map { event -> MarkdownResult(event.url, event.markdown) }
-                    .onCompletion { initialDiscoveredLinksChannel.close() }
+                    .onCompletion {
+                        logger.info("[{}] Initial link processing complete", sessionId)
+                        initialDiscoveredLinksChannel.close()
+                    }
             }
     }
 
@@ -325,12 +328,6 @@ class AgenticBrowserSearchOrchestrator(
         cacheExpiryMs: Long?
     ): Flow<MarkdownResult> {
         return linkSource
-            .takeWhile {
-                !querySessionService.isBudgetExceeded(
-                    sessionId,
-                    budget
-                )
-            }
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
 
@@ -537,9 +534,9 @@ class AgenticBrowserSearchOrchestrator(
         return merge(
             merge(
                 initialDiscoveredLinksChannel.receiveAsFlow(),
-                googleSearchDiscoveredLinksChannel.receiveAsFlow(),
+//                googleSearchDiscoveredLinksChannel.receiveAsFlow(),
                 serperSearchDiscoveredLinksChannel.receiveAsFlow(),
-                sitemapDiscoveredLinksChannel.receiveAsFlow(),
+//                sitemapDiscoveredLinksChannel.receiveAsFlow(),
                 hybridSearchDiscoveredLinksChannel.receiveAsFlow(),
             )
                 .onCompletion {
@@ -592,9 +589,9 @@ class AgenticBrowserSearchOrchestrator(
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
                                     inFlightLinkDiscoveryProcessing.remove(e.url)
                                     if (initialDiscoveredLinksChannel.isClosedForSend &&
-                                        googleSearchDiscoveredLinksChannel.isClosedForSend &&
+//                                        googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         serperSearchDiscoveredLinksChannel.isClosedForSend &&
-                                        sitemapDiscoveredLinksChannel.isClosedForSend &&
+//                                        sitemapDiscoveredLinksChannel.isClosedForSend &&
                                         hybridSearchDiscoveredLinksChannel.isClosedForSend &&
                                         inFlightLinkDiscoveryProcessing.isEmpty()
                                     ) {
@@ -631,20 +628,29 @@ class AgenticBrowserSearchOrchestrator(
                                         event.url,
                                         event.discoveredLinks.size
                                     )
-                                    event.discoveredLinks.forEach { discoveredLink ->
+                                    inFlightLinkDiscoveryProcessing.remove(event.url)
+
+                                    val newDiscoveredLinks = event.discoveredLinks.filter {
+                                        val normalizedDiscoveredLink = normalizeUrlService.normalize(it.url) ?: it.url
+                                        !seenUrls.contains(normalizedDiscoveredLink)
+                                    }
+                                    newDiscoveredLinks.forEach { discoveredLink ->
                                         recursiveDiscoveredLinksChannel.send(discoveredLink)
                                     }
-                                    inFlightLinkDiscoveryProcessing.remove(event.url)
                                     logger.debug(
-                                        "processRecursiveDiscoveredLinksFlow {}",
-                                        inFlightLinkDiscoveryProcessing
+                                        "processRecursiveDiscoveredLinksFlow in-flight links count: {}",
+                                        inFlightLinkDiscoveryProcessing.count()
                                     )
                                     if (initialDiscoveredLinksChannel.isClosedForSend &&
-                                        googleSearchDiscoveredLinksChannel.isClosedForSend &&
+//                                        googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         serperSearchDiscoveredLinksChannel.isClosedForSend &&
-                                        sitemapDiscoveredLinksChannel.isClosedForSend &&
+//                                        sitemapDiscoveredLinksChannel.isClosedForSend &&
                                         hybridSearchDiscoveredLinksChannel.isClosedForSend &&
-                                        inFlightLinkDiscoveryProcessing.isEmpty()
+                                        // if there are no in-flight links being processed (where we may discover more links)
+                                        // and we are not emitting any new links
+                                        // we can be sure that the recursive flow has stalled, so we can close it
+                                        inFlightLinkDiscoveryProcessing.isEmpty() &&
+                                        newDiscoveredLinks.isEmpty()
                                     ) {
                                         recursiveDiscoveredLinksChannel.close()
                                     }
