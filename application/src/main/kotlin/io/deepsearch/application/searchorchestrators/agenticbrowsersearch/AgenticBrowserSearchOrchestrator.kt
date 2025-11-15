@@ -846,7 +846,7 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         cacheExpiryMs: Long?,
-        vectorSearchDiscoveredLinksChannel: Channel<WebpageLink>
+        hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownResult> = flow {
         // Search using hybrid search (RRF combining keyword + semantic search)
         val similarWebpages = webpageCacheService.searchHybrid(
@@ -865,10 +865,13 @@ class AgenticBrowserSearchOrchestrator(
 
         seenUrls.addAll(validWebpages.map { it.url })
 
+        // immediately emit the valid webpages found from hybrid search
+        validWebpages.forEach { emit(MarkdownResult(it.url, it.markdown!!)) }
+
         // Process similar webpages through the standard flow
         validWebpages.asFlow()
             .flatMapMerge(concurrency = 15) { webpage ->
-                flow {
+                flow<MarkdownResult> {
                     try {
                         // Discover relevant links from this cached webpage
                         val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
@@ -885,11 +888,8 @@ class AgenticBrowserSearchOrchestrator(
 
                         // Emit discovered links to the channel
                         discoveredLinks.forEach { link ->
-                            vectorSearchDiscoveredLinksChannel.send(link)
+                            hybridSearchDiscoveredLinksChannel.send(link)
                         }
-
-                        // Emit the markdown result
-                        emit(MarkdownResult(webpage.url, webpage.markdown!!))
                     } catch (e: Exception) {
                         logger.warn(
                             "[{}] Hybrid search: Failed to process cached webpage {}: {}",
@@ -898,8 +898,6 @@ class AgenticBrowserSearchOrchestrator(
                             e.message,
                             e
                         )
-                        // Still emit the markdown even if link discovery fails
-                        emit(MarkdownResult(webpage.url, webpage.markdown!!))
                     }
                 }
             }
@@ -913,9 +911,9 @@ class AgenticBrowserSearchOrchestrator(
                 } else {
                     logger.info("[{}] Hybrid search processing complete", sessionId)
                 }
-                vectorSearchDiscoveredLinksChannel.close()
+                hybridSearchDiscoveredLinksChannel.close()
             }
-            .collect { emit(it) }
+            .collect {}
     }
 
     /**
