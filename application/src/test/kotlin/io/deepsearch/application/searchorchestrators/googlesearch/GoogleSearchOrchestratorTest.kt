@@ -1,6 +1,7 @@
 package io.deepsearch.application.searchorchestrators.googlesearch
 
 import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -13,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class GoogleSearchOrchestratorTest : KoinTest {
+    private val apiKeyId = ApiKeyId(0)
 
     @JvmField
     @RegisterExtension
@@ -32,7 +34,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -50,7 +52,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -68,7 +70,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -86,7 +88,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -104,7 +106,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -123,7 +125,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery)
+        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)

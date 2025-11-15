@@ -53,22 +53,16 @@ class NormalizeUrlService : INormalizeUrlService {
     
     companion object {
         /**
-         * Common two-letter ISO 639-1 language codes and regional variants.
+         * Regex pattern for matching locale segments in URL paths.
+         * Matches:
+         * - Two-letter language codes (ISO 639-1): en, fr, de, ja, id, etc.
+         * - Language-region combinations with hyphen: en-us, id-id, zh-cn, etc.
+         * - Language-region combinations with underscore: en_us, id_id, zh_cn, etc.
+         * - Three-letter region codes: es-419 (Latin America Spanish)
          */
-        private val LOCALE_PATTERNS = setOf(
-            // Two-letter language codes (ISO 639-1)
-            "en", "fr", "de", "es", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh", "ar", "hi",
-            "he", "tr", "sv", "no", "da", "fi", "cs", "el", "th", "vi", "id", "ms", "ro", "hu",
-            "uk", "bg", "hr", "sk", "sl", "lt", "lv", "et", "sr", "ca", "af", "sq", "eu", "gl",
-            // Common regional variants (language-region)
-            "en-us", "en-gb", "en-ca", "en-au", "en-nz", "en-ie", "en-za", "en-in",
-            "fr-fr", "fr-ca", "fr-be", "fr-ch",
-            "es-es", "es-mx", "es-ar", "es-co", "es-cl", "es-pe",
-            "pt-br", "pt-pt",
-            "de-de", "de-at", "de-ch",
-            "zh-cn", "zh-tw", "zh-hk", "zh-sg",
-            "it-it", "it-ch",
-            "nl-nl", "nl-be"
+        private val LOCALE_SEGMENT_PATTERN = Regex(
+            "^[a-z]{2}([-_][a-z]{2,3})?$",
+            RegexOption.IGNORE_CASE
         )
         
         /**
@@ -283,7 +277,7 @@ class NormalizeUrlService : INormalizeUrlService {
         val isLocale = if (whitelist.isNotEmpty()) {
             firstSegment in whitelist
         } else {
-            firstSegment in LOCALE_PATTERNS
+            LOCALE_SEGMENT_PATTERN.matches(firstSegment)
         }
         
         return if (isLocale && segments.size > 1) {

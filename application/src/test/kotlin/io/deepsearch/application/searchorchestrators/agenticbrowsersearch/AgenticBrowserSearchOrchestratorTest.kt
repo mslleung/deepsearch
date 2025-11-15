@@ -1,6 +1,7 @@
 package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -13,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class AgenticBrowserSearchOrchestratorTest : KoinTest {
+    private val apiKeyId = ApiKeyId(0)
 
     @JvmField
     @RegisterExtension
@@ -32,7 +34,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -49,7 +51,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -66,7 +68,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -84,7 +86,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -102,7 +104,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -120,7 +122,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -138,7 +140,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
@@ -157,7 +159,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = agenticBrowserSearchOrchestrator.execute(searchQuery)
+        val result = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
