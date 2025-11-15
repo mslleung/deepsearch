@@ -22,6 +22,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 /**
  * Streaming Answer agent that incrementally builds an answer as new markdown batches arrive.
@@ -64,25 +66,23 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
         )
         instruction(
             """
-            You are a streaming answer agent that builds comprehensive answers incrementally as new markdown content arrives.
-            
-            Instructions for answer updates:
-            - If there's no current answer, create an initial answer from the markdowns
-            - If there's a current answer, enhance it with any new relevant information
-            - If the new content contains no relevant information, return the current answer unchanged
+            You are a answer generation agent that builds comprehensive answers for a query based on provided text content
             
             Answer quality:
             - The answer should be as comprehensive as possible
             - The answer should be standalone and serve as a direct answer to the user query
             - If the user query is a statement instead of a question, focus on supplying relevant information
-            - There is no temporal significance of the markdowns, the answer should not reveal our streaming approach
-              For example, prefer to say "from the information" instead of "from the new batch of information"
             - If there is a lack of information, the answer should just say so
-            - Only include information that directly addresses the user's query
+            - Only include information that supports the answer in addressing the query
             - Do not invent information not present in the content
             - Use markdown styling as applicable, such as headings/list etc.
             - The answer should be in the same language as the input query.
             - The answer should be placed in a json structured output
+            
+            Conflict resolution:
+            - Some markdowns may contain conflicting/overlapping information
+            - You should prioritize markdown data from official pages and deprioritize data from blog posts or publications
+            - No need to note the discrepancy, just include the information you deem to be most credible
 
             Expected output shape:
             {
@@ -121,6 +121,7 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
     /**
      * Process a single batch of markdowns (up to BATCH_SIZE) and produce a partial answer.
      */
+    @OptIn(ExperimentalTime::class)
     private suspend fun processBatch(
         query: String,
         currentAnswer: String?,
@@ -133,12 +134,11 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
         val userPrompt = buildString {
             appendLine("Search Query: $query")
             appendLine()
+            appendLine("Text content:")
             if (currentAnswer != null) {
-                appendLine("Current Answer:")
                 appendLine(currentAnswer)
-                appendLine()
+                appendLine("\n\n---\n\n")
             }
-            appendLine("New Markdown:")
             appendLine(markdownContent)
         }
 

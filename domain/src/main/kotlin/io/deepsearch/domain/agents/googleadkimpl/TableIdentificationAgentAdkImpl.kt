@@ -544,27 +544,19 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
         // Step 6: Remove empty elements iteratively to compact structure
         // This significantly reduces HTML size without losing meaningful structure
-        var changed = true
-        var iterations = 0
-        while (changed && iterations < 5) { // Limit iterations for performance
-            changed = false
-            iterations++
-            
-            val emptyElements = doc.select("*").filter { element ->
-                element.children().isEmpty() &&
-                element.ownText().isBlank() &&
-                element.attr("id").isEmpty() &&
-                element.attr("class").isEmpty() &&
-                element.attr("role").isEmpty() &&
-                element.attr("colspan").isEmpty() &&
-                element.attr("rowspan").isEmpty()
-            }
-            
-            if (emptyElements.isNotEmpty()) {
-                emptyElements.forEach { it.remove() }
-                changed = true
-                logger.debug("Iteration {}: Removed {} empty elements", iterations, emptyElements.size)
-            }
+        val emptyElements = doc.select("*").filter { element ->
+            element.children().isEmpty() &&
+                    element.ownText().isBlank() &&
+                    element.attr("id").isEmpty() &&
+                    element.attr("class").isEmpty() &&
+                    element.attr("role").isEmpty() &&
+                    element.attr("colspan").isEmpty() &&
+                    element.attr("rowspan").isEmpty()
+        }
+
+        if (emptyElements.isNotEmpty()) {
+            emptyElements.forEach { it.remove() }
+            logger.debug("Removed {} empty elements", emptyElements.size)
         }
 
         val cleanedHtml = doc.outerHtml()
