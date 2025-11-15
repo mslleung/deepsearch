@@ -33,7 +33,6 @@ val infrastructureModule = module {
     singleOf(::WebpageTableInterpretationCacheTable)
     singleOf(::WebpageSemanticElementCacheTable)
     singleOf(::WebpageMarkdownCacheTable)
-    singleOf(::WebpageMarkdownCacheEmbeddingTable)
     singleOf(::PdfMarkdownCacheTable)
     singleOf(::QuerySessionTable)
     singleOf(::UrlAccessTable)
