@@ -71,7 +71,7 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
                 cleanedMatchingElements.size, structurallyMatchingElements.size)
             
             if (structurallyMatchingElements.isEmpty()) {
-                logger.warn("No structurally-matching elements found for snippet: {}", htmlSnippet.take(100))
+                logger.warn("No structurally-matching elements found for snippet: {}", htmlSnippet)
                 return emptyList()
             }
             
