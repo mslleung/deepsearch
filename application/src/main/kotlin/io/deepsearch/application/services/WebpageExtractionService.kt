@@ -216,7 +216,7 @@ class WebpageExtractionService(
         // Filter out tables that were removed as part of semantic element removal
         val filteredReplacements = tableReplacements.filter { replacement ->
             try {
-                webpage.isElementVisibleByCssSelector(replacement.cssSelector)
+                webpage.elementExistsByCssSelector(replacement.cssSelector)
             } catch (e: Exception) {
                 logger.debug("Table with CSS selector '{}' no longer exists, skipping replacement", 
                     replacement.cssSelector)

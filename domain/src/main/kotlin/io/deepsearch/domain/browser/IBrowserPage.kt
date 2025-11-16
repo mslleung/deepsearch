@@ -77,6 +77,13 @@ interface IBrowserPage {
     suspend fun elementExists(xpath: String): Boolean
 
     /**
+     * Check if an element matching the provided CSS selector exists in the document.
+     * @param cssSelector CSS selector to match
+     * @return true if at least one element matches; false otherwise
+     */
+    suspend fun elementExistsByCssSelector(cssSelector: String): Boolean
+
+    /**
      * Check if an element matching the provided CSS selector is visible.
      * @param cssSelector CSS selector to match
      * @return true if the element is visible; false otherwise

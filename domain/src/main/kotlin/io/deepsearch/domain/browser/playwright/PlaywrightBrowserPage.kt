@@ -229,6 +229,14 @@ class PlaywrightBrowserPage(
         }
     }
 
+    override suspend fun elementExistsByCssSelector(cssSelector: String): Boolean {
+        return apiMutex.withLock {
+            val locator = page.locator(cssSelector)
+            val count = locator.count()
+            count > 0
+        }
+    }
+
     override suspend fun isElementVisibleByCssSelector(cssSelector: String): Boolean {
         logger.debug("Checking element visibility by CSS selector: {}", cssSelector)
         return apiMutex.withLock {
