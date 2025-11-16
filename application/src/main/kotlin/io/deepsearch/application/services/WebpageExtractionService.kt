@@ -42,41 +42,44 @@ class WebpageExtractionService(
         val screenshot = webpage.takeFullPageScreenshot()
         val html = webpage.getFullHtml()
 
-        // Step 2: Extract icons (sequential, browser interaction)
-        val icons = webpage.extractIcons()
-
-        // Step 3: Extract images (sequential, browser interaction)
-        val images = webpage.extractImages()
-
-        // Step 4: Run LLM operations concurrently using Flow
+        // Step 2: Run LLM operations concurrently using Flow
         val semanticElementsFlow = identifySemanticElementsFlow(
             screenshot.bytes, screenshot.mimeType, html
         )
-        val iconReplacementsFlow = interpretIconsFlow(icons)
-        val imageReplacementsFlow = interpretImagesFlow(images)
+        val iconReplacementsFlow = interpretIconsFlow(webpage)
+        val imageReplacementsFlow = interpretImagesFlow(webpage)
+        val tableReplacementsFlow = interpretTablesFlow(webpage)
 
-        // Combine all three flows and collect
-        val (semanticElements, iconReplacements, imageReplacements) = combine(
+        // Combine all four flows and collect
+        data class FlowResults(
+            val semanticElements: SemanticElements,
+            val iconReplacements: List<IBrowserPage.XPathReplacementWithText>,
+            val imageReplacements: List<IBrowserPage.XPathReplacementWithText>,
+            val tableReplacements: List<IBrowserPage.CssSelectorReplacementWithText>
+        )
+        
+        val results = combine(
             semanticElementsFlow,
             iconReplacementsFlow,
-            imageReplacementsFlow
-        ) { semantic, iconRep, imageRep ->
-            Triple(semantic, iconRep, imageRep)
+            imageReplacementsFlow,
+            tableReplacementsFlow
+        ) { semantic, iconRep, imageRep, tableRep ->
+            FlowResults(semantic, iconRep, imageRep, tableRep)
         }.first()
 
-        // Step 5: Replace icons and images
-        webpage.replaceElementsByXPathWithText(iconReplacements + imageReplacements)
+        // Step 3: Replace icons and images
+        webpage.replaceElementsByXPathWithText(results.iconReplacements + results.imageReplacements)
 
-        // Step 6: Extract popup text (before removal)
-        val popupText = extractPopupText(webpage, semanticElements)
+        // Step 4: Extract popup text (before removal)
+        val popupText = extractPopupText(webpage, results.semanticElements)
 
-        // Step 7: Remove semantic elements
-        removeSemanticElements(webpage, semanticElements)
+        // Step 5: Remove semantic elements
+        removeSemanticElements(webpage, results.semanticElements)
 
-        // Step 8: Process tables (unchanged)
-        replaceTablesWithTexts(webpage)
+        // Step 6: Replace tables (after filtering out removed elements)
+        replaceFilteredTables(webpage, results.tableReplacements)
 
-        // Step 9: Extract final text and build result
+        // Step 7: Extract final text and build result
         val extractedText = webpage.extractTextContent()
         buildString {
             appendLine("URL: ${webpage.getUrl()}")
@@ -107,8 +110,9 @@ class WebpageExtractionService(
         logger.debug("Semantic element identification took {} ms", duration)
     }
 
-    private fun interpretIconsFlow(icons: List<IBrowserPage.Icon>) = flow {
+    private fun interpretIconsFlow(webpage: IBrowserPage) = flow {
         val duration = measureTimeMillis {
+            val icons = webpage.extractIcons()
 
             val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons)
             val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
@@ -121,8 +125,10 @@ class WebpageExtractionService(
         logger.debug("Icon interpretation took {} ms", duration)
     }
 
-    private fun interpretImagesFlow(images: List<IBrowserPage.WebImage>) = flow {
+    private fun interpretImagesFlow(webpage: IBrowserPage) = flow {
         val duration = measureTimeMillis {
+            val images = webpage.extractImages()
+
             val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images)
             val replacements = images.zip(extractedTexts).flatMap { (image, extractedText) ->
                 image.xPathSelectors.map { xpath ->
@@ -132,6 +138,57 @@ class WebpageExtractionService(
             emit(replacements)
         }
         logger.debug("Image interpretation took {} ms", duration)
+    }
+
+    private fun interpretTablesFlow(webpage: IBrowserPage) = flow {
+        val duration = measureTimeMillis {
+            val url = webpage.getUrl()
+            val fullHtml = webpage.getFullHtml()
+            val fullScreenshot = webpage.takeFullPageScreenshot()
+            
+            val tables = tableIdentificationService.identifyTables(
+                TableIdentificationInput(
+                    screenshotBytes = fullScreenshot.bytes,
+                    mimetype = fullScreenshot.mimeType,
+                    html = fullHtml
+                )
+            )
+
+            // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)
+            val tableInputs = tables.mapNotNull { table ->
+                try {
+                    val isVisible = webpage.isElementVisibleByCssSelector(table.cssSelector)
+                    val elementScreenshot = if (isVisible) {
+                        webpage.getElementScreenshotByCssSelector(table.cssSelector)
+                    } else {
+                        null
+                    }
+                    val elementHtml = webpage.getElementHtmlByCssSelector(table.cssSelector)
+                    table.cssSelector to TableInterpretationInput(
+                        screenshotBytes = elementScreenshot?.bytes,
+                        mimetype = elementScreenshot?.mimeType,
+                        auxiliaryInfo = table.auxiliaryInfo,
+                        html = elementHtml
+                    )
+                } catch (e: Exception) {
+                    logger.error("Failed to extract table at URL: {} with CSS selector '{}': {}", 
+                        url, table.cssSelector, e.message)
+                    null
+                }
+            }
+
+            // Interpret all tables in batch to reduce concurrent upsert issues
+            val cssSelectors = tableInputs.map { it.first }
+            val inputs = tableInputs.map { it.second }
+            val markdowns = tableInterpretationService.interpretTablesBatch(inputs)
+            
+            val replacements = cssSelectors.zip(markdowns).map { (cssSelector, markdown) ->
+                IBrowserPage.CssSelectorReplacementWithText(cssSelector, markdown)
+            }
+
+            emit(replacements)
+        }
+        logger.debug("Table interpretation took {} ms", duration)
     }
 
     private suspend fun extractPopupText(
@@ -152,52 +209,30 @@ class WebpageExtractionService(
         }
     }
 
-    private suspend fun replaceTablesWithTexts(webpage: IBrowserPage) = coroutineScope {
-        // Table processing: identify tables from HTML and interpret them to markdown
-        val url = webpage.getUrl()
-        val fullHtml = webpage.getFullHtml()
-        val fullScreenshot = webpage.takeFullPageScreenshot()
-        val tables = tableIdentificationService.identifyTables(
-            TableIdentificationInput(
-                screenshotBytes = fullScreenshot.bytes,
-                mimetype = fullScreenshot.mimeType,
-                html = fullHtml
-            )
-        )
-
-        // Sequentially gather screenshots and HTML for each table (Playwright is not thread-safe)
-        val tableInputs = tables.mapNotNull { table ->
+    private suspend fun replaceFilteredTables(
+        webpage: IBrowserPage,
+        tableReplacements: List<IBrowserPage.CssSelectorReplacementWithText>
+    ) {
+        // Filter out tables that were removed as part of semantic element removal
+        val filteredReplacements = tableReplacements.filter { replacement ->
             try {
-                val isVisible = webpage.isElementVisibleByCssSelector(table.cssSelector)
-                val elementScreenshot = if (isVisible) {
-                    webpage.getElementScreenshotByCssSelector(table.cssSelector)
-                } else {
-                    null
-                }
-                val elementHtml = webpage.getElementHtmlByCssSelector(table.cssSelector)
-                table.cssSelector to TableInterpretationInput(
-                    screenshotBytes = elementScreenshot?.bytes,
-                    mimetype = elementScreenshot?.mimeType,
-                    auxiliaryInfo = table.auxiliaryInfo,
-                    html = elementHtml
-                )
+                webpage.isElementVisibleByCssSelector(replacement.cssSelector)
             } catch (e: Exception) {
-                logger.error("Failed to extract table at URL: {} with CSS selector '{}': {}", 
-                    url, table.cssSelector, e.message)
-                null
+                logger.debug("Table with CSS selector '{}' no longer exists, skipping replacement", 
+                    replacement.cssSelector)
+                false
             }
         }
 
-        // Interpret all tables in batch to reduce concurrent upsert issues
-        val cssSelectors = tableInputs.map { it.first }
-        val inputs = tableInputs.map { it.second }
-        val markdowns = tableInterpretationService.interpretTablesBatch(inputs)
-        
-        val replacements = cssSelectors.zip(markdowns).map { (cssSelector, markdown) ->
-            IBrowserPage.CssSelectorReplacementWithText(cssSelector, markdown)
+        val removedCount = tableReplacements.size - filteredReplacements.size
+        if (removedCount > 0) {
+            logger.debug("Filtered out {} table(s) that were removed with semantic elements", removedCount)
         }
+        logger.debug("Replacing {} table(s) with interpreted text", filteredReplacements.size)
 
-        webpage.replaceElementsByCssSelectorWithText(replacements)
+        if (filteredReplacements.isNotEmpty()) {
+            webpage.replaceElementsByCssSelectorWithText(filteredReplacements)
+        }
     }
 
     private suspend fun removeSemanticElements(

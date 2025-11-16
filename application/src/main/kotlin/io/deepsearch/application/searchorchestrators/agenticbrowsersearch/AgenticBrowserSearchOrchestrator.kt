@@ -727,6 +727,24 @@ class AgenticBrowserSearchOrchestrator(
             newMarkdowns.size
         )
 
+        // TODO use an agent to classify the markdown into [Canonical/Temporal/Ancillary]
+        //Canonical Source (High Authority): A page that is meant to be a timeless, definitive source of truth. Its job is to be correct right now.
+        //
+        //Examples: Product specification page, API documentation, pricing page, company directory.
+        //Rule: Information from a Canonical source is the default truth.
+        //Temporal Source (Contextual Authority): A page that announces a change or provides an update at a specific point in time. Its authority is tied to its date.
+        //
+        //Examples: Blog posts, press releases, news articles, patch notes.
+        //Rule: Information from a Temporal source overrides a Canonical source only if it is more recent and explicitly states a change.
+        //Ancillary Source (Low Authority): A page where the information is mentioned incidentally.
+        //
+        //Examples: "About Us" pages, user forums, case studies, comments.
+        //Rule: Information from an Ancillary source is generally a weak signal and should only be used for corroboration.
+
+        // TODO streamingAnswerAgent llm must also respect the authority and use the higher priority source when dealing with conflicting data, no need to note the discrepency, the answer should be confident and absolute
+
+        // TODO answerReviewerAgent should only return complete=true if there is at least one canonical source
+
         // First, build/update the answer
         val answerOutput = streamingAnswerAgent.generate(
             StreamingAnswerInput(

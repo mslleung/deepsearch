@@ -3,7 +3,9 @@ package io.deepsearch.application.services
 import io.deepsearch.application.config.applicationTestModule
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
@@ -40,9 +42,12 @@ class WebpageExtractionServiceTest : KoinTest {
             val page = context.newPage()
 
             page.navigate(url)
-            val text = webpageExtractionService.extractWebpage(page)
+            withContext(Dispatchers.IO) {
+                val text = webpageExtractionService.extractWebpage(page)
 
-            assertTrue(text.length > 200)
+                assertTrue(text.length > 200)
+                println(text)
+            }
         }
     }
 }
