@@ -37,7 +37,7 @@ class SemanticIdentificationAgentAdkImpl(
         .properties(
             mapOf(
                 "htmlSnippet" to Schema.builder().type("STRING")
-                    .description("The complete HTML of the element, including opening tag, all content, and closing tag").build(),
+                    .description("A concise HTML snippet showing the opening tag and first ~10 lines of content, sufficient to uniquely identify the element").build(),
                 "note" to Schema.builder().type("STRING").description("Brief note of what this element is").build()
             )
         )
@@ -108,7 +108,7 @@ class SemanticIdentificationAgentAdkImpl(
                 - adBanners: Elements containing ads
                 - popups: Popup dialogs that cover the main content and are visually interrupting to the user
             - Do not include the main content of the webpage. Only include elements that contain no critical information in the webpage.
-            - For each region, extract the complete HTML of the element that wraps the region (opening tag + all nested content + closing tag)
+            - For each region, extract a concise HTML snippet: the opening tag with attributes and the first ~10 lines of nested content (enough to uniquely identify the element)
             - Make sure the regions are unique with no overlap.
             - Write a brief note describing why it is considered a semantic element (e.g., "Top navbar with logo and menu", "Left sidebar with category links", "Cookie consent popup").
             - Return null for optional single elements if not found.
@@ -124,6 +124,8 @@ class SemanticIdentificationAgentAdkImpl(
               "adBanners": [ { "htmlSnippet": string, "note": string }, ... ],
               "popups": [ { "htmlSnippet": string, "note": string }, ... ]
             }
+            
+            Note: HTML snippets should be concise (first ~10 lines) - just enough to uniquely identify the element by its tag, attributes, and initial structure.
             """.trimIndent()
         )
         build()

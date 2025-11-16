@@ -32,8 +32,11 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
     ): List<String> {
         return try {
             // Parse the snippet to extract the root element's attributes
-            val snippetDoc = Jsoup.parseBodyFragment(htmlSnippet)
-            val rootElement = snippetDoc.body().child(0)
+            // For truncated HTML with unclosed attributes, try to repair it first
+            val repairedSnippet = repairTruncatedHtml(htmlSnippet)
+            val snippetDoc = Jsoup.parseBodyFragment(repairedSnippet)
+            val rootElement = snippetDoc.body().children().firstOrNull() 
+                ?: return emptyList()
             
             val tagName = rootElement.tagName()
             val id = rootElement.attr("id")
@@ -54,8 +57,14 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
             }
             
             // Filter by structural match in cleaned HTML
-            val structurallyMatchingElements = cleanedMatchingElements.filter { candidate ->
-                hasMatchingStructure(rootElement, candidate)
+            // Skip structural matching if we have a unique ID selector - IDs are globally unique
+            val structurallyMatchingElements = if (id.isNotBlank() && cleanedMatchingElements.size == 1) {
+                logger.debug("Skipping structural match for unique ID selector: {}", baseSelector)
+                cleanedMatchingElements.toList()
+            } else {
+                cleanedMatchingElements.filter { candidate ->
+                    hasMatchingStructure(rootElement, candidate, htmlSnippet)
+                }
             }
             
             logger.debug("Filtered {} candidates to {} structurally-matching elements in cleaned HTML", 
@@ -133,17 +142,26 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
     
     /**
      * Compares structural similarity between snippet element and candidate element.
-     * Both elements are from cleaned HTML, so we can do a direct structural comparison.
+     * Uses raw HTML snippet comparison to handle truncated/unterminated HTML.
      * 
      * @param snippetElement The root element from the LLM-provided HTML snippet (from cleaned HTML)
      * @param candidateElement The candidate element from cleaned HTML
-     * @return true if structures match exactly
+     * @param rawSnippet The raw HTML snippet string (may be truncated/unterminated)
+     * @return true if structures match
      */
-    private fun hasMatchingStructure(snippetElement: Element, candidateElement: Element): Boolean {
-        // if a candidate in the original html has the base selector and the first 1000 characters look exactly the same, consider it a match
-        val matches = snippetElement.outerHtml().take(1000) == candidateElement.outerHtml().take(1000)
-
-        return matches
+    private fun hasMatchingStructure(snippetElement: Element, candidateElement: Element, rawSnippet: String): Boolean {
+        val trimmedSnippet = rawSnippet.trim()
+        val candidateHtml = candidateElement.outerHtml()
+        
+        // Normalize both strings for comparison: collapse whitespace sequences to single spaces
+        // This handles differences in HTML formatting between LLM output and Jsoup's outerHtml()
+        val normalizedSnippet = trimmedSnippet.replace(Regex("\\s+"), " ")
+        val normalizedCandidate = candidateHtml.replace(Regex("\\s+"), " ")
+        
+        // Check if candidate's HTML starts with the provided snippet (after normalization)
+        // This works for truncated HTML since we match the prefix only
+        val snippetLength = normalizedSnippet.length
+        return normalizedCandidate.take(snippetLength) == normalizedSnippet
     }
     
     /**
@@ -245,6 +263,31 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
         
         logger.debug("Built hierarchical selector: {}", hierarchicalSelector)
         return hierarchicalSelector
+    }
+    
+    /**
+     * Attempts to repair truncated HTML that may have unclosed quotes or tags.
+     * This handles edge cases where the LLM truncates mid-attribute or mid-tag.
+     * 
+     * @param html The potentially truncated HTML snippet
+     * @return Repaired HTML that can be parsed by Jsoup
+     */
+    private fun repairTruncatedHtml(html: String): String {
+        var repaired = html.trim()
+        
+        // Count quotes in attribute values - if odd number, close the quote
+        val quoteCount = repaired.count { it == '"' }
+        if (quoteCount % 2 == 1) {
+            // Unclosed quote - close it
+            repaired += "\""
+        }
+        
+        // If the snippet doesn't end with >, try to close the opening tag
+        if (!repaired.endsWith(">") && !repaired.endsWith("/>")) {
+            repaired += ">"
+        }
+        
+        return repaired
     }
 }
 
