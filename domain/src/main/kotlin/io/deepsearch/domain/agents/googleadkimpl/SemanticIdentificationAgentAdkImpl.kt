@@ -15,6 +15,7 @@ import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.agents.SemanticIdentificationOutput
 import io.deepsearch.domain.models.valueobjects.IdentifiedElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
+import io.deepsearch.domain.services.ICssSelectorConstructionService
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -24,16 +25,19 @@ import org.jsoup.nodes.Document
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
+class SemanticIdentificationAgentAdkImpl(
+    private val cssSelectorConstructionService: ICssSelectorConstructionService
+) : ISemanticIdentificationAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     private val identifiedElementSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("An identified element with CSS selector and note")
+        .description("An identified element with HTML snippet and note")
         .properties(
             mapOf(
-                "cssSelector" to Schema.builder().type("STRING").description("CSS selector to the container").build(),
+                "htmlSnippet" to Schema.builder().type("STRING")
+                    .description("The complete HTML of the element, including opening tag, all content, and closing tag").build(),
                 "note" to Schema.builder().type("STRING").description("Brief note of what this element is").build()
             )
         )
@@ -69,7 +73,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("semanticIdentificationAgent")
-        description("Identify and return CSS selectors of all semantic elements (navigation elements, popups, etc.) using screenshot and cleaned HTML")
+        description("Identify and return HTML snippets of all semantic elements (navigation elements, popups, etc.) using screenshot and cleaned HTML")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -86,7 +90,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
         )
         instruction(
             """
-            Task: Identify popup and navigational elements on the page and provide their CSS selector and a short note.
+            Task: Identify popup and navigational elements on the page and provide their HTML snippet and a short note.
 
             Inputs:
             - A screenshot of the webpage (current viewport)
@@ -104,24 +108,21 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
                 - adBanners: Elements containing ads
                 - popups: Popup dialogs that cover the main content and are visually interrupting to the user
             - Do not include the main content of the webpage. Only include elements that contain no critical information in the webpage.
-            - For each region, return a CSS selector to the container that wraps the region. Make sure the regions are unique with no overlap.
-            - Use robust CSS selectors (prefer class names, IDs, or semantic HTML tags).
+            - For each region, extract the complete HTML of the element that wraps the region (opening tag + all nested content + closing tag)
+            - Make sure the regions are unique with no overlap.
             - Write a brief note describing why it is considered a semantic element (e.g., "Top navbar with logo and menu", "Left sidebar with category links", "Cookie consent popup").
             - Return null for optional single elements if not found.
             - Return empty arrays for list elements if none found.
-            
-            Example CSS selector format:
-            div.nav-link, #header, header.site-header
 
             Output structure:
             {
-              "header": { "cssSelector": string, "note": string } | null,
-              "footer": { "cssSelector": string, "note": string } | null,
-              "navSidebar": { "cssSelector": string, "note": string } | null,
-              "breadcrumb": { "cssSelector": string, "note": string } | null,
-              "cookieBanner": { "cssSelector": string, "note": string } | null,
-              "adBanners": [ { "cssSelector": string, "note": string }, ... ],
-              "popups": [ { "cssSelector": string, "note": string }, ... ]
+              "header": { "htmlSnippet": string, "note": string } | null,
+              "footer": { "htmlSnippet": string, "note": string } | null,
+              "navSidebar": { "htmlSnippet": string, "note": string } | null,
+              "breadcrumb": { "htmlSnippet": string, "note": string } | null,
+              "cookieBanner": { "htmlSnippet": string, "note": string } | null,
+              "adBanners": [ { "htmlSnippet": string, "note": string }, ... ],
+              "popups": [ { "htmlSnippet": string, "note": string }, ... ]
             }
             """.trimIndent()
         )
@@ -129,6 +130,23 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
     }
 
     private val runner = InMemoryRunner(agent)
+
+    @Serializable
+    private data class LlmSemanticResult(
+        val htmlSnippet: String,
+        val note: String
+    )
+
+    @Serializable
+    private data class SemanticIdentificationResponse(
+        val header: LlmSemanticResult? = null,
+        val footer: LlmSemanticResult? = null,
+        val navSidebar: LlmSemanticResult? = null,
+        val breadcrumb: LlmSemanticResult? = null,
+        val cookieBanner: LlmSemanticResult? = null,
+        val adBanners: List<LlmSemanticResult> = emptyList(),
+        val popups: List<LlmSemanticResult> = emptyList()
+    )
 
     override suspend fun generate(input: SemanticIdentificationInput): SemanticIdentificationOutput {
         val cleanedHtml = cleanHtml(input.html)
@@ -139,7 +157,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
             )
         }
 
-        val response = retryLlmCall<SemanticElements> {
+        val response = retryLlmCall<SemanticIdentificationResponse> {
             val session = runner
                 .sessionService()
                 .createSession(
@@ -181,11 +199,61 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
             llmResponse
         }
 
+        logger.debug("Semantic element identification found {} HTML snippets from LLM", 
+            listOfNotNull(response.header, response.footer, response.navSidebar, response.breadcrumb, response.cookieBanner).size + 
+            response.adBanners.size + response.popups.size)
+
+        // Convert HTML snippets to CSS selectors for each element type
+        // Handle the case where a snippet might match multiple elements (though rare for semantic elements)
+        val headerElements = response.header?.let { convertToIdentifiedElements(it, cleanedHtml, input.html) } ?: emptyList()
+        val footerElements = response.footer?.let { convertToIdentifiedElements(it, cleanedHtml, input.html) } ?: emptyList()
+        val navSidebarElements = response.navSidebar?.let { convertToIdentifiedElements(it, cleanedHtml, input.html) } ?: emptyList()
+        val breadcrumbElements = response.breadcrumb?.let { convertToIdentifiedElements(it, cleanedHtml, input.html) } ?: emptyList()
+        val cookieBannerElements = response.cookieBanner?.let { convertToIdentifiedElements(it, cleanedHtml, input.html) } ?: emptyList()
+        val adBannerElements = response.adBanners.flatMap { convertToIdentifiedElements(it, cleanedHtml, input.html) }
+        val popupElements = response.popups.flatMap { convertToIdentifiedElements(it, cleanedHtml, input.html) }
+
         logger.debug("Semantic element identification complete")
 
         return SemanticIdentificationOutput(
-            elements = response
+            elements = SemanticElements(
+                header = headerElements.firstOrNull(),
+                footer = footerElements.firstOrNull(),
+                navSidebar = navSidebarElements.firstOrNull(),
+                breadcrumb = breadcrumbElements.firstOrNull(),
+                cookieBanner = cookieBannerElements.firstOrNull(),
+                adBanners = adBannerElements,
+                popups = popupElements
+            )
         )
+    }
+
+    /**
+     * Converts an LLM semantic result (HTML snippet + note) to a list of IdentifiedElements.
+     * Uses the CSS selector construction service to find matching elements.
+     * Returns a list because a snippet might match multiple elements in rare cases.
+     */
+    private fun convertToIdentifiedElements(
+        llmResult: LlmSemanticResult,
+        cleanedHtml: String,
+        fullHtml: String
+    ): List<IdentifiedElement> {
+        val cssSelectors = cssSelectorConstructionService.constructCssSelectorsFromSnippet(
+            llmResult.htmlSnippet, cleanedHtml, fullHtml
+        )
+        
+        if (cssSelectors.isEmpty()) {
+            logger.warn("Skipping semantic element with snippet '{}' - could not construct valid CSS selector", 
+                llmResult.htmlSnippet.take(100))
+            return emptyList()
+        }
+        
+        return cssSelectors.map { cssSelector ->
+            IdentifiedElement(
+                cssSelector = cssSelector,
+                note = llmResult.note
+            )
+        }
     }
 
     private fun cleanHtml(rawHtml: String): String {

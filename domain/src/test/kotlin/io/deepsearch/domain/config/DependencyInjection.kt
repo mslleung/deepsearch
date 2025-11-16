@@ -49,8 +49,10 @@ import io.deepsearch.domain.ocr.ITesseractPool
 import io.deepsearch.domain.services.OcrImageTextExtractionService
 import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.services.ApiKeyCryptoService
+import io.deepsearch.domain.services.CssSelectorConstructionService
 import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
+import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
@@ -112,6 +114,7 @@ private val domainCommonTestModule = module {
 
     // domain services
     singleOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
+    singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
     singleOf(::JwtService) bind IJwtService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::SerperService) bind ISerperService::class
