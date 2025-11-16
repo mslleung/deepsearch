@@ -25,7 +25,6 @@ class WebpageExtractionService(
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
     private val semanticIdentificationService: ISemanticIdentificationService,
     private val popupContainerIdentificationService: IPopupContainerIdentificationService,
-    private val navigationElementRemovalService: INavigationElementRemovalService,
     private val dispatchers: IDispatcherProvider
 ) : IWebpageExtractionService {
 
@@ -142,7 +141,7 @@ class WebpageExtractionService(
         return if (semanticElements.popups.isNotEmpty()) {
             buildString {
                 semanticElements.popups.forEach { popup ->
-                    val text = webpage.extractElementTextContent(popup.xpath)
+                    val text = webpage.extractElementTextContentByCssSelector(popup.cssSelector)
                     if (text.isNotBlank()) {
                         appendLine(text)
                     }
@@ -208,64 +207,64 @@ class WebpageExtractionService(
         // Remove each semantic element individually
         semanticElements.header?.let { element ->
             try {
-                logger.debug("Removing header via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
+                logger.debug("Removing header via CSS selector: {}", element.cssSelector)
+                webpage.removeElementByCssSelector(element.cssSelector)
             } catch (e: Exception) {
-                logger.warn("Failed to remove header at {}: {}", element.xpath, e.message)
+                logger.warn("Failed to remove header at {}: {}", element.cssSelector, e.message)
             }
         }
 
         semanticElements.footer?.let { element ->
             try {
-                logger.debug("Removing footer via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
+                logger.debug("Removing footer via CSS selector: {}", element.cssSelector)
+                webpage.removeElementByCssSelector(element.cssSelector)
             } catch (e: Exception) {
-                logger.warn("Failed to remove footer at {}: {}", element.xpath, e.message)
+                logger.warn("Failed to remove footer at {}: {}", element.cssSelector, e.message)
             }
         }
 
         semanticElements.navSidebar?.let { element ->
             try {
-                logger.debug("Removing navigation sidebar via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
+                logger.debug("Removing navigation sidebar via CSS selector: {}", element.cssSelector)
+                webpage.removeElementByCssSelector(element.cssSelector)
             } catch (e: Exception) {
-                logger.warn("Failed to remove navigation sidebar at {}: {}", element.xpath, e.message)
+                logger.warn("Failed to remove navigation sidebar at {}: {}", element.cssSelector, e.message)
             }
         }
 
         semanticElements.breadcrumb?.let { element ->
             try {
-                logger.debug("Removing breadcrumb via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
+                logger.debug("Removing breadcrumb via CSS selector: {}", element.cssSelector)
+                webpage.removeElementByCssSelector(element.cssSelector)
             } catch (e: Exception) {
-                logger.warn("Failed to remove breadcrumb at {}: {}", element.xpath, e.message)
+                logger.warn("Failed to remove breadcrumb at {}: {}", element.cssSelector, e.message)
             }
         }
 
         semanticElements.cookieBanner?.let { element ->
             try {
-                logger.debug("Removing cookie banner via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
+                logger.debug("Removing cookie banner via CSS selector: {}", element.cssSelector)
+                webpage.removeElementByCssSelector(element.cssSelector)
             } catch (e: Exception) {
-                logger.warn("Failed to remove cookie banner at {}: {}", element.xpath, e.message)
+                logger.warn("Failed to remove cookie banner at {}: {}", element.cssSelector, e.message)
             }
         }
 
         semanticElements.adBanners.forEach { element ->
             try {
-                logger.debug("Removing ad banner via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
+                logger.debug("Removing ad banner via CSS selector: {}", element.cssSelector)
+                webpage.removeElementByCssSelector(element.cssSelector)
             } catch (e: Exception) {
-                logger.warn("Failed to remove ad banner at {}: {}", element.xpath, e.message)
+                logger.warn("Failed to remove ad banner at {}: {}", element.cssSelector, e.message)
             }
         }
 
         semanticElements.popups.forEach { element ->
             try {
-                logger.debug("Removing popup via XPath: {}", element.xpath)
-                webpage.removeElement(element.xpath)
+                logger.debug("Removing popup via CSS selector: {}", element.cssSelector)
+                webpage.removeElementByCssSelector(element.cssSelector)
             } catch (e: Exception) {
-                logger.warn("Failed to remove popup at {}: {}", element.xpath, e.message)
+                logger.warn("Failed to remove popup at {}: {}", element.cssSelector, e.message)
             }
         }
     }

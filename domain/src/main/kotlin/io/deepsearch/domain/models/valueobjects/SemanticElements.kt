@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class IdentifiedElement(
-    val xpath: String,
+    val cssSelector: String,
     val note: String
 )
 

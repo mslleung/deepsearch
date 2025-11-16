@@ -6,7 +6,6 @@ import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOr
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.SerperConfig
-import io.deepsearch.application.services.INavigationElementRemovalService
 import io.deepsearch.application.services.IPopupContainerIdentificationService
 import io.deepsearch.application.services.ISearchService
 import io.deepsearch.application.services.ISemanticIdentificationService
@@ -22,7 +21,6 @@ import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
-import io.deepsearch.application.services.NavigationElementRemovalService
 import io.deepsearch.application.services.PdfConversionService
 import io.deepsearch.application.services.PopupContainerIdentificationService
 import io.deepsearch.application.services.SearchService
@@ -79,7 +77,6 @@ private val applicationCommonTestModule = module {
     singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
     singleOf(::TableIdentificationService) bind ITableIdentificationService::class
     singleOf(::TableInterpretationService) bind ITableInterpretationService::class
-    singleOf(::NavigationElementRemovalService) bind INavigationElementRemovalService::class
     singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class

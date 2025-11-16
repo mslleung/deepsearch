@@ -196,6 +196,31 @@ class PlaywrightBrowserPage(
         logger.debug("Successfully removed {} element(s) at XPath: {}", count, xpath)
     }
 
+    override suspend fun removeElementByCssSelector(cssSelector: String) {
+        logger.debug("Remove element by CSS selector: {}", cssSelector)
+        val (locator, count) = apiMutex.withLock {
+            val loc = page.locator(cssSelector)
+            val c = loc.count()
+            loc to c
+        }
+
+        if (count == 0) {
+            logger.warn("No element found at CSS selector: {}", cssSelector)
+            return
+        }
+
+        if (count > 1) {
+            logger.debug("Multiple elements ({}) found at CSS selector: {}, removing all", count, cssSelector)
+        }
+
+        // Remove all matching elements using JavaScript
+        apiMutex.withLock {
+            locator.evaluateAll("elements => elements.forEach(element => element.remove())")
+        }
+
+        logger.debug("Successfully removed {} element(s) at CSS selector: {}", count, cssSelector)
+    }
+
     override suspend fun elementExists(xpath: String): Boolean {
         return apiMutex.withLock {
             val locator = page.locator("xpath=$xpath")
@@ -555,6 +580,58 @@ class PlaywrightBrowserPage(
             }
             """,
                 elementXPath
+            )
+        } as String
+    }
+
+    override suspend fun extractElementTextContentByCssSelector(cssSelector: String): String {
+        logger.debug("Extracting text content from CSS selector: {}", cssSelector)
+
+        return apiMutex.withLock {
+            page.evaluate(
+                """
+            (selector) => {
+                const collectText = (root) => {
+                    const result = [];
+                    const stack = [root];
+                    
+                    // Elements that don't generally contain meaningful text for retrieval
+                    const excludeTags = new Set([
+                        'script', 'style', 'noscript', 'button', 'iframe', 'nav', 'header', 'footer',
+                        'aside', 'link', 'meta'
+                    ]);
+                    
+                    while (stack.length > 0) {
+                        const node = stack.pop();
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            const text = node.textContent.trim();
+                            if (text.length > 0) {
+                                result.push(text);
+                            }
+                        } else if (node.nodeType === Node.ELEMENT_NODE) {
+                            const tagName = node.tagName.toLowerCase();
+                            if (!excludeTags.has(tagName)) {
+                                const children = Array.from(node.childNodes);
+                                for (let i = children.length - 1; i >= 0; i--) {
+                                    stack.push(children[i]);
+                                }
+                            }
+                        }
+                    }
+                    return result;
+                };
+
+                const elements = document.querySelectorAll(selector);
+                if (elements.length === 0) {
+                    return '';
+                }
+                // Use the last matched element (similar to XPath behavior)
+                const target = elements[elements.length - 1];
+                const result = collectText(target);
+                return result.join('\n');
+            }
+            """,
+                cssSelector
             )
         } as String
     }

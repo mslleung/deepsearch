@@ -51,7 +51,6 @@ val domainModule = module {
         scopedOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
         scopedOf(::MultiIconInterpreterAgentAdkImpl) bind IMultiIconInterpreterAgent::class
         scopedOf(::MultiImageTextExtractionAgentAdkImpl) bind IMultiImageTextExtractionAgent::class
-        scopedOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
         scopedOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
         scopedOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
         scopedOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class

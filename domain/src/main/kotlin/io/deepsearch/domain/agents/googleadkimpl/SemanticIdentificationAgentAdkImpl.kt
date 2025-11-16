@@ -30,10 +30,10 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
     private val identifiedElementSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("An identified element with XPath and note")
+        .description("An identified element with CSS selector and note")
         .properties(
             mapOf(
-                "xpath" to Schema.builder().type("STRING").description("XPath to the container").build(),
+                "cssSelector" to Schema.builder().type("STRING").description("CSS selector to the container").build(),
                 "note" to Schema.builder().type("STRING").description("Brief note of what this element is").build()
             )
         )
@@ -69,7 +69,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("semanticIdentificationAgent")
-        description("Identify and return XPath selectors of all semantic elements (navigation elements, popups, etc.) using screenshot and cleaned HTML")
+        description("Identify and return CSS selectors of all semantic elements (navigation elements, popups, etc.) using screenshot and cleaned HTML")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -86,7 +86,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
         )
         instruction(
             """
-            Task: Identify popup and navigational elements on the page and provide their XPath and a short note.
+            Task: Identify popup and navigational elements on the page and provide their CSS selector and a short note.
 
             Inputs:
             - A screenshot of the webpage (current viewport)
@@ -104,24 +104,24 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
                 - adBanners: Elements containing ads
                 - popups: Popup dialogs that cover the main content and are visually interrupting to the user
             - Do not include the main content of the webpage. Only include elements that contain no critical information in the webpage.
-            - For each region, return a relative xpath to the container that wraps the region. Make sure the regions are unique with no overlap.
-            - Must not use positional predicates in the XPaths.
+            - For each region, return a CSS selector to the container that wraps the region. Make sure the regions are unique with no overlap.
+            - Use robust CSS selectors (prefer class names, IDs, or semantic HTML tags).
             - Write a brief note describing why it is considered a semantic element (e.g., "Top navbar with logo and menu", "Left sidebar with category links", "Cookie consent popup").
             - Return null for optional single elements if not found.
             - Return empty arrays for list elements if none found.
             
-            Example XPath format:
-            //div[@class='nav-link']
+            Example CSS selector format:
+            div.nav-link, #header, header.site-header
 
             Output structure:
             {
-              "header": { "xpath": string, "note": string } | null,
-              "footer": { "xpath": string, "note": string } | null,
-              "navSidebar": { "xpath": string, "note": string } | null,
-              "breadcrumb": { "xpath": string, "note": string } | null,
-              "cookieBanner": { "xpath": string, "note": string } | null,
-              "adBanners": [ { "xpath": string, "note": string }, ... ],
-              "popups": [ { "xpath": string, "note": string }, ... ]
+              "header": { "cssSelector": string, "note": string } | null,
+              "footer": { "cssSelector": string, "note": string } | null,
+              "navSidebar": { "cssSelector": string, "note": string } | null,
+              "breadcrumb": { "cssSelector": string, "note": string } | null,
+              "cookieBanner": { "cssSelector": string, "note": string } | null,
+              "adBanners": [ { "cssSelector": string, "note": string }, ... ],
+              "popups": [ { "cssSelector": string, "note": string }, ... ]
             }
             """.trimIndent()
         )
@@ -211,7 +211,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
 
         // Step 2: Strip attributes to only essentials for semantic identification
         // Keep FULL page structure - LLM needs context to distinguish semantic elements from content
-        // Keep id, class, role for XPath uniqueness and semantic meaning
+        // Keep id, class, role for CSS selector targeting and semantic meaning
         doc.select("*").forEach { element ->
             val essentialAttrs = setOf("id", "class", "role", "aria-label", "aria-modal", "data-testid")
             val attrsToKeep = element.attributes().filter { attr ->
@@ -223,7 +223,7 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
             }
         }
 
-        // Step 3: Aggressively minimize text content - only need structure for XPath
+        // Step 3: Aggressively minimize text content - only need structure for CSS selectors
         // Keep only first few chars per text node for context
         doc.select("*").forEach { element ->
             element.textNodes().forEach { textNode ->

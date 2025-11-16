@@ -14,7 +14,6 @@ import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.IMultiIconInterpreterAgent
-import io.deepsearch.domain.agents.INavigationElementIdentificationAgent
 import io.deepsearch.domain.agents.IPdfToMarkdownAgent
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
 import io.deepsearch.domain.agents.IQueryExpansionAgent
@@ -36,7 +35,6 @@ import io.deepsearch.domain.agents.googleadkimpl.StreamingAnswerAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.LinkRelevanceAnalysisAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.MultiIconInterpreterAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.NavigationElementIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.PopupContainerIdentificationAgentAdkImpl
 import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
@@ -101,7 +99,6 @@ private val domainCommonTestModule = module {
     singleOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
     singleOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
-    singleOf(::NavigationElementIdentificationAgentAdkImpl) bind INavigationElementIdentificationAgent::class
     singleOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
     singleOf(::MultiImageTextExtractionAgentAdkImpl) bind IMultiImageTextExtractionAgent::class
     singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class

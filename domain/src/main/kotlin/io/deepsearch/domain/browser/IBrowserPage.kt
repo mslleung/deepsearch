@@ -64,6 +64,12 @@ interface IBrowserPage {
     suspend fun removeElement(xpath: String)
 
     /**
+     * Remove the DOM element matched by the provided CSS selector from the document.
+     * No-op if no element matches.
+     */
+    suspend fun removeElementByCssSelector(cssSelector: String)
+
+    /**
      * Check if an element matching the provided XPath selector exists in the document.
      * @param xpath XPath expression to match
      * @return true if at least one element matches; false otherwise
@@ -187,4 +193,11 @@ interface IBrowserPage {
      * The resulting lines are joined with newlines.
      */
     suspend fun extractElementTextContent(elementXPath: String): String
+
+    /**
+     * Extract text content from specific element, identified by their CSS selector.
+     * The element's subtree is traversed similarly to extractTextContent, excluding script and style tags.
+     * The resulting lines are joined with newlines.
+     */
+    suspend fun extractElementTextContentByCssSelector(cssSelector: String): String
 }
