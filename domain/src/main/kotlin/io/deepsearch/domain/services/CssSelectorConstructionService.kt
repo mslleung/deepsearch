@@ -142,26 +142,164 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
     
     /**
      * Compares structural similarity between snippet element and candidate element.
-     * Uses raw HTML snippet comparison to handle truncated/unterminated HTML.
+     * Uses DOM-based comparison to handle formatting differences in HTML output.
      * 
      * @param snippetElement The root element from the LLM-provided HTML snippet (from cleaned HTML)
      * @param candidateElement The candidate element from cleaned HTML
-     * @param rawSnippet The raw HTML snippet string (may be truncated/unterminated)
+     * @param rawSnippet The raw HTML snippet string (for debug logging)
      * @return true if structures match
      */
     private fun hasMatchingStructure(snippetElement: Element, candidateElement: Element, rawSnippet: String): Boolean {
-        val trimmedSnippet = rawSnippet.trim()
-        val candidateHtml = candidateElement.outerHtml()
+        // Compare tag names
+        if (snippetElement.tagName() != candidateElement.tagName()) {
+            logger.debug(
+                "Tag name mismatch: expected '{}', found '{}'",
+                snippetElement.tagName(),
+                candidateElement.tagName()
+            )
+            return false
+        }
         
-        // Normalize both strings for comparison: collapse whitespace sequences to single spaces
-        // This handles differences in HTML formatting between LLM output and Jsoup's outerHtml()
-        val normalizedSnippet = trimmedSnippet.replace(Regex("\\s+"), " ")
-        val normalizedCandidate = candidateHtml.replace(Regex("\\s+"), " ")
+        // Compare attributes (ignoring order)
+        if (!compareAttributes(snippetElement, candidateElement)) {
+            logger.debug(
+                "Attribute mismatch for <{}>: expected {}, found {}",
+                snippetElement.tagName(),
+                formatAttributesForLog(snippetElement),
+                formatAttributesForLog(candidateElement)
+            )
+            return false
+        }
         
-        // Check if candidate's HTML starts with the provided snippet (after normalization)
-        // This works for truncated HTML since we match the prefix only
-        val snippetLength = normalizedSnippet.length
-        return normalizedCandidate.take(snippetLength) == normalizedSnippet
+        // Compare child structure recursively (up to depth limit)
+        val maxDepth = 3
+        if (!compareChildStructure(snippetElement, candidateElement, depth = 0, maxDepth = maxDepth)) {
+            logger.debug(
+                "Child structure mismatch for <{}>: expected {} children, found {} children",
+                snippetElement.tagName(),
+                snippetElement.children().size,
+                candidateElement.children().size
+            )
+            return false
+        }
+        
+        return true
+    }
+    
+    /**
+     * Compares attributes of two elements, ignoring order.
+     * Only compares attributes that exist on the snippet element.
+     * 
+     * @param snippetElement The element from the LLM snippet
+     * @param candidateElement The candidate element from cleaned HTML
+     * @return true if all snippet attributes match
+     */
+    private fun compareAttributes(snippetElement: Element, candidateElement: Element): Boolean {
+        val snippetAttrs = snippetElement.attributes()
+        val candidateAttrs = candidateElement.attributes()
+        
+        // Check that all snippet attributes exist and match in the candidate
+        for (attr in snippetAttrs) {
+            val snippetValue = attr.value
+            val candidateValue = candidateAttrs.get(attr.key)
+            
+            // Special handling for class attribute - compare as sets
+            if (attr.key == "class") {
+                val snippetClasses = snippetElement.classNames()
+                val candidateClasses = candidateElement.classNames()
+                if (snippetClasses != candidateClasses) {
+                    return false
+                }
+            } else {
+                // For other attributes, exact match required
+                if (snippetValue != candidateValue) {
+                    return false
+                }
+            }
+        }
+        
+        return true
+    }
+    
+    /**
+     * Recursively compares child structure of two elements up to a depth limit.
+     * 
+     * @param snippetElement The element from the LLM snippet
+     * @param candidateElement The candidate element from cleaned HTML
+     * @param depth Current recursion depth
+     * @param maxDepth Maximum recursion depth
+     * @return true if child structures match
+     */
+    private fun compareChildStructure(
+        snippetElement: Element,
+        candidateElement: Element,
+        depth: Int,
+        maxDepth: Int
+    ): Boolean {
+        // Stop recursion at max depth
+        if (depth >= maxDepth) {
+            return true
+        }
+        
+        val snippetChildren = snippetElement.children()
+        val candidateChildren = candidateElement.children()
+        
+        // The snippet might be truncated, so candidate can have MORE children
+        // but must have AT LEAST as many as the snippet shows
+        if (candidateChildren.size < snippetChildren.size) {
+            return false
+        }
+        
+        // Compare each child in the snippet with corresponding child in candidate
+        for (i in snippetChildren.indices) {
+            val snippetChild = snippetChildren[i]
+            val candidateChild = candidateChildren[i]
+            
+            // Compare tag names
+            if (snippetChild.tagName() != candidateChild.tagName()) {
+                logger.debug(
+                    "Child tag mismatch at depth {}: expected '{}', found '{}'",
+                    depth,
+                    snippetChild.tagName(),
+                    candidateChild.tagName()
+                )
+                return false
+            }
+            
+            // Compare attributes
+            if (!compareAttributes(snippetChild, candidateChild)) {
+                logger.debug(
+                    "Child attribute mismatch at depth {} for <{}>",
+                    depth,
+                    snippetChild.tagName()
+                )
+                return false
+            }
+            
+            // Recursively compare children
+            if (!compareChildStructure(snippetChild, candidateChild, depth + 1, maxDepth)) {
+                return false
+            }
+        }
+        
+        return true
+    }
+    
+    /**
+     * Formats element attributes for debug logging.
+     * 
+     * @param element The element to format
+     * @return A string representation of the element's attributes
+     */
+    private fun formatAttributesForLog(element: Element): String {
+        val attrs = element.attributes()
+        if (attrs.isEmpty()) {
+            return "(no attributes)"
+        }
+        
+        return attrs.joinToString(", ") { attr ->
+            "${attr.key}=\"${attr.value}\""
+        }
     }
     
     /**
