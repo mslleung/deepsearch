@@ -6,14 +6,13 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SemanticElements
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.system.measureTimeMillis
 
 interface IWebpageExtractionService {
     suspend fun extractWebpage(webpage: IBrowserPage): String
@@ -95,36 +94,45 @@ class WebpageExtractionService(
         }.trim()
     }
 
-
     private fun identifySemanticElementsFlow(
         screenshotBytes: ByteArray,
         mimeType: ImageMimeType,
         html: String
     ) = flow {
-        val semanticElements = semanticIdentificationService.identifySemanticElements(
-            screenshotBytes, mimeType, html
-        )
-        emit(semanticElements)
+        val duration = measureTimeMillis {
+            val semanticElements = semanticIdentificationService.identifySemanticElements(
+                screenshotBytes, mimeType, html
+            )
+            emit(semanticElements)
+        }
+        logger.debug("Semantic element identification took {} ms", duration)
     }
 
     private fun interpretIconsFlow(icons: List<IBrowserPage.Icon>) = flow {
-        val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons)
-        val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
-            icon.xPathSelectors.map { xpath ->
-                IBrowserPage.XPathReplacementWithText(xpath, interpretedText)
+        val duration = measureTimeMillis {
+
+            val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons)
+            val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
+                icon.xPathSelectors.map { xpath ->
+                    IBrowserPage.XPathReplacementWithText(xpath, interpretedText)
+                }
             }
+            emit(replacements)
         }
-        emit(replacements)
+        logger.debug("Icon interpretation took {} ms", duration)
     }
 
     private fun interpretImagesFlow(images: List<IBrowserPage.WebImage>) = flow {
-        val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images)
-        val replacements = images.zip(extractedTexts).flatMap { (image, extractedText) ->
-            image.xPathSelectors.map { xpath ->
-                IBrowserPage.XPathReplacementWithText(xpath, extractedText)
+        val duration = measureTimeMillis {
+            val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images)
+            val replacements = images.zip(extractedTexts).flatMap { (image, extractedText) ->
+                image.xPathSelectors.map { xpath ->
+                    IBrowserPage.XPathReplacementWithText(xpath, extractedText)
+                }
             }
+            emit(replacements)
         }
-        emit(replacements)
+        logger.debug("Image interpretation took {} ms", duration)
     }
 
     private suspend fun extractPopupText(

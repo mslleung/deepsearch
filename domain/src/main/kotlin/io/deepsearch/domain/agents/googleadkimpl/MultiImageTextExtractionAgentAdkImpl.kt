@@ -309,7 +309,7 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
             }
 
             if (extractedText != null && extractedText.isNotBlank()) {
-                logger.debug("Text extracted from image at batch position {}: {} characters", position, extractedText.length)
+                logger.debug("Text extracted from image at batch position {}: {}", position, extractedText)
             } else {
                 logger.debug("No text found in image at batch position {} ({} bytes)", position, images[position].bytes.size)
             }

@@ -43,8 +43,18 @@ class OcrImageTextExtractionService(
             try {
                 tesseractPool.use { api ->
                     api.SetImage(pix)
-                    val text = api.GetUTF8Text()?.string
-                    text ?: ""
+                    val text = api.GetUTF8Text()?.string?.trim()
+                    if (text != null && text.isNotBlank()) {
+                        if (text.length > 2) {
+                            logger.debug("OCR detected text: {}", text)
+                            text
+                        } else {
+                            logger.debug("OCR detected text: {}, Skipping as there are less than 3 characters", text)
+                            ""
+                        }
+                    } else {
+                        ""
+                    }
                 }
             } finally {
                 leptonica.pixDestroy(pix)

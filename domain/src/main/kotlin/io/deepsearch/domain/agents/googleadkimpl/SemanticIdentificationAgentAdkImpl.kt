@@ -181,6 +181,8 @@ class SemanticIdentificationAgentAdkImpl : ISemanticIdentificationAgent {
             llmResponse
         }
 
+        logger.debug("Semantic element identification complete")
+
         return SemanticIdentificationOutput(
             elements = response
         )

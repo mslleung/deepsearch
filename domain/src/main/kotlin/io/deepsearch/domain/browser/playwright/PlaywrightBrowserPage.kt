@@ -63,17 +63,9 @@ class PlaywrightBrowserPage(
             try {
                 val navigationTime = measureTimeMillis {
                     val response = page.navigate(url)
-                    
-                    // Wait for network idle to handle Cloudflare challenges and dynamic content
-                    // This gives time for anti-bot challenges to complete
-                    try {
-                        page.waitForLoadState(LoadState.NETWORKIDLE, Page.WaitForLoadStateOptions().setTimeout(5000.0))
-                    } catch (e: Exception) {
-                        // If network idle times out, fall back to DOM content loaded
-                        logger.debug("Network idle timeout, falling back to DOM content loaded")
-                        page.waitForLoadState(LoadState.DOMCONTENTLOADED)
-                    }
-                    
+
+                    page.waitForLoadState(LoadState.LOAD)
+
                     // Check HTTP status code
                     response?.let {
                         val statusCode = it.status()
@@ -344,10 +336,12 @@ class PlaywrightBrowserPage(
 
 
     override suspend fun getTitle(): String {
+        logger.debug("Getting title...")
         return apiMutex.withLock { page.title() }
     }
 
     override suspend fun getDescription(): String? {
+        logger.debug("Getting description...")
         return apiMutex.withLock {
             val descriptionMeta = page.locator("meta[name=description], meta[property='og:description']")
             val description =

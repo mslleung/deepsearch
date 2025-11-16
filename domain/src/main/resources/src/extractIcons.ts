@@ -201,6 +201,7 @@
     // 4. <span> with icon fonts or classes
     const selectors = [
       'i',
+      'svg',
       'svg[class*="icon"]',
       'svg[class*="Icon"]',
       '[class*="icon-"]',
