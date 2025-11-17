@@ -34,7 +34,6 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
 
     // Loaded resources
     private val exampleHtml: String = resourceText("view-source_https___example.com.html")
-    private val exampleScreenshot: ByteArray = resourceBytes("example.com_.webp")
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<ISemanticIdentificationAgent>()
@@ -42,13 +41,7 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
 
     @Test
     fun `should identify no semantic elements on simple example page`() = runTest(testCoroutineDispatcher) {
-        // Verify resources are loaded
-        assertTrue(exampleScreenshot.isNotEmpty(), "Screenshot should be loaded")
-        assertTrue(exampleHtml.isNotBlank(), "HTML should be loaded")
-
         val input = SemanticIdentificationInput(
-            screenshotBytes = exampleScreenshot,
-            mimetype = ImageMimeType.WEBP,
             html = exampleHtml
         )
         val output = agent.generate(input)
@@ -77,10 +70,7 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
             val page = context.newPage()
             page.navigate(url)
 
-            val screenshot = page.takeFullPageScreenshot()
             val input = SemanticIdentificationInput(
-                screenshotBytes = screenshot.bytes,
-                mimetype = screenshot.mimeType,
                 html = page.getFullHtml()
             )
             val output = agent.generate(input)

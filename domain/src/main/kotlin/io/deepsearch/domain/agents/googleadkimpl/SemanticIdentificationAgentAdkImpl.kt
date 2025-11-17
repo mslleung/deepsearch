@@ -93,7 +93,6 @@ class SemanticIdentificationAgentAdkImpl(
             Task: Identify popup and navigational elements on the page and provide their HTML snippet and a short note.
 
             Inputs:
-            - A screenshot of the webpage (current viewport)
             - CLEANED HTML (subset of DOM with key attributes)
 
             Guidelines:
@@ -173,8 +172,7 @@ class SemanticIdentificationAgentAdkImpl(
             val eventsFlow = runner.runAsync(
                 session,
                 Content.fromParts(
-                    Part.fromBytes(input.screenshotBytes, input.mimetype.value),
-                    Part.fromText("CLEANED_HTML:\n$cleanedHtml")
+                    Part.fromText(cleanedHtml)
                 ),
                 RunConfig.builder().apply {
                     setStreamingMode(RunConfig.StreamingMode.NONE)

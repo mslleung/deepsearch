@@ -6,8 +6,6 @@ import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.serialization.Serializable
 
 data class SemanticIdentificationInput(
-    val screenshotBytes: ByteArray,
-    val mimetype: ImageMimeType,
     val html: String
 ) : IAgent.IAgentInput
 

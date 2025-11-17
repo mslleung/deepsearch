@@ -4,7 +4,6 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.IDispatcherProvider
-import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
@@ -39,13 +38,10 @@ class WebpageExtractionService(
         val description = webpage.getDescription()
 
         // Step 1: Take screenshot and html (browser operations)
-        val screenshot = webpage.takeFullPageScreenshot()
         val html = webpage.getFullHtml()
 
         // Step 2: Run LLM operations concurrently using Flow
-        val semanticElementsFlow = identifySemanticElementsFlow(
-            screenshot.bytes, screenshot.mimeType, html
-        )
+        val semanticElementsFlow = identifySemanticElementsFlow(html)
         val iconReplacementsFlow = interpretIconsFlow(webpage)
         val imageReplacementsFlow = interpretImagesFlow(webpage)
         val tableReplacementsFlow = interpretTablesFlow(webpage)
@@ -97,13 +93,11 @@ class WebpageExtractionService(
     }
 
     private fun identifySemanticElementsFlow(
-        screenshotBytes: ByteArray,
-        mimeType: ImageMimeType,
         html: String
     ) = flow {
         val duration = measureTimeMillis {
             val semanticElements = semanticIdentificationService.identifySemanticElements(
-                screenshotBytes, mimeType, html
+                html
             )
             emit(semanticElements)
         }

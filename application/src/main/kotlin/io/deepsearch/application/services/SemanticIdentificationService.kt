@@ -15,15 +15,11 @@ interface ISemanticIdentificationService {
     /**
      * Identifies all semantic elements (navigation elements + popups) on a webpage.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
-     * 
-     * @param screenshotBytes The screenshot of the webpage
-     * @param mimeType The MIME type of the screenshot
+     *
      * @param html The full HTML of the webpage
      * @return SemanticElements containing all identified semantic elements grouped by type
      */
     suspend fun identifySemanticElements(
-        screenshotBytes: ByteArray,
-        mimeType: ImageMimeType,
         html: String
     ): SemanticElements
 }
@@ -36,12 +32,10 @@ class SemanticIdentificationService(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun identifySemanticElements(
-        screenshotBytes: ByteArray,
-        mimeType: ImageMimeType,
         html: String
     ): SemanticElements {
-        // Use screenshot hash for caching (more reliable than HTML for popup detection)
-        val pageHash = MessageDigest.getInstance("SHA-256").digest(screenshotBytes)
+        // Use html hash for caching
+        val pageHash = MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
 
         val cached = webpageSemanticElementRepository.findByHash(pageHash)
         if (cached != null) {
@@ -51,8 +45,6 @@ class SemanticIdentificationService(
 
         val identificationResult = semanticIdentificationAgent.generate(
             SemanticIdentificationInput(
-                screenshotBytes = screenshotBytes,
-                mimetype = mimeType,
                 html = html
             )
         )

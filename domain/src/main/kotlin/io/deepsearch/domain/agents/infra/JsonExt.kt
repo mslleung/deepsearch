@@ -53,7 +53,7 @@ inline fun <reified T> Json.decodeFromStringWithCodeBlocks(response: String): T 
  * @throws LlmDeserializationException if all retries fail
  */
 suspend inline fun <reified T> retryLlmCall(
-    maxRetries: Int = 1,
+    maxRetries: Int = 3,
     crossinline llmCall: suspend () -> String
 ): T {
     val logger = LoggerFactory.getLogger("io.deepsearch.domain.agents.infra.JsonExt")
