@@ -60,10 +60,6 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-    
-    // Pass environment variables to tests
-    environment("GOOGLE_API_KEY", System.getenv("GOOGLE_API_KEY") ?: "")
-    environment("SERPER_API_KEY", System.getenv("SERPER_API_KEY") ?: "")
 }
 
 tasks.compileKotlin {

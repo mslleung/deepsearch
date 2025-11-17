@@ -392,7 +392,7 @@ class PlaywrightBrowserPage(
 
         // Convert replacements to a format that can be serialized for JavaScript
         val replacementsData = replacements.map {
-            mapOf("xpath" to it.xpath, "text" to it.text?.take(100)) // Truncate for logging
+            mapOf("xpath" to it.xpath, "text" to it.text)
         }
 
         // Perform all replacements in a single evaluate call for optimal performance
