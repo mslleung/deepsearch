@@ -74,6 +74,8 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
             - If the image is a simple UI icon, output a concise, lowercase label
               ex. "search", "download", "settings", "hamburger menu", "close", "play", "pause", "tick", "cross".
             - If the image is not a simple UI icon, output a more detailed label describing the icon.
+            - If the image is ambiguous, output all possibilities
+              For example, a cross icon and a close icon may look the same, in that case output "cross/close"
             - If the image is meaningless or empty or cannot be interpreted, output nothing.
 
             Expected output shape:

@@ -194,21 +194,22 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
     /**
      * Process multiple batches of images in parallel.
      */
-    private suspend fun processInParallelBatches(images: List<MultiImageTextExtractionInput.ImageItem>): MultiImageTextExtractionOutput = coroutineScope {
-        val batches = images.chunked(BATCH_SIZE)
-        logger.debug("Processing {} images in {} parallel batches", images.size, batches.size)
+    private suspend fun processInParallelBatches(images: List<MultiImageTextExtractionInput.ImageItem>): MultiImageTextExtractionOutput =
+        coroutineScope {
+            val batches = images.chunked(BATCH_SIZE)
+            logger.debug("Processing {} images in {} parallel batches", images.size, batches.size)
 
-        // Process all batches in parallel
-        val batchResults = batches.map { batch ->
-            async {
-                processBatch(batch)
-            }
-        }.awaitAll()
+            // Process all batches in parallel
+            val batchResults = batches.map { batch ->
+                async {
+                    processBatch(batch)
+                }
+            }.awaitAll()
 
-        // Combine results from all batches in order
-        val allExtractions = batchResults.flatMap { it.extractions }
-        MultiImageTextExtractionOutput(extractions = allExtractions)
-    }
+            // Combine results from all batches in order
+            val allExtractions = batchResults.flatMap { it.extractions }
+            MultiImageTextExtractionOutput(extractions = allExtractions)
+        }
 
     /**
      * Process a single batch of images (up to BATCH_SIZE).
@@ -221,7 +222,11 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
         val oversizedPositions = mutableSetOf<Int>()
         val imagesToProcess = images.filterIndexed { index, image ->
             if (isImageTooLarge(image.bytes, image.mimeType)) {
-                logger.error("Image at batch position {} is too large (resolution exceeds {} pixels); returning empty string", index, MAX_PIXEL_COUNT)
+                logger.error(
+                    "Image at batch position {} is too large (resolution exceeds {} pixels); returning empty string",
+                    index,
+                    MAX_PIXEL_COUNT
+                )
                 oversizedPositions.add(index)
                 false
             } else {
@@ -241,14 +246,14 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
         // Build content with all images
         val contentParts = mutableListOf<Part>()
 
-        // Add instruction text
-        contentParts.add(Part.fromText("Extract text from the following ${imagesToProcess.size} images in order:"))
-
         // Add each image as an image part with position label
         imagesToProcess.forEachIndexed { index, image ->
             contentParts.add(Part.fromText("Image ${index + 1}:"))
             contentParts.add(Part.fromBytes(image.bytes, image.mimeType.value))
         }
+
+        // Add instruction text
+        contentParts.add(Part.fromText("Extract text from the above ${imagesToProcess.size} images in order"))
 
         val response = retryLlmCall<MultiImageTextExtractionResponse> {
             val session = runner
@@ -312,7 +317,11 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
             if (extractedText != null && extractedText.isNotBlank()) {
                 logger.debug("Text extracted from image at batch position {}: {}", position, extractedText)
             } else {
-                logger.debug("No text found in image at batch position {} ({} bytes)", position, images[position].bytes.size)
+                logger.debug(
+                    "No text found in image at batch position {} ({} bytes)",
+                    position,
+                    images[position].bytes.size
+                )
             }
 
             MultiImageTextExtractionOutput.TextExtraction(extractedText = extractedText)
@@ -428,6 +437,7 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
             theadTrs.isNotEmpty() -> allTrs.indexOf(theadTrs.last()).coerceAtLeast(0)
             allTrs.firstOrNull { it.select("th").isNotEmpty() } != null ->
                 allTrs.indexOfFirst { it.select("th").isNotEmpty() }.coerceAtLeast(0)
+
             else -> 0
         }
 
