@@ -2,29 +2,57 @@
   type ImageResult = { base64: string; xPathSelectors: string[] };
   type FailedImage = { element: Element; xPath: string; reason: string };
 
-  const getElementIndex = (el: Element): number => {
-    let index = 1;
-    let sibling = el.previousElementSibling;
-    while (sibling) {
-      if (sibling.tagName === el.tagName) {
-        index++;
-      }
-      sibling = sibling.previousElementSibling;
-    }
-    return index;
-  };
-
   const xPathSegmentFor = (el: Element): string => {
     const tag = el.tagName.toLowerCase();
-    const index = getElementIndex(el);
-    const parent = el.parentElement;
-    const siblingsSameTag = parent 
-      ? Array.from(parent.children).filter(ch => ch.tagName === el.tagName).length 
-      : 1;
-    if (siblingsSameTag > 1) {
-      return `${tag}[${index}]`;
+    
+    // 1. Try to use id attribute (most stable)
+    const id = el.getAttribute('id');
+    if (id && id.trim()) {
+      return `${tag}[@id='${id.trim().replace(/'/g, "\\'")}']`;
     }
-    return tag;
+    
+    // 2. For img elements, try using src attribute
+    if (tag === 'img') {
+      const src = el.getAttribute('src');
+      if (src && src.trim()) {
+        // Escape single quotes in XPath
+        return `${tag}[@src='${src.trim().replace(/'/g, "\\'")}']`;
+      }
+    }
+    
+    // 3. Try using class attribute if it's reasonably unique
+    const classes = el.getAttribute('class');
+    if (classes && classes.trim()) {
+      const classList = classes.trim().split(/\s+/).filter(c => c.length > 0);
+      if (classList.length > 0) {
+        // Use contains for each class to be more resilient
+        const classConditions = classList.map(c => `contains(@class,'${c.replace(/'/g, "\\'")}')`).join(' and ');
+        return `${tag}[${classConditions}]`;
+      }
+    }
+    
+    // 4. For other potentially unique attributes
+    const alt = el.getAttribute('alt');
+    if (alt && alt.trim()) {
+      return `${tag}[@alt='${alt.trim().replace(/'/g, "\\'")}']`;
+    }
+    
+    const href = el.getAttribute('href');
+    if (href && href.trim()) {
+      return `${tag}[@href='${href.trim().replace(/'/g, "\\'")}']`;
+    }
+    
+    // 5. Try data attributes
+    const dataAttrs = Array.from(el.attributes).filter(attr => attr.name.startsWith('data-'));
+    if (dataAttrs.length > 0) {
+      const attr = dataAttrs[0];
+      return `${tag}[@${attr.name}='${attr.value.replace(/'/g, "\\'")}']`;
+    }
+    
+    // 6. Last resort: inject a temporary unique data attribute
+    const uniqueId = `ds-${Math.random().toString(36).substr(2, 9)}`;
+    el.setAttribute('data-ds-temp-id', uniqueId);
+    return `${tag}[@data-ds-temp-id='${uniqueId}']`;
   };
 
   const uniqueXPathFor = (el: Element): string => {

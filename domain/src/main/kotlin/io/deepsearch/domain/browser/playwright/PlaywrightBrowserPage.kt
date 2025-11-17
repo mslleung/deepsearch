@@ -392,14 +392,16 @@ class PlaywrightBrowserPage(
 
         // Convert replacements to a format that can be serialized for JavaScript
         val replacementsData = replacements.map {
-            mapOf("xpath" to it.xpath, "text" to it.text)
+            mapOf("xpath" to it.xpath, "text" to it.text?.take(100)) // Truncate for logging
         }
 
         // Perform all replacements in a single evaluate call for optimal performance
-        apiMutex.withLock {
+        val result = apiMutex.withLock {
             page.evaluate(
                 """
             (replacements) => {
+                const results = { succeeded: 0, failed: [], removed: 0 };
+                
                 for (const replacement of replacements) {
                     const xpath = replacement.xpath;
                     const text = replacement.text;
@@ -416,6 +418,7 @@ class PlaywrightBrowserPage(
                     const count = xpathResult.snapshotLength;
                     
                     if (count === 0) {
+                        results.failed.push({ xpath: xpath.substring(0, 100), reason: 'no_match' });
                         continue;
                     }
                     
@@ -426,18 +429,38 @@ class PlaywrightBrowserPage(
                         // Replace element with text node
                         const parent = target.parentNode;
                         if (!parent || parent.nodeType === Node.DOCUMENT_NODE) {
+                            results.failed.push({ xpath: xpath.substring(0, 100), reason: 'no_parent' });
                             continue;
                         }
                         const textNode = document.createTextNode(text);
                         parent.replaceChild(textNode, target);
+                        results.succeeded++;
                     } else {
                         // Remove element
                         target.remove();
+                        results.removed++;
                     }
                 }
+                
+                return results;
             }
             """, replacementsData
             )
+        } as Map<*, *>
+
+        val succeeded = (result["succeeded"] as? Number)?.toInt() ?: 0
+        val removed = (result["removed"] as? Number)?.toInt() ?: 0
+        @Suppress("UNCHECKED_CAST")
+        val failed = (result["failed"] as? List<Map<String, String>>) ?: emptyList()
+
+        logger.debug("XPath replacements: {} succeeded, {} removed, {} failed", succeeded, removed, failed.size)
+        if (failed.isNotEmpty()) {
+            failed.take(5).forEach { failure ->
+                logger.warn("Failed to replace XPath '{}': {}", failure["xpath"], failure["reason"])
+            }
+            if (failed.size > 5) {
+                logger.warn("... and {} more failed replacements", failed.size - 5)
+            }
         }
     }
 
