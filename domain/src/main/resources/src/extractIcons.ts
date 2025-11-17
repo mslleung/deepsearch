@@ -78,7 +78,7 @@
       debugStats.skippedNoGlyph++;
       debugStats.skippedDetails.push({
         tag: el.tagName.toLowerCase(),
-        classes: el.className,
+        classes: typeof el.className === 'string' ? el.className : (el.className as SVGAnimatedString).baseVal || '',
         beforeContent: beforeContent,
         textContent: textContent,
         reason: 'no_glyph'
@@ -208,7 +208,7 @@
       debugStats.skippedSvgZeroSize++;
       debugStats.skippedDetails.push({
         tag: 'svg',
-        classes: el.className,
+        classes: typeof el.className === 'string' ? el.className : (el.className as SVGAnimatedString).baseVal || '',
         width: bbox.width,
         height: bbox.height,
         reason: 'zero_dimensions'
@@ -333,7 +333,7 @@
         debugStats.renderingErrors++;
         debugStats.skippedDetails.push({
           tag: el.tagName.toLowerCase(),
-          classes: el.className,
+          classes: typeof el.className === 'string' ? el.className : (el.className as SVGAnimatedString).baseVal || '',
           error: String(error),
           reason: 'rendering_error'
         });
