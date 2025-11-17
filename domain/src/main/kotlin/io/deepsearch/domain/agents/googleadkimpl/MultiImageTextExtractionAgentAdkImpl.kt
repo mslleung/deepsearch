@@ -92,6 +92,7 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
                         .thinkingBudget(0)
                         .build()
                 )
+                .maxOutputTokens(8192)  // attempt to solve gemini no response issue
                 .build()
         )
         instruction(
