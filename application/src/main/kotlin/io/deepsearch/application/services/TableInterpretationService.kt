@@ -28,7 +28,6 @@ class TableInterpretationService(
     override suspend fun interpretTable(input: TableInterpretationInput): String {
         // Create a hash from all input parameters that affect the interpretation
         val digest = MessageDigest.getInstance("SHA-256")
-        input.screenshotBytes?.let { digest.update(it) }
         digest.update(input.html.toByteArray())
         val dataHash = digest.digest()
 
@@ -67,7 +66,6 @@ class TableInterpretationService(
         // Compute hashes for all inputs
         val hashes = inputs.map { input ->
             val digest = MessageDigest.getInstance("SHA-256")
-            input.screenshotBytes?.let { digest.update(it) }
             digest.update(input.html.toByteArray())
             digest.digest()
         }

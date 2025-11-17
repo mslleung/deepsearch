@@ -57,17 +57,13 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         )
         instruction(
             """
-            You are given the HTML markup for a table-like region from a webpage, an auxiliary info describing 
-            the table, and optionally a cropped screenshot of the table region (if the table was visible).
-            Convert this table into clean, faithful GitHub-flavored Markdown.
-
-            Note: The screenshot may be absent if the table was not visible in the viewport. In such cases, 
-            rely primarily on the HTML and auxiliary info.
+            You are given the HTML markup for a table-like region from a webpage and an auxiliary info describing 
+            the table. Convert this table into clean, faithful GitHub-flavored Markdown.
 
             Rules:
             - Preserve the table's row and column structure accurately.
             - Include a header row if one exists; otherwise infer a sensible header from the first row if appropriate.
-            - Do not invent data. Only use what is visible in the screenshot (if provided) or present in the supplied HTML.
+            - Do not invent data. Only use what is present in the supplied HTML.
             - Normalize whitespace; remove decorative or layout-only characters.
             - Keep content concise; avoid verbose prose or explanations.
             - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
@@ -90,8 +86,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
-        logger.debug("Interpreting table to markdown (screenshot: {} bytes, html length {})", 
-            input.screenshotBytes?.size ?: "none", input.html.length)
+        logger.debug("Interpreting table to markdown (html length {})", input.html.length)
 
         val response = retryLlmCall<TableInterpretationResponse> {
             val session = runner
@@ -107,9 +102,6 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             var llmResponse = ""
 
             val parts = buildList {
-                if (input.screenshotBytes != null && input.mimetype != null) {
-                    add(Part.fromBytes(input.screenshotBytes, input.mimetype.value))
-                }
                 add(Part.fromText("Auxiliary context: " + input.auxiliaryInfo))
                 add(Part.fromText(input.html))
             }

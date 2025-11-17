@@ -61,7 +61,7 @@ class TableIdentificationAgentAdkImpl(
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableIdentificationAgent")
-        description("Identify tables in webpage using screenshot and cleaned HTML, return HTML snippets of their root containers")
+        description("Identify tables in webpage using cleaned HTML, return HTML snippets of their root containers")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -81,11 +81,10 @@ class TableIdentificationAgentAdkImpl(
             Your task is to identify all tables in the provided webpage and extract their HTML snippets.
 
             Inputs:
-            - A screenshot of the full webpage
             - Cleaned HTML structure of the webpage
 
             Instructions:
-            - Analyze both the screenshot and HTML to identify every table in the webpage
+            - Analyze both the HTML to identify every table in the webpage
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
             - For every table you find, extract the complete HTML of the table element (opening tag + all nested content + closing tag). This must include the full table structure, not just the opening tag or first row.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
@@ -118,7 +117,7 @@ class TableIdentificationAgentAdkImpl(
     )
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
-        logger.debug("Table identification for HTML (screenshot: {} bytes)", input.screenshotBytes.size)
+        logger.debug("Table identification for HTML ({} bytes)", input.html.length)
 
         val cleanedHtml = cleanHtml(input.html)
 
@@ -142,8 +141,7 @@ class TableIdentificationAgentAdkImpl(
             val eventsFlow = runner.runAsync(
                 session,
                 Content.fromParts(
-                    Part.fromBytes(input.screenshotBytes, input.mimetype.value),
-                    Part.fromText("CLEANED_HTML:\n$cleanedHtml")
+                    Part.fromText(cleanedHtml)
                 ),
                 RunConfig.builder().apply {
                     setStreamingMode(RunConfig.StreamingMode.NONE)

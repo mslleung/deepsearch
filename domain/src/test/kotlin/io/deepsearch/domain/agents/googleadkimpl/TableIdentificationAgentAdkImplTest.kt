@@ -43,11 +43,8 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
             val page = context.newPage()
             page.navigate(url)
             val html = page.getFullHtml()
-            val screenshot = page.takeFullPageScreenshot()
 
             val input = TableIdentificationInput(
-                screenshotBytes = screenshot.bytes,
-                mimetype = screenshot.mimeType,
                 html = html
             )
             val output = agent.generate(input)

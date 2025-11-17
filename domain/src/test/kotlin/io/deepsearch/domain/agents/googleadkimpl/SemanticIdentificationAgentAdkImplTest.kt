@@ -58,8 +58,8 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
     @ParameterizedTest
     @ValueSource(
         strings = [
-            "https://mybeame.com/beame-student-discount",
-//            "https://www.otandp.com/body-check/",
+//            "https://mybeame.com/beame-student-discount",
+            "https://www.otandp.com/body-check/",
 //            "https://www.jetbrains.com/help/exposed/working-with-database.html",
         ]
     )

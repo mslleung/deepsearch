@@ -73,7 +73,7 @@ class SemanticIdentificationAgentAdkImpl(
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("semanticIdentificationAgent")
-        description("Identify and return HTML snippets of all semantic elements (navigation elements, popups, etc.) using screenshot and cleaned HTML")
+        description("Identify and return HTML snippets of all semantic elements (navigation elements, popups, etc.) using the cleaned HTML")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)

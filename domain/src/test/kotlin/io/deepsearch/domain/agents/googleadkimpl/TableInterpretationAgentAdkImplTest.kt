@@ -42,23 +42,17 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
             val page = context.newPage()
             page.navigate(url)
             val html = page.getFullHtml()
-            val screenshot = page.takeFullPageScreenshot()
             val idOutput = tableIdentificationAgent.generate(
                 TableIdentificationInput(
-                    screenshotBytes = screenshot.bytes,
-                    mimetype = screenshot.mimeType,
                     html = html
                 )
             )
             // Take first table if any
             val first = idOutput.tables.firstOrNull() ?: return@acquireRuntime
-            val elementShot = page.getElementScreenshotByCssSelector(first.cssSelector)
             val elementHtml = page.getElementHtmlByCssSelector(first.cssSelector)
 
             val md = tableInterpretationAgent.generate(
                 TableInterpretationInput(
-                    screenshotBytes = elementShot.bytes,
-                    mimetype = elementShot.mimeType,
                     html = elementHtml,
                     auxiliaryInfo = first.auxiliaryInfo
                 )
