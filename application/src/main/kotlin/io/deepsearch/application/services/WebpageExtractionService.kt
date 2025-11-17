@@ -35,62 +35,67 @@ class WebpageExtractionService(
      * The extracted text is primed for information retrieval on the current page.
      */
     override suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
-        val title = webpage.getTitle()
-        val description = webpage.getDescription()
+        val result: String
+        val duration = measureTimeMillis {
+            val title = webpage.getTitle()
+            val description = webpage.getDescription()
 
-        // Step 1: Take screenshot and html (browser operations)
-        val html = webpage.getFullHtml()
+            // Step 1: Take screenshot and html (browser operations)
+            val html = webpage.getFullHtml()
 
-        // Step 2: Run LLM operations concurrently using Flow
-        val semanticElementsFlow = identifySemanticElementsFlow(html)
-        val iconReplacementsFlow = interpretIconsFlow(webpage)
-        val imageReplacementsFlow = interpretImagesFlow(webpage)
-        val identifiedTablesFlow = identifyTablesFlow(html)
+            // Step 2: Run LLM operations concurrently using Flow
+            val semanticElementsFlow = identifySemanticElementsFlow(html)
+            val iconReplacementsFlow = interpretIconsFlow(webpage)
+            val imageReplacementsFlow = interpretImagesFlow(webpage)
+            val identifiedTablesFlow = identifyTablesFlow(html)
 
-        // Combine all four flows and collect
-        data class FlowResults(
-            val semanticElements: SemanticElements,
-            val iconReplacements: List<IBrowserPage.XPathReplacementWithText>,
-            val imageReplacements: List<IBrowserPage.XPathReplacementWithText>,
-            val identifiedTables: List<TableIdentification>
-        )
-        
-        val results = combine(
-            semanticElementsFlow,
-            iconReplacementsFlow,
-            imageReplacementsFlow,
-            identifiedTablesFlow
-        ) { semantic, iconRep, imageRep, tables ->
-            FlowResults(semantic, iconRep, imageRep, tables)
-        }.first()
+            // Combine all four flows and collect
+            data class FlowResults(
+                val semanticElements: SemanticElements,
+                val iconReplacements: List<IBrowserPage.XPathReplacementWithText>,
+                val imageReplacements: List<IBrowserPage.XPathReplacementWithText>,
+                val identifiedTables: List<TableIdentification>
+            )
+            
+            val results = combine(
+                semanticElementsFlow,
+                iconReplacementsFlow,
+                imageReplacementsFlow,
+                identifiedTablesFlow
+            ) { semantic, iconRep, imageRep, tables ->
+                FlowResults(semantic, iconRep, imageRep, tables)
+            }.first()
 
-        // Step 3: Replace icons and images
-        webpage.replaceElementsByXPathWithText(results.iconReplacements + results.imageReplacements)
+            // Step 3: Replace icons and images
+            webpage.replaceElementsByXPathWithText(results.iconReplacements + results.imageReplacements)
 
-        // Step 4: Extract popup text (before removal)
-        val popupText = extractPopupText(webpage, results.semanticElements)
+            // Step 4: Extract popup text (before removal)
+            val popupText = extractPopupText(webpage, results.semanticElements)
 
-        // Step 5: Remove semantic elements
-        removeSemanticElements(webpage, results.semanticElements)
+            // Step 5: Remove semantic elements
+            removeSemanticElements(webpage, results.semanticElements)
 
-        // Step 6: Interpret and replace tables (after filtering out removed elements)
-        interpretAndReplaceTables(webpage, results.identifiedTables)
+            // Step 6: Interpret and replace tables (after filtering out removed elements)
+            interpretAndReplaceTables(webpage, results.identifiedTables)
 
-        // Step 7: Extract final text and build result
-        val extractedText = webpage.extractTextContent()
-        buildString {
-            appendLine("URL: ${webpage.getUrl()}")
-            appendLine("Title: $title")
-            if (!description.isNullOrBlank()) {
-                appendLine("Description: $description")
-            }
-            appendLine()
-            if (!popupText.isNullOrBlank()) {
-                appendLine(popupText)
-            }
-            appendLine()
-            appendLine(extractedText)
-        }.trim()
+            // Step 7: Extract final text and build result
+            val extractedText = webpage.extractTextContent()
+            result = buildString {
+                appendLine("URL: ${webpage.getUrl()}")
+                appendLine("Title: $title")
+                if (!description.isNullOrBlank()) {
+                    appendLine("Description: $description")
+                }
+                appendLine()
+                if (!popupText.isNullOrBlank()) {
+                    appendLine(popupText)
+                }
+                appendLine()
+                appendLine(extractedText)
+            }.trim()
+        }
+        logger.debug("Webpage extraction took {} ms", duration)
+        result
     }
 
     private fun identifySemanticElementsFlow(
