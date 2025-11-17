@@ -63,6 +63,7 @@ suspend inline fun <reified T> retryLlmCall(
     repeat(maxRetries) { attempt ->
         try {
             val response = llmCall()
+            logger.debug("Decoding LLM response: {}", response)
             return Json.decodeFromStringWithCodeBlocks<T>(response)
         } catch (e: LlmDeserializationException) {
             lastException = e
