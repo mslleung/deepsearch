@@ -1,6 +1,31 @@
 (() => {
   type IconResult = { base64: string; xPathSelectors: string[] };
 
+  type SkippedDetail = {
+    tag: string;
+    classes: string;
+    beforeContent?: string;
+    textContent?: string;
+    width?: number;
+    height?: number;
+    error?: string;
+    reason: 'no_glyph' | 'zero_dimensions' | 'rendering_error';
+  };
+
+  type DebugStats = {
+    totalElementsFound: number;
+    elementsBySelector: Record<string, number>;
+    elementsProcessed: number;
+    skippedNoGlyph: number;
+    skippedSvgZeroSize: number;
+    renderingErrors: number;
+    successfullyRendered: number;
+    uniqueIcons: number;
+    totalXPaths: number;
+    skippedDetails: SkippedDetail[];
+    deduplicationMap: Record<number, number>;
+  };
+
   const toPlainString = (cssContent: string | null): string => {
     if (!cssContent || cssContent === 'none') return '';
     let s = String(cssContent).trim();
@@ -42,11 +67,24 @@
     return luminance > 0.5 ? '#2a2a2a' : '#f0f0f0';
   };
 
-  const renderIcon = async (el: Element): Promise<string | null> => {
+  const renderIcon = async (el: Element, debugStats: DebugStats): Promise<string | null> => {
     const style = window.getComputedStyle(el as HTMLElement);
     const before = window.getComputedStyle(el as HTMLElement, '::before');
-    const glyph = toPlainString(before.content) || (el.textContent || '').trim();
-    if (!glyph) return null;
+    const beforeContent = before.content;
+    const textContent = (el.textContent || '').trim();
+    const glyph = toPlainString(beforeContent) || textContent;
+    
+    if (!glyph) {
+      debugStats.skippedNoGlyph++;
+      debugStats.skippedDetails.push({
+        tag: el.tagName.toLowerCase(),
+        classes: el.className,
+        beforeContent: beforeContent,
+        textContent: textContent,
+        reason: 'no_glyph'
+      });
+      return null;
+    }
 
     await (document as any).fonts.ready;
 
@@ -96,13 +134,19 @@
   const xPathSegmentFor = (el: Element): string => {
     const tag = el.tagName.toLowerCase();
     
-    // 1. Try to use id attribute (most stable)
+    // 1. Check for our injected unique ID first (for icon elements)
+    const tempId = el.getAttribute('data-ds-temp-icon-id');
+    if (tempId) {
+      return `${tag}[@data-ds-temp-icon-id='${tempId}']`;
+    }
+    
+    // 2. Try to use id attribute (most stable)
     const id = el.getAttribute('id');
     if (id && id.trim()) {
       return `${tag}[@id='${id.trim().replace(/'/g, "\\'")}']`;
     }
     
-    // 2. Try using class attribute if it's reasonably unique
+    // 3. Try using class attribute if it's reasonably unique
     const classes = el.getAttribute('class');
     if (classes && classes.trim()) {
       const classList = classes.trim().split(/\s+/).filter(c => c.length > 0);
@@ -113,7 +157,7 @@
       }
     }
     
-    // 3. For other potentially unique attributes
+    // 4. For other potentially unique attributes
     const role = el.getAttribute('role');
     if (role && role.trim()) {
       return `${tag}[@role='${role.trim().replace(/'/g, "\\'")}']`;
@@ -129,14 +173,14 @@
       return `${tag}[@href='${href.trim().replace(/'/g, "\\'")}']`;
     }
     
-    // 4. Try data attributes
+    // 5. Try data attributes
     const dataAttrs = Array.from(el.attributes).filter(attr => attr.name.startsWith('data-'));
     if (dataAttrs.length > 0) {
       const attr = dataAttrs[0];
       return `${tag}[@${attr.name}='${attr.value.replace(/'/g, "\\'")}']`;
     }
     
-    // 5. Last resort: inject a temporary unique data attribute
+    // 6. Last resort: inject a temporary unique data attribute
     const uniqueId = `ds-${Math.random().toString(36).substr(2, 9)}`;
     el.setAttribute('data-ds-temp-id', uniqueId);
     return `${tag}[@data-ds-temp-id='${uniqueId}']`;
@@ -155,12 +199,22 @@
     return '//' + segments.join('/');
   };
 
-  const renderSvgIcon = async (el: Element): Promise<string | null> => {
+  const renderSvgIcon = async (el: Element, debugStats: DebugStats): Promise<string | null> => {
     const svg = el as SVGElement;
     
     // Get computed dimensions
     const bbox = svg.getBoundingClientRect();
-    if (bbox.width === 0 || bbox.height === 0) return null;
+    if (bbox.width === 0 || bbox.height === 0) {
+      debugStats.skippedSvgZeroSize++;
+      debugStats.skippedDetails.push({
+        tag: 'svg',
+        classes: el.className,
+        width: bbox.width,
+        height: bbox.height,
+        reason: 'zero_dimensions'
+      });
+      return null;
+    }
     
     // Get the computed color
     const style = window.getComputedStyle(svg);
@@ -214,6 +268,21 @@
   const run = async (): Promise<string> => {
     const imagesToXPathSelectors = new Map<string, Set<string>>();
     
+    // Initialize debug stats
+    const debugStats: DebugStats = {
+      totalElementsFound: 0,
+      elementsBySelector: {},
+      elementsProcessed: 0,
+      skippedNoGlyph: 0,
+      skippedSvgZeroSize: 0,
+      renderingErrors: 0,
+      successfullyRendered: 0,
+      uniqueIcons: 0,
+      totalXPaths: 0,
+      skippedDetails: [],
+      deduplicationMap: {} // maps number of xPaths to count of icons with that many xPaths
+    };
+    
     // Query for multiple icon types:
     // 1. <i> tags (Font Awesome, Bootstrap Icons, etc.)
     // 2. <svg> tags (inline SVG icons)
@@ -231,18 +300,50 @@
       '[role="img"]'
     ];
     
+    // Count elements by individual selector for better debugging
+    for (const selector of selectors) {
+      const count = document.querySelectorAll(selector).length;
+      debugStats.elementsBySelector[selector] = count;
+    }
+    
     const elements = Array.from(document.querySelectorAll(selectors.join(', ')));
+    debugStats.totalElementsFound = elements.length;
+    
+    console.log('[extractIcons] Starting extraction...');
+    console.log('[extractIcons] Total elements found:', debugStats.totalElementsFound);
+    console.log('[extractIcons] Elements by selector:', debugStats.elementsBySelector);
+    
+    // Inject unique IDs for all icon elements upfront to ensure unique xPaths
+    elements.forEach((el, index) => {
+      const uniqueId = `icon-${index}-${Math.random().toString(36).substr(2, 9)}`;
+      el.setAttribute('data-ds-temp-icon-id', uniqueId);
+    });
     
     for (const el of elements) {
+      debugStats.elementsProcessed++;
       let rendered: string | null = null;
       
-      if (el.tagName.toLowerCase() === 'svg') {
-        rendered = await renderSvgIcon(el);
-      } else {
-        rendered = await renderIcon(el);
+      try {
+        if (el.tagName.toLowerCase() === 'svg') {
+          rendered = await renderSvgIcon(el, debugStats);
+        } else {
+          rendered = await renderIcon(el, debugStats);
+        }
+      } catch (error) {
+        debugStats.renderingErrors++;
+        debugStats.skippedDetails.push({
+          tag: el.tagName.toLowerCase(),
+          classes: el.className,
+          error: String(error),
+          reason: 'rendering_error'
+        });
+        console.warn('[extractIcons] Rendering error:', error);
+        continue;
       }
       
       if (!rendered) continue;
+      
+      debugStats.successfullyRendered++;
       
       const xPathSelector = uniqueXPathFor(el);
       if (!imagesToXPathSelectors.has(rendered)) {
@@ -251,11 +352,33 @@
       imagesToXPathSelectors.get(rendered)!.add(xPathSelector);
     }
     
+    // Calculate deduplication stats
+    debugStats.uniqueIcons = imagesToXPathSelectors.size;
+    for (const [base64, xPaths] of imagesToXPathSelectors.entries()) {
+      const xPathCount = xPaths.size;
+      debugStats.totalXPaths += xPathCount;
+      debugStats.deduplicationMap[xPathCount] = (debugStats.deduplicationMap[xPathCount] || 0) + 1;
+    }
+    
+    console.log('[extractIcons] Extraction complete');
+    console.log('[extractIcons] Successfully rendered:', debugStats.successfullyRendered);
+    console.log('[extractIcons] Unique icons:', debugStats.uniqueIcons);
+    console.log('[extractIcons] Total xPaths:', debugStats.totalXPaths);
+    console.log('[extractIcons] Skipped (no glyph):', debugStats.skippedNoGlyph);
+    console.log('[extractIcons] Skipped (svg zero size):', debugStats.skippedSvgZeroSize);
+    console.log('[extractIcons] Rendering errors:', debugStats.renderingErrors);
+    console.log('[extractIcons] Deduplication map:', debugStats.deduplicationMap);
+    
     const results: IconResult[] = Array.from(imagesToXPathSelectors.entries()).map(([base64, xPaths]) => ({
       base64,
       xPathSelectors: Array.from(xPaths)
     }));
-    return JSON.stringify(results);
+    
+    // Return both debug stats and results
+    return JSON.stringify({
+      debug: debugStats,
+      results: results
+    });
   };
 
   return run();

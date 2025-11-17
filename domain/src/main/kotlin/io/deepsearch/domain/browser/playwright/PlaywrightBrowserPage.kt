@@ -258,12 +258,66 @@ class PlaywrightBrowserPage(
     @Serializable
     private data class IconResult(val base64: String, val xPathSelectors: List<String>)
 
+    @Serializable
+    private data class SkippedDetail(
+        val tag: String,
+        val classes: String,
+        val beforeContent: String? = null,
+        val textContent: String? = null,
+        val width: Double? = null,
+        val height: Double? = null,
+        val error: String? = null,
+        val reason: String
+    )
+
+    @Serializable
+    private data class IconDebugStats(
+        val totalElementsFound: Int,
+        val elementsBySelector: Map<String, Int>,
+        val elementsProcessed: Int,
+        val skippedNoGlyph: Int,
+        val skippedSvgZeroSize: Int,
+        val renderingErrors: Int,
+        val successfullyRendered: Int,
+        val uniqueIcons: Int,
+        val totalXPaths: Int,
+        val skippedDetails: List<SkippedDetail>,
+        val deduplicationMap: Map<String, Int>
+    )
+
+    @Serializable
+    private data class IconExtractionResponse(
+        val debug: IconDebugStats,
+        val results: List<IconResult>
+    )
+
     override suspend fun extractIcons(): List<IBrowserPage.Icon> {
         logger.debug("Extracting icons via evaluate()")
         val extractIconJsonRaw = apiMutex.withLock { page.evaluate(loadScript("out/extractIcons.js")) } as String
 
-        val decoded = Json.decodeFromString<List<IconResult>>(extractIconJsonRaw)
-        val results = decoded.mapNotNull { result ->
+        val response = Json.decodeFromString<IconExtractionResponse>(extractIconJsonRaw)
+        
+        // Log debug statistics
+        val debug = response.debug
+        logger.debug(
+            "Icon extraction stats: total={}, processed={}, rendered={}, unique={}, " +
+            "skipped(no_glyph={}, svg_zero_size={}, errors={})",
+            debug.totalElementsFound,
+            debug.elementsProcessed,
+            debug.successfullyRendered,
+            debug.uniqueIcons,
+            debug.skippedNoGlyph,
+            debug.skippedSvgZeroSize,
+            debug.renderingErrors
+        )
+        logger.debug("Elements by selector: {}", debug.elementsBySelector)
+        logger.debug("Deduplication map: {}", debug.deduplicationMap)
+        
+        if (debug.skippedDetails.isNotEmpty() && logger.isTraceEnabled) {
+            logger.trace("First 5 skipped details: {}", debug.skippedDetails.take(5))
+        }
+
+        val results = response.results.mapNotNull { result ->
             val cleaned = sanitizeBase64(result.base64)
             try {
                 val bytes = Base64.decode(cleaned)

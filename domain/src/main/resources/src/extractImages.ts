@@ -5,13 +5,19 @@
   const xPathSegmentFor = (el: Element): string => {
     const tag = el.tagName.toLowerCase();
     
-    // 1. Try to use id attribute (most stable)
+    // 1. Check for our injected unique ID first (for image elements)
+    const tempId = el.getAttribute('data-ds-temp-img-id');
+    if (tempId) {
+      return `${tag}[@data-ds-temp-img-id='${tempId}']`;
+    }
+    
+    // 2. Try to use id attribute (most stable)
     const id = el.getAttribute('id');
     if (id && id.trim()) {
       return `${tag}[@id='${id.trim().replace(/'/g, "\\'")}']`;
     }
     
-    // 2. For img elements, try using src attribute
+    // 3. For img elements, try using src attribute
     if (tag === 'img') {
       const src = el.getAttribute('src');
       if (src && src.trim()) {
@@ -20,7 +26,7 @@
       }
     }
     
-    // 3. Try using class attribute if it's reasonably unique
+    // 4. Try using class attribute if it's reasonably unique
     const classes = el.getAttribute('class');
     if (classes && classes.trim()) {
       const classList = classes.trim().split(/\s+/).filter(c => c.length > 0);
@@ -31,7 +37,7 @@
       }
     }
     
-    // 4. For other potentially unique attributes
+    // 5. For other potentially unique attributes
     const alt = el.getAttribute('alt');
     if (alt && alt.trim()) {
       return `${tag}[@alt='${alt.trim().replace(/'/g, "\\'")}']`;
@@ -42,14 +48,14 @@
       return `${tag}[@href='${href.trim().replace(/'/g, "\\'")}']`;
     }
     
-    // 5. Try data attributes
+    // 6. Try data attributes
     const dataAttrs = Array.from(el.attributes).filter(attr => attr.name.startsWith('data-'));
     if (dataAttrs.length > 0) {
       const attr = dataAttrs[0];
       return `${tag}[@${attr.name}='${attr.value.replace(/'/g, "\\'")}']`;
     }
     
-    // 6. Last resort: inject a temporary unique data attribute
+    // 7. Last resort: inject a temporary unique data attribute
     const uniqueId = `ds-${Math.random().toString(36).substr(2, 9)}`;
     el.setAttribute('data-ds-temp-id', uniqueId);
     return `${tag}[@data-ds-temp-id='${uniqueId}']`;
@@ -72,6 +78,12 @@
     
     // Extract regular img elements
     const images = Array.from(document.querySelectorAll('img'));
+    
+    // Inject unique IDs for all img elements upfront to ensure unique xPaths
+    images.forEach((img, index) => {
+      const uniqueId = `img-${index}-${Math.random().toString(36).substr(2, 9)}`;
+      img.setAttribute('data-ds-temp-img-id', uniqueId);
+    });
 
     // Wait for all images to load
     await Promise.all(images.map(img => {
@@ -197,6 +209,12 @@
       const style = window.getComputedStyle(el);
       const backgroundImage = style.backgroundImage;
       return backgroundImage && backgroundImage !== 'none' && backgroundImage.startsWith('url(');
+    });
+    
+    // Inject unique IDs for all background image elements upfront to ensure unique xPaths
+    elementsWithBackgrounds.forEach((el, index) => {
+      const uniqueId = `bg-${index}-${Math.random().toString(36).substr(2, 9)}`;
+      el.setAttribute('data-ds-temp-img-id', uniqueId);
     });
     
     console.log(`Found ${elementsWithBackgrounds.length} elements with backgrounds to process`);

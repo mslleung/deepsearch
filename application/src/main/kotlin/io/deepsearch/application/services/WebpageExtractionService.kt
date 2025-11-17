@@ -120,6 +120,7 @@ class WebpageExtractionService(
                     IBrowserPage.XPathReplacementWithText(xpath, interpretedText)
                 }
             }
+            logger.debug("number of icon replacements: {}", replacements.size)
             emit(replacements)
         }
         logger.debug("Icon interpretation took {} ms", duration)
