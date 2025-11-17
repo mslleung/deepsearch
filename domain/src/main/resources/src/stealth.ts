@@ -145,51 +145,6 @@
     },
   };
 
-  // Mask canvas fingerprinting by adding subtle noise
-  const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-  const originalToBlob = HTMLCanvasElement.prototype.toBlob;
-  const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-
-  const addCanvasNoise = (canvas: HTMLCanvasElement) => {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const pixels = imageData.data;
-    
-    // Add subtle noise to avoid detection
-    for (let i = 0; i < pixels.length; i += 4) {
-      // Only modify alpha channel slightly
-      const noise = Math.floor(Math.random() * 3) - 1;
-      pixels[i + 3] = Math.min(255, Math.max(0, pixels[i + 3] + noise));
-    }
-    
-    ctx.putImageData(imageData, 0, 0);
-  };
-
-  HTMLCanvasElement.prototype.toDataURL = function (...args) {
-    addCanvasNoise(this);
-    return originalToDataURL.apply(this, args);
-  };
-
-  HTMLCanvasElement.prototype.toBlob = function (...args) {
-    addCanvasNoise(this);
-    return originalToBlob.apply(this, args);
-  };
-
-  CanvasRenderingContext2D.prototype.getImageData = function (...args) {
-    const imageData = originalGetImageData.apply(this, args);
-    const pixels = imageData.data;
-    
-    // Add subtle noise
-    for (let i = 0; i < pixels.length; i += 4) {
-      const noise = Math.floor(Math.random() * 3) - 1;
-      pixels[i + 3] = Math.min(255, Math.max(0, pixels[i + 3] + noise));
-    }
-    
-    return imageData;
-  };
-
   // Mask WebGL fingerprinting
   const getParameterOriginal = WebGLRenderingContext.prototype.getParameter;
   WebGLRenderingContext.prototype.getParameter = function (parameter) {
