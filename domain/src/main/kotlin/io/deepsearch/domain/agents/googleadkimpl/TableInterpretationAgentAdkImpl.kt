@@ -61,11 +61,12 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             the table. Convert this table into clean, faithful GitHub-flavored Markdown.
 
             Rules:
-            - Preserve the table's row and column structure accurately.
+            - Preserve the table's row and column structure and order accurately.
             - Include a header row if one exists; otherwise infer a sensible header from the first row if appropriate.
+            - The HTML table may not translate well into a 2-dimensional markdown table. 
+              In that case please adjust the rows and columns while preserving the semantic meaning of the table.
             - Do not invent data. Only use what is present in the supplied HTML.
             - Normalize whitespace; remove decorative or layout-only characters.
-            - Keep content concise; avoid verbose prose or explanations.
             - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
             - Output only the Markdown string, wrapped in JSON structured output
 

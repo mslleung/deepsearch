@@ -472,7 +472,7 @@ class PlaywrightBrowserPage(
                     const count = xpathResult.snapshotLength;
                     
                     if (count === 0) {
-                        results.failed.push({ xpath: xpath.substring(0, 100), reason: 'no_match' });
+                        results.failed.push({ xpath: xpath, reason: 'no_match' });
                         continue;
                     }
                     
@@ -483,7 +483,7 @@ class PlaywrightBrowserPage(
                         // Replace element with text node
                         const parent = target.parentNode;
                         if (!parent || parent.nodeType === Node.DOCUMENT_NODE) {
-                            results.failed.push({ xpath: xpath.substring(0, 100), reason: 'no_parent' });
+                            results.failed.push({ xpath: xpath, reason: 'no_parent' });
                             continue;
                         }
                         const textNode = document.createTextNode(text);

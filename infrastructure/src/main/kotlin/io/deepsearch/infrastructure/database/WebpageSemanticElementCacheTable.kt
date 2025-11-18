@@ -5,7 +5,7 @@ import org.jetbrains.exposed.v1.core.Table
 
 class WebpageSemanticElementCacheTable(
     private val databaseCryptoService: IDatabaseCryptoService
-) : Table("webpage_navigation_elements") {
+) : Table("webpage_semantic_elements") {
     val pageHash = varchar("page_hash", length = 128)
     // JSON column storing list of navigation elements with xpath, type, and note
     val elementsJson = text("elements_json")
