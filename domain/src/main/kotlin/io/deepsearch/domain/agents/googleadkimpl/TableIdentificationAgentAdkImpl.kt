@@ -88,7 +88,7 @@ class TableIdentificationAgentAdkImpl(
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Focus only on identifying table root containers, do not include elements that are not tables.
-            - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
+            - Additionally, extract auxiliaryInfo to act as the table title using surrounding context.
 
             Expected output shape:
             {
