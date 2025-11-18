@@ -14,6 +14,7 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.services.ICssSelectorConstructionService
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -23,7 +24,9 @@ import org.jsoup.nodes.Document
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
+class TableIdentificationAgentAdkImpl(
+    private val cssSelectorConstructionService: ICssSelectorConstructionService
+) : ITableIdentificationAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -123,6 +126,9 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             return TableIdentificationOutput(tables = emptyList())
         }
 
+        // Inject stable identifiers for LLM processing
+        val cleanedHtmlWithIds = injectStableIdentifiers(cleanedHtml, "ds-table")
+
         val response = retryLlmCall<TableIdentificationResponse> {
             val session = runner
                 .sessionService()
@@ -139,7 +145,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
             val eventsFlow = runner.runAsync(
                 session,
                 Content.fromParts(
-                    Part.fromText(cleanedHtml)
+                    Part.fromText(cleanedHtmlWithIds)
                 ),
                 RunConfig.builder().apply {
                     setStreamingMode(RunConfig.StreamingMode.NONE)
@@ -166,26 +172,51 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
         logger.debug("Table identification found {} table IDs from LLM", response.tables.size)
 
-        // Convert IDs to CSS selectors and extract HTML snippets from cleaned HTML
-        val cleanedDoc = Jsoup.parse(cleanedHtml)
-        val tableIdentifications = response.tables.mapNotNull { llmResult ->
-            val cssSelector = "[data-ds-id=\"${llmResult.id}\"]"
-            val element = cleanedDoc.selectFirst(cssSelector)
+        // Convert IDs to HTML snippets, then to CSS selectors that work on original HTML
+        val cleanedDocWithIds = Jsoup.parse(cleanedHtmlWithIds)
+        
+        val tableIdentifications = response.tables.flatMap { llmResult ->
+            val tempSelector = "[data-ds-id=\"${llmResult.id}\"]"
+            val element = cleanedDocWithIds.selectFirst(tempSelector)
             
             if (element == null) {
-                logger.warn("Skipping table with ID '{}' - element not found", llmResult.id)
-                null
+                logger.warn("Skipping table with ID '{}' - element not found in cleaned HTML", llmResult.id)
+                emptyList()
             } else {
-                TableIdentification(
-                    htmlSnippet = element.outerHtml(),
-                    cssSelector = cssSelector,
-                    auxiliaryInfo = llmResult.auxiliaryInfo
+                // Remove temporary IDs from element and all its descendants (they don't exist in original HTML)
+                element.removeAttr("data-ds-id")
+                element.select("[data-ds-id]").forEach { it.removeAttr("data-ds-id") }
+                val htmlSnippet = element.outerHtml()
+                
+                // Convert snippet to CSS selectors that work on original HTML
+                // Use cleanedHtml (without IDs) for proper CSS selector construction
+                val cssSelectors = cssSelectorConstructionService.constructCssSelectorsFromSnippet(
+                    htmlSnippet, cleanedHtml, input.html
                 )
+
+                if (cssSelectors.isEmpty()) {
+                    logger.warn(
+                        "Skipping table with ID '{}' - could not construct valid CSS selector from snippet",
+                        llmResult.id
+                    )
+                    emptyList()
+                } else {
+                    logger.debug("CSS selectors: {}", cssSelectors)
+                    cssSelectors.map { cssSelector ->
+                        TableIdentification(
+                            htmlSnippet = htmlSnippet,
+                            cssSelector = cssSelector,
+                            auxiliaryInfo = llmResult.auxiliaryInfo
+                        )
+                    }
+                }
             }
         }
 
-        logger.debug("Table identification produced {} table identifications", 
-            tableIdentifications.size)
+        logger.debug(
+            "Table identification produced {} table identifications",
+            tableIdentifications.size
+        )
 
         return TableIdentificationOutput(tables = tableIdentifications)
     }
@@ -217,17 +248,17 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         doc.select("*").forEach { element ->
             val originalAttrs = element.attributes().asList()
             val essentialAttrs = originalAttrs.filter { attr ->
-                attr.key == "id" || 
-                attr.key == "class" || 
-                attr.key == "role" || 
-                attr.key == "colspan" || 
-                attr.key == "rowspan" || 
-                attr.key == "scope" ||
-                attr.key.startsWith("data-")
+                attr.key == "id" ||
+                        attr.key == "class" ||
+                        attr.key == "role" ||
+                        attr.key == "colspan" ||
+                        attr.key == "rowspan" ||
+                        attr.key == "scope" ||
+                        attr.key.startsWith("data-")
             }
-            
+
             element.clearAttributes()
-            
+
             // Restore filtered attributes
             essentialAttrs.forEach { attr ->
                 when (attr.key) {
@@ -240,6 +271,7 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
                         }
                         element.attr("id", value)
                     }
+
                     "class" -> {
                         // Keep all classes but limit to first 5 to reduce bloat
                         val classes = attr.value.split("\\s+".toRegex()).take(5)
@@ -247,22 +279,18 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
                             element.attr("class", classes.joinToString(" "))
                         }
                     }
+
                     "data-testid", "data-test", "data-qa" -> {
                         // Keep test IDs - they often indicate semantic structure
                         element.attr(attr.key, attr.value)
                     }
+
                     else -> {
                         // Keep other essential attributes as-is
                         element.attr(attr.key, attr.value)
                     }
                 }
             }
-        }
-
-        // Step 2.5: Inject stable identifiers into potential table elements
-        var idCounter = 0
-        doc.select("table, div, section, article, main, aside, ul, ol, dl").forEach { element ->
-            element.attr("data-ds-id", "ds-table-${idCounter++}")
         }
 
         // Step 3: Truncate text content but keep enough for pattern recognition
@@ -317,8 +345,28 @@ class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
         }
 
         val cleanedHtml = doc.outerHtml()
-        logger.debug("Cleaned HTML: {} chars (original: ~{} chars)",
-            cleanedHtml.length, rawHtml.length)
+        logger.debug(
+            "Cleaned HTML: {} chars (original: ~{} chars)",
+            cleanedHtml.length, rawHtml.length
+        )
         return cleanedHtml
+    }
+
+    /**
+     * Injects stable identifiers into potential table elements for LLM processing.
+     * 
+     * @param cleanedHtml The cleaned HTML (without IDs)
+     * @param idPrefix The prefix for generated IDs (e.g., "ds-table")
+     * @return HTML with injected data-ds-id attributes
+     */
+    private fun injectStableIdentifiers(cleanedHtml: String, idPrefix: String): String {
+        val doc: Document = Jsoup.parse(cleanedHtml)
+        
+        var idCounter = 0
+        doc.select("table, div, section, article, main, aside, ul, ol, dl").forEach { element ->
+            element.attr("data-ds-id", "$idPrefix-${idCounter++}")
+        }
+        
+        return doc.outerHtml()
     }
 }
