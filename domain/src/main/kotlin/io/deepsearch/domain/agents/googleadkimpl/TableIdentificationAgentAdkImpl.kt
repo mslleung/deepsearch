@@ -14,7 +14,6 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
-import io.deepsearch.domain.services.ICssSelectorConstructionService
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -24,33 +23,31 @@ import org.jsoup.nodes.Document
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-class TableIdentificationAgentAdkImpl(
-    private val cssSelectorConstructionService: ICssSelectorConstructionService
-) : ITableIdentificationAgent {
+class TableIdentificationAgentAdkImpl : ITableIdentificationAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("List of HTML snippets for table roots")
+        .description("List of table IDs for table roots")
         .properties(
             mapOf(
                 "tables" to Schema.builder()
                     .type("ARRAY")
-                    .description("Array of HTML snippet strings for table root elements")
+                    .description("Array of table identifications with data-ds-id values")
                     .items(
                         Schema.builder()
                             .type("OBJECT")
                             .properties(
                                 mapOf(
-                                    "htmlSnippet" to Schema.builder().type("STRING")
-                                        .description("The complete HTML of the table element, including opening tag, all content, and closing tag (e.g., '<table class=\"data-table\" id=\"results\"><tr><td>...</td></tr></table>').")
+                                    "id" to Schema.builder().type("STRING")
+                                        .description("The data-ds-id value of the table root element (e.g., 'ds-table-0', 'ds-table-5').")
                                         .build(),
                                     "auxiliaryInfo" to Schema.builder().type("STRING")
                                         .description("The auxiliary info for the table.").build()
                                 )
                             )
-                            .required(listOf("htmlSnippet", "auxiliaryInfo"))
+                            .required(listOf("id", "auxiliaryInfo"))
                             .build()
                     )
                     .build()
@@ -61,7 +58,7 @@ class TableIdentificationAgentAdkImpl(
 
     private val agent: LlmAgent = LlmAgent.builder().run {
         name("tableIdentificationAgent")
-        description("Identify tables in webpage using cleaned HTML, return HTML snippets of their root containers")
+        description("Identify tables in webpage using cleaned HTML, return their stable IDs")
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         outputSchema(outputSchema)
         disallowTransferToPeers(true)
@@ -78,22 +75,23 @@ class TableIdentificationAgentAdkImpl(
         )
         instruction(
             """
-            Your task is to identify all tables in the provided webpage and extract their HTML snippets.
+            Your task is to identify all tables in the provided webpage and return the stable identifiers of their root containers.
 
             Inputs:
             - Cleaned HTML structure of the webpage
 
             Instructions:
-            - Analyze both the HTML to identify every table in the webpage
+            - Analyze the HTML to identify every table in the webpage
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
-            - For every table you find, extract the complete HTML of the table element (opening tag + all nested content + closing tag). This must include the full table structure, not just the opening tag or first row.
+            - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
+            - Focus only on identifying table root containers, do not include elements that are not tables.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
             Expected output shape:
             {
                 "tables": [
                     {
-                        "htmlSnippet": "string",
+                        "id": "string",
                         "auxiliaryInfo": "string"
                     }
                 ]
@@ -112,7 +110,7 @@ class TableIdentificationAgentAdkImpl(
 
     @Serializable
     private data class LlmTableResult(
-        val htmlSnippet: String,
+        val id: String,
         val auxiliaryInfo: String
     )
 
@@ -166,31 +164,27 @@ class TableIdentificationAgentAdkImpl(
             llmResponse
         }
 
-        logger.debug("Table identification found {} HTML snippets from LLM", response.tables.size)
+        logger.debug("Table identification found {} table IDs from LLM", response.tables.size)
 
-        // Convert HTML snippets to CSS selectors and expand if multiple matches
-        // Note: Snippets come from cleaned HTML, match against cleaned, but selectors work on original HTML
-        val tableIdentifications = response.tables.flatMap { llmResult ->
-            val cssSelectors = cssSelectorConstructionService.constructCssSelectorsFromSnippet(
-                llmResult.htmlSnippet, cleanedHtml, input.html
-            )
+        // Convert IDs to CSS selectors and extract HTML snippets from cleaned HTML
+        val cleanedDoc = Jsoup.parse(cleanedHtml)
+        val tableIdentifications = response.tables.mapNotNull { llmResult ->
+            val cssSelector = "[data-ds-id=\"${llmResult.id}\"]"
+            val element = cleanedDoc.selectFirst(cssSelector)
             
-            if (cssSelectors.isEmpty()) {
-                logger.warn("Skipping table with snippet '{}' - could not construct valid CSS selector", 
-                    llmResult.htmlSnippet.take(100))
-                emptyList()
+            if (element == null) {
+                logger.warn("Skipping table with ID '{}' - element not found", llmResult.id)
+                null
             } else {
-                cssSelectors.map { cssSelector ->
-                    TableIdentification(
-                        htmlSnippet = llmResult.htmlSnippet,
-                        cssSelector = cssSelector,
-                        auxiliaryInfo = llmResult.auxiliaryInfo
-                    )
-                }
+                TableIdentification(
+                    htmlSnippet = element.outerHtml(),
+                    cssSelector = cssSelector,
+                    auxiliaryInfo = llmResult.auxiliaryInfo
+                )
             }
         }
 
-        logger.debug("Table identification produced {} table identifications (after expanding duplicates)", 
+        logger.debug("Table identification produced {} table identifications", 
             tableIdentifications.size)
 
         return TableIdentificationOutput(tables = tableIdentifications)
@@ -263,6 +257,12 @@ class TableIdentificationAgentAdkImpl(
                     }
                 }
             }
+        }
+
+        // Step 2.5: Inject stable identifiers into potential table elements
+        var idCounter = 0
+        doc.select("table, div, section, article, main, aside, ul, ol, dl").forEach { element ->
+            element.attr("data-ds-id", "ds-table-${idCounter++}")
         }
 
         // Step 3: Truncate text content but keep enough for pattern recognition
