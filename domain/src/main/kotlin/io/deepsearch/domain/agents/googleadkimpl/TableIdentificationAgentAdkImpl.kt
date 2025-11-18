@@ -204,7 +204,6 @@ class TableIdentificationAgentAdkImpl(
                     logger.debug("CSS selectors: {}", cssSelectors)
                     cssSelectors.map { cssSelector ->
                         TableIdentification(
-                            htmlSnippet = htmlSnippet,
                             cssSelector = cssSelector,
                             auxiliaryInfo = llmResult.auxiliaryInfo
                         )
