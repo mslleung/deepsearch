@@ -67,7 +67,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
 
             Note that HTML tables may not be in perfect row/column format due to styling etc. Bounding box is crucial
             for mapping elements that are out of place. For these elements, you can simply add a paragraph after the markdown table 
-            to describe them.
+            to describe them under **Additional Information:**.
 
             Rules:
             - Preserve the table's row and column structure and order accurately.
@@ -76,9 +76,31 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
               In that case please adjust the rows and columns while preserving the semantic meaning of the table.
             - Use the bounding box coordinates to better understand the spatial layout when the HTML structure is ambiguous.
             - Do not invent data. Only use what is present in the supplied HTML.
+            - Make sure all table data is captured with no information loss. All text must be represented in the markdown.
+            - Make sure the markdown is valid. The resulting markdown should not contain HTML.
+            - If there is any ambiguity or information conflict, note them clearly under **Additional Information:**.
             - Normalize whitespace; remove decorative or layout-only characters.
             - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
-            - Output only the Markdown string, wrapped in JSON structured output
+
+            Example markdown output:
+            | Feature | Free | Pro AI | Premium AI | Enterprise AI |
+            |---|---|---|---|---|
+            | **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |
+            | **Price** | Free | Starting from US$ 99/month | Starting from US$ 299/month | Let’s talk |
+            | **Call to Action** | Try Free Forever | Start for Free | Start for Free | Book a Demo |
+            | **Key features** | 50 monthly active contacts | Up to 2,000 monthly active contacts | Up to 12,000 monthly active contacts | Custom number of monthly active contacts |
+            | | Includes 3 user accounts | Includes 3 user accounts | Includes 10 user accounts | Custom number of user accounts |
+            | | Test all core features without affecting your live business using the | Unlimited Broadcast | Analytics dashboards | Salesforce & custom integrations |
+            | | | Unlimited Flow Builder usage | Webhook & API calls | Dedicated Customer success manager |
+            | | | Unlimited contact storage | Role-based access control | PII masking |
+            | | | Team Inbox | Advanced AI Agents with integrations | |
+            | | | AI Agent | | |
+            **Additional Information:**
+            *   **Pro AI** includes "Free Onboarding Support".
+            *   **Premium AI** includes "Free Onboarding Support" and is marked as "Most Popular".
+            *   **Enterprise AI** includes "🌟 AI Solution Engineer Support".
+
+            **Output only the Markdown string, wrapped in JSON structured output**
 
             Expected output shape:
             {
@@ -100,7 +122,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         // Extract HTML and bounding boxes from the webpage
         val tableHtml = input.webpage.getElementHtmlByCssSelector(input.tableIdentification.cssSelector)
         val boundingBoxes = input.webpage.getBoundingBoxesByCssSelector(input.tableIdentification.cssSelector)
-        
+
         logger.debug("Interpreting table to markdown (html length {})", tableHtml.length)
         logger.debug("Got {} bounding boxes", boundingBoxes.size)
 
@@ -175,7 +197,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
                     "head, title, base, " +
                     "img, video, audio, source, track, picture, " +
-                    "form, input, button, select, textarea, label, fieldset, legend, " +
+                    "form, input, select, textarea, label, fieldset, legend, " +
                     "nav, footer, header, aside"
         ).remove()
 
@@ -209,39 +231,56 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         // Step 4: Remove empty elements, preserving table structure
         val preserveTags = setOf("td", "th", "tr", "table", "thead", "tbody", "tfoot", "caption")
         
-        var changed = true
-        var iterations = 0
-        val maxIterations = 100 // Safety limit to prevent infinite loops
-        
-        while (changed && iterations < maxIterations) {
-            changed = false
-            iterations++
-            
-            val emptyElements = doc.select("*").filter { element ->
-                !preserveTags.contains(element.tagName().lowercase()) &&
-                        element.children().isEmpty() &&
-                        element.ownText().isBlank()
-            }
-            
-            if (emptyElements.isNotEmpty()) {
-                logger.trace("Removing {} empty elements (iteration {})", emptyElements.size, iterations)
-                emptyElements.forEach { it.remove() }
-                changed = true
-            }
-        }
-        
-        if (iterations >= maxIterations) {
-            logger.warn("cleanHtml reached maximum iterations ({}), stopping empty element removal", maxIterations)
-        }
+        // Use bottom-up (post-order) traversal to remove empty elements in a single pass
+        // This processes children before parents, so nested empty elements are handled correctly
+        val removedCount = removeEmptyElementsBottomUp(doc.body(), preserveTags)
+        logger.trace("Removed {} empty elements in single pass", removedCount)
 
         return doc.body().html()
+    }
+
+    /**
+     * Removes empty elements using a bottom-up (post-order) traversal.
+     * This processes children before parents, allowing nested empty elements to be removed in a single pass.
+     * 
+     * @param element The root element to process
+     * @param preserveTags Set of tag names that should never be removed, even if empty
+     * @return The count of removed elements
+     */
+    private fun removeEmptyElementsBottomUp(
+        element: org.jsoup.nodes.Element,
+        preserveTags: Set<String>
+    ): Int {
+        var removedCount = 0
+        
+        // Process all children first (post-order traversal)
+        // Use toList() to avoid ConcurrentModificationException when removing elements
+        val children = element.children().toList()
+        for (child in children) {
+            removedCount += removeEmptyElementsBottomUp(child, preserveTags)
+        }
+        
+        // After processing children, check if this element itself should be removed
+        // An element is considered empty if it has no children and no meaningful text
+        val isEmpty = element.children().isEmpty() && element.ownText().isBlank()
+        val shouldPreserve = preserveTags.contains(element.tagName().lowercase())
+        
+        if (isEmpty && !shouldPreserve) {
+            element.remove()
+            removedCount++
+        }
+        
+        return removedCount
     }
 
     /**
      * Injects bounding box coordinates into HTML elements.
      * Each element receives a ds-bounding-box attribute with format "left top right bottom".
      */
-    private fun injectBoundingBoxes(html: String, boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>): String {
+    private fun injectBoundingBoxes(
+        html: String,
+        boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>
+    ): String {
         if (boundingBoxes.isEmpty()) {
             return html
         }
@@ -250,21 +289,21 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             // Parse the HTML fragment (table element)
             val doc = Jsoup.parseBodyFragment(html)
             doc.outputSettings().prettyPrint(false)
-            
+
             // The table should be the first child in the body
             val root = doc.body().children().firstOrNull() ?: return html
-            
+
             // Pre-compile regex for performance
             val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
-            
+
             for ((xpath, bbox) in boundingBoxes) {
-                val bboxValue = "${bbox.left} ${bbox.top} ${bbox.right} ${bbox.bottom}"
-                
+                val bboxValue = "${bbox.left.toInt()} ${bbox.top.toInt()} ${bbox.right.toInt()} ${bbox.bottom.toInt()}"
+
                 // XPath format: ./tagname[index]/tagname[index]/...
                 val element = findElementByRelativeXPath(root, xpath, xpathRegex)
                 element?.attr("ds-bounding-box", bboxValue)
             }
-            
+
             // Return only the body's inner HTML (the table element)
             return doc.body().html()
         } catch (e: Exception) {
@@ -277,29 +316,33 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
      * Find an element using a relative XPath expression starting from a root element.
      * XPath format: ./tagname[index]/tagname[index]/... or "." for the root itself
      */
-    private fun findElementByRelativeXPath(root: org.jsoup.nodes.Element, xpath: String, regex: Regex): org.jsoup.nodes.Element? {
+    private fun findElementByRelativeXPath(
+        root: org.jsoup.nodes.Element,
+        xpath: String,
+        regex: Regex
+    ): org.jsoup.nodes.Element? {
         if (xpath == ".") {
             return root
         }
-        
+
         if (!xpath.startsWith("./")) {
             return null
         }
-        
+
         val parts = xpath.substring(2).split("/")
         var current = root
-        
+
         for (part in parts) {
             // Parse "tagname[index]"
             val match = regex.find(part) ?: return null
             val tagName = match.groupValues[1]
             val index = match.groupValues[2].toInt()
-            
+
             // Find the nth child with the matching tag name (1-based index)
             // Optimize: traverse children manually to avoid creating new lists
             var count = 0
             var found: org.jsoup.nodes.Element? = null
-            
+
             val children = current.children()
             for (child in children) {
                 if (child.tagName().equals(tagName, ignoreCase = true)) {
@@ -310,13 +353,13 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
                     }
                 }
             }
-            
+
             if (found == null) {
                 return null
             }
             current = found
         }
-        
+
         return current
     }
 }

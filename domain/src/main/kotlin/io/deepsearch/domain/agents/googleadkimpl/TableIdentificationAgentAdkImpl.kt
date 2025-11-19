@@ -89,7 +89,9 @@ class TableIdentificationAgentAdkImpl(
             - In the event of nested tables/grids, target the outermost wrapping parent only
             - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
-            - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
+            - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
+              - The table's description
+              - The column headers
 
             Expected output shape:
             {
