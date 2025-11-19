@@ -78,15 +78,16 @@ class TableIdentificationAgentAdkImpl(
         )
         instruction(
             """
-            Your task is to identify all grid-like structures in the provided webpage and return the stable identifiers of their root containers.
+            Your task is to identify all table structures in the provided webpage and return the stable identifiers of their root containers.
 
             Inputs:
             - Cleaned HTML structure of the webpage
 
             Instructions:
-            - Analyze the HTML to identify every grid-like structure in the webpage
-            - Identify anything that semantically or structurally looks like a table or grid
-            - Modern websites may design grids purely using <div> styling or structure, you need to identify those in addition to the standard semantic HTML tables
+            - Analyze the HTML to identify every table-like structure in the webpage
+            - Target the table root containers only
+            - In the event of nested tables/grids, target the biggest wrapping parent only
+            - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
@@ -129,6 +130,10 @@ class TableIdentificationAgentAdkImpl(
         // Inject stable identifiers for LLM processing
         val cleanedHtmlWithIds = injectStableIdentifiers(cleanedHtml, "ds-table")
 
+        // Programmatic extraction of semantic tables to reduce LLM input
+        val (programmaticTables, reducedHtml) = extractSemanticTables(cleanedHtmlWithIds)
+        logger.debug("Programmatically extracted {} semantic tables", programmaticTables.size)
+
         val response = retryLlmCall<TableIdentificationResponse> {
             val session = runner
                 .sessionService()
@@ -145,7 +150,7 @@ class TableIdentificationAgentAdkImpl(
             val eventsFlow = runner.runAsync(
                 session,
                 Content.fromParts(
-                    Part.fromText(cleanedHtmlWithIds)
+                    Part.fromText(reducedHtml)
                 ),
                 RunConfig.builder().apply {
                     setStreamingMode(RunConfig.StreamingMode.NONE)
@@ -170,12 +175,14 @@ class TableIdentificationAgentAdkImpl(
             llmResponse
         }
 
-        logger.debug("Table identification found {} table IDs from LLM", response.tables.size)
+        val allTableResults = programmaticTables + response.tables
+        logger.debug("Total table identification found {} table IDs ({} programmatic, {} LLM)", 
+            allTableResults.size, programmaticTables.size, response.tables.size)
 
         // Convert IDs to HTML snippets, then to CSS selectors that work on original HTML
         val cleanedDocWithIds = Jsoup.parse(cleanedHtmlWithIds)
         
-        val tableIdentifications = response.tables.flatMap { llmResult ->
+        val tableIdentifications = allTableResults.flatMap { llmResult ->
             val tempSelector = "[data-ds-id=\"${llmResult.id}\"]"
             val element = cleanedDocWithIds.selectFirst(tempSelector)
             
@@ -218,6 +225,33 @@ class TableIdentificationAgentAdkImpl(
         )
 
         return TableIdentificationOutput(tables = tableIdentifications)
+    }
+
+    private fun extractSemanticTables(htmlWithIds: String): Pair<List<LlmTableResult>, String> {
+        val doc = Jsoup.parse(htmlWithIds)
+        val tables = mutableListOf<LlmTableResult>()
+
+        // Select ONLY <table> elements with data-ds-id
+        // NOTE: role="table" is intentionally ignored as per user requirement
+        val tableElements = doc.select("table[data-ds-id]")
+
+        tableElements.forEach { element ->
+            val id = element.attr("data-ds-id")
+            // Extract simple auxiliary info (e.g., caption or summary)
+            val caption = element.select("caption").text()
+            val summary = element.attr("summary")
+            // Use caption or summary or empty string
+            val auxiliaryInfo = when {
+                caption.isNotBlank() -> caption
+                summary.isNotBlank() -> summary
+                else -> ""
+            }
+
+            tables.add(LlmTableResult(id, auxiliaryInfo))
+            element.remove() // Remove from DOM to reduce LLM input
+        }
+
+        return Pair(tables, doc.outerHtml())
     }
 
     private fun cleanHtml(rawHtml: String): String {
