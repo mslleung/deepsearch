@@ -198,17 +198,16 @@ class WebpageExtractionService(
         
         logger.debug("Interpreting {} table(s)", existingTables.size)
         
-        // Gather HTML for each existing table
+        // Gather inputs for each existing table
         val duration = measureTimeMillis {
             val tableInputs = existingTables.mapNotNull { table ->
                 try {
-                    val elementHtml = webpage.getElementHtmlByCssSelector(table.cssSelector)
                     table.cssSelector to TableInterpretationInput(
-                        auxiliaryInfo = table.auxiliaryInfo,
-                        html = elementHtml
+                        tableIdentification = table,
+                        webpage = webpage
                     )
                 } catch (e: Exception) {
-                    logger.error("Failed to extract table at URL: {} with CSS selector '{}': {}", 
+                    logger.error("Failed to create input for table at URL: {} with CSS selector '{}': {}", 
                         url, table.cssSelector, e.message)
                     null
                 }

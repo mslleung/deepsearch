@@ -17,6 +17,7 @@ import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.jsoup.Jsoup
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -59,12 +60,17 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             """
             You are given the HTML markup for a table-like region from a webpage and an auxiliary info describing 
             the table. Convert this table into clean, faithful GitHub-flavored Markdown.
+            
+            Each element in the HTML has been augmented with a ds-bounding-box attribute containing spatial coordinates
+            in the format ds-bounding-box="left top right bottom". These coordinates are relative to the table element's top-left corner
+            and can help you understand the spatial layout and relationships between elements.
 
             Rules:
             - Preserve the table's row and column structure and order accurately.
             - Include a header row if one exists; otherwise infer a sensible header from the first row if appropriate.
             - The HTML table may not translate well into a 2-dimensional markdown table. 
               In that case please adjust the rows and columns while preserving the semantic meaning of the table.
+            - Use the bounding box coordinates to better understand the spatial layout when the HTML structure is ambiguous.
             - Do not invent data. Only use what is present in the supplied HTML.
             - Normalize whitespace; remove decorative or layout-only characters.
             - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
@@ -87,7 +93,15 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
-        logger.debug("Interpreting table to markdown (html length {})", input.html.length)
+        // Extract HTML and bounding boxes from the webpage
+        val tableHtml = input.webpage.getElementHtmlByCssSelector(input.tableIdentification.cssSelector)
+        val boundingBoxes = input.webpage.getBoundingBoxesByCssSelector(input.tableIdentification.cssSelector)
+        
+        logger.debug("Interpreting table to markdown (html length {})", tableHtml.length)
+        logger.debug("Got {} bounding boxes", boundingBoxes.size)
+
+        // Inject bounding box attributes into HTML
+        val htmlWithBoundingBoxes = injectBoundingBoxes(tableHtml, boundingBoxes)
 
         val response = retryLlmCall<TableInterpretationResponse> {
             val session = runner
@@ -103,8 +117,8 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             var llmResponse = ""
 
             val parts = buildList {
-                add(Part.fromText("Auxiliary context: " + input.auxiliaryInfo))
-                add(Part.fromText(input.html))
+                add(Part.fromText("Auxiliary context: " + input.tableIdentification.auxiliaryInfo))
+                add(Part.fromText(htmlWithBoundingBoxes))
             }
 
             val eventsFlow = runner.runAsync(
@@ -137,6 +151,73 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         logger.debug("Table interpreted to markdown ({} chars)", markdown.length)
 
         return TableInterpretationOutput(markdown = markdown)
+    }
+
+    /**
+     * Injects bounding box coordinates into HTML elements.
+     * Each element receives a ds-bounding-box attribute with format "left top right bottom".
+     */
+    private fun injectBoundingBoxes(html: String, boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>): String {
+        if (boundingBoxes.isEmpty()) {
+            return html
+        }
+
+        try {
+            // Parse the HTML fragment (table element)
+            val doc = Jsoup.parseBodyFragment(html)
+            doc.outputSettings().prettyPrint(false)
+            
+            // The table should be the first child in the body
+            val root = doc.body().children().firstOrNull() ?: return html
+            
+            for ((xpath, bbox) in boundingBoxes) {
+                val bboxValue = "${bbox.left} ${bbox.top} ${bbox.right} ${bbox.bottom}"
+                
+                // XPath format: ./tagname[index]/tagname[index]/...
+                val element = findElementByRelativeXPath(root, xpath)
+                element?.attr("ds-bounding-box", bboxValue)
+            }
+            
+            // Return only the body's inner HTML (the table element)
+            return doc.body().html()
+        } catch (e: Exception) {
+            logger.warn("Failed to inject bounding boxes: {}", e.message)
+            return html
+        }
+    }
+
+    /**
+     * Find an element using a relative XPath expression starting from a root element.
+     * XPath format: ./tagname[index]/tagname[index]/... or "." for the root itself
+     */
+    private fun findElementByRelativeXPath(root: org.jsoup.nodes.Element, xpath: String): org.jsoup.nodes.Element? {
+        if (xpath == ".") {
+            return root
+        }
+        
+        if (!xpath.startsWith("./")) {
+            return null
+        }
+        
+        val parts = xpath.substring(2).split("/")
+        var current = root
+        
+        for (part in parts) {
+            // Parse "tagname[index]"
+            val match = Regex("""(\w+)\[(\d+)\]""").find(part) ?: return null
+            val tagName = match.groupValues[1]
+            val index = match.groupValues[2].toInt()
+            
+            // Find the nth child with the matching tag name (1-based index)
+            val children = current.children().filter { it.tagName().equals(tagName, ignoreCase = true) }
+            if (index < 1 || index > children.size) {
+                return null
+            }
+            
+            current = children[index - 1]
+        }
+        
+        return current
     }
 }
 

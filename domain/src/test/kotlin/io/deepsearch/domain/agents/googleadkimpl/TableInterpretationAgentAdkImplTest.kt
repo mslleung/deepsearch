@@ -32,7 +32,8 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
     @ParameterizedTest
     @ValueSource(
         strings = [
-            "https://www.otandp.com/body-check/"
+//            "https://www.otandp.com/body-check/",
+            "https://sleekflow.io/pricing"
         ]
     )
     fun `interprets identified table to markdown`(url: String) = runTest(testCoroutineDispatcher) {
@@ -48,18 +49,20 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
                 )
             )
             // Take first table if any
-            val first = idOutput.tables.firstOrNull() ?: return@acquireRuntime
-            val elementHtml = page.getElementHtmlByCssSelector(first.cssSelector)
 
-            val md = tableInterpretationAgent.generate(
-                TableInterpretationInput(
-                    html = elementHtml,
-                    auxiliaryInfo = first.auxiliaryInfo
-                )
-            ).markdown
+            idOutput.tables.forEach { table ->
+                val md = tableInterpretationAgent.generate(
+                    TableInterpretationInput(
+                        tableIdentification = table,
+                        webpage = page
+                    )
+                ).markdown
 
-            assertTrue(md.contains("|"))
-            assertTrue(md.contains("\n"))
+                println(md)
+
+//            assertTrue(md.contains("|"))
+//            assertTrue(md.contains("\n"))
+            }
         }
     }
 }

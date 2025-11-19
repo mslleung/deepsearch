@@ -11,6 +11,17 @@ import java.security.MessageDigest
  */
 interface IBrowserPage {
 
+    /**
+     * Bounding box coordinates relative to an element's position.
+     * Coordinates are relative to the queried element's top-left corner.
+     */
+    data class BoundingBox(
+        val left: Double,
+        val top: Double,
+        val right: Double,
+        val bottom: Double
+    )
+
     suspend fun getUrl(): String
 
     /**
@@ -207,4 +218,13 @@ interface IBrowserPage {
      * The resulting lines are joined with newlines.
      */
     suspend fun extractElementTextContentByCssSelector(cssSelector: String): String
+
+    /**
+     * Get bounding boxes for all descendant elements within the element matched by the CSS selector.
+     * Coordinates are relative to the matched element's top-left corner.
+     * 
+     * @param cssSelector CSS selector to match the parent element
+     * @return Map of element identifiers (xpath relative to parent) to their bounding boxes
+     */
+    suspend fun getBoundingBoxesByCssSelector(cssSelector: String): Map<String, BoundingBox>
 }

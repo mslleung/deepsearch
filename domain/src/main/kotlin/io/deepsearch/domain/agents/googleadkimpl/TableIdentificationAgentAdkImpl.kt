@@ -84,11 +84,12 @@ class TableIdentificationAgentAdkImpl(
             - Cleaned HTML structure of the webpage
 
             Instructions:
-            - Analyze the HTML to identify every table in the webpage
+            - Analyze the HTML to identify every major table in the webpage
             - Look for both standard HTML table elements (<table>, <tr>, <td>, <th>) and CSS-based table layouts (divs with table-like styling).
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Focus only on identifying table root containers, do not include elements that are not tables.
-            - Additionally, extract auxiliaryInfo to act as the table title using surrounding context.
+            - Additionally, extract auxiliaryInfo to act as the table description using surrounding context.
+            - The table description should also describe the major rows, columns and any sub-tables.
 
             Expected output shape:
             {

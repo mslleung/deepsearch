@@ -1,11 +1,12 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
+import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
 
 data class TableInterpretationInput(
-    val auxiliaryInfo: String,
-    val html: String,
+    val tableIdentification: TableIdentification,
+    val webpage: IBrowserPage,
 ) : IAgent.IAgentInput
 
 data class TableInterpretationOutput(

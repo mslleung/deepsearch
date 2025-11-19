@@ -721,6 +721,100 @@ class PlaywrightBrowserPage(
         } as String
     }
 
+    override suspend fun getBoundingBoxesByCssSelector(cssSelector: String): Map<String, IBrowserPage.BoundingBox> {
+        logger.debug("Getting bounding boxes for CSS selector: {}", cssSelector)
+
+        return apiMutex.withLock {
+            val resultJson = page.evaluate(
+                $$"""
+            (selector) => {
+                const parentElement = document.querySelector(selector);
+                if (!parentElement) {
+                    return JSON.stringify({});
+                }
+
+                const parentRect = parentElement.getBoundingClientRect();
+                const result = {};
+
+                // Get XPath for an element relative to the parent
+                const getRelativeXPath = (element, parent) => {
+                    if (element === parent) {
+                        return '.';
+                    }
+                    
+                    const path = [];
+                    let current = element;
+                    
+                    while (current && current !== parent && current.nodeType === Node.ELEMENT_NODE) {
+                        let index = 1;
+                        let sibling = current.previousSibling;
+                        
+                        while (sibling) {
+                            if (sibling.nodeType === Node.ELEMENT_NODE && 
+                                sibling.tagName === current.tagName) {
+                                index++;
+                            }
+                            sibling = sibling.previousSibling;
+                        }
+                        
+                        const tagName = current.tagName.toLowerCase();
+                        path.unshift(`${tagName}[${index}]`);
+                        current = current.parentNode;
+                    }
+                    
+                    return current === parent ? './' + path.join('/') : null;
+                };
+
+                // Collect all descendant elements
+                const allElements = parentElement.querySelectorAll('*');
+                
+                for (const element of allElements) {
+                    const rect = element.getBoundingClientRect();
+                    
+                    // Calculate relative coordinates
+                    const relativeLeft = rect.left - parentRect.left;
+                    const relativeTop = rect.top - parentRect.top;
+                    const relativeRight = rect.right - parentRect.left;
+                    const relativeBottom = rect.bottom - parentRect.top;
+                    
+                    const xpath = getRelativeXPath(element, parentElement);
+                    if (xpath) {
+                        result[xpath] = {
+                            left: relativeLeft,
+                            top: relativeTop,
+                            right: relativeRight,
+                            bottom: relativeBottom
+                        };
+                    }
+                }
+
+                return JSON.stringify(result);
+            }
+            """,
+                cssSelector
+            ) as String
+
+            // Parse JSON and convert to Map<String, IBrowserPage.BoundingBox>
+            val parsed = Json.decodeFromString<Map<String, BoundingBoxJson>>(resultJson)
+            parsed.mapValues { (_, bbox) ->
+                IBrowserPage.BoundingBox(
+                    left = bbox.left,
+                    top = bbox.top,
+                    right = bbox.right,
+                    bottom = bbox.bottom
+                )
+            }
+        }
+    }
+
+    @Serializable
+    private data class BoundingBoxJson(
+        val left: Double,
+        val top: Double,
+        val right: Double,
+        val bottom: Double
+    )
+
     private fun loadScript(path: String): String {
         val stream = this::class.java.classLoader.getResourceAsStream(path)
             ?: throw IllegalStateException("Resource not found: $path")
