@@ -268,11 +268,11 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
             
             // Compare attributes
             if (!compareAttributes(snippetChild, candidateChild)) {
-                logger.debug(
-                    "Child attribute mismatch at depth {} for <{}>",
-                    depth,
-                    snippetChild.tagName()
-                )
+//                logger.debug(
+//                    "Child attribute mismatch at depth {} for <{}>",
+//                    depth,
+//                    snippetChild.tagName()
+//                )
                 return false
             }
             
