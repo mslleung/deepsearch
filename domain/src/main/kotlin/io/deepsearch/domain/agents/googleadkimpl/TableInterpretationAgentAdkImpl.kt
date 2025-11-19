@@ -78,7 +78,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             - Do not invent data. Only use what is present in the supplied HTML.
             - Make sure all table data is captured with no information loss. All text must be represented in the markdown.
             - Make sure the markdown is valid. The resulting markdown should not contain HTML.
-            - If there is any ambiguity or information conflict, note them clearly under **Additional Information:**.
+            - If there is any ambiguity or information conflict, note them clearly inside the table and explain under **Additional Information:**.
             - Normalize whitespace; remove decorative or layout-only characters.
             - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
 
@@ -216,8 +216,6 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
                 attr.key == "ds-bounding-box" ||
                         attr.key == "colspan" ||
                         attr.key == "rowspan" ||
-                        attr.key == "id" ||
-                        attr.key == "class" ||
                         attr.key == "role" ||
                         attr.key == "scope" ||
                         attr.key.startsWith("data-")
@@ -233,7 +231,12 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         
         // Use bottom-up (post-order) traversal to remove empty elements in a single pass
         // This processes children before parents, so nested empty elements are handled correctly
-        val removedCount = removeEmptyElementsBottomUp(doc.body(), preserveTags)
+        // Process children of body, not body itself (body should never be removed)
+        var removedCount = 0
+        val bodyChildren = doc.body().children().toList()
+        for (child in bodyChildren) {
+            removedCount += removeEmptyElementsBottomUp(child, preserveTags)
+        }
         logger.trace("Removed {} empty elements in single pass", removedCount)
 
         return doc.body().html()
@@ -245,19 +248,27 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
      * 
      * @param element The root element to process
      * @param preserveTags Set of tag names that should never be removed, even if empty
+     * @param depth Current recursion depth (for safety checking)
      * @return The count of removed elements
      */
     private fun removeEmptyElementsBottomUp(
         element: org.jsoup.nodes.Element,
-        preserveTags: Set<String>
+        preserveTags: Set<String>,
+        depth: Int = 0
     ): Int {
+        // Safety check to prevent stack overflow (DOM trees shouldn't be this deep)
+        if (depth > 1000) {
+            logger.error("removeEmptyElementsBottomUp exceeded max depth of 1000, stopping traversal")
+            return 0
+        }
+        
         var removedCount = 0
         
         // Process all children first (post-order traversal)
-        // Use toList() to avoid ConcurrentModificationException when removing elements
+        // Use toList() to create a snapshot and avoid ConcurrentModificationException
         val children = element.children().toList()
         for (child in children) {
-            removedCount += removeEmptyElementsBottomUp(child, preserveTags)
+            removedCount += removeEmptyElementsBottomUp(child, preserveTags, depth + 1)
         }
         
         // After processing children, check if this element itself should be removed
