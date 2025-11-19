@@ -26,7 +26,7 @@ class PlaywrightBrowserContext(
         val page = apiMutex.withLock { 
             val p = context.newPage()
             // Inject stealth script before any page navigation
-            p.addInitScript(stealthScript)
+//            p.addInitScript(stealthScript)
             p
         }
         return PlaywrightBrowserPage(page, apiMutex)

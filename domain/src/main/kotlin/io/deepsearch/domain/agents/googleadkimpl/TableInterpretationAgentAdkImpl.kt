@@ -65,6 +65,10 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             in the format ds-bounding-box="left top right bottom". These coordinates are relative to the table element's top-left corner
             and can help you understand the spatial layout and relationships between elements.
 
+            Note that HTML tables may not be in perfect row/column format due to styling etc. Bounding box is crucial
+            for mapping elements that are out of place. For these elements, you can simply add rows/column in the 
+            markdown to accurately represent them.
+
             Rules:
             - Preserve the table's row and column structure and order accurately.
             - Include a header row if one exists; otherwise infer a sensible header from the first row if appropriate.

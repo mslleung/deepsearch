@@ -48,7 +48,6 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
                     html = html
                 )
             )
-            // Take first table if any
 
             idOutput.tables.forEach { table ->
                 val md = tableInterpretationAgent.generate(

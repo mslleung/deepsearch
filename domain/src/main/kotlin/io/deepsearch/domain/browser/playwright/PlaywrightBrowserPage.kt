@@ -721,6 +721,8 @@ class PlaywrightBrowserPage(
         } as String
     }
 
+    // TODO Remove all elements with 0 bounding box
+
     override suspend fun getBoundingBoxesByCssSelector(cssSelector: String): Map<String, IBrowserPage.BoundingBox> {
         logger.debug("Getting bounding boxes for CSS selector: {}", cssSelector)
 
