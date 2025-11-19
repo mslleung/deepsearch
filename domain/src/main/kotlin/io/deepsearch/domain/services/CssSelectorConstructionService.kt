@@ -174,12 +174,12 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
         // Compare child structure recursively (up to depth limit)
         val maxDepth = 3
         if (!compareChildStructure(snippetElement, candidateElement, depth = 0, maxDepth = maxDepth)) {
-            logger.debug(
-                "Child structure mismatch for <{}>: expected {} children, found {} children",
-                snippetElement.tagName(),
-                snippetElement.children().size,
-                candidateElement.children().size
-            )
+//            logger.debug(
+//                "Child structure mismatch for <{}>: expected {} children, found {} children",
+//                snippetElement.tagName(),
+//                snippetElement.children().size,
+//                candidateElement.children().size
+//            )
             return false
         }
         

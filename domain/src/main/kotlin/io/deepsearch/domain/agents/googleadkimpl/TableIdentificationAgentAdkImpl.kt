@@ -78,15 +78,15 @@ class TableIdentificationAgentAdkImpl(
         )
         instruction(
             """
-            Your task is to identify all tables in the provided webpage and return the stable identifiers of their root containers.
+            Your task is to identify all grid-like structures in the provided webpage and return the stable identifiers of their root containers.
 
             Inputs:
             - Cleaned HTML structure of the webpage
 
             Instructions:
-            - Analyze the HTML to identify every table in the webpage
-            - A table is defined as anything that semantically or structurally looks like a table or grid
-            - Modern websites may design tables purely using <div> styling or structure, you need to identify those in addition to the standard semantic HTML tables
+            - Analyze the HTML to identify every grid-like structure in the webpage
+            - Identify anything that semantically or structurally looks like a table or grid
+            - Modern websites may design grids purely using <div> styling or structure, you need to identify those in addition to the standard semantic HTML tables
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
 
