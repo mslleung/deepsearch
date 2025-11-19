@@ -257,12 +257,12 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
             
             // Compare tag names
             if (snippetChild.tagName() != candidateChild.tagName()) {
-                logger.debug(
-                    "Child tag mismatch at depth {}: expected '{}', found '{}'",
-                    depth,
-                    snippetChild.tagName(),
-                    candidateChild.tagName()
-                )
+//                logger.debug(
+//                    "Child tag mismatch at depth {}: expected '{}', found '{}'",
+//                    depth,
+//                    snippetChild.tagName(),
+//                    candidateChild.tagName()
+//                )
                 return false
             }
             

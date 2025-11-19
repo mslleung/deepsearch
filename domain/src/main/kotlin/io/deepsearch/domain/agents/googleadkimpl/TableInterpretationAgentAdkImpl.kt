@@ -107,6 +107,12 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         // Inject bounding box attributes into HTML
         val htmlWithBoundingBoxes = injectBoundingBoxes(tableHtml, boundingBoxes)
 
+        // Clean HTML to reduce token usage and noise
+        val cleanedHtml = cleanHtml(htmlWithBoundingBoxes)
+
+        logger.debug("Cleaned HTML length: {} (original: {})", cleanedHtml.length, htmlWithBoundingBoxes.length)
+        logger.debug(cleanedHtml)
+
         val response = retryLlmCall<TableInterpretationResponse> {
             val session = runner
                 .sessionService()
@@ -122,7 +128,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
 
             val parts = buildList {
                 add(Part.fromText("Auxiliary context: " + input.tableIdentification.auxiliaryInfo))
-                add(Part.fromText(htmlWithBoundingBoxes))
+                add(Part.fromText(cleanedHtml))
             }
 
             val eventsFlow = runner.runAsync(
@@ -158,6 +164,80 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
     }
 
     /**
+     * Cleans HTML to optimize for LLM consumption by removing noise and non-content elements.
+     */
+    private fun cleanHtml(rawHtml: String): String {
+        val doc = Jsoup.parseBodyFragment(rawHtml)
+        doc.outputSettings().prettyPrint(false)
+
+        // Step 1: Remove noise elements
+        doc.select(
+            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
+                    "head, title, base, " +
+                    "img, video, audio, source, track, picture, " +
+                    "form, input, button, select, textarea, label, fieldset, legend, " +
+                    "nav, footer, header, aside"
+        ).remove()
+
+        // Step 2: Remove comments and processing instructions
+        doc.select("*").forEach { element ->
+            val nodesToRemove = element.childNodes().filter { node ->
+                node.nodeName() == "#comment" || node.nodeName() == "#pi"
+            }
+            nodesToRemove.forEach { node -> node.remove() }
+        }
+
+        // Step 3: Strip attributes except whitelist
+        doc.select("*").forEach { element ->
+            val attributes = element.attributes().asList()
+            val attrsToKeep = attributes.filter { attr ->
+                attr.key == "ds-bounding-box" ||
+                        attr.key == "colspan" ||
+                        attr.key == "rowspan" ||
+                        attr.key == "id" ||
+                        attr.key == "class" ||
+                        attr.key == "role" ||
+                        attr.key == "scope" ||
+                        attr.key.startsWith("data-")
+            }
+            element.clearAttributes()
+            attrsToKeep.forEach { attr ->
+                element.attr(attr.key, attr.value)
+            }
+        }
+
+        // Step 4: Remove empty elements, preserving table structure
+        val preserveTags = setOf("td", "th", "tr", "table", "thead", "tbody", "tfoot", "caption")
+        
+        var changed = true
+        var iterations = 0
+        val maxIterations = 100 // Safety limit to prevent infinite loops
+        
+        while (changed && iterations < maxIterations) {
+            changed = false
+            iterations++
+            
+            val emptyElements = doc.select("*").filter { element ->
+                !preserveTags.contains(element.tagName().lowercase()) &&
+                        element.children().isEmpty() &&
+                        element.ownText().isBlank()
+            }
+            
+            if (emptyElements.isNotEmpty()) {
+                logger.trace("Removing {} empty elements (iteration {})", emptyElements.size, iterations)
+                emptyElements.forEach { it.remove() }
+                changed = true
+            }
+        }
+        
+        if (iterations >= maxIterations) {
+            logger.warn("cleanHtml reached maximum iterations ({}), stopping empty element removal", maxIterations)
+        }
+
+        return doc.body().html()
+    }
+
+    /**
      * Injects bounding box coordinates into HTML elements.
      * Each element receives a ds-bounding-box attribute with format "left top right bottom".
      */
@@ -174,11 +254,14 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             // The table should be the first child in the body
             val root = doc.body().children().firstOrNull() ?: return html
             
+            // Pre-compile regex for performance
+            val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
+            
             for ((xpath, bbox) in boundingBoxes) {
                 val bboxValue = "${bbox.left} ${bbox.top} ${bbox.right} ${bbox.bottom}"
                 
                 // XPath format: ./tagname[index]/tagname[index]/...
-                val element = findElementByRelativeXPath(root, xpath)
+                val element = findElementByRelativeXPath(root, xpath, xpathRegex)
                 element?.attr("ds-bounding-box", bboxValue)
             }
             
@@ -194,7 +277,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
      * Find an element using a relative XPath expression starting from a root element.
      * XPath format: ./tagname[index]/tagname[index]/... or "." for the root itself
      */
-    private fun findElementByRelativeXPath(root: org.jsoup.nodes.Element, xpath: String): org.jsoup.nodes.Element? {
+    private fun findElementByRelativeXPath(root: org.jsoup.nodes.Element, xpath: String, regex: Regex): org.jsoup.nodes.Element? {
         if (xpath == ".") {
             return root
         }
@@ -208,17 +291,30 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         
         for (part in parts) {
             // Parse "tagname[index]"
-            val match = Regex("""(\w+)\[(\d+)\]""").find(part) ?: return null
+            val match = regex.find(part) ?: return null
             val tagName = match.groupValues[1]
             val index = match.groupValues[2].toInt()
             
             // Find the nth child with the matching tag name (1-based index)
-            val children = current.children().filter { it.tagName().equals(tagName, ignoreCase = true) }
-            if (index < 1 || index > children.size) {
-                return null
+            // Optimize: traverse children manually to avoid creating new lists
+            var count = 0
+            var found: org.jsoup.nodes.Element? = null
+            
+            val children = current.children()
+            for (child in children) {
+                if (child.tagName().equals(tagName, ignoreCase = true)) {
+                    count++
+                    if (count == index) {
+                        found = child
+                        break
+                    }
+                }
             }
             
-            current = children[index - 1]
+            if (found == null) {
+                return null
+            }
+            current = found
         }
         
         return current

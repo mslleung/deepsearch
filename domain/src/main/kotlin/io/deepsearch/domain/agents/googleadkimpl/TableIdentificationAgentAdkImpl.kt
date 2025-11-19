@@ -85,8 +85,8 @@ class TableIdentificationAgentAdkImpl(
 
             Instructions:
             - Analyze the HTML to identify every table-like structure in the webpage
-            - Target the table root containers only
-            - In the event of nested tables/grids, target the biggest wrapping parent only
+            - Always target the table root containers instead of individual rows and columns
+            - In the event of nested tables/grids, target the outermost wrapping parent only
             - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Additionally, extract auxiliaryInfo using surrounding text such as table headers and captions to provide extra information for understanding the table.
