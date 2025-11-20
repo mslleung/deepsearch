@@ -3,7 +3,6 @@ package io.deepsearch.domain.browser.playwright
 import com.microsoft.playwright.Playwright
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserRuntime
-import io.deepsearch.domain.services.ICssSelectorConstructionService
 
 /**
  * Playwright-backed browser runtime.
@@ -13,12 +12,11 @@ import io.deepsearch.domain.services.ICssSelectorConstructionService
  * Each runtime can spawn multiple isolated browsers for concurrent link processing.
  */
 class PlaywrightBrowserRuntime(
-    private val cssSelectorConstructionService: ICssSelectorConstructionService
 ) : IBrowserRuntime {
     private val playwright: Playwright = Playwright.create()
 
     override suspend fun createBrowser(): IBrowser {
-        return PlaywrightBrowser(playwright, cssSelectorConstructionService)
+        return PlaywrightBrowser(playwright)
     }
 
     override suspend fun close() {

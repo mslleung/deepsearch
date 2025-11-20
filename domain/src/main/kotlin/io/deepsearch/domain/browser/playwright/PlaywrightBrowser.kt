@@ -1,12 +1,10 @@
 package io.deepsearch.domain.browser.playwright
 
 import com.microsoft.playwright.Browser
-import com.microsoft.playwright.BrowserContext
 import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Playwright
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserContext
-import io.deepsearch.domain.services.ICssSelectorConstructionService
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -18,8 +16,7 @@ import kotlinx.coroutines.sync.withLock
  * Browsers are typically created per-link during web scraping.
  */
 class PlaywrightBrowser(
-    private val playwright: Playwright,
-    private val cssSelectorConstructionService: ICssSelectorConstructionService
+    private val playwright: Playwright
 ) : IBrowser {
     private val playwrightBrowser = playwright.chromium().launch(
         BrowserType.LaunchOptions()
@@ -89,7 +86,7 @@ class PlaywrightBrowser(
             }
         }
 
-        return PlaywrightBrowserContext(context, apiMutex, cssSelectorConstructionService)
+        return PlaywrightBrowserContext(context, apiMutex)
     }
 
     override suspend fun close() {

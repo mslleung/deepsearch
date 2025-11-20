@@ -34,9 +34,6 @@ val domainModule = module {
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
     singleOf(::DefaultDispatcherProvider) bind IDispatcherProvider::class
 
-    // Domain services (stateless singletons)
-    singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
-
     // OCR services
     singleOf(::BrowserRuntimePool) { createdAtStart() } bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) { createdAtStart() } bind ITesseractPool::class
@@ -66,6 +63,7 @@ val domainModule = module {
 
         // domain services
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
+        scopedOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
         scopedOf(::JwtService) bind IJwtService::class
         scopedOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
         scopedOf(::SerperService) bind ISerperService::class

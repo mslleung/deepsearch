@@ -1,5 +1,5 @@
 (() => {
-  type IconResult = { base64: string; htmlSnippets: string[] };
+  type IconResult = { base64: string; cssSelectors: string[] };
 
   type SkippedDetail = {
     tag: string;
@@ -131,8 +131,8 @@
     return base64;
   };
 
-  const extractHtmlSnippet = (el: Element): string => {
-    return el.outerHTML;
+  const extractStableId = (el: Element): string | null => {
+    return (el as HTMLElement).getAttribute('data-ds-id');
   };
 
   const renderSvgIcon = async (el: Element, debugStats: DebugStats): Promise<string | null> => {
@@ -262,7 +262,7 @@
   };
 
   const run = async (): Promise<string> => {
-    const imagesToHtmlSnippets = new Map<string, Set<string>>();
+    const imagesToStableIds = new Map<string, Set<string>>();
     
     // Initialize debug stats
     const debugStats: DebugStats = {
@@ -276,7 +276,7 @@
       uniqueIcons: 0,
       totalSnippets: 0,
       skippedDetails: [],
-      deduplicationMap: {} // maps number of snippets to count of icons with that many snippets
+      deduplicationMap: {} // maps number of selectors to count of icons with that many selectors
     };
     
     // Query for multiple icon types:
@@ -309,6 +309,13 @@
     console.log('[extractIcons] Total elements found:', debugStats.totalElementsFound);
     console.log('[extractIcons] Elements by selector:', debugStats.elementsBySelector);
     
+    // Inject stable identifiers into all icon elements
+    let idCounter = 0;
+    for (const el of elements) {
+      const stableId = `ds-icon-${idCounter++}`;
+      (el as HTMLElement).setAttribute('data-ds-id', stableId);
+    }
+    
     for (const el of elements) {
       debugStats.elementsProcessed++;
       let rendered: string | null = null;
@@ -335,33 +342,35 @@
       
       debugStats.successfullyRendered++;
       
-      const htmlSnippet = extractHtmlSnippet(el);
-      if (!imagesToHtmlSnippets.has(rendered)) {
-        imagesToHtmlSnippets.set(rendered, new Set());
+      const stableId = extractStableId(el);
+      if (stableId) {
+        if (!imagesToStableIds.has(rendered)) {
+          imagesToStableIds.set(rendered, new Set());
+        }
+        imagesToStableIds.get(rendered)!.add(stableId);
       }
-      imagesToHtmlSnippets.get(rendered)!.add(htmlSnippet);
     }
     
     // Calculate deduplication stats
-    debugStats.uniqueIcons = imagesToHtmlSnippets.size;
-    for (const [base64, snippets] of imagesToHtmlSnippets.entries()) {
-      const snippetCount = snippets.size;
-      debugStats.totalSnippets += snippetCount;
-      debugStats.deduplicationMap[snippetCount] = (debugStats.deduplicationMap[snippetCount] || 0) + 1;
+    debugStats.uniqueIcons = imagesToStableIds.size;
+    for (const [base64, ids] of imagesToStableIds.entries()) {
+      const selectorCount = ids.size;
+      debugStats.totalSnippets += selectorCount;
+      debugStats.deduplicationMap[selectorCount] = (debugStats.deduplicationMap[selectorCount] || 0) + 1;
     }
     
     console.log('[extractIcons] Extraction complete');
     console.log('[extractIcons] Successfully rendered:', debugStats.successfullyRendered);
     console.log('[extractIcons] Unique icons:', debugStats.uniqueIcons);
-    console.log('[extractIcons] Total snippets:', debugStats.totalSnippets);
+    console.log('[extractIcons] Total selectors:', debugStats.totalSnippets);
     console.log('[extractIcons] Skipped (no glyph):', debugStats.skippedNoGlyph);
     console.log('[extractIcons] Skipped (svg zero size):', debugStats.skippedSvgZeroSize);
     console.log('[extractIcons] Rendering errors:', debugStats.renderingErrors);
     console.log('[extractIcons] Deduplication map:', debugStats.deduplicationMap);
     
-    const results: IconResult[] = Array.from(imagesToHtmlSnippets.entries()).map(([base64, snippets]) => ({
+    const results: IconResult[] = Array.from(imagesToStableIds.entries()).map(([base64, ids]) => ({
       base64,
-      htmlSnippets: Array.from(snippets)
+      cssSelectors: Array.from(ids).map(id => `[data-ds-id="${id}"]`)
     }));
     
     // Return both debug stats and results

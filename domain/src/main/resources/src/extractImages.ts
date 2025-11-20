@@ -1,17 +1,23 @@
 (() => {
-  type ImageResult = { base64: string; htmlSnippets: string[] };
-  type FailedImage = { element: Element; htmlSnippet: string; reason: string };
+  type ImageResult = { base64: string; cssSelectors: string[] };
+  type FailedImage = { element: Element; cssSelector: string; reason: string };
 
-  const extractHtmlSnippet = (el: Element): string => {
-    return el.outerHTML;
+  const extractStableId = (el: Element): string | null => {
+    return (el as HTMLElement).getAttribute('data-ds-id');
   };
 
   const run = async (): Promise<string> => {
-    const imagesToHtmlSnippets = new Map<string, Set<string>>();
+    const imagesToStableIds = new Map<string, Set<string>>();
     const failedImages: FailedImage[] = [];
     
     // Extract regular img elements
     const images = Array.from(document.querySelectorAll('img'));
+
+    // Inject stable identifiers into img elements
+    let idCounter = 0;
+    images.forEach(img => {
+      img.setAttribute('data-ds-id', `ds-image-${idCounter++}`);
+    });
 
     // Wait for all images to load
     await Promise.all(images.map(img => {
@@ -61,8 +67,8 @@
         const dataUrl = canvas.toDataURL('image/webp', 0.9);
         const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         
-        const htmlSnippet = extractHtmlSnippet(img);
-        return { base64, htmlSnippet, failed: null };
+        const stableId = extractStableId(img);
+        return { base64, stableId, failed: null };
       } catch (e) {
         // Canvas is tainted or drawing failed - try re-downloading with CORS
         if (e instanceof DOMException && e.name === 'SecurityError' && img.src && !img.src.startsWith('data:')) {
@@ -85,19 +91,20 @@
             const dataUrl = canvas.toDataURL('image/webp', 0.9);
             const base64 = dataUrl.replace(/^data:[^,]+,/, '');
             
-            const htmlSnippet = extractHtmlSnippet(img);
-            return { base64, htmlSnippet, failed: null };
+            const stableId = extractStableId(img);
+            return { base64, stableId, failed: null };
           } catch (retryError) {
             // Re-download also failed
             const errorMsg = retryError instanceof Error ? retryError.message : String(retryError);
-            const htmlSnippet = extractHtmlSnippet(img);
-            console.warn(`Failed to extract image at ${htmlSnippet} after retry: ${errorMsg}`);
+            const stableId = extractStableId(img);
+            const cssSelector = stableId ? `[data-ds-id="${stableId}"]` : '';
+            console.warn(`Failed to extract image at ${cssSelector} after retry: ${errorMsg}`);
             return {
               base64: null,
-              htmlSnippet: null,
+              stableId: null,
               failed: {
                 element: img,
-                htmlSnippet: htmlSnippet,
+                cssSelector: cssSelector,
                 reason: `CORS retry failed: ${errorMsg}`
               }
             };
@@ -106,14 +113,15 @@
         
         // Some other error (not SecurityError or not recoverable) - report it
         const errorMsg = e instanceof Error ? e.message : String(e);
-        const htmlSnippet = extractHtmlSnippet(img);
-        console.warn(`Failed to extract image at ${htmlSnippet}: ${errorMsg}`);
+        const stableId = extractStableId(img);
+        const cssSelector = stableId ? `[data-ds-id="${stableId}"]` : '';
+        console.warn(`Failed to extract image at ${cssSelector}: ${errorMsg}`);
         return {
           base64: null,
-          htmlSnippet: null,
+          stableId: null,
           failed: {
             element: img,
-            htmlSnippet: htmlSnippet,
+            cssSelector: cssSelector,
             reason: errorMsg
           }
         };
@@ -126,11 +134,11 @@
       
       if (result.failed) {
         failedImages.push(result.failed);
-      } else if (result.base64 && result.htmlSnippet) {
-        if (!imagesToHtmlSnippets.has(result.base64)) {
-          imagesToHtmlSnippets.set(result.base64, new Set());
+      } else if (result.base64 && result.stableId) {
+        if (!imagesToStableIds.has(result.base64)) {
+          imagesToStableIds.set(result.base64, new Set());
         }
-        imagesToHtmlSnippets.get(result.base64)!.add(result.htmlSnippet);
+        imagesToStableIds.get(result.base64)!.add(result.stableId);
       }
     }
     
@@ -139,6 +147,11 @@
       const style = window.getComputedStyle(el);
       const backgroundImage = style.backgroundImage;
       return backgroundImage && backgroundImage !== 'none' && backgroundImage.startsWith('url(');
+    });
+    
+    // Inject stable identifiers into elements with background images
+    elementsWithBackgrounds.forEach(element => {
+      (element as HTMLElement).setAttribute('data-ds-id', `ds-image-${idCounter++}`);
     });
     
     console.log(`Found ${elementsWithBackgrounds.length} elements with backgrounds to process`);
@@ -195,8 +208,8 @@
           const dataUrl = canvas.toDataURL('image/webp', 0.9);
           const base64 = dataUrl.replace(/^data:[^,]+,/, '');
           
-          const htmlSnippet = extractHtmlSnippet(element);
-          return { base64, htmlSnippet, failed: null };
+          const stableId = extractStableId(element);
+          return { base64, stableId, failed: null };
         } catch (securityError) {
           // Canvas is tainted - retry with crossOrigin
           if (securityError instanceof DOMException && securityError.name === 'SecurityError') {
@@ -218,22 +231,23 @@
             const dataUrl = canvas.toDataURL('image/webp', 0.9);
             const base64 = dataUrl.replace(/^data:[^,]+,/, '');
             
-            const htmlSnippet = extractHtmlSnippet(element);
-            return { base64, htmlSnippet, failed: null };
+            const stableId = extractStableId(element);
+            return { base64, stableId, failed: null };
           }
           throw securityError;
         }
       } catch (e) {
         // Store failed background images for fallback processing
         const errorMsg = e instanceof Error ? e.message : String(e);
-        const htmlSnippet = extractHtmlSnippet(element);
-        console.warn(`Failed to extract background image at ${htmlSnippet}: ${errorMsg}`);
+        const stableId = extractStableId(element);
+        const cssSelector = stableId ? `[data-ds-id="${stableId}"]` : '';
+        console.warn(`Failed to extract background image at ${cssSelector}: ${errorMsg}`);
         return {
           base64: null,
-          htmlSnippet: null,
+          stableId: null,
           failed: {
             element: element,
-            htmlSnippet: htmlSnippet,
+            cssSelector: cssSelector,
             reason: errorMsg
           }
         };
@@ -246,23 +260,23 @@
       
       if (result.failed) {
         failedImages.push(result.failed);
-      } else if (result.base64 && result.htmlSnippet) {
-        if (!imagesToHtmlSnippets.has(result.base64)) {
-          imagesToHtmlSnippets.set(result.base64, new Set());
+      } else if (result.base64 && result.stableId) {
+        if (!imagesToStableIds.has(result.base64)) {
+          imagesToStableIds.set(result.base64, new Set());
         }
-        imagesToHtmlSnippets.get(result.base64)!.add(result.htmlSnippet);
+        imagesToStableIds.get(result.base64)!.add(result.stableId);
       }
     }
     
-    const results: ImageResult[] = Array.from(imagesToHtmlSnippets.entries()).map(([base64, snippets]) => ({
+    const results: ImageResult[] = Array.from(imagesToStableIds.entries()).map(([base64, ids]) => ({
       base64,
-      htmlSnippets: Array.from(snippets)
+      cssSelectors: Array.from(ids).map(id => `[data-ds-id="${id}"]`)
     }));
     
     // Return both successful results and failed images for fallback processing
     return JSON.stringify({
       successful: results,
-      failed: failedImages.map(f => ({ htmlSnippet: f.htmlSnippet, reason: f.reason }))
+      failed: failedImages.map(f => ({ cssSelector: f.cssSelector, reason: f.reason }))
     });
   };
 
