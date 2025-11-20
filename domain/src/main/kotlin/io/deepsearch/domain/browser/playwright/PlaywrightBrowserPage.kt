@@ -580,10 +580,12 @@ class PlaywrightBrowserPage(
         }
 
         // Perform all replacements in a single evaluate call for optimal performance
-        apiMutex.withLock {
+        val result = apiMutex.withLock {
             page.evaluate(
                 """
             (replacements) => {
+                const results = { succeeded: 0, failed: [], removed: 0 };
+                
                 for (const replacement of replacements) {
                     const cssSelector = replacement.cssSelector;
                     const text = replacement.text;
@@ -592,6 +594,7 @@ class PlaywrightBrowserPage(
                     const elements = document.querySelectorAll(cssSelector);
                     
                     if (elements.length === 0) {
+                        results.failed.push({ cssSelector: cssSelector, reason: 'no_match' });
                         continue;
                     }
                     
@@ -602,18 +605,38 @@ class PlaywrightBrowserPage(
                         // Replace element with text node
                         const parent = target.parentNode;
                         if (!parent || parent.nodeType === Node.DOCUMENT_NODE) {
+                            results.failed.push({ cssSelector: cssSelector, reason: 'no_parent' });
                             continue;
                         }
                         const textNode = document.createTextNode(text);
                         parent.replaceChild(textNode, target);
+                        results.succeeded++;
                     } else {
                         // Remove element
                         target.remove();
+                        results.removed++;
                     }
                 }
+                
+                return results;
             }
             """, replacementsData
             )
+        } as Map<*, *>
+
+        val succeeded = (result["succeeded"] as? Number)?.toInt() ?: 0
+        val removed = (result["removed"] as? Number)?.toInt() ?: 0
+        @Suppress("UNCHECKED_CAST")
+        val failed = (result["failed"] as? List<Map<String, String>>) ?: emptyList()
+
+        logger.debug("CSS replacements: {} succeeded, {} removed, {} failed", succeeded, removed, failed.size)
+        if (failed.isNotEmpty()) {
+            failed.take(5).forEach { failure ->
+                logger.warn("Failed to replace CSS selector '{}': {}", failure["cssSelector"], failure["reason"])
+            }
+            if (failed.size > 5) {
+                logger.warn("... and {} more failed replacements", failed.size - 5)
+            }
         }
     }
 
@@ -820,11 +843,56 @@ class PlaywrightBrowserPage(
                 for (const element of allElements) {
                     const rect = element.getBoundingClientRect();
                     
-                    // Calculate relative coordinates
-                    const relativeLeft = rect.left - parentRect.left;
-                    const relativeTop = rect.top - parentRect.top;
-                    const relativeRight = rect.right - parentRect.left;
-                    const relativeBottom = rect.bottom - parentRect.top;
+                    // Check if element has visual dimensions
+                    const hasVisualDimensions = rect.width > 0 || rect.height > 0;
+                    
+                    let relativeLeft, relativeTop, relativeRight, relativeBottom;
+                    
+                    if (hasVisualDimensions) {
+                        // Use visual bounding box for visible elements
+                        relativeLeft = rect.left - parentRect.left;
+                        relativeTop = rect.top - parentRect.top;
+                        relativeRight = rect.right - parentRect.left;
+                        relativeBottom = rect.bottom - parentRect.top;
+                    } else {
+                        // Try to get layout dimensions for invisible/collapsed elements
+                        // This works for visibility:hidden, opacity:0, collapsed rows, etc.
+                        // but not for display:none (which truly has no layout)
+                        const offsetWidth = element.offsetWidth;
+                        const offsetHeight = element.offsetHeight;
+                        
+                        if (offsetWidth > 0 || offsetHeight > 0) {
+                            // Element has layout dimensions even if not visible
+                            // Calculate position relative to parent
+                            let offsetLeft = 0;
+                            let offsetTop = 0;
+                            let current = element;
+                            
+                            // Accumulate offsets up to parent
+                            while (current && current !== parentElement) {
+                                offsetLeft += current.offsetLeft;
+                                offsetTop += current.offsetTop;
+                                current = current.offsetParent;
+                                
+                                // Break if we've gone past the parent
+                                if (current && !parentElement.contains(current)) {
+                                    break;
+                                }
+                            }
+                            
+                            relativeLeft = offsetLeft;
+                            relativeTop = offsetTop;
+                            relativeRight = offsetLeft + offsetWidth;
+                            relativeBottom = offsetTop + offsetHeight;
+                        } else {
+                            // Element truly has no dimensions (e.g., display:none)
+                            // Use the zero rect as-is
+                            relativeLeft = rect.left - parentRect.left;
+                            relativeTop = rect.top - parentRect.top;
+                            relativeRight = rect.right - parentRect.left;
+                            relativeBottom = rect.bottom - parentRect.top;
+                        }
+                    }
                     
                     const xpath = getRelativeXPath(element, parentElement);
                     if (xpath) {

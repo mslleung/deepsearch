@@ -13,6 +13,7 @@ import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.agents.TableInterpretationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.browser.IBrowserPage
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
@@ -306,7 +307,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
      */
     private fun injectBoundingBoxes(
         html: String,
-        boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>
+        boundingBoxes: Map<String, IBrowserPage.BoundingBox>
     ): String {
         if (boundingBoxes.isEmpty()) {
             return html
@@ -324,6 +325,14 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
 
             for ((xpath, bbox) in boundingBoxes) {
+                val width = bbox.right - bbox.left
+                val height = bbox.bottom - bbox.top
+
+                // If the element truly has 0 0 0 0 bounding box (or 0 size), do not inject as it has no meaning
+                if (width <= 0.0 && height <= 0.0) {
+                    continue
+                }
+
                 val bboxValue = "${bbox.left.toInt()} ${bbox.top.toInt()} ${bbox.right.toInt()} ${bbox.bottom.toInt()}"
 
                 // XPath format: ./tagname[index]/tagname[index]/...
