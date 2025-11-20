@@ -17,5 +17,15 @@ interface ICssSelectorConstructionService {
      * @return List of CSS selectors, one for each matching element. Empty list if snippet is invalid.
      */
     fun constructCssSelectorsFromSnippet(htmlSnippet: String, cleanedHtml: String, fullHtml: String): List<String>
+
+    /**
+     * Constructs a CSS selector from a stable identifier by finding the element in the HTML
+     * and building a selector based on its attributes and structure.
+     * 
+     * @param identifier The data-ds-id value (e.g., "ds-semantic-5")
+     * @param htmlWithIdentifiers The HTML document containing injected data-ds-id attributes
+     * @return A CSS selector that can locate the element in the original webpage, or null if element not found
+     */
+    fun constructCssSelectorFromIdentifier(identifier: String, htmlWithIdentifiers: String): String?
 }
 

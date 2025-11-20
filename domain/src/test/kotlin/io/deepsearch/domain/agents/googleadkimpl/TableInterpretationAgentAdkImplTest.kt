@@ -41,10 +41,9 @@ class TableInterpretationAgentAdkImplTest : KoinTest {
             val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
-            val html = page.getFullHtml()
             val idOutput = tableIdentificationAgent.generate(
                 TableIdentificationInput(
-                    html = html
+                    webpage = page
                 )
             )
 

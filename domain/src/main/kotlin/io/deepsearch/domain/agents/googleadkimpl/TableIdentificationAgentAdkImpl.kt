@@ -14,6 +14,7 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.rx3.await
@@ -82,12 +83,17 @@ class TableIdentificationAgentAdkImpl(
 
             Inputs:
             - Cleaned HTML structure of the webpage
+            
+            Each element in the HTML has been augmented with a ds-bounding-box attribute containing spatial coordinates
+            in the format ds-bounding-box="left top right bottom". These coordinates help you understand the spatial layout
+            and relationships between elements.
 
             Instructions:
             - Analyze the HTML to identify every table-like structure in the webpage
             - Always target the table root containers instead of individual rows and columns
             - In the event of nested tables/grids, target the outermost wrapping parent only
             - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
+            - Use the bounding box coordinates to identify grid patterns typical of tables (aligned columns, consistent row heights)
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
               - The table's description
@@ -121,21 +127,31 @@ class TableIdentificationAgentAdkImpl(
     )
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
-        logger.debug("Table identification for HTML ({} bytes)", input.html.length)
+        // Step 1: Get webpage HTML and bounding boxes
+        val originalHtml = input.webpage.getFullHtml()
+        val boundingBoxes = input.webpage.getBoundingBoxesByCssSelector("body")
 
-        val cleanedHtml = cleanHtml(input.html)
+        logger.debug("Table identification for HTML ({} bytes)", originalHtml.length)
+        logger.debug("Got {} bounding boxes for table identification", boundingBoxes.size)
+
+        // Step 2: Inject stable identifiers into jsoup copy
+        val htmlWithIds = injectStableIdentifiers(originalHtml, "ds-table")
+
+        // Step 3: Inject bounding boxes into jsoup copy
+        val htmlWithIdsAndBboxes = injectBoundingBoxes(htmlWithIds, boundingBoxes)
+
+        // Step 4: Clean HTML (after identifier and bbox injection)
+        val cleanedHtml = cleanHtml(htmlWithIdsAndBboxes)
 
         if (cleanedHtml.isEmpty()) {
             return TableIdentificationOutput(tables = emptyList())
         }
 
-        // Inject stable identifiers for LLM processing
-        val cleanedHtmlWithIds = injectStableIdentifiers(cleanedHtml, "ds-table")
-
         // Programmatic extraction of semantic tables to reduce LLM input
-        val (programmaticTables, reducedHtml) = extractSemanticTables(cleanedHtmlWithIds)
+        val (programmaticTables, reducedHtml) = extractSemanticTables(cleanedHtml)
         logger.debug("Programmatically extracted {} semantic tables", programmaticTables.size)
 
+        // Step 5: Pass to LLM
         val response = retryLlmCall<TableIdentificationResponse> {
             val session = runner
                 .sessionService()
@@ -178,47 +194,14 @@ class TableIdentificationAgentAdkImpl(
         }
 
         val allTableResults = programmaticTables + response.tables
-        logger.debug("Total table identification found {} table IDs ({} programmatic, {} LLM)", 
-            allTableResults.size, programmaticTables.size, response.tables.size)
+        logger.debug(
+            "Total table identification found {} table IDs ({} programmatic, {} LLM)",
+            allTableResults.size, programmaticTables.size, response.tables.size
+        )
 
-        // Convert IDs to HTML snippets, then to CSS selectors that work on original HTML
-        val cleanedDocWithIds = Jsoup.parse(cleanedHtmlWithIds)
-        
-        val tableIdentifications = allTableResults.flatMap { llmResult ->
-            val tempSelector = "[data-ds-id=\"${llmResult.id}\"]"
-            val element = cleanedDocWithIds.selectFirst(tempSelector)
-            
-            if (element == null) {
-                logger.warn("Skipping table with ID '{}' - element not found in cleaned HTML", llmResult.id)
-                emptyList()
-            } else {
-                // Remove temporary IDs from element and all its descendants (they don't exist in original HTML)
-                element.removeAttr("data-ds-id")
-                element.select("[data-ds-id]").forEach { it.removeAttr("data-ds-id") }
-                val htmlSnippet = element.outerHtml()
-                
-                // Convert snippet to CSS selectors that work on original HTML
-                // Use cleanedHtml (without IDs) for proper CSS selector construction
-                val cssSelectors = cssSelectorConstructionService.constructCssSelectorsFromSnippet(
-                    htmlSnippet, cleanedHtml, input.html
-                )
-
-                if (cssSelectors.isEmpty()) {
-                    logger.warn(
-                        "Skipping table with ID '{}' - could not construct valid CSS selector from snippet",
-                        llmResult.id
-                    )
-                    emptyList()
-                } else {
-                    logger.debug("CSS selectors: {}", cssSelectors)
-                    cssSelectors.map { cssSelector ->
-                        TableIdentification(
-                            cssSelector = cssSelector,
-                            auxiliaryInfo = llmResult.auxiliaryInfo
-                        )
-                    }
-                }
-            }
+        // Step 6 & 7: Reconstruct CSS selectors and inject into webpage
+        val tableIdentifications = allTableResults.mapNotNull { llmResult ->
+            convertToTableIdentification(llmResult, htmlWithIds, input)
         }
 
         logger.debug(
@@ -227,6 +210,42 @@ class TableIdentificationAgentAdkImpl(
         )
 
         return TableIdentificationOutput(tables = tableIdentifications)
+    }
+
+    /**
+     * Converts an LLM table result (ID + auxiliaryInfo) to a TableIdentification.
+     * Uses the ID to construct a CSS selector, injects the identifier into the actual webpage,
+     * and returns a table identification with a selector that points to the injected identifier.
+     */
+    private suspend fun convertToTableIdentification(
+        llmResult: LlmTableResult,
+        htmlWithIds: String,
+        input: TableIdentificationInput
+    ): TableIdentification? {
+        // Step 6: Reconstruct CSS selector using identifier
+        val cssSelector = cssSelectorConstructionService.constructCssSelectorFromIdentifier(
+            identifier = llmResult.id,
+            htmlWithIdentifiers = htmlWithIds
+        )
+
+        if (cssSelector == null) {
+            logger.warn(
+                "Skipping table with ID '{}' - could not construct valid CSS selector",
+                llmResult.id
+            )
+            return null
+        }
+
+        logger.debug("Constructed CSS selector '{}' for identifier '{}'", cssSelector, llmResult.id)
+
+        // Step 7: Inject identifier into actual webpage
+        input.webpage.injectAttributeByCssSelector(cssSelector, "data-ds-id", llmResult.id)
+
+        // Return table identification with selector that matches the injected identifier
+        return TableIdentification(
+            cssSelector = "[data-ds-id=\"${llmResult.id}\"]",
+            auxiliaryInfo = llmResult.auxiliaryInfo
+        )
     }
 
     private fun extractSemanticTables(htmlWithIds: String): Pair<List<LlmTableResult>, String> {
@@ -276,10 +295,8 @@ class TableIdentificationAgentAdkImpl(
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Step 2: Strip attributes to essentials for table identification
-        // Keep id, class, role for semantic meaning and XPath uniqueness
-        // Keep table-specific attributes (colspan, rowspan) for structure
-        // Keep data-* attributes as they often indicate structure
+        // Step 2: Strip attributes aggressively - bounding boxes replace need for class/id
+        // Keep only: role, colspan, rowspan, scope, data-testid, data-ds-id, ds-bounding-box
         doc.select("*").forEach { element ->
             val originalAttrs = element.attributes().asList()
             val essentialAttrs = originalAttrs.filter { attr ->
@@ -289,42 +306,16 @@ class TableIdentificationAgentAdkImpl(
                         attr.key == "colspan" ||
                         attr.key == "rowspan" ||
                         attr.key == "scope" ||
-                        attr.key.startsWith("data-")
+                        attr.key == "data-testid" ||
+                        attr.key == "data-ds-id"
+                        attr.key == "ds-bounding-box"
             }
 
             element.clearAttributes()
 
             // Restore filtered attributes
             essentialAttrs.forEach { attr ->
-                when (attr.key) {
-                    "id" -> {
-                        // Truncate very long IDs (generated IDs can be huge)
-                        val value = if (attr.value.length <= 50) {
-                            attr.value
-                        } else {
-                            attr.value.take(30) + "..."
-                        }
-                        element.attr("id", value)
-                    }
-
-                    "class" -> {
-                        // Keep all classes but limit to first 5 to reduce bloat
-                        val classes = attr.value.split("\\s+".toRegex()).take(5)
-                        if (classes.isNotEmpty()) {
-                            element.attr("class", classes.joinToString(" "))
-                        }
-                    }
-
-                    "data-testid", "data-test", "data-qa" -> {
-                        // Keep test IDs - they often indicate semantic structure
-                        element.attr(attr.key, attr.value)
-                    }
-
-                    else -> {
-                        // Keep other essential attributes as-is
-                        element.attr(attr.key, attr.value)
-                    }
-                }
+                element.attr(attr.key, attr.value)
             }
         }
 
@@ -367,11 +358,10 @@ class TableIdentificationAgentAdkImpl(
         val emptyElements = doc.select("*").filter { element ->
             element.children().isEmpty() &&
                     element.ownText().isBlank() &&
-                    element.attr("id").isEmpty() &&
-                    element.attr("class").isEmpty() &&
                     element.attr("role").isEmpty() &&
                     element.attr("colspan").isEmpty() &&
-                    element.attr("rowspan").isEmpty()
+                    element.attr("rowspan").isEmpty() &&
+                    element.attr("ds-bounding-box").isEmpty()
         }
 
         if (emptyElements.isNotEmpty()) {
@@ -389,19 +379,117 @@ class TableIdentificationAgentAdkImpl(
 
     /**
      * Injects stable identifiers into potential table elements for LLM processing.
-     * 
+     *
      * @param cleanedHtml The cleaned HTML (without IDs)
      * @param idPrefix The prefix for generated IDs (e.g., "ds-table")
      * @return HTML with injected data-ds-id attributes
      */
     private fun injectStableIdentifiers(cleanedHtml: String, idPrefix: String): String {
         val doc: Document = Jsoup.parse(cleanedHtml)
-        
+
         var idCounter = 0
         doc.select("table, div, section, article, main, aside, ul, ol, dl").forEach { element ->
             element.attr("data-ds-id", "$idPrefix-${idCounter++}")
         }
-        
+
         return doc.outerHtml()
+    }
+
+    /**
+     * Injects bounding box coordinates into HTML elements.
+     * Each element receives a ds-bounding-box attribute with format "left top right bottom".
+     */
+    private fun injectBoundingBoxes(
+        html: String,
+        boundingBoxes: Map<String, IBrowserPage.BoundingBox>
+    ): String {
+        if (boundingBoxes.isEmpty()) {
+            return html
+        }
+
+        try {
+            // Parse the HTML
+            val doc = Jsoup.parse(html)
+            doc.outputSettings().prettyPrint(false)
+
+            // The body should be the root
+            val root = doc.body()
+
+            // Pre-compile regex for performance
+            val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
+
+            for ((xpath, bbox) in boundingBoxes) {
+                val width = bbox.right - bbox.left
+                val height = bbox.bottom - bbox.top
+
+                // If the element truly has 0 0 0 0 bounding box (or 0 size), do not inject as it has no meaning
+                if (width <= 0.0 && height <= 0.0) {
+                    continue
+                }
+
+                val bboxValue = "${bbox.left.toInt()} ${bbox.top.toInt()} ${bbox.right.toInt()} ${bbox.bottom.toInt()}"
+
+                // XPath format: ./tagname[index]/tagname[index]/...
+                val element = findElementByRelativeXPath(root, xpath, xpathRegex)
+                element?.attr("ds-bounding-box", bboxValue)
+            }
+
+            // Return the full HTML
+            return doc.outerHtml()
+        } catch (e: Exception) {
+            logger.warn("Failed to inject bounding boxes: {}", e.message)
+            return html
+        }
+    }
+
+    /**
+     * Find an element using a relative XPath expression starting from a root element.
+     * XPath format: ./tagname[index]/tagname[index]/... or "." for the root itself
+     */
+    private fun findElementByRelativeXPath(
+        root: org.jsoup.nodes.Element,
+        xpath: String,
+        regex: Regex
+    ): org.jsoup.nodes.Element? {
+        if (xpath == ".") {
+            return root
+        }
+
+        if (!xpath.startsWith("./")) {
+            return null
+        }
+
+        val parts = xpath.substring(2).split("/")
+        var current = root
+
+        for (part in parts) {
+            // Parse "tagname[index]"
+            val match = regex.find(part) ?: return null
+            val tagName = match.groupValues[1]
+            val index = match.groupValues[2].toInt()
+
+            // Find the nth child with the matching tag name (1-based index)
+            // Optimize: traverse children manually to avoid creating new lists
+            var count = 0
+            var found: org.jsoup.nodes.Element? = null
+
+            val children = current.children()
+            for (child in children) {
+                if (child.tagName().equals(tagName, ignoreCase = true)) {
+                    count++
+                    if (count == index) {
+                        found = child
+                        break
+                    }
+                }
+            }
+
+            if (found == null) {
+                return null
+            }
+            current = found
+        }
+
+        return current
     }
 }

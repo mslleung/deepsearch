@@ -404,6 +404,65 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
     }
     
     /**
+     * Constructs a CSS selector from a stable identifier by finding the element in the HTML
+     * and building a selector based on its attributes and structure.
+     * 
+     * @param identifier The data-ds-id value (e.g., "ds-semantic-5")
+     * @param htmlWithIdentifiers The HTML document containing injected data-ds-id attributes
+     * @return A CSS selector that can locate the element in the original webpage, or null if element not found
+     */
+    override fun constructCssSelectorFromIdentifier(identifier: String, htmlWithIdentifiers: String): String? {
+        return try {
+            val doc = Jsoup.parse(htmlWithIdentifiers)
+            val element = doc.selectFirst("[data-ds-id=\"$identifier\"]")
+            
+            if (element == null) {
+                logger.warn("Element with identifier '{}' not found in HTML", identifier)
+                return null
+            }
+            
+            // Build a CSS selector based on the element's attributes
+            val tagName = element.tagName()
+            val id = element.attr("id")
+            val classes = element.classNames()
+            
+            // Strategy: prefer unique identifiers (id), then classes, then structural position
+            val selector = when {
+                // If element has an ID, use it (should be unique)
+                id.isNotBlank() -> {
+                    val idSelector = "#${escapeCssIdentifier(id)}"
+                    // Verify it's unique
+                    if (doc.select(idSelector).size == 1) {
+                        idSelector
+                    } else {
+                        // ID is not unique (shouldn't happen but be defensive), fall back to hierarchical
+                        buildHierarchicalSelector(element, doc)
+                    }
+                }
+                // If element has classes, try class-based selector
+                classes.isNotEmpty() -> {
+                    val classSelector = "$tagName.${classes.map { escapeCssIdentifier(it) }.joinToString(".")}"
+                    // Check if class selector is unique
+                    if (doc.select(classSelector).size == 1) {
+                        classSelector
+                    } else {
+                        // Not unique, use hierarchical selector
+                        buildHierarchicalSelector(element, doc)
+                    }
+                }
+                // No id or classes, use hierarchical selector
+                else -> buildHierarchicalSelector(element, doc)
+            }
+            
+            logger.debug("Constructed selector '{}' for identifier '{}'", selector, identifier)
+            selector
+        } catch (e: Exception) {
+            logger.error("Failed to construct CSS selector from identifier: {}", identifier, e)
+            null
+        }
+    }
+
+    /**
      * Attempts to repair truncated HTML that may have unclosed quotes or tags.
      * This handles edge cases where the LLM truncates mid-attribute or mid-tag.
      * 

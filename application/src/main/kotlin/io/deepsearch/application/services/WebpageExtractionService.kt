@@ -40,14 +40,11 @@ class WebpageExtractionService(
             val title = webpage.getTitle()
             val description = webpage.getDescription()
 
-            // Step 1: Take screenshot and html (browser operations)
-            val html = webpage.getFullHtml()
-
-            // Step 2: Run LLM operations concurrently using Flow
-            val semanticElementsFlow = identifySemanticElementsFlow(html)
+            // Step 1: Run LLM operations concurrently using Flow
+            val semanticElementsFlow = identifySemanticElementsFlow(webpage)
             val iconReplacementsFlow = interpretIconsFlow(webpage)
             val imageReplacementsFlow = interpretImagesFlow(webpage)
-            val identifiedTablesFlow = identifyTablesFlow(html)
+            val identifiedTablesFlow = identifyTablesFlow(webpage)
 
             // Combine all four flows and collect
             data class FlowResults(
@@ -99,11 +96,11 @@ class WebpageExtractionService(
     }
 
     private fun identifySemanticElementsFlow(
-        html: String
+        webpage: IBrowserPage
     ) = flow {
         val duration = measureTimeMillis {
             val semanticElements = semanticIdentificationService.identifySemanticElements(
-                html
+                webpage
             )
             emit(semanticElements)
         }
@@ -141,11 +138,9 @@ class WebpageExtractionService(
         logger.debug("Image interpretation took {} ms", duration)
     }
 
-    private fun identifyTablesFlow(html: String) = flow {
+    private fun identifyTablesFlow(webpage: IBrowserPage) = flow {
         val duration = measureTimeMillis {
-            val tables = tableIdentificationService.identifyTables(
-                TableIdentificationInput(html = html)
-            )
+            val tables = tableIdentificationService.identifyTables(webpage)
             emit(tables)
         }
         logger.debug("Table identification took {} ms", duration)

@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.SemanticIdentificationInput
+import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.entities.WebpageSemanticElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
@@ -16,11 +17,11 @@ interface ISemanticIdentificationService {
      * Identifies all semantic elements (navigation elements + popups) on a webpage.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
      *
-     * @param html The full HTML of the webpage
+     * @param webpage The webpage to analyze
      * @return SemanticElements containing all identified semantic elements grouped by type
      */
     suspend fun identifySemanticElements(
-        html: String
+        webpage: IBrowserPage
     ): SemanticElements
 }
 
@@ -32,8 +33,11 @@ class SemanticIdentificationService(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun identifySemanticElements(
-        html: String
+        webpage: IBrowserPage
     ): SemanticElements {
+        // Get HTML for caching
+        val html = webpage.getFullHtml()
+        
         // Use html hash for caching
         val pageHash = MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
 
@@ -45,7 +49,7 @@ class SemanticIdentificationService(
 
         val identificationResult = semanticIdentificationAgent.generate(
             SemanticIdentificationInput(
-                html = html
+                webpage = webpage
             )
         )
 

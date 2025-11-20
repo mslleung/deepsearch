@@ -900,6 +900,32 @@ class PlaywrightBrowserPage(
         }
     }
 
+    override suspend fun injectAttributeByCssSelector(
+        cssSelector: String,
+        attributeName: String,
+        attributeValue: String
+    ) {
+        logger.debug("Injecting attribute '{}={}' into elements matching: {}", attributeName, attributeValue, cssSelector)
+
+        apiMutex.withLock {
+            page.evaluate(
+                """
+                (params) => {
+                    const elements = document.querySelectorAll(params.selector);
+                    elements.forEach(element => {
+                        element.setAttribute(params.attributeName, params.attributeValue);
+                    });
+                }
+                """,
+                mapOf(
+                    "selector" to cssSelector,
+                    "attributeName" to attributeName,
+                    "attributeValue" to attributeValue
+                )
+            )
+        }
+    }
+
     @Serializable
     private data class BoundingBoxJson(
         val left: Double,

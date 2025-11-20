@@ -24,35 +24,32 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
         modules(domainTestModule)
     }
 
-    // Test resources helpers
-    private fun resourceBytes(name: String): ByteArray =
-        requireNotNull(this::class.java.getResourceAsStream("/$name")) {
-            "Missing test resource: $name"
-        }.use { it.readBytes() }
-
-    private fun resourceText(name: String): String = resourceBytes(name).toString(Charsets.UTF_8)
-
-    // Loaded resources
-    private val exampleHtml: String = resourceText("view-source_https___example.com.html")
-
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<ISemanticIdentificationAgent>()
     private val browserRuntimePool by inject<IBrowserRuntimePool>()
 
     @Test
     fun `should identify no semantic elements on simple example page`() = runTest(testCoroutineDispatcher) {
-        val input = SemanticIdentificationInput(
-            html = exampleHtml
-        )
-        val output = agent.generate(input)
-        val hasElements = output.elements.header != null ||
-                output.elements.footer != null ||
-                output.elements.navSidebar != null ||
-                output.elements.breadcrumb != null ||
-                output.elements.cookieBanner != null ||
-                output.elements.adBanners.isNotEmpty() ||
-                output.elements.popups.isNotEmpty()
-        assertTrue(!hasElements, "Simple example page should not have semantic elements")
+        browserRuntimePool.acquireRuntime { runtime ->
+            val browser = runtime.createBrowser()
+            val context = browser.createContext()
+            val page = context.newPage()
+            // Navigate to data URL with the example HTML
+            page.navigate("https://www.example.com/")
+            
+            val input = SemanticIdentificationInput(
+                webpage = page
+            )
+            val output = agent.generate(input)
+            val hasElements = output.elements.header != null ||
+                    output.elements.footer != null ||
+                    output.elements.navSidebar != null ||
+                    output.elements.breadcrumb != null ||
+                    output.elements.cookieBanner != null ||
+                    output.elements.adBanners.isNotEmpty() ||
+                    output.elements.popups.isNotEmpty()
+            assertTrue(!hasElements, "Simple example page should not have semantic elements")
+        }
     }
 
     @ParameterizedTest
@@ -71,7 +68,7 @@ class SemanticIdentificationAgentAdkImplTest : KoinTest {
             page.navigate(url)
 
             val input = SemanticIdentificationInput(
-                html = page.getFullHtml()
+                webpage = page
             )
             val output = agent.generate(input)
 

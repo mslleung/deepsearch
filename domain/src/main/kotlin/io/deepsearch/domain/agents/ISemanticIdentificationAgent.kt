@@ -1,12 +1,12 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
-import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.serialization.Serializable
 
 data class SemanticIdentificationInput(
-    val html: String
+    val webpage: IBrowserPage
 ) : IAgent.IAgentInput
 
 @Serializable

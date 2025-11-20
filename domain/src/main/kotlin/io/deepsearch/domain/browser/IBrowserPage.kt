@@ -227,4 +227,14 @@ interface IBrowserPage {
      * @return Map of element identifiers (xpath relative to parent) to their bounding boxes
      */
     suspend fun getBoundingBoxesByCssSelector(cssSelector: String): Map<String, BoundingBox>
+
+    /**
+     * Inject an attribute into all elements matching the CSS selector.
+     * This modifies the actual DOM of the webpage.
+     * 
+     * @param cssSelector CSS selector to match the target elements
+     * @param attributeName Name of the attribute to inject (e.g., "data-ds-id")
+     * @param attributeValue Value of the attribute to inject
+     */
+    suspend fun injectAttributeByCssSelector(cssSelector: String, attributeName: String, attributeValue: String)
 }

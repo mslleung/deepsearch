@@ -13,6 +13,7 @@ import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.agents.SemanticIdentificationOutput
+import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.valueobjects.IdentifiedElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.services.ICssSelectorConstructionService
@@ -95,6 +96,10 @@ class SemanticIdentificationAgentAdkImpl(
 
             Inputs:
             - CLEANED HTML (subset of DOM with key attributes, all potential semantic elements have data-ds-id attributes)
+            
+            Each element in the HTML has been augmented with a ds-bounding-box attribute containing spatial coordinates
+            in the format ds-bounding-box="left top right bottom". These coordinates help you understand the spatial layout
+            and relationships between elements.
 
             Guidelines:
             - Identify the following if any:
@@ -109,6 +114,7 @@ class SemanticIdentificationAgentAdkImpl(
                 - popups: Popup dialogs that cover the main content and are visually interrupting to the user
             - Do not include the main content of the webpage. Only include elements that contain no critical information in the webpage.
             - For each element, return its data-ds-id attribute value (e.g., "ds-semantic-5").
+            - Use the bounding box coordinates to better understand spatial layout when the HTML structure is ambiguous.
             - Make sure the regions are unique with no overlap.
             - Write a brief note describing why it is considered a semantic element (e.g., "Top navbar with logo and menu", "Left sidebar with category links", "Cookie consent popup").
             - Return null for optional single elements if not found.
@@ -149,7 +155,20 @@ class SemanticIdentificationAgentAdkImpl(
     )
 
     override suspend fun generate(input: SemanticIdentificationInput): SemanticIdentificationOutput {
-        val cleanedHtml = cleanHtml(input.html)
+        // Step 1: Get webpage HTML and bounding boxes
+        val originalHtml = input.webpage.getFullHtml()
+        val boundingBoxes = input.webpage.getBoundingBoxesByCssSelector("body")
+        
+        logger.debug("Got {} bounding boxes for semantic identification", boundingBoxes.size)
+        
+        // Step 2: Inject stable identifiers into jsoup copy
+        val htmlWithIds = injectStableIdentifiers(originalHtml, "ds-semantic")
+        
+        // Step 3: Inject bounding boxes into jsoup copy
+        val htmlWithIdsAndBboxes = injectBoundingBoxes(htmlWithIds, boundingBoxes)
+        
+        // Step 4: Clean HTML (after identifier and bbox injection)
+        val cleanedHtml = cleanHtml(htmlWithIdsAndBboxes)
 
         if (cleanedHtml.isEmpty()) {
             return SemanticIdentificationOutput(
@@ -157,9 +176,7 @@ class SemanticIdentificationAgentAdkImpl(
             )
         }
 
-        // Inject stable identifiers for LLM processing
-        val cleanedHtmlWithIds = injectStableIdentifiers(cleanedHtml, "ds-semantic")
-
+        // Step 5: Pass to LLM
         val response = retryLlmCall<SemanticIdentificationResponse> {
             val session = runner
                 .sessionService()
@@ -176,7 +193,7 @@ class SemanticIdentificationAgentAdkImpl(
             val eventsFlow = runner.runAsync(
                 session,
                 Content.fromParts(
-                    Part.fromText(cleanedHtmlWithIds)
+                    Part.fromText(cleanedHtml)
                 ),
                 RunConfig.builder().apply {
                     setStreamingMode(RunConfig.StreamingMode.NONE)
@@ -213,27 +230,26 @@ class SemanticIdentificationAgentAdkImpl(
                     response.adBanners.size + response.popups.size
         )
 
-        // Convert IDs to CSS selectors for each element type
-        // Handle the case where an element might match multiple locations (though rare for semantic elements)
+        // Step 6 & 7: Reconstruct CSS selectors and inject into webpage
         val headerElements =
-            response.header?.let { convertToIdentifiedElements(it, cleanedHtmlWithIds, cleanedHtml, input.html) }
+            response.header?.let { convertToIdentifiedElement(it, htmlWithIds, input) }?.let { listOf(it) }
                 ?: emptyList()
         val footerElements =
-            response.footer?.let { convertToIdentifiedElements(it, cleanedHtmlWithIds, cleanedHtml, input.html) }
+            response.footer?.let { convertToIdentifiedElement(it, htmlWithIds, input) }?.let { listOf(it) }
                 ?: emptyList()
         val navSidebarElements =
-            response.navSidebar?.let { convertToIdentifiedElements(it, cleanedHtmlWithIds, cleanedHtml, input.html) }
+            response.navSidebar?.let { convertToIdentifiedElement(it, htmlWithIds, input) }?.let { listOf(it) }
                 ?: emptyList()
         val breadcrumbElements =
-            response.breadcrumb?.let { convertToIdentifiedElements(it, cleanedHtmlWithIds, cleanedHtml, input.html) }
+            response.breadcrumb?.let { convertToIdentifiedElement(it, htmlWithIds, input) }?.let { listOf(it) }
                 ?: emptyList()
         val cookieBannerElements =
-            response.cookieBanner?.let { convertToIdentifiedElements(it, cleanedHtmlWithIds, cleanedHtml, input.html) }
+            response.cookieBanner?.let { convertToIdentifiedElement(it, htmlWithIds, input) }?.let { listOf(it) }
                 ?: emptyList()
         val adBannerElements =
-            response.adBanners.flatMap { convertToIdentifiedElements(it, cleanedHtmlWithIds, cleanedHtml, input.html) }
+            response.adBanners.mapNotNull { convertToIdentifiedElement(it, htmlWithIds, input) }
         val popupElements =
-            response.popups.flatMap { convertToIdentifiedElements(it, cleanedHtmlWithIds, cleanedHtml, input.html) }
+            response.popups.mapNotNull { convertToIdentifiedElement(it, htmlWithIds, input) }
 
         logger.debug("Semantic element identification complete")
 
@@ -251,52 +267,39 @@ class SemanticIdentificationAgentAdkImpl(
     }
 
     /**
-     * Converts an LLM semantic result (ID + note) to a list of IdentifiedElements.
-     * Uses the ID to locate the element in cleaned HTML, then constructs CSS selectors for original HTML.
-     * Returns a list because a snippet might match multiple elements in rare cases.
+     * Converts an LLM semantic result (ID + note) to an IdentifiedElement.
+     * Uses the ID to construct a CSS selector, injects the identifier into the actual webpage,
+     * and returns a selector that points to the injected identifier.
      */
-    private fun convertToIdentifiedElements(
+    private suspend fun convertToIdentifiedElement(
         llmResult: LlmSemanticResult,
-        cleanedHtmlWithIds: String,
-        cleanedHtml: String,
-        fullHtml: String
-    ): List<IdentifiedElement> {
-        val tempSelector = "[data-ds-id=\"${llmResult.id}\"]"
-        val cleanedDoc = Jsoup.parse(cleanedHtmlWithIds)
-        val element = cleanedDoc.selectFirst(tempSelector)
-
-        if (element == null) {
-            logger.warn(
-                "Skipping semantic element with ID '{}' - element not found in cleaned HTML",
-                llmResult.id
-            )
-            return emptyList()
-        }
-
-        // Remove temporary IDs from element and all its descendants (they don't exist in original HTML)
-        element.removeAttr("data-ds-id")
-        element.select("[data-ds-id]").forEach { it.removeAttr("data-ds-id") }
-        val htmlSnippet = element.outerHtml()
-        val cssSelectors = cssSelectorConstructionService.constructCssSelectorsFromSnippet(
-            htmlSnippet, cleanedHtml, fullHtml
+        htmlWithIds: String,
+        input: SemanticIdentificationInput
+    ): IdentifiedElement? {
+        // Step 6: Reconstruct CSS selector using identifier
+        val cssSelector = cssSelectorConstructionService.constructCssSelectorFromIdentifier(
+            identifier = llmResult.id,
+            htmlWithIdentifiers = htmlWithIds
         )
 
-        if (cssSelectors.isEmpty()) {
+        if (cssSelector == null) {
             logger.warn(
                 "Skipping semantic element with ID '{}' - could not construct valid CSS selector",
                 llmResult.id
             )
-            return emptyList()
+            return null
         }
 
-        logger.debug("CSS selectors: {}", cssSelectors)
+        logger.debug("Constructed CSS selector '{}' for identifier '{}'", cssSelector, llmResult.id)
 
-        return cssSelectors.map { cssSelector ->
-            IdentifiedElement(
-                cssSelector = cssSelector,
-                note = llmResult.note
-            )
-        }
+        // Step 7: Inject identifier into actual webpage
+        input.webpage.injectAttributeByCssSelector(cssSelector, "data-ds-id", llmResult.id)
+
+        // Return selector that matches the injected identifier
+        return IdentifiedElement(
+            cssSelector = "[data-ds-id=\"${llmResult.id}\"]",
+            note = llmResult.note
+        )
     }
 
     private fun cleanHtml(rawHtml: String): String {
@@ -320,11 +323,10 @@ class SemanticIdentificationAgentAdkImpl(
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Step 2: Strip attributes to only essentials for semantic identification
-        // Keep FULL page structure - LLM needs context to distinguish semantic elements from content
-        // Keep id, class, role for CSS selector targeting and semantic meaning
+        // Step 2: Strip attributes aggressively - bounding boxes replace need for class/id
+        // Keep only: role, aria-label, aria-modal, data-testid, ds-bounding-box
         doc.select("*").forEach { element ->
-            val essentialAttrs = setOf("id", "class", "role", "aria-label", "aria-modal", "data-testid")
+            val essentialAttrs = setOf("id", "class", "role", "aria-label", "aria-modal", "data-testid", "data-ds-id", "ds-bounding-box")
             val attrsToKeep = element.attributes().filter { attr ->
                 attr.key in essentialAttrs
             }
@@ -388,9 +390,8 @@ class SemanticIdentificationAgentAdkImpl(
             val emptyElements = doc.select("*").filter { element ->
                 element.children().isEmpty() &&
                         element.ownText().isBlank() &&
-                        element.attr("id").isEmpty() &&
-                        element.attr("class").isEmpty() &&
-                        element.attr("role").isEmpty()
+                        element.attr("role").isEmpty() &&
+                        element.attr("ds-bounding-box").isEmpty()
             }
             if (emptyElements.isNotEmpty()) {
                 emptyElements.forEach { it.remove() }
@@ -419,5 +420,103 @@ class SemanticIdentificationAgentAdkImpl(
         }
 
         return doc.outerHtml()
+    }
+
+    /**
+     * Injects bounding box coordinates into HTML elements.
+     * Each element receives a ds-bounding-box attribute with format "left top right bottom".
+     */
+    private fun injectBoundingBoxes(
+        html: String,
+        boundingBoxes: Map<String, IBrowserPage.BoundingBox>
+    ): String {
+        if (boundingBoxes.isEmpty()) {
+            return html
+        }
+
+        try {
+            // Parse the HTML
+            val doc = Jsoup.parse(html)
+            doc.outputSettings().prettyPrint(false)
+
+            // The body should be the root
+            val root = doc.body()
+
+            // Pre-compile regex for performance
+            val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
+
+            for ((xpath, bbox) in boundingBoxes) {
+                val width = bbox.right - bbox.left
+                val height = bbox.bottom - bbox.top
+
+                // If the element truly has 0 0 0 0 bounding box (or 0 size), do not inject as it has no meaning
+                if (width <= 0.0 && height <= 0.0) {
+                    continue
+                }
+
+                val bboxValue = "${bbox.left.toInt()} ${bbox.top.toInt()} ${bbox.right.toInt()} ${bbox.bottom.toInt()}"
+
+                // XPath format: ./tagname[index]/tagname[index]/...
+                val element = findElementByRelativeXPath(root, xpath, xpathRegex)
+                element?.attr("ds-bounding-box", bboxValue)
+            }
+
+            // Return the full HTML
+            return doc.outerHtml()
+        } catch (e: Exception) {
+            logger.warn("Failed to inject bounding boxes: {}", e.message)
+            return html
+        }
+    }
+
+    /**
+     * Find an element using a relative XPath expression starting from a root element.
+     * XPath format: ./tagname[index]/tagname[index]/... or "." for the root itself
+     */
+    private fun findElementByRelativeXPath(
+        root: org.jsoup.nodes.Element,
+        xpath: String,
+        regex: Regex
+    ): org.jsoup.nodes.Element? {
+        if (xpath == ".") {
+            return root
+        }
+
+        if (!xpath.startsWith("./")) {
+            return null
+        }
+
+        val parts = xpath.substring(2).split("/")
+        var current = root
+
+        for (part in parts) {
+            // Parse "tagname[index]"
+            val match = regex.find(part) ?: return null
+            val tagName = match.groupValues[1]
+            val index = match.groupValues[2].toInt()
+
+            // Find the nth child with the matching tag name (1-based index)
+            // Optimize: traverse children manually to avoid creating new lists
+            var count = 0
+            var found: org.jsoup.nodes.Element? = null
+
+            val children = current.children()
+            for (child in children) {
+                if (child.tagName().equals(tagName, ignoreCase = true)) {
+                    count++
+                    if (count == index) {
+                        found = child
+                        break
+                    }
+                }
+            }
+
+            if (found == null) {
+                return null
+            }
+            current = found
+        }
+
+        return current
     }
 }

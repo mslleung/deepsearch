@@ -42,16 +42,16 @@ class TableIdentificationAgentAdkImplTest : KoinTest {
             val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
-            val html = page.getFullHtml()
 
             val input = TableIdentificationInput(
-                html = html
+                webpage = page
             )
             val output = agent.generate(input)
 
             assertEquals(1, output.tables.size, "Should identify exactly one table")
             
             // Verify that each CSS selector is unique and specific
+            val html = page.getFullHtml()
             output.tables.forEach { table ->
                 // Parse the HTML to verify the selector matches exactly one element
                 val doc = org.jsoup.Jsoup.parse(html)

@@ -224,6 +224,8 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
                 attr.key == "ds-bounding-box" ||
                         attr.key == "colspan" ||
                         attr.key == "rowspan" ||
+                        attr.key == "id" ||
+                        attr.key == "class" ||
                         attr.key == "role" ||
                         attr.key == "scope" ||
                         attr.key.startsWith("data-")

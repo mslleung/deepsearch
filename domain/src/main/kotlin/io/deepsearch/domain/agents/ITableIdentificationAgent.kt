@@ -1,11 +1,11 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
-import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.browser.IBrowserPage
 import kotlinx.serialization.Serializable
 
 data class TableIdentificationInput(
-    val html: String
+    val webpage: IBrowserPage
 ) : IAgent.IAgentInput
 
 @Serializable
