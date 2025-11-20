@@ -132,8 +132,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         // Clean HTML to reduce token usage and noise
         val cleanedHtml = cleanHtml(htmlWithBoundingBoxes)
 
-        logger.debug("Cleaned HTML length: {} (original: {})", cleanedHtml.length, htmlWithBoundingBoxes.length)
-        logger.debug(cleanedHtml)
+        logger.debug("Cleaned HTML length: {} (original: {})", cleanedHtml.length, tableHtml.length)
 
         val response = retryLlmCall<TableInterpretationResponse> {
             val session = runner

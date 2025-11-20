@@ -126,7 +126,7 @@
     ctx.textBaseline = 'middle';
     ctx.fillText(glyph, width / 2, height / 2);
 
-    const dataUrl = canvas.toDataURL('image/webp', 1.0);
+    const dataUrl = canvas.toDataURL('image/webp', 0.9);
     const base64 = dataUrl.replace(/^data:[^,]+,/, '');
     return base64;
   };
@@ -202,15 +202,76 @@
   const renderSvgIcon = async (el: Element, debugStats: DebugStats): Promise<string | null> => {
     const svg = el as SVGElement;
     
-    // Get computed dimensions
-    const bbox = svg.getBoundingClientRect();
-    if (bbox.width === 0 || bbox.height === 0) {
+    // Try to get intrinsic dimensions from SVG attributes first
+    let width = 0;
+    let height = 0;
+    
+    // 1. Try width/height attributes
+    const widthAttr = svg.getAttribute('width');
+    const heightAttr = svg.getAttribute('height');
+    if (widthAttr && heightAttr) {
+      width = parseFloat(widthAttr);
+      height = parseFloat(heightAttr);
+    }
+    
+    // 2. Try viewBox if no width/height
+    if (width === 0 || height === 0) {
+      const viewBox = svg.getAttribute('viewBox');
+      if (viewBox) {
+        const parts = viewBox.split(/\s+|,/);
+        if (parts.length === 4) {
+          width = parseFloat(parts[2]);
+          height = parseFloat(parts[3]);
+        }
+      }
+    }
+    
+    // 3. Try computed dimensions (for visible elements)
+    if (width === 0 || height === 0) {
+      const bbox = svg.getBoundingClientRect();
+      if (bbox.width > 0 && bbox.height > 0) {
+        width = bbox.width;
+        height = bbox.height;
+      }
+    }
+    
+    // 4. Last resort: clone and measure off-screen to avoid triggering page events
+    if (width === 0 || height === 0) {
+      try {
+        const svgCloneForMeasure = svg.cloneNode(true) as SVGElement;
+        svgCloneForMeasure.style.position = 'absolute';
+        svgCloneForMeasure.style.visibility = 'hidden';
+        svgCloneForMeasure.style.display = 'block';
+        svgCloneForMeasure.style.left = '-9999px';
+        svgCloneForMeasure.style.top = '-9999px';
+        
+        document.body.appendChild(svgCloneForMeasure);
+        const bbox = svgCloneForMeasure.getBoundingClientRect();
+        document.body.removeChild(svgCloneForMeasure);
+        
+        if (bbox.width > 0 && bbox.height > 0) {
+          width = bbox.width;
+          height = bbox.height;
+        }
+      } catch (_e) {
+        // Failed to measure, will use default size
+      }
+    }
+    
+    // If still no dimensions, use a default size
+    if (width === 0 || height === 0) {
+      width = 24;  // Common default icon size
+      height = 24;
+    }
+    
+    // Skip only if dimensions are unreasonably small (likely broken SVG)
+    if (width < 1 || height < 1) {
       debugStats.skippedSvgZeroSize++;
       debugStats.skippedDetails.push({
         tag: 'svg',
         classes: typeof el.className === 'string' ? el.className : (el.className as SVGAnimatedString).baseVal || '',
-        width: bbox.width,
-        height: bbox.height,
+        width: width,
+        height: height,
         reason: 'zero_dimensions'
       });
       return null;
@@ -222,18 +283,16 @@
     
     // Clone the SVG to avoid modifying the original
     const svgClone = svg.cloneNode(true) as SVGElement;
-    
+
     // Set explicit width/height for rendering
-    const width = Math.ceil(bbox.width);
-    const height = Math.ceil(bbox.height);
-    svgClone.setAttribute('width', width.toString());
-    svgClone.setAttribute('height', height.toString());
+    svgClone.setAttribute('width', Math.ceil(width).toString());
+    svgClone.setAttribute('height', Math.ceil(height).toString());
     
     // Serialize SVG to data URL
     const svgString = new XMLSerializer().serializeToString(svgClone);
     const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
     
-    // Convert to canvas for JPEG output
+    // Convert to canvas for WEBP output
     return new Promise<string | null>((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -256,12 +315,13 @@
         
         ctx.drawImage(img, 0, 0, width, height);
         
-        const dataUrl = canvas.toDataURL('image/webp', 1.0);
+        const dataUrl = canvas.toDataURL('image/webp', 0.9);
         const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         resolve(base64);
       };
       img.onerror = () => resolve(null);
       img.src = URL.createObjectURL(svgBlob);
+      setTimeout(() => resolve(null), 1000);
     });
   };
 

@@ -130,7 +130,7 @@
         ctx.drawImage(img, 0, 0, width, height);
         
         // Test if we can extract the data (this will throw SecurityError if tainted)
-        const dataUrl = canvas.toDataURL('image/webp', 1.0);
+        const dataUrl = canvas.toDataURL('image/webp', 0.9);
         const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         
         const xPathSelector = uniqueXPathFor(img);
@@ -154,7 +154,7 @@
             });
             
             ctx.drawImage(tempImg, 0, 0, width, height);
-            const dataUrl = canvas.toDataURL('image/webp', 1.0);
+            const dataUrl = canvas.toDataURL('image/webp', 0.9);
             const base64 = dataUrl.replace(/^data:[^,]+,/, '');
             
             const xPathSelector = uniqueXPathFor(img);
@@ -268,7 +268,7 @@
         
         try {
           // Test if we can extract the data (this will throw SecurityError if tainted)
-          const dataUrl = canvas.toDataURL('image/webp', 1.0);
+          const dataUrl = canvas.toDataURL('image/webp', 0.9);
           const base64 = dataUrl.replace(/^data:[^,]+,/, '');
           
           const xPathSelector = uniqueXPathFor(element);
@@ -291,7 +291,7 @@
             });
             
             ctx.drawImage(corsImg, 0, 0, width, height);
-            const dataUrl = canvas.toDataURL('image/webp', 1.0);
+            const dataUrl = canvas.toDataURL('image/webp', 0.9);
             const base64 = dataUrl.replace(/^data:[^,]+,/, '');
             
             const xPathSelector = uniqueXPathFor(element);
