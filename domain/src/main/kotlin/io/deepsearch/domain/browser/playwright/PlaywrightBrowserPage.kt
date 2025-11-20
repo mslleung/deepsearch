@@ -154,7 +154,7 @@ class PlaywrightBrowserPage(
     }
 
     override suspend fun getElementHtmlByCssSelector(cssSelector: String): String {
-        logger.debug("Getting element outerHTML by CSS selector: {}", cssSelector)
+//        logger.debug("Getting element outerHTML by CSS selector: {}", cssSelector)
         return apiMutex.withLock {
             val locator = page.locator(cssSelector)
             val target = locator.last()
@@ -770,7 +770,7 @@ class PlaywrightBrowserPage(
     }
 
     override suspend fun getBoundingBoxesByCssSelector(cssSelector: String): Map<String, IBrowserPage.BoundingBox> {
-        logger.debug("Getting bounding boxes for CSS selector: {}", cssSelector)
+//        logger.debug("Getting bounding boxes for CSS selector: {}", cssSelector)
 
         return apiMutex.withLock {
             val resultJson = page.evaluate(

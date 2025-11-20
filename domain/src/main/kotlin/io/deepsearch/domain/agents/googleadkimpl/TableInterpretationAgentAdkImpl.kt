@@ -35,10 +35,6 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
                     .type("STRING")
                     .description("The table expressed in GitHub-flavored Markdown.")
                     .build(),
-                "confidence" to Schema.builder()
-                    .type("STRING")
-                    .description("The conversion confidence level. (HIGH/LOW)")
-                    .build()
             )
         )
         .required(listOf("markdown"))
@@ -105,12 +101,9 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             *   **Premium AI** includes "Free Onboarding Support" and is marked as "Most Popular".
             *   **Enterprise AI** includes "🌟 AI Solution Engineer Support".
 
-            Assess the confidence of the conversion, which can be HIGH or LOW
-
             Expected output shape:
             {
                 "markdown": "string",
-                "confidence": "HIGH/LOW"
             }
             """.trimIndent()
         )
@@ -122,7 +115,6 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
     @Serializable
     private data class TableInterpretationResponse(
         val markdown: String,
-        val confidence: String
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
@@ -188,11 +180,10 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         }
 
         val markdown = response.markdown.trim()
-        val confidence = response.confidence.trim()
-        logger.debug("Table interpreted to markdown ({} chars), confidence level: {}", markdown.length, confidence)
+        logger.debug("Table interpreted to markdown ({} chars)", markdown.length)
 
         val finalMarkdown = buildString {
-            appendLine("**Start of $confidence confidence table**")
+            appendLine("**Start of table**")
             appendLine()
             appendLine(markdown)
             appendLine()
