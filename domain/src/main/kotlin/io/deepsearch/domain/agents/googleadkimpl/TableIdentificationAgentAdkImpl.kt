@@ -93,7 +93,7 @@ class TableIdentificationAgentAdkImpl(
             - Always target the table root containers instead of individual rows and columns
             - In the event of nested tables/grids, target the outermost wrapping parent only
             - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
-            - Use the bounding box coordinates to identify grid patterns typical of tables (aligned columns, consistent row heights)
+            - Use the bounding box coordinates to better understand spatial layout when the HTML structure is ambiguous.
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
               - The table's description
@@ -140,16 +140,16 @@ class TableIdentificationAgentAdkImpl(
         // Step 3: Inject bounding boxes into jsoup copy
         val htmlWithIdsAndBboxes = injectBoundingBoxes(htmlWithIds, boundingBoxes)
 
+        // Programmatic extraction of semantic tables to reduce LLM input
+        val (programmaticTables, reducedHtml) = extractSemanticTables(htmlWithIds)
+        logger.debug("Programmatically extracted {} semantic tables", programmaticTables.size)
+
         // Step 4: Clean HTML (after identifier and bbox injection)
         val cleanedHtml = cleanHtml(htmlWithIdsAndBboxes)
 
         if (cleanedHtml.isEmpty()) {
             return TableIdentificationOutput(tables = emptyList())
         }
-
-        // Programmatic extraction of semantic tables to reduce LLM input
-        val (programmaticTables, reducedHtml) = extractSemanticTables(cleanedHtml)
-        logger.debug("Programmatically extracted {} semantic tables", programmaticTables.size)
 
         // Step 5: Pass to LLM
         val response = retryLlmCall<TableIdentificationResponse> {
@@ -398,6 +398,7 @@ class TableIdentificationAgentAdkImpl(
     /**
      * Injects bounding box coordinates into HTML elements.
      * Each element receives a ds-bounding-box attribute with format "left top right bottom".
+     * Only injects on elements that could potentially be table roots.
      */
     private fun injectBoundingBoxes(
         html: String,
@@ -417,6 +418,10 @@ class TableIdentificationAgentAdkImpl(
 
             // Pre-compile regex for performance
             val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
+            
+            // Tags relevant for table identification (potential table root containers)
+            // Includes semantic table elements and common container elements used for CSS-based tables
+            val relevantTags = setOf("table", "div", "section", "article", "main", "aside", "ul", "ol", "dl")
 
             for ((xpath, bbox) in boundingBoxes) {
                 val width = bbox.right - bbox.left
@@ -431,7 +436,11 @@ class TableIdentificationAgentAdkImpl(
 
                 // XPath format: ./tagname[index]/tagname[index]/...
                 val element = findElementByRelativeXPath(root, xpath, xpathRegex)
-                element?.attr("ds-bounding-box", bboxValue)
+                
+                // Only inject bounding boxes on elements that could be table roots
+                if (element != null && element.tagName() in relevantTags) {
+                    element.attr("ds-bounding-box", bboxValue)
+                }
             }
 
             // Return the full HTML

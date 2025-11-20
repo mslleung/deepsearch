@@ -297,6 +297,7 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
     /**
      * Injects bounding box coordinates into HTML elements.
      * Each element receives a ds-bounding-box attribute with format "left top right bottom".
+     * Only injects on elements relevant for understanding table structure and cell boundaries.
      */
     private fun injectBoundingBoxes(
         html: String,
@@ -316,6 +317,10 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
 
             // Pre-compile regex for performance
             val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
+            
+            // Tags relevant for table interpretation (structure and cell boundaries)
+            // Includes semantic table elements and divs for CSS-based tables
+            val relevantTags = setOf("table", "thead", "tbody", "tfoot", "tr", "td", "th", "div")
 
             for ((xpath, bbox) in boundingBoxes) {
                 val width = bbox.right - bbox.left
@@ -330,7 +335,11 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
 
                 // XPath format: ./tagname[index]/tagname[index]/...
                 val element = findElementByRelativeXPath(root, xpath, xpathRegex)
-                element?.attr("ds-bounding-box", bboxValue)
+                
+                // Only inject bounding boxes on elements relevant for table structure
+                if (element != null && element.tagName() in relevantTags) {
+                    element.attr("ds-bounding-box", bboxValue)
+                }
             }
 
             // Return only the body's inner HTML (the table element)

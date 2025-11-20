@@ -14,95 +14,6 @@ import org.slf4j.LoggerFactory
 class CssSelectorConstructionService : ICssSelectorConstructionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-
-    /**
-     * Constructs CSS selectors from an HTML snippet by parsing the root element's attributes
-     * and finding all matching elements in the full HTML DOM using hierarchical parent context.
-     * Only generates selectors for elements with matching structural hierarchy.
-     * 
-     * @param htmlSnippet The complete HTML of the element (from cleaned HTML)
-     * @param cleanedHtml The cleaned HTML document that the LLM saw
-     * @param fullHtml The full HTML document (original, uncleaned)
-     * @return List of CSS selectors, one for each matching element. Empty list if snippet is invalid.
-     */
-    override fun constructCssSelectorsFromSnippet(
-        htmlSnippet: String,
-        cleanedHtml: String,
-        fullHtml: String
-    ): List<String> {
-        return try {
-            // Parse the snippet to extract the root element's attributes
-            // For truncated HTML with unclosed attributes, try to repair it first
-            val repairedSnippet = repairTruncatedHtml(htmlSnippet)
-            val snippetDoc = Jsoup.parseBodyFragment(repairedSnippet)
-            val rootElement = snippetDoc.body().children().firstOrNull() 
-                ?: return emptyList()
-            
-            val tagName = rootElement.tagName()
-            val id = rootElement.attr("id")
-            val classes = rootElement.classNames()
-            
-            // Build base CSS selector for the target element
-            val baseSelector = buildBaseSelector(tagName, id, classes)
-            
-//            logger.debug("Constructed base selector: {} from snippet", baseSelector)
-            
-            // First, find matching elements in the CLEANED HTML (which the LLM saw)
-            val cleanedDoc = Jsoup.parse(cleanedHtml)
-            val cleanedMatchingElements = cleanedDoc.select(baseSelector)
-            
-            if (cleanedMatchingElements.isEmpty()) {
-//                logger.warn("No elements found in cleaned HTML for selector: {}", baseSelector)
-                return emptyList()
-            }
-            
-            // Filter by structural match in cleaned HTML
-            // Skip structural matching if we have a unique ID selector - IDs are globally unique
-            val structurallyMatchingElements = if (id.isNotBlank() && cleanedMatchingElements.size == 1) {
-//                logger.debug("Skipping structural match for unique ID selector: {}", baseSelector)
-                cleanedMatchingElements.toList()
-            } else {
-                cleanedMatchingElements.filter { candidate ->
-                    hasMatchingStructure(rootElement, candidate, htmlSnippet)
-                }
-            }
-            
-//            logger.debug("Filtered {} candidates to {} structurally-matching elements in cleaned HTML",
-//                cleanedMatchingElements.size, structurallyMatchingElements.size)
-            
-            if (structurallyMatchingElements.isEmpty()) {
-//                logger.warn("No structurally-matching elements found for snippet: {}", htmlSnippet)
-                return emptyList()
-            }
-            
-            // Now find the same elements in the ORIGINAL HTML using their selectors
-            val fullDoc = Jsoup.parse(fullHtml)
-            
-            // If single match in cleaned HTML, use the base selector
-            if (structurallyMatchingElements.size == 1) {
-//                logger.debug("Single structurally-matching element found for selector: {}", baseSelector)
-                return listOf(baseSelector)
-            }
-            
-            // Multiple matches: construct hierarchical selectors from cleaned HTML elements
-            // but validate they work on the original HTML
-            return structurallyMatchingElements.mapNotNull { cleanedElement ->
-                val hierarchicalSelector = buildHierarchicalSelector(cleanedElement, cleanedDoc)
-                
-                // Verify the selector works on original HTML
-                val originalMatches = fullDoc.select(hierarchicalSelector)
-                if (originalMatches.isEmpty()) {
-//                    logger.warn("Selector {} from cleaned HTML doesn't match original HTML", hierarchicalSelector)
-                    null
-                } else {
-                    hierarchicalSelector
-                }
-            }
-        } catch (e: Exception) {
-            logger.error("Failed to construct CSS selector from HTML snippet: {}", htmlSnippet.take(100), e)
-            emptyList()
-        }
-    }
     
     /**
      * Escapes special characters in CSS identifiers (IDs and class names) to make them
@@ -127,63 +38,6 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
                 char.toString()
             }
         }.joinToString("")
-    }
-    
-    /**
-     * Builds a base CSS selector for an element using its tag, id, and classes.
-     */
-    private fun buildBaseSelector(tagName: String, id: String, classes: Set<String>): String {
-        return when {
-            id.isNotBlank() -> "#${escapeCssIdentifier(id)}"
-            classes.isNotEmpty() -> "$tagName.${classes.map { escapeCssIdentifier(it) }.joinToString(".")}"
-            else -> tagName
-        }
-    }
-    
-    /**
-     * Compares structural similarity between snippet element and candidate element.
-     * Uses DOM-based comparison to handle formatting differences in HTML output.
-     * 
-     * @param snippetElement The root element from the LLM-provided HTML snippet (from cleaned HTML)
-     * @param candidateElement The candidate element from cleaned HTML
-     * @param rawSnippet The raw HTML snippet string (for debug logging)
-     * @return true if structures match
-     */
-    private fun hasMatchingStructure(snippetElement: Element, candidateElement: Element, rawSnippet: String): Boolean {
-        // Compare tag names
-        if (snippetElement.tagName() != candidateElement.tagName()) {
-            logger.debug(
-                "Tag name mismatch: expected '{}', found '{}'",
-                snippetElement.tagName(),
-                candidateElement.tagName()
-            )
-            return false
-        }
-        
-        // Compare attributes (ignoring order)
-        if (!compareAttributes(snippetElement, candidateElement)) {
-//            logger.debug(
-//                "Attribute mismatch for <{}>: expected {}, found {}",
-//                snippetElement.tagName(),
-//                formatAttributesForLog(snippetElement),
-//                formatAttributesForLog(candidateElement)
-//            )
-            return false
-        }
-        
-        // Compare child structure recursively (up to depth limit)
-        val maxDepth = 3
-        if (!compareChildStructure(snippetElement, candidateElement, depth = 0, maxDepth = maxDepth)) {
-//            logger.debug(
-//                "Child structure mismatch for <{}>: expected {} children, found {} children",
-//                snippetElement.tagName(),
-//                snippetElement.children().size,
-//                candidateElement.children().size
-//            )
-            return false
-        }
-        
-        return true
     }
     
     /**
@@ -283,23 +137,6 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
         }
         
         return true
-    }
-    
-    /**
-     * Formats element attributes for debug logging.
-     * 
-     * @param element The element to format
-     * @return A string representation of the element's attributes
-     */
-    private fun formatAttributesForLog(element: Element): String {
-        val attrs = element.attributes()
-        if (attrs.isEmpty()) {
-            return "(no attributes)"
-        }
-        
-        return attrs.joinToString(", ") { attr ->
-            "${attr.key}=\"${attr.value}\""
-        }
     }
     
     /**
@@ -460,31 +297,6 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
             logger.error("Failed to construct CSS selector from identifier: {}", identifier, e)
             null
         }
-    }
-
-    /**
-     * Attempts to repair truncated HTML that may have unclosed quotes or tags.
-     * This handles edge cases where the LLM truncates mid-attribute or mid-tag.
-     * 
-     * @param html The potentially truncated HTML snippet
-     * @return Repaired HTML that can be parsed by Jsoup
-     */
-    private fun repairTruncatedHtml(html: String): String {
-        var repaired = html.trim()
-        
-        // Count quotes in attribute values - if odd number, close the quote
-        val quoteCount = repaired.count { it == '"' }
-        if (quoteCount % 2 == 1) {
-            // Unclosed quote - close it
-            repaired += "\""
-        }
-        
-        // If the snippet doesn't end with >, try to close the opening tag
-        if (!repaired.endsWith(">") && !repaired.endsWith("/>")) {
-            repaired += ">"
-        }
-        
-        return repaired
     }
 }
 

@@ -425,6 +425,7 @@ class SemanticIdentificationAgentAdkImpl(
     /**
      * Injects bounding box coordinates into HTML elements.
      * Each element receives a ds-bounding-box attribute with format "left top right bottom".
+     * Only injects on structural elements relevant for semantic identification.
      */
     private fun injectBoundingBoxes(
         html: String,
@@ -444,6 +445,9 @@ class SemanticIdentificationAgentAdkImpl(
 
             // Pre-compile regex for performance
             val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
+            
+            // Tags relevant for semantic identification (structural/navigational elements)
+            val relevantTags = setOf("header", "footer", "nav", "aside", "section", "article", "main", "div")
 
             for ((xpath, bbox) in boundingBoxes) {
                 val width = bbox.right - bbox.left
@@ -458,7 +462,11 @@ class SemanticIdentificationAgentAdkImpl(
 
                 // XPath format: ./tagname[index]/tagname[index]/...
                 val element = findElementByRelativeXPath(root, xpath, xpathRegex)
-                element?.attr("ds-bounding-box", bboxValue)
+                
+                // Only inject bounding boxes on relevant structural elements
+                if (element != null && element.tagName() in relevantTags) {
+                    element.attr("ds-bounding-box", bboxValue)
+                }
             }
 
             // Return the full HTML
