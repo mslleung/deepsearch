@@ -81,8 +81,10 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             - If there is any ambiguity or information conflict, note them clearly inside the table and explain under **Additional Information:**.
             - Normalize whitespace; remove decorative or layout-only characters.
             - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
+            - Precede the output with the interpretation confidence, which can be HIGH or LOW
 
             Example markdown output:
+            ** High Confidence Table **
             | Feature | Free | Pro AI | Premium AI | Enterprise AI |
             |---|---|---|---|---|
             | **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |

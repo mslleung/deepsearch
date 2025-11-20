@@ -82,7 +82,7 @@ class PlaywrightBrowserPageTest : KoinTest {
             // Verify all images have valid data
             images.forEach { image ->
                 assertTrue { image.bytes.isNotEmpty() }
-                assertTrue { image.xPathSelectors.isNotEmpty() }
+                assertTrue { image.cssSelectors.isNotEmpty() }
             }
         }
     }

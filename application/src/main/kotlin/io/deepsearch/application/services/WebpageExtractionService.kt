@@ -52,8 +52,8 @@ class WebpageExtractionService(
             // Combine all four flows and collect
             data class FlowResults(
                 val semanticElements: SemanticElements,
-                val iconReplacements: List<IBrowserPage.XPathReplacementWithText>,
-                val imageReplacements: List<IBrowserPage.XPathReplacementWithText>,
+                val iconReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
+                val imageReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
                 val identifiedTables: List<TableIdentification>
             )
             
@@ -67,7 +67,7 @@ class WebpageExtractionService(
             }.first()
 
             // Step 3: Replace icons and images
-            webpage.replaceElementsByXPathWithText(results.iconReplacements + results.imageReplacements)
+            webpage.replaceElementsByCssSelectorWithText(results.iconReplacements + results.imageReplacements)
 
             // Step 4: Extract popup text (before removal)
             val popupText = extractPopupText(webpage, results.semanticElements)
@@ -116,8 +116,8 @@ class WebpageExtractionService(
 
             val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons)
             val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
-                icon.xPathSelectors.map { xpath ->
-                    IBrowserPage.XPathReplacementWithText(xpath, interpretedText)
+                icon.cssSelectors.map { cssSelector ->
+                    IBrowserPage.CssSelectorReplacementWithText(cssSelector, interpretedText)
                 }
             }
             logger.debug("number of icon replacements: {}", replacements.size)
@@ -132,8 +132,8 @@ class WebpageExtractionService(
 
             val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images)
             val replacements = images.zip(extractedTexts).flatMap { (image, extractedText) ->
-                image.xPathSelectors.map { xpath ->
-                    IBrowserPage.XPathReplacementWithText(xpath, extractedText)
+                image.cssSelectors.map { cssSelector ->
+                    IBrowserPage.CssSelectorReplacementWithText(cssSelector, extractedText)
                 }
             }
             emit(replacements)

@@ -58,7 +58,7 @@ class WebpageImageTextExtractionService(
         images.forEach { image ->
             val existing = webpageImageRepository.findByHash(image.bytesHash)
             if (existing != null) {
-                logger.debug("Found cached result for image")
+//                logger.debug("Found cached result for image")
                 cachedResults[Base64.encode(image.bytesHash)] = existing.extractedText?.takeIf { it.isNotBlank() }
             } else {
                 uncachedImages.add(image)

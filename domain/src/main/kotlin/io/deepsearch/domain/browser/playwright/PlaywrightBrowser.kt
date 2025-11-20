@@ -6,6 +6,7 @@ import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Playwright
 import io.deepsearch.domain.browser.IBrowser
 import io.deepsearch.domain.browser.IBrowserContext
+import io.deepsearch.domain.services.ICssSelectorConstructionService
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -18,6 +19,7 @@ import kotlinx.coroutines.sync.withLock
  */
 class PlaywrightBrowser(
     private val playwright: Playwright,
+    private val cssSelectorConstructionService: ICssSelectorConstructionService
 ) : IBrowser {
     private val playwrightBrowser = playwright.chromium().launch(
         BrowserType.LaunchOptions()
@@ -87,7 +89,7 @@ class PlaywrightBrowser(
             }
         }
 
-        return PlaywrightBrowserContext(context, apiMutex)
+        return PlaywrightBrowserContext(context, apiMutex, cssSelectorConstructionService)
     }
 
     override suspend fun close() {

@@ -1,89 +1,17 @@
 (() => {
-  type ImageResult = { base64: string; xPathSelectors: string[] };
-  type FailedImage = { element: Element; xPath: string; reason: string };
+  type ImageResult = { base64: string; htmlSnippets: string[] };
+  type FailedImage = { element: Element; htmlSnippet: string; reason: string };
 
-  const xPathSegmentFor = (el: Element): string => {
-    const tag = el.tagName.toLowerCase();
-    
-    // 1. Check for our injected unique ID first (for image elements)
-    const tempId = el.getAttribute('data-ds-temp-img-id');
-    if (tempId) {
-      return `${tag}[@data-ds-temp-img-id='${tempId}']`;
-    }
-    
-    // 2. Try to use id attribute (most stable)
-    const id = el.getAttribute('id');
-    if (id && id.trim()) {
-      return `${tag}[@id='${id.trim().replace(/'/g, "\\'")}']`;
-    }
-    
-    // 3. For img elements, try using src attribute
-    if (tag === 'img') {
-      const src = el.getAttribute('src');
-      if (src && src.trim()) {
-        // Escape single quotes in XPath
-        return `${tag}[@src='${src.trim().replace(/'/g, "\\'")}']`;
-      }
-    }
-    
-    // 4. Try using class attribute if it's reasonably unique
-    const classes = el.getAttribute('class');
-    if (classes && classes.trim()) {
-      const classList = classes.trim().split(/\s+/).filter(c => c.length > 0);
-      if (classList.length > 0) {
-        // Use contains for each class to be more resilient
-        const classConditions = classList.map(c => `contains(@class,'${c.replace(/'/g, "\\'")}')`).join(' and ');
-        return `${tag}[${classConditions}]`;
-      }
-    }
-    
-    // 5. For other potentially unique attributes
-    const alt = el.getAttribute('alt');
-    if (alt && alt.trim()) {
-      return `${tag}[@alt='${alt.trim().replace(/'/g, "\\'")}']`;
-    }
-    
-    const href = el.getAttribute('href');
-    if (href && href.trim()) {
-      return `${tag}[@href='${href.trim().replace(/'/g, "\\'")}']`;
-    }
-    
-    // 6. Try data attributes
-    const dataAttrs = Array.from(el.attributes).filter(attr => attr.name.startsWith('data-'));
-    if (dataAttrs.length > 0) {
-      const attr = dataAttrs[0];
-      return `${tag}[@${attr.name}='${attr.value.replace(/'/g, "\\'")}']`;
-    }
-    
-    // 7. Last resort: inject a temporary unique data attribute
-    const uniqueId = `ds-${Math.random().toString(36).substr(2, 9)}`;
-    el.setAttribute('data-ds-temp-id', uniqueId);
-    return `${tag}[@data-ds-temp-id='${uniqueId}']`;
-  };
-
-  const uniqueXPathFor = (el: Element): string => {
-    const segments: string[] = [];
-    let node: Element | null = el;
-    while (node && node.nodeType === Node.ELEMENT_NODE && node.tagName.toLowerCase() !== 'html') {
-      const segment = xPathSegmentFor(node);
-      segments.unshift(segment);
-      node = node.parentElement;
-    }
-    return '//' + segments.join('/');
+  const extractHtmlSnippet = (el: Element): string => {
+    return el.outerHTML;
   };
 
   const run = async (): Promise<string> => {
-    const imagesToXPathSelectors = new Map<string, Set<string>>();
+    const imagesToHtmlSnippets = new Map<string, Set<string>>();
     const failedImages: FailedImage[] = [];
     
     // Extract regular img elements
     const images = Array.from(document.querySelectorAll('img'));
-    
-    // Inject unique IDs for all img elements upfront to ensure unique xPaths
-    images.forEach((img, index) => {
-      const uniqueId = `img-${index}-${Math.random().toString(36).substr(2, 9)}`;
-      img.setAttribute('data-ds-temp-img-id', uniqueId);
-    });
 
     // Wait for all images to load
     await Promise.all(images.map(img => {
@@ -133,8 +61,8 @@
         const dataUrl = canvas.toDataURL('image/webp', 0.9);
         const base64 = dataUrl.replace(/^data:[^,]+,/, '');
         
-        const xPathSelector = uniqueXPathFor(img);
-        return { base64, xPathSelector, failed: null };
+        const htmlSnippet = extractHtmlSnippet(img);
+        return { base64, htmlSnippet, failed: null };
       } catch (e) {
         // Canvas is tainted or drawing failed - try re-downloading with CORS
         if (e instanceof DOMException && e.name === 'SecurityError' && img.src && !img.src.startsWith('data:')) {
@@ -157,18 +85,19 @@
             const dataUrl = canvas.toDataURL('image/webp', 0.9);
             const base64 = dataUrl.replace(/^data:[^,]+,/, '');
             
-            const xPathSelector = uniqueXPathFor(img);
-            return { base64, xPathSelector, failed: null };
+            const htmlSnippet = extractHtmlSnippet(img);
+            return { base64, htmlSnippet, failed: null };
           } catch (retryError) {
             // Re-download also failed
             const errorMsg = retryError instanceof Error ? retryError.message : String(retryError);
-            console.warn(`Failed to extract image at ${uniqueXPathFor(img)} after retry: ${errorMsg}`);
+            const htmlSnippet = extractHtmlSnippet(img);
+            console.warn(`Failed to extract image at ${htmlSnippet} after retry: ${errorMsg}`);
             return {
               base64: null,
-              xPathSelector: null,
+              htmlSnippet: null,
               failed: {
                 element: img,
-                xPath: uniqueXPathFor(img),
+                htmlSnippet: htmlSnippet,
                 reason: `CORS retry failed: ${errorMsg}`
               }
             };
@@ -177,13 +106,14 @@
         
         // Some other error (not SecurityError or not recoverable) - report it
         const errorMsg = e instanceof Error ? e.message : String(e);
-        console.warn(`Failed to extract image at ${uniqueXPathFor(img)}: ${errorMsg}`);
+        const htmlSnippet = extractHtmlSnippet(img);
+        console.warn(`Failed to extract image at ${htmlSnippet}: ${errorMsg}`);
         return {
           base64: null,
-          xPathSelector: null,
+          htmlSnippet: null,
           failed: {
             element: img,
-            xPath: uniqueXPathFor(img),
+            htmlSnippet: htmlSnippet,
             reason: errorMsg
           }
         };
@@ -196,11 +126,11 @@
       
       if (result.failed) {
         failedImages.push(result.failed);
-      } else if (result.base64 && result.xPathSelector) {
-        if (!imagesToXPathSelectors.has(result.base64)) {
-          imagesToXPathSelectors.set(result.base64, new Set());
+      } else if (result.base64 && result.htmlSnippet) {
+        if (!imagesToHtmlSnippets.has(result.base64)) {
+          imagesToHtmlSnippets.set(result.base64, new Set());
         }
-        imagesToXPathSelectors.get(result.base64)!.add(result.xPathSelector);
+        imagesToHtmlSnippets.get(result.base64)!.add(result.htmlSnippet);
       }
     }
     
@@ -209,12 +139,6 @@
       const style = window.getComputedStyle(el);
       const backgroundImage = style.backgroundImage;
       return backgroundImage && backgroundImage !== 'none' && backgroundImage.startsWith('url(');
-    });
-    
-    // Inject unique IDs for all background image elements upfront to ensure unique xPaths
-    elementsWithBackgrounds.forEach((el, index) => {
-      const uniqueId = `bg-${index}-${Math.random().toString(36).substr(2, 9)}`;
-      el.setAttribute('data-ds-temp-img-id', uniqueId);
     });
     
     console.log(`Found ${elementsWithBackgrounds.length} elements with backgrounds to process`);
@@ -271,8 +195,8 @@
           const dataUrl = canvas.toDataURL('image/webp', 0.9);
           const base64 = dataUrl.replace(/^data:[^,]+,/, '');
           
-          const xPathSelector = uniqueXPathFor(element);
-          return { base64, xPathSelector, failed: null };
+          const htmlSnippet = extractHtmlSnippet(element);
+          return { base64, htmlSnippet, failed: null };
         } catch (securityError) {
           // Canvas is tainted - retry with crossOrigin
           if (securityError instanceof DOMException && securityError.name === 'SecurityError') {
@@ -294,21 +218,22 @@
             const dataUrl = canvas.toDataURL('image/webp', 0.9);
             const base64 = dataUrl.replace(/^data:[^,]+,/, '');
             
-            const xPathSelector = uniqueXPathFor(element);
-            return { base64, xPathSelector, failed: null };
+            const htmlSnippet = extractHtmlSnippet(element);
+            return { base64, htmlSnippet, failed: null };
           }
           throw securityError;
         }
       } catch (e) {
         // Store failed background images for fallback processing
         const errorMsg = e instanceof Error ? e.message : String(e);
-        console.warn(`Failed to extract background image at ${uniqueXPathFor(element)}: ${errorMsg}`);
+        const htmlSnippet = extractHtmlSnippet(element);
+        console.warn(`Failed to extract background image at ${htmlSnippet}: ${errorMsg}`);
         return {
           base64: null,
-          xPathSelector: null,
+          htmlSnippet: null,
           failed: {
             element: element,
-            xPath: uniqueXPathFor(element),
+            htmlSnippet: htmlSnippet,
             reason: errorMsg
           }
         };
@@ -321,23 +246,23 @@
       
       if (result.failed) {
         failedImages.push(result.failed);
-      } else if (result.base64 && result.xPathSelector) {
-        if (!imagesToXPathSelectors.has(result.base64)) {
-          imagesToXPathSelectors.set(result.base64, new Set());
+      } else if (result.base64 && result.htmlSnippet) {
+        if (!imagesToHtmlSnippets.has(result.base64)) {
+          imagesToHtmlSnippets.set(result.base64, new Set());
         }
-        imagesToXPathSelectors.get(result.base64)!.add(result.xPathSelector);
+        imagesToHtmlSnippets.get(result.base64)!.add(result.htmlSnippet);
       }
     }
     
-    const results: ImageResult[] = Array.from(imagesToXPathSelectors.entries()).map(([base64, xPaths]) => ({
+    const results: ImageResult[] = Array.from(imagesToHtmlSnippets.entries()).map(([base64, snippets]) => ({
       base64,
-      xPathSelectors: Array.from(xPaths)
+      htmlSnippets: Array.from(snippets)
     }));
     
     // Return both successful results and failed images for fallback processing
     return JSON.stringify({
       successful: results,
-      failed: failedImages.map(f => ({ xPath: f.xPath, reason: f.reason }))
+      failed: failedImages.map(f => ({ htmlSnippet: f.htmlSnippet, reason: f.reason }))
     });
   };
 

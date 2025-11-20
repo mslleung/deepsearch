@@ -113,12 +113,12 @@ interface IBrowserPage {
      *
      * bytes: raw image bytes (typically WebP from canvas rendering).
      * mimeType: image mime type, defaults to WebP.
-     * xPathSelectors: list of XPath selectors for DOM nodes that render this icon image.
+     * cssSelectors: list of CSS selectors for DOM nodes that render this icon image.
      */
     data class Icon(
         val bytes: ByteArray,
         val mimeType: ImageMimeType = ImageMimeType.WEBP,
-        val xPathSelectors: List<String>
+        val cssSelectors: List<String>
     ) {
         val bytesHash: ByteArray by lazy { MessageDigest.getInstance("SHA-256").digest(bytes) }
     }
@@ -129,7 +129,7 @@ interface IBrowserPage {
      * Extracts various icon types (i, svg, span with icon classes, etc.).
      * Each icon is rendered as a WebP and deduplicated by SHA-256 hash of the bytes.
      *
-     * @return List of Icon containing bytes, mimeType, and xPathSelectors.
+     * @return List of Icon containing bytes, mimeType, and CSS selectors.
      */
     suspend fun extractIcons(): List<Icon>
 
@@ -138,12 +138,12 @@ interface IBrowserPage {
      *
      * bytes: raw image bytes (WebP from canvas rendering, or PNG from Playwright screenshots).
      * mimeType: image mime type.
-     * xPathSelectors: list of XPath selectors for DOM nodes that contain this image.
+     * cssSelectors: list of CSS selectors for DOM nodes that contain this image.
      */
     data class WebImage(
         val bytes: ByteArray,
         val mimeType: ImageMimeType,
-        val xPathSelectors: List<String>
+        val cssSelectors: List<String>
     ) {
         val bytesHash: ByteArray by lazy { MessageDigest.getInstance("SHA-256").digest(bytes) }
     }
@@ -153,7 +153,7 @@ interface IBrowserPage {
      *
      * Each image is captured as a screenshot and deduplicated by SHA-256 hash of the bytes.
      *
-     * @return List of WebImage containing bytes, mimeType, and xPathSelectors.
+     * @return List of WebImage containing bytes, mimeType, and CSS selectors.
      */
     suspend fun extractImages(): List<WebImage>
 

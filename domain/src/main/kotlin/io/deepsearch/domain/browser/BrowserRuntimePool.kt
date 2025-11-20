@@ -1,6 +1,7 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.browser.playwright.PlaywrightBrowserRuntime
+import io.deepsearch.domain.services.ICssSelectorConstructionService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -31,7 +32,9 @@ interface IBrowserRuntimePool {
  *   runtimes are recycled immediately on the next acquire call. If a runtime becomes expired while in use,
  *   it will be closed and removed from the pool upon release (and never handed out again).
  */
-class BrowserRuntimePool : IBrowserRuntimePool {
+class BrowserRuntimePool(
+    private val cssSelectorConstructionService: ICssSelectorConstructionService
+) : IBrowserRuntimePool {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -193,7 +196,7 @@ class BrowserRuntimePool : IBrowserRuntimePool {
     private fun createNewRuntimeLocked(): PooledRuntime {
         val id = idGenerator.getAndIncrement()
         logger.info("Creating new runtime #{}", id)
-        val runtime = PlaywrightBrowserRuntime()
+        val runtime = PlaywrightBrowserRuntime(cssSelectorConstructionService)
         val pooled = PooledRuntime(
             id = id,
             runtime = runtime,

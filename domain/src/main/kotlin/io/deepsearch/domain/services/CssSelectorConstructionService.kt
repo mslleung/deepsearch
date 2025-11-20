@@ -45,21 +45,21 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
             // Build base CSS selector for the target element
             val baseSelector = buildBaseSelector(tagName, id, classes)
             
-            logger.debug("Constructed base selector: {} from snippet", baseSelector)
+//            logger.debug("Constructed base selector: {} from snippet", baseSelector)
             
             // First, find matching elements in the CLEANED HTML (which the LLM saw)
             val cleanedDoc = Jsoup.parse(cleanedHtml)
             val cleanedMatchingElements = cleanedDoc.select(baseSelector)
             
             if (cleanedMatchingElements.isEmpty()) {
-                logger.warn("No elements found in cleaned HTML for selector: {}", baseSelector)
+//                logger.warn("No elements found in cleaned HTML for selector: {}", baseSelector)
                 return emptyList()
             }
             
             // Filter by structural match in cleaned HTML
             // Skip structural matching if we have a unique ID selector - IDs are globally unique
             val structurallyMatchingElements = if (id.isNotBlank() && cleanedMatchingElements.size == 1) {
-                logger.debug("Skipping structural match for unique ID selector: {}", baseSelector)
+//                logger.debug("Skipping structural match for unique ID selector: {}", baseSelector)
                 cleanedMatchingElements.toList()
             } else {
                 cleanedMatchingElements.filter { candidate ->
@@ -67,11 +67,11 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
                 }
             }
             
-            logger.debug("Filtered {} candidates to {} structurally-matching elements in cleaned HTML", 
-                cleanedMatchingElements.size, structurallyMatchingElements.size)
+//            logger.debug("Filtered {} candidates to {} structurally-matching elements in cleaned HTML",
+//                cleanedMatchingElements.size, structurallyMatchingElements.size)
             
             if (structurallyMatchingElements.isEmpty()) {
-                logger.warn("No structurally-matching elements found for snippet: {}", htmlSnippet)
+//                logger.warn("No structurally-matching elements found for snippet: {}", htmlSnippet)
                 return emptyList()
             }
             
@@ -80,7 +80,7 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
             
             // If single match in cleaned HTML, use the base selector
             if (structurallyMatchingElements.size == 1) {
-                logger.debug("Single structurally-matching element found for selector: {}", baseSelector)
+//                logger.debug("Single structurally-matching element found for selector: {}", baseSelector)
                 return listOf(baseSelector)
             }
             
@@ -92,7 +92,7 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
                 // Verify the selector works on original HTML
                 val originalMatches = fullDoc.select(hierarchicalSelector)
                 if (originalMatches.isEmpty()) {
-                    logger.warn("Selector {} from cleaned HTML doesn't match original HTML", hierarchicalSelector)
+//                    logger.warn("Selector {} from cleaned HTML doesn't match original HTML", hierarchicalSelector)
                     null
                 } else {
                     hierarchicalSelector
@@ -162,12 +162,12 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
         
         // Compare attributes (ignoring order)
         if (!compareAttributes(snippetElement, candidateElement)) {
-            logger.debug(
-                "Attribute mismatch for <{}>: expected {}, found {}",
-                snippetElement.tagName(),
-                formatAttributesForLog(snippetElement),
-                formatAttributesForLog(candidateElement)
-            )
+//            logger.debug(
+//                "Attribute mismatch for <{}>: expected {}, found {}",
+//                snippetElement.tagName(),
+//                formatAttributesForLog(snippetElement),
+//                formatAttributesForLog(candidateElement)
+//            )
             return false
         }
         
@@ -395,11 +395,11 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
         // Validate that this selector is unique in the document
         val matches = doc.select(hierarchicalSelector)
         if (matches.size != 1) {
-            logger.warn("Hierarchical selector '{}' matches {} elements, expected 1", hierarchicalSelector, matches.size)
+//            logger.warn("Hierarchical selector '{}' matches {} elements, expected 1", hierarchicalSelector, matches.size)
             // Return it anyway, as it's still more specific than the base selector
         }
         
-        logger.debug("Built hierarchical selector: {}", hierarchicalSelector)
+//        logger.debug("Built hierarchical selector: {}", hierarchicalSelector)
         return hierarchicalSelector
     }
     

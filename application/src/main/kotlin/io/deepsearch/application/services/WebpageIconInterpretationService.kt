@@ -57,7 +57,7 @@ class WebpageIconInterpretationService(
             val bytesHash = MessageDigest.getInstance("SHA-256").digest(icon.bytes)
             val existing = webpageIconRepository.findByHash(bytesHash)
             if (existing != null) {
-                logger.debug("Found cached result for icon")
+//                logger.debug("Found cached result for icon")
                 cachedResults[Base64.encode(bytesHash)] = existing.label?.takeIf { it.isNotBlank() }
             } else {
                 uncachedIcons.add(icon)

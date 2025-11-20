@@ -86,6 +86,10 @@ private val domainCommonTestModule = module {
     }
 
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
+    
+    // Domain services needed by browser runtime
+    singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
+    
     singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) bind ITesseractPool::class
 
@@ -114,7 +118,6 @@ private val domainCommonTestModule = module {
 
     // domain services
     singleOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
-    singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
     singleOf(::JwtService) bind IJwtService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::SerperService) bind ISerperService::class

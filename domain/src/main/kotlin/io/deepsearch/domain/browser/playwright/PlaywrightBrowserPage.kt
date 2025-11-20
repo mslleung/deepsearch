@@ -16,6 +16,7 @@ import io.deepsearch.domain.exceptions.NetworkTimeoutException
 import io.deepsearch.domain.exceptions.RedirectLoopException
 import io.deepsearch.domain.exceptions.SslHandshakeException
 import io.deepsearch.domain.exceptions.UrlProcessingException
+import io.deepsearch.domain.services.ICssSelectorConstructionService
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -33,7 +34,8 @@ import kotlin.system.measureTimeMillis
  */
 class PlaywrightBrowserPage(
     private val page: Page,
-    private val apiMutex: Mutex
+    private val apiMutex: Mutex,
+    private val cssSelectorConstructionService: ICssSelectorConstructionService
 ) : IBrowserPage {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -113,7 +115,7 @@ class PlaywrightBrowserPage(
     }
 
     override suspend fun getElementScreenshotByXPath(xpath: String): IBrowserPage.Screenshot {
-        logger.debug("Taking element screenshot by XPath: {}", xpath)
+//        logger.debug("Taking element screenshot by XPath: {}", xpath)
         val bytes = apiMutex.withLock {
             val locator = page.locator("xpath=$xpath")
             // When XPath matches a chain (target + ancestors), select the leaf-most node
@@ -129,7 +131,7 @@ class PlaywrightBrowserPage(
     }
 
     override suspend fun getElementScreenshotByCssSelector(cssSelector: String): IBrowserPage.Screenshot {
-        logger.debug("Taking element screenshot by CSS selector: {}", cssSelector)
+//        logger.debug("Taking element screenshot by CSS selector: {}", cssSelector)
         val bytes = apiMutex.withLock {
             val locator = page.locator(cssSelector)
             // When CSS selector matches multiple elements, select the last one
@@ -256,7 +258,7 @@ class PlaywrightBrowserPage(
     }
 
     @Serializable
-    private data class IconResult(val base64: String, val xPathSelectors: List<String>)
+    private data class IconResult(val base64: String, val htmlSnippets: List<String>)
 
     @Serializable
     private data class SkippedDetail(
@@ -280,7 +282,7 @@ class PlaywrightBrowserPage(
         val renderingErrors: Int,
         val successfullyRendered: Int,
         val uniqueIcons: Int,
-        val totalXPaths: Int,
+        val totalSnippets: Int,
         val skippedDetails: List<SkippedDetail>,
         val deduplicationMap: Map<String, Int>
     )
@@ -293,6 +295,10 @@ class PlaywrightBrowserPage(
 
     override suspend fun extractIcons(): List<IBrowserPage.Icon> {
         logger.debug("Extracting icons via evaluate()")
+        
+        // Get full HTML for CSS selector construction context
+        val fullHtml = getFullHtml()
+        
         val extractIconJsonRaw = apiMutex.withLock { page.evaluate(loadScript("out/extractIcons.js")) } as String
 
         val response = Json.decodeFromString<IconExtractionResponse>(extractIconJsonRaw)
@@ -321,10 +327,23 @@ class PlaywrightBrowserPage(
             val cleaned = sanitizeBase64(result.base64)
             try {
                 val bytes = Base64.decode(cleaned)
+                
+                // Convert HTML snippets to CSS selectors
+                val cssSelectors = result.htmlSnippets.flatMap { snippet ->
+                    cssSelectorConstructionService.constructCssSelectorsFromSnippet(
+                        snippet, fullHtml, fullHtml
+                    )
+                }
+                
+                if (cssSelectors.isEmpty()) {
+                    logger.warn("Skipping icon - could not construct CSS selectors from {} snippets", result.htmlSnippets.size)
+                    return@mapNotNull null
+                }
+                
                 IBrowserPage.Icon(
                     bytes = bytes,
                     mimeType = ImageMimeType.WEBP,
-                    xPathSelectors = result.xPathSelectors
+                    cssSelectors = cssSelectors
                 )
             } catch (e: IllegalArgumentException) {
                 logger.warn("Skipping invalid icon base64 ({} chars): {}", cleaned.length, e.message)
@@ -337,10 +356,10 @@ class PlaywrightBrowserPage(
     }
 
     @Serializable
-    private data class ImageResult(val base64: String, val xPathSelectors: List<String>)
+    private data class ImageResult(val base64: String, val htmlSnippets: List<String>)
 
     @Serializable
-    private data class FailedImage(val xPath: String, val reason: String)
+    private data class FailedImage(val htmlSnippet: String, val reason: String)
 
     @Serializable
     private data class ImageExtractionResult(
@@ -350,6 +369,10 @@ class PlaywrightBrowserPage(
 
     override suspend fun extractImages(): List<IBrowserPage.WebImage> {
         logger.debug("Extracting images via evaluate()")
+        
+        // Get full HTML for CSS selector construction context
+        val fullHtml = getFullHtml()
+        
         val extractImageJsonRaw = apiMutex.withLock { page.evaluate(loadScript("out/extractImages.js")) } as String
         val decoded = Json.decodeFromString<ImageExtractionResult>(extractImageJsonRaw)
 
@@ -358,11 +381,24 @@ class PlaywrightBrowserPage(
         // Process successful canvas-based extractions
         decoded.successful.forEach { result ->
             val bytes = Base64.decode(result.base64)
+            
+            // Convert HTML snippets to CSS selectors
+            val cssSelectors = result.htmlSnippets.flatMap { snippet ->
+                cssSelectorConstructionService.constructCssSelectorsFromSnippet(
+                    snippet, fullHtml, fullHtml
+                )
+            }
+            
+            if (cssSelectors.isEmpty()) {
+                logger.warn("Skipping image - could not construct CSS selectors from {} snippets", result.htmlSnippets.size)
+                return@forEach
+            }
+            
             results.add(
                 IBrowserPage.WebImage(
                     bytes = bytes,
                     mimeType = ImageMimeType.WEBP,
-                    xPathSelectors = result.xPathSelectors
+                    cssSelectors = cssSelectors
                 )
             )
         }
@@ -372,21 +408,34 @@ class PlaywrightBrowserPage(
             logger.info("Processing {} failed images using screenshot fallback", decoded.failed.size)
             decoded.failed.forEach { failedImage ->
                 try {
-                    val isVisible = isElementVisibleByXPath(failedImage.xPath)
-                    if (!isVisible) {
-                        throw Exception("Skipping screenshot for invisible image at ${failedImage.xPath}")
+                    // Convert HTML snippet to CSS selector
+                    val cssSelectors = cssSelectorConstructionService.constructCssSelectorsFromSnippet(
+                        failedImage.htmlSnippet, fullHtml, fullHtml
+                    )
+                    
+                    if (cssSelectors.isEmpty()) {
+                        logger.warn("Skipping failed image - could not construct CSS selector from snippet")
+                        return@forEach
                     }
-                    val screenshot = getElementScreenshotByXPath(failedImage.xPath)
+                    
+                    // Use first CSS selector for screenshot
+                    val cssSelector = cssSelectors.first()
+                    
+                    val isVisible = isElementVisibleByCssSelector(cssSelector)
+                    if (!isVisible) {
+                        throw Exception("Skipping screenshot for invisible image at $cssSelector")
+                    }
+                    val screenshot = getElementScreenshotByCssSelector(cssSelector)
                     results.add(
                         IBrowserPage.WebImage(
                             bytes = screenshot.bytes,
                             mimeType = screenshot.mimeType,
-                            xPathSelectors = listOf(failedImage.xPath)
+                            cssSelectors = cssSelectors
                         )
                     )
-                    logger.debug("Successfully captured screenshot for failed image at {}", failedImage.xPath)
+//                    logger.debug("Successfully captured screenshot for failed image at {}", cssSelector)
                 } catch (e: Exception) {
-                    logger.warn("Failed to capture screenshot for image at {}: {}", failedImage.xPath, e.message)
+                    logger.warn("Failed to capture screenshot for image: {}", e.message)
                 }
             }
         }
@@ -397,17 +446,17 @@ class PlaywrightBrowserPage(
         )
         
         // Deduplicate by bytesHash to prevent constraint violations in batch upsert
-        // Keep first occurrence and merge xPathSelectors
+        // Keep first occurrence and merge cssSelectors
         // even though we already dedup in extractImages.ts, our screenshot fallback may introduce duplicates again
         val deduplicatedResults = results
             .groupBy { Base64.encode(it.bytesHash) }
             .map { (_, duplicates) ->
                 if (duplicates.size > 1) {
-                    // Merge xPathSelectors from all duplicates
+                    // Merge cssSelectors from all duplicates
                     IBrowserPage.WebImage(
                         bytes = duplicates.first().bytes,
                         mimeType = duplicates.first().mimeType,
-                        xPathSelectors = duplicates.flatMap { it.xPathSelectors }.distinct()
+                        cssSelectors = duplicates.flatMap { it.cssSelectors }.distinct()
                     )
                 } else {
                     duplicates.first()
@@ -720,8 +769,6 @@ class PlaywrightBrowserPage(
             )
         } as String
     }
-
-    // TODO Remove all elements with 0 bounding box
 
     override suspend fun getBoundingBoxesByCssSelector(cssSelector: String): Map<String, IBrowserPage.BoundingBox> {
         logger.debug("Getting bounding boxes for CSS selector: {}", cssSelector)
