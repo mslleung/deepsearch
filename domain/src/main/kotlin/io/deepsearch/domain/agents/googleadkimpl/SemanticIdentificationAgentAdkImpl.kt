@@ -165,10 +165,10 @@ class SemanticIdentificationAgentAdkImpl(
         val htmlWithIds = injectStableIdentifiers(originalHtml, "ds-semantic")
         
         // Step 3: Inject bounding boxes into jsoup copy
-        val htmlWithIdsAndBboxes = injectBoundingBoxes(htmlWithIds, boundingBoxes)
+//        val htmlWithIdsAndBboxes = injectBoundingBoxes(htmlWithIds, boundingBoxes)
         
         // Step 4: Clean HTML (after identifier and bbox injection)
-        val cleanedHtml = cleanHtml(htmlWithIdsAndBboxes)
+        val cleanedHtml = cleanHtml(htmlWithIds)
 
         if (cleanedHtml.isEmpty()) {
             return SemanticIdentificationOutput(

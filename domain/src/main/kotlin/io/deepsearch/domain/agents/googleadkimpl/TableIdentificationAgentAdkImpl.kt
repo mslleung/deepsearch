@@ -79,21 +79,15 @@ class TableIdentificationAgentAdkImpl(
         )
         instruction(
             """
-            Your task is to identify all table structures in the provided webpage and return the stable identifiers of their root containers.
+            Your task is to identify table structures in the provided webpage and return the stable identifiers of their root containers.
 
             Inputs:
             - Cleaned HTML structure of the webpage
-            
-            Each element in the HTML has been augmented with a ds-bounding-box attribute containing spatial coordinates
-            in the format ds-bounding-box="left top right bottom". These coordinates help you understand the spatial layout
-            and relationships between elements.
 
             Instructions:
-            - Analyze the HTML to identify every table-like structure in the webpage
-            - Always target the table root containers instead of individual rows and columns
-            - In the event of nested tables/grids, target the outermost wrapping parent only
+            - Analyze the HTML to identify tables or grid-like structures in the webpage
+            - Always target the root containers instead of individual rows and columns
             - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
-            - Use the bounding box coordinates to better understand the spatial layout of the HTML structure.
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
               - The table's description
@@ -138,14 +132,14 @@ class TableIdentificationAgentAdkImpl(
         val htmlWithIds = injectStableIdentifiers(originalHtml, "ds-table")
 
         // Step 3: Inject bounding boxes into jsoup copy
-        val htmlWithIdsAndBboxes = injectBoundingBoxes(htmlWithIds, boundingBoxes)
+//        val htmlWithIdsAndBboxes = injectBoundingBoxes(htmlWithIds, boundingBoxes)
 
         // Programmatic extraction of semantic tables to reduce LLM input
         val (programmaticTables, reducedHtml) = extractSemanticTables(htmlWithIds)
         logger.debug("Programmatically extracted {} semantic tables", programmaticTables.size)
 
         // Step 4: Clean HTML (after identifier and bbox injection)
-        val cleanedHtml = cleanHtml(htmlWithIdsAndBboxes)
+        val cleanedHtml = cleanHtml(htmlWithIds)
 
         if (cleanedHtml.isEmpty()) {
             return TableIdentificationOutput(tables = emptyList())
