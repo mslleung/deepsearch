@@ -82,11 +82,11 @@ class TableIdentificationAgentAdkImpl(
             Your task is to identify table structures in the provided webpage and return the stable identifiers of their root containers.
 
             Inputs:
-            - Cleaned HTML structure of the webpage
+            - Cleaned HTML structure of the webpage, all possible table containers are injected with data-ds-id attribute 
 
             Instructions:
             - Analyze the HTML to identify tables or grid-like structures in the webpage
-            - Always target the root containers instead of individual rows and columns
+            - Always target the root containers instead of individual rows and columns, a typical webpage should have a limited number of tables/grids
             - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
@@ -139,7 +139,7 @@ class TableIdentificationAgentAdkImpl(
         logger.debug("Programmatically extracted {} semantic tables", programmaticTables.size)
 
         // Step 4: Clean HTML (after identifier and bbox injection)
-        val cleanedHtml = cleanHtml(htmlWithIds)
+        val cleanedHtml = cleanHtml(reducedHtml)
 
         if (cleanedHtml.isEmpty()) {
             return TableIdentificationOutput(tables = emptyList())
@@ -162,7 +162,7 @@ class TableIdentificationAgentAdkImpl(
             val eventsFlow = runner.runAsync(
                 session,
                 Content.fromParts(
-                    Part.fromText(reducedHtml)
+                    Part.fromText(cleanedHtml)
                 ),
                 RunConfig.builder().apply {
                     setStreamingMode(RunConfig.StreamingMode.NONE)
@@ -301,7 +301,7 @@ class TableIdentificationAgentAdkImpl(
                         attr.key == "rowspan" ||
                         attr.key == "scope" ||
                         attr.key == "data-testid" ||
-                        attr.key == "data-ds-id"
+                        attr.key == "data-ds-id" ||
                         attr.key == "ds-bounding-box"
             }
 

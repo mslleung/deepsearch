@@ -41,6 +41,21 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
     }
     
     /**
+     * Filters out CSS class names that Jsoup's selector parser cannot handle reliably,
+     * even when escaped. This primarily affects Tailwind arbitrary variants like [&>*]:space-y-10.
+     * 
+     * @param classes The set of class names from an element
+     * @return A filtered set containing only Jsoup-compatible class names
+     */
+    private fun filterJsoupCompatibleClasses(classes: Set<String>): Set<String> {
+        return classes.filter { className ->
+            // Exclude classes with square brackets (Tailwind arbitrary variants)
+            // These cause Jsoup's selector parser to fail even when properly escaped
+            !className.contains('[') && !className.contains(']')
+        }.toSet()
+    }
+    
+    /**
      * Compares attributes of two elements, ignoring order.
      * Only compares attributes that exist on the snippet element.
      * 
@@ -174,22 +189,40 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
                 }
                 // If element has classes, include them
                 classes.isNotEmpty() -> {
-                    val classSelector = "$tagName.${classes.map { escapeCssIdentifier(it) }.joinToString(".")}"
-                    // Check if this selector is unique at this level
-                    val parent = currentElement.parent()
-                    if (parent != null) {
-                        val siblingsMatching = parent.children().filter { sibling ->
-                            sibling.tagName() == tagName && sibling.classNames() == classes
+                    val filteredClasses = filterJsoupCompatibleClasses(classes)
+                    if (filteredClasses.isEmpty()) {
+                        // No usable classes, fall back to tag with position
+                        val parent = currentElement.parent()
+                        if (parent != null) {
+                            val siblingsOfSameType = parent.children().filter { it.tagName() == tagName }
+                            if (siblingsOfSameType.size > 1) {
+                                val position = siblingsOfSameType.indexOf(currentElement) + 1
+                                "$tagName:nth-of-type($position)"
+                            } else {
+                                tagName
+                            }
+                        } else {
+                            tagName
                         }
-                        if (siblingsMatching.size > 1) {
-                            // Need positional selector
-                            val position = siblingsMatching.indexOf(currentElement) + 1
-                            "$classSelector:nth-of-type($position)"
+                    } else {
+                        val classSelector = "$tagName.${filteredClasses.map { escapeCssIdentifier(it) }.joinToString(".")}"
+                        // Check if this selector is unique at this level
+                        val parent = currentElement.parent()
+                        if (parent != null) {
+                            val siblingsMatching = parent.children().filter { sibling ->
+                                val siblingFilteredClasses = filterJsoupCompatibleClasses(sibling.classNames())
+                                sibling.tagName() == tagName && siblingFilteredClasses == filteredClasses
+                            }
+                            if (siblingsMatching.size > 1) {
+                                // Need positional selector
+                                val position = siblingsMatching.indexOf(currentElement) + 1
+                                "$classSelector:nth-of-type($position)"
+                            } else {
+                                classSelector
+                            }
                         } else {
                             classSelector
                         }
-                    } else {
-                        classSelector
                     }
                 }
                 // No id or classes, use tag with position
@@ -230,10 +263,16 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
         val hierarchicalSelector = selectorParts.joinToString(" > ")
         
         // Validate that this selector is unique in the document
-        val matches = doc.select(hierarchicalSelector)
-        if (matches.size != 1) {
-//            logger.warn("Hierarchical selector '{}' matches {} elements, expected 1", hierarchicalSelector, matches.size)
-            // Return it anyway, as it's still more specific than the base selector
+        try {
+            val matches = doc.select(hierarchicalSelector)
+            if (matches.size != 1) {
+//                logger.warn("Hierarchical selector '{}' matches {} elements, expected 1", hierarchicalSelector, matches.size)
+                // Return it anyway, as it's still more specific than the base selector
+            }
+        } catch (e: org.jsoup.select.Selector.SelectorParseException) {
+            // If even the hierarchical selector can't be parsed, log and return it anyway
+            // The selector might still work in a real browser even if Jsoup can't parse it
+            logger.warn("Failed to validate hierarchical selector '{}': {}", hierarchicalSelector, e.message)
         }
         
 //        logger.debug("Built hierarchical selector: {}", hierarchicalSelector)
@@ -268,23 +307,43 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
                 // If element has an ID, use it (should be unique)
                 id.isNotBlank() -> {
                     val idSelector = "#${escapeCssIdentifier(id)}"
-                    // Verify it's unique
-                    if (doc.select(idSelector).size == 1) {
-                        idSelector
-                    } else {
-                        // ID is not unique (shouldn't happen but be defensive), fall back to hierarchical
+                    try {
+                        // Verify it's unique
+                        if (doc.select(idSelector).size == 1) {
+                            idSelector
+                        } else {
+                            // ID is not unique (shouldn't happen but be defensive), fall back to hierarchical
+                            buildHierarchicalSelector(element, doc)
+                        }
+                    } catch (e: org.jsoup.select.Selector.SelectorParseException) {
+                        // Jsoup couldn't parse the ID selector, fall back to hierarchical
+                        logger.debug("Failed to parse ID selector '{}', falling back to hierarchical: {}", 
+                            idSelector, e.message)
                         buildHierarchicalSelector(element, doc)
                     }
                 }
                 // If element has classes, try class-based selector
                 classes.isNotEmpty() -> {
-                    val classSelector = "$tagName.${classes.map { escapeCssIdentifier(it) }.joinToString(".")}"
-                    // Check if class selector is unique
-                    if (doc.select(classSelector).size == 1) {
-                        classSelector
-                    } else {
-                        // Not unique, use hierarchical selector
+                    val filteredClasses = filterJsoupCompatibleClasses(classes)
+                    if (filteredClasses.isEmpty()) {
+                        // No Jsoup-compatible classes, use hierarchical selector
                         buildHierarchicalSelector(element, doc)
+                    } else {
+                        val classSelector = "$tagName.${filteredClasses.map { escapeCssIdentifier(it) }.joinToString(".")}"
+                        try {
+                            // Check if class selector is unique
+                            if (doc.select(classSelector).size == 1) {
+                                classSelector
+                            } else {
+                                // Not unique, use hierarchical selector
+                                buildHierarchicalSelector(element, doc)
+                            }
+                        } catch (e: org.jsoup.select.Selector.SelectorParseException) {
+                            // Jsoup couldn't parse the selector, fall back to hierarchical
+                            logger.debug("Failed to parse class selector '{}', falling back to hierarchical: {}", 
+                                classSelector, e.message)
+                            buildHierarchicalSelector(element, doc)
+                        }
                     }
                 }
                 // No id or classes, use hierarchical selector

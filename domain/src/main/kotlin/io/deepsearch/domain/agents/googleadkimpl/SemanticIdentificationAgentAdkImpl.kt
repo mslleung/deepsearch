@@ -96,10 +96,6 @@ class SemanticIdentificationAgentAdkImpl(
 
             Inputs:
             - CLEANED HTML (subset of DOM with key attributes, all potential semantic elements have data-ds-id attributes)
-            
-            Each element in the HTML has been augmented with a ds-bounding-box attribute containing spatial coordinates
-            in the format ds-bounding-box="left top right bottom". These coordinates help you understand the spatial layout
-            and relationships between elements.
 
             Guidelines:
             - Identify the following if any:
@@ -114,7 +110,6 @@ class SemanticIdentificationAgentAdkImpl(
                 - popups: Popup dialogs that cover the main content and are visually interrupting to the user
             - Do not include the main content of the webpage. Only include elements that contain no critical information in the webpage.
             - For each element, return its data-ds-id attribute value (e.g., "ds-semantic-5").
-            - Use the bounding box coordinates to better understand spatial layout when the HTML structure is ambiguous.
             - Make sure the regions are unique with no overlap.
             - Write a brief note describing why it is considered a semantic element (e.g., "Top navbar with logo and menu", "Left sidebar with category links", "Cookie consent popup").
             - Return null for optional single elements if not found.
