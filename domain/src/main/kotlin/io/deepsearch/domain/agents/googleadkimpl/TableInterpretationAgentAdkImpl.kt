@@ -101,6 +101,8 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             *   **Premium AI** includes "Free Onboarding Support" and is marked as "Most Popular".
             *   **Enterprise AI** includes "🌟 AI Solution Engineer Support".
 
+            **The response should be placed in a json structured output.**
+
             Expected output shape:
             {
                 "markdown": "string",
@@ -132,8 +134,6 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
         val cleanedHtml = cleanHtml(htmlWithBoundingBoxes)
 
         logger.debug("Cleaned HTML length: {} (original: {})", cleanedHtml.length, tableHtml.length)
-        logger.debug(tableHtml)
-        logger.debug(cleanedHtml)
 
         val response = retryLlmCall<TableInterpretationResponse> {
             val session = runner
