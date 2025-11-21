@@ -93,7 +93,7 @@ class TableIdentificationAgentAdkImpl(
             - Always target the table root containers instead of individual rows and columns
             - In the event of nested tables/grids, target the outermost wrapping parent only
             - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
-            - Use the bounding box coordinates to better understand spatial layout when the HTML structure is ambiguous.
+            - Use the bounding box coordinates to better understand the spatial layout of the HTML structure.
             - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
             - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
               - The table's description
