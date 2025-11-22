@@ -39,7 +39,7 @@ class MarkdownConversionAgentAdkImplTest : KoinTest {
 //            "https://www.otandp.com/body-check/",
 //            "https://mybeame.com/beame-student-discount",
 //            "https://www.egltours.com/website/home",
-            "https://sleekflow.io/"
+            "https://sleekflow.io/pricing"
         ]
     )
     fun `converts webpage to markdown`(url: String) = runTest(testCoroutineDispatcher) {
@@ -58,6 +58,8 @@ class MarkdownConversionAgentAdkImplTest : KoinTest {
             )
 
             val output = agent.generate(input)
+
+            println(output.markdown)
 
             assertTrue(output.markdown.isNotBlank(), "Markdown output should not be blank")
             assertTrue(output.markdown.length > 50, "Markdown should contain substantial content")

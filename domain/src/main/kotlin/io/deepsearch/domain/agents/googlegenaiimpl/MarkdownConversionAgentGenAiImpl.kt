@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.MarkdownConversionInput
 import io.deepsearch.domain.agents.MarkdownConversionOutput
@@ -43,11 +44,12 @@ class MarkdownConversionAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are given a webpage screenshot and HTML content. Your task is to convert this webpage into well-structured markdown that preserves the visual hierarchy, content structure, and semantic meaning of the original page.
+        You are given a HTML content. Your task is to convert this webpage into well-structured markdown.
         
         Instructions:
-        - Analyze both the screenshot and HTML content to understand the webpage structure
-        - Convert the content to clean, readable markdown format
+        - Analyze the HTML content to understand the webpage structure
+        - Convert the all information in the webpage into markdown, including hidden or invisible elements
+        - Make sure there is no information loss
         - Preserve headings, paragraphs, lists, tables, links, and other structural elements
         - Use appropriate markdown syntax for different content types:
           * Use # ## ### for headings based on their visual hierarchy
@@ -77,7 +79,7 @@ class MarkdownConversionAgentGenAiImpl(
 
         val response = retryLlmCall<MarkdownConversionResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                ModelIds.GEMINI_3_PRO_PREVIEW.modelId,
                 listOf(
                     Content.fromParts(
                         Part.fromBytes(input.screenshotBytes, "image/jpeg"),
@@ -85,12 +87,12 @@ class MarkdownConversionAgentGenAiImpl(
                     )
                 ),
                 GenerateContentConfig.builder()
-                    .temperature(0F)
+                    .temperature(1F)
                     .responseSchema(outputSchema)
                     .responseMimeType("application/json")
                     .thinkingConfig(
                         ThinkingConfig.builder()
-                            .thinkingBudget(0)
+                            .thinkingLevel(ThinkingLevel.Known.LOW)
                             .build()
                     )
                     .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
@@ -116,7 +118,7 @@ class MarkdownConversionAgentGenAiImpl(
 
         // Step 1: Remove obvious non-content elements (scripts, styles, etc.)
         doc.select(
-            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
+            "script, style, noscript, template, canvas, meta, iframe, object, embed, " +
             "head, title, base"
         ).remove()
 
@@ -127,7 +129,7 @@ class MarkdownConversionAgentGenAiImpl(
         ).remove()
 
         // Step 3: Remove form elements (not part of readable content)
-        doc.select("form, input, button, select, textarea").remove()
+        doc.select("form, input, select, textarea").remove()
 
         // Step 4: Remove comments and processing instructions
         doc.select("*").forEach { element ->
@@ -158,16 +160,16 @@ class MarkdownConversionAgentGenAiImpl(
         }
 
         // Step 6: Keep only content-relevant attributes (for links, etc.)
-        doc.select("*").forEach { element ->
-            val essentialAttrs = setOf("href", "src", "alt", "title", "colspan", "rowspan")
-            val attrsToKeep = element.attributes().filter { attr ->
-                attr.key in essentialAttrs
-            }
-            element.clearAttributes()
-            attrsToKeep.forEach { attr ->
-                element.attr(attr.key, attr.value)
-            }
-        }
+//        doc.select("*").forEach { element ->
+//            val essentialAttrs = setOf("href", "src", "alt", "title", "colspan", "rowspan")
+//            val attrsToKeep = element.attributes().filter { attr ->
+//                attr.key in essentialAttrs
+//            }
+//            element.clearAttributes()
+//            attrsToKeep.forEach { attr ->
+//                element.attr(attr.key, attr.value)
+//            }
+//        }
 
         // Step 7: Normalize whitespace in text nodes (but don't truncate - we need full content!)
         doc.select("*").forEach { element ->
@@ -178,19 +180,19 @@ class MarkdownConversionAgentGenAiImpl(
         }
 
         // Step 8: Remove empty elements that don't contribute to content
-        var changed = true
-        while (changed) {
-            changed = false
-            val emptyElements = doc.select("*").filter { element ->
-                element.children().isEmpty() &&
-                element.ownText().isBlank() &&
-                element.tagName() !in setOf("br", "hr") // Keep structural breaks
-            }
-            if (emptyElements.isNotEmpty()) {
-                emptyElements.forEach { it.remove() }
-                changed = true
-            }
-        }
+//        var changed = true
+//        while (changed) {
+//            changed = false
+//            val emptyElements = doc.select("*").filter { element ->
+//                element.children().isEmpty() &&
+//                element.ownText().isBlank() &&
+//                element.tagName() !in setOf("br", "hr") // Keep structural breaks
+//            }
+//            if (emptyElements.isNotEmpty()) {
+//                emptyElements.forEach { it.remove() }
+//                changed = true
+//            }
+//        }
 
         val cleanedHtml = doc.outerHtml()
         logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
