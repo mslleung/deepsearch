@@ -1,0 +1,336 @@
+package io.deepsearch.domain.agents.googlegenaiimpl
+
+import com.google.genai.types.Content
+import com.google.genai.types.GenerateContentConfig
+import com.google.genai.types.Part
+import com.google.genai.types.ThinkingConfig
+import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
+import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
+import io.deepsearch.domain.agents.LinkRelevanceAnalysisOutput
+import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.ext.toSafeUri
+import io.deepsearch.domain.models.valueobjects.LinkSource
+import io.deepsearch.domain.models.valueobjects.WebpageLink
+import kotlinx.serialization.Serializable
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
+import org.jsoup.nodes.TextNode
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+
+/**
+ * An agent that analyzes HTML to identify links relevant to a query.
+ * The agent extracts <a href> links from the HTML and ranks them by relevance.
+ */
+class LinkRelevanceAnalysisAgentGenAiImpl(
+    private val client: com.google.genai.Client
+) : ILinkRelevanceAnalysisAgent {
+
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    @Serializable
+    private data class RelevantLinkJson(
+        val url: String,
+        val reason: String
+    )
+
+    @Serializable
+    private data class LinkAnalysisResponse(
+        val links: List<RelevantLinkJson>
+    )
+
+    private val systemInstruction = """
+        You are a link relevance analysis agent. Your task is to:
+        1. Identify all <a href> links in the provided text
+        2. Using the surrounding context, analyze which links are most relevant to the user's query
+        3. Return all relevant links with reasons why they are relevant
+        4. The links must be unique
+        
+        Focus on links that would help answer the user's query or provide more detailed information.
+        
+        Return your response in JSON format:
+        {
+          "links": [
+            {
+              "url": "https://example.com/page",
+              "reason": "This page contains information about..."
+            }
+          ]
+        }
+        
+        If there are no relevant links, return an empty links array.
+    """.trimIndent()
+
+    override suspend fun generate(input: LinkRelevanceAnalysisInput): LinkRelevanceAnalysisOutput {
+        logger.debug("Analyzing link relevance for query: '{}'", input.query)
+
+        val (cleanedHtml, extractedLinks) = cleanHtml(input.html, input.url)
+        logger.debug("Extracted {} unique links from cleaned HTML", extractedLinks.size)
+
+        val userPrompt = buildString {
+            appendLine("Query: ${input.query}")
+            appendLine()
+            appendLine("Extracted html text:")
+            appendLine(cleanedHtml)
+        }
+
+        val links = try {
+            val response = retryLlmCall<LinkAnalysisResponse> {
+                val result = client.models.generateContent(
+                    ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                    userPrompt,
+                    GenerateContentConfig.builder()
+                        .temperature(0.2F)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
+                )
+
+                result.checkFinishReason()
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
+
+            // Validate that all returned links exist in the extracted links to prevent hallucinations
+            val validatedLinks = response.links.distinctBy { it.url }.mapNotNull { linkJson ->
+                if (linkJson.url in extractedLinks) {
+                    WebpageLink(
+                        url = linkJson.url,
+                        source = LinkSource.LINK_RELEVANCE,
+                        reason = linkJson.reason
+                    )
+                } else {
+                    logger.warn("LLM returned hallucinated link not found in original HTML: '{}'", linkJson.url)
+                    null
+                }
+            }
+
+            val hallucinatedCount = response.links.size - validatedLinks.size
+            if (hallucinatedCount > 0) {
+                logger.warn("Filtered out {} hallucinated link(s) from LLM response", hallucinatedCount)
+            }
+
+            validatedLinks
+        } catch (e: Exception) {
+            logger.warn("Failed to parse link analysis response: {}", e.message)
+            emptyList()
+        }
+
+        logger.debug("Link relevance analysis found {} relevant links", links.size)
+
+        return LinkRelevanceAnalysisOutput(links)
+    }
+
+    /**
+     * Extracts the base domain from a URL (scheme + host).
+     * For example: "https://example.com/path" -> "https://example.com"
+     */
+    private fun extractBaseDomain(url: String): String? {
+        val regex = Regex("^(https?://[^/]+)")
+        return regex.find(url)?.value
+    }
+
+    /**
+     * Cleans HTML by removing non-content elements that don't contribute to link analysis.
+     * Preserves anchor tags and their surrounding context for better link relevance analysis.
+     * Filters anchor tags to only include those from the same domain as the url parameter.
+     * @return A Pair of (cleaned HTML text, set of extracted normalized links)
+     */
+    private fun cleanHtml(rawHtml: String, url: String): Pair<String, Set<String>> {
+        val doc: Document = Jsoup.parse(rawHtml)
+        val baseDomain = extractBaseDomain(url)
+
+        // Step 1: Remove obvious non-content elements (scripts, styles, etc.)
+        doc.select(
+            "script, style, noscript, template, svg, canvas, meta, link[rel], iframe, object, embed, " +
+                    "head, title, base"
+        ).remove()
+
+        // Step 2: Filter anchor tags to only include those from the same domain
+        if (baseDomain != null) {
+            doc.select("a[href]").forEach { anchor ->
+                val href = anchor.attr("href")
+                if (href.isNotBlank() && !href.startsWith(baseDomain)) {
+                    anchor.remove()
+                }
+            }
+            logger.debug("Filtered anchor tags to base domain: {}", baseDomain)
+        }
+
+        // Step 3: Remove duplicate links (keep only first occurrence of each unique href)
+        val seenHrefs = mutableSetOf<String>()
+        doc.select("a[href]").forEach { anchor ->
+            val href = anchor.attr("href")
+            if (href.isNotBlank()) {
+                if (href in seenHrefs) {
+                    anchor.remove()
+                } else {
+                    seenHrefs.add(href)
+                }
+            }
+        }
+        logger.debug("Removed duplicate links, kept {} unique hrefs", seenHrefs.size)
+
+        // Step 4: Remove form elements (not part of navigational content)
+        doc.select("form, input, button, select, textarea").remove()
+
+        // Step 5: Remove comments and processing instructions
+        doc.select("*").forEach { element ->
+            val nodesToRemove = element.childNodes().filter { node ->
+                node.nodeName() == "#comment" || node.nodeName() == "#pi"
+            }
+            nodesToRemove.forEach { node -> node.remove() }
+        }
+
+        // Step 6: Strip attributes except those useful for link relevance analysis
+        // For anchors: keep href (critical) and aria-label (provides context)
+        // For other elements: keep only semantic role attributes that indicate navigation structure
+        val semanticRoles = setOf(
+            "navigation", "menu", "menuitem", "main",
+            "complementary", "contentinfo", "banner"
+        )
+
+        doc.select("*").forEach { element ->
+            val attrsToKeep = when {
+                element.tagName() == "a" -> {
+                    // For anchors: href is critical, aria-label can provide additional context
+                    element.attributes().filter { attr ->
+                        attr.key in setOf("href", "aria-label")
+                    }
+                }
+
+                else -> {
+                    // For other elements: keep only semantic role attributes
+                    element.attributes().filter { attr ->
+                        attr.key == "role" && attr.value in semanticRoles
+                    }
+                }
+            }
+            element.clearAttributes()
+            attrsToKeep.forEach { attr ->
+                element.attr(attr.key, attr.value)
+            }
+        }
+
+        // Step 7: Truncate text content to reduce token usage while preserving context
+        doc.select("*").forEach { element ->
+            element.textNodes().forEach { textNode ->
+                val text = textNode.text().trim()
+                if (text.isNotEmpty() && text.length > 100) {
+                    textNode.text(text.take(100) + "...")
+                }
+            }
+        }
+
+        // Step 8: Remove empty elements iteratively (but keep anchors even if empty)
+        var changed = true
+        while (changed) {
+            changed = false
+            val emptyElements = doc.select("*").filter { element ->
+                element.tagName() != "a" && // Keep all anchor tags
+                        element.children().isEmpty() &&
+                        element.ownText().isBlank() &&
+                        element.tagName() !in setOf("br", "hr")
+            }
+            if (emptyElements.isNotEmpty()) {
+                emptyElements.forEach { it.remove() }
+                changed = true
+            }
+        }
+
+        // Step 9: Extract and normalize all links before converting to text
+        val baseUri = url.toSafeUri()
+        val normalizedLinks = mutableSetOf<String>()
+        doc.select("a[href]").forEach { anchor ->
+            val href = anchor.attr("href").trim()
+            if (href.isNotBlank()) {
+                try {
+                    val absoluteUrl = baseUri.resolve(href).toString()
+                    normalizedLinks.add(absoluteUrl)
+                } catch (e: Exception) {
+                    logger.debug("Failed to normalize link '{}': {}", href, e.message)
+                }
+            }
+        }
+
+        // Step 10: Extract text content while preserving <a> tags
+        val cleanedHtml = extractTextWithLinks(doc.body())
+        logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
+        return Pair(cleanedHtml, normalizedLinks)
+    }
+
+    /**
+     * Recursively extracts text content from an element while preserving <a> tags.
+     * All other HTML tags are stripped, leaving only text and anchor links.
+     * Each <a> tag is placed on its own line for better readability.
+     * 
+     * @param element The element to extract text and links from
+     * @param isRoot Whether this is the root call (for final trimming)
+     * @return A string containing text with embedded <a> tags, each link on its own line
+     */
+    private fun extractTextWithLinks(element: Element?, isRoot: Boolean = true): String {
+        if (element == null) return ""
+        
+        val result = StringBuilder()
+        
+        element.childNodes().forEach { node ->
+            when (node) {
+                // Text nodes: append directly with space management
+                is TextNode -> {
+                    val text = node.text().trim()
+                    if (text.isNotBlank()) {
+                        // Add space before text if needed (but not newline)
+                        if (result.isNotEmpty() && !result.endsWith(" ") && !result.endsWith("\n")) {
+                            result.append(" ")
+                        }
+                        result.append(text)
+                    }
+                }
+                // Anchor elements: preserve the tag with href on its own line
+                is Element if node.tagName() == "a" -> {
+                    val href = node.attr("href")
+                    val ariaLabel = node.attr("aria-label")
+                    val linkText = node.text()
+
+                    // Ensure we're on a new line before the anchor
+                    if (result.isNotEmpty() && !result.endsWith("\n")) {
+                        result.append("\n")
+                    }
+                    
+                    result.append("<a href=\"").append(href).append("\"")
+                    if (ariaLabel.isNotBlank()) {
+                        result.append(" aria-label=\"").append(ariaLabel).append("\"")
+                    }
+                    result.append(">").append(linkText).append("</a>")
+                    
+                    // Add newline after the anchor
+                    result.append("\n")
+                }
+                // All other elements: recurse but don't include the tag itself
+                is Element -> {
+                    val childContent = extractTextWithLinks(node, isRoot = false)
+                    if (childContent.isNotBlank()) {
+                        result.append(childContent)
+                    }
+                }
+            }
+        }
+        
+        // Only trim at the root level to preserve internal newlines
+        return if (isRoot) {
+            result.toString().trim()
+        } else {
+            result.toString()
+        }
+    }
+
+}
+
+

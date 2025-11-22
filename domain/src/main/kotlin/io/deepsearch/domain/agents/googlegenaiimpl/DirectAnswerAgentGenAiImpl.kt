@@ -1,0 +1,110 @@
+package io.deepsearch.domain.agents.googlegenaiimpl
+
+import com.google.genai.types.Content
+import com.google.genai.types.GenerateContentConfig
+import com.google.genai.types.Part
+import com.google.genai.types.Schema
+import com.google.genai.types.ThinkingConfig
+import io.deepsearch.domain.agents.DirectAnswerInput
+import io.deepsearch.domain.agents.DirectAnswerOutput
+import io.deepsearch.domain.agents.IDirectAnswerAgent
+import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.retryLlmCall
+import kotlinx.serialization.Serializable
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+
+/**
+ * Direct answer agent for benchmarking purposes.
+ *
+ * Given a webpage screenshot, HTML content, and a search query, 
+ * produce a direct answer based on the visual and textual content.
+ * This agent is designed for testing and benchmarking scenarios.
+ */
+class DirectAnswerAgentGenAiImpl(
+    private val client: com.google.genai.Client
+) : IDirectAnswerAgent {
+
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    private val outputSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .description("Direct answer to a search query based on webpage content")
+        .properties(
+            mapOf(
+                "answer" to Schema.builder()
+                    .type("STRING")
+                    .description("Direct answer to the search query based on the webpage content")
+                    .build()
+            )
+        )
+        .required(listOf("answer"))
+        .build()
+
+    private val systemInstruction = """
+        You are given a webpage screenshot, HTML content, and a search query. 
+        Your task is to provide a direct, accurate answer to the search query based on the visual and textual content of the webpage.
+        
+        Instructions:
+        - Analyze both the screenshot and HTML content to understand the webpage
+        - Focus on answering the specific search query provided
+        - Provide a clear, direct, and accurate answer
+        - Use specific details from the webpage to support your answer
+        - If the information is not available on the page, state that clearly
+        - Keep the answer concise but comprehensive
+
+        Expected output shape:
+        {
+            "answer": string
+        }
+    """.trimIndent()
+
+    @Serializable
+    private data class DirectAnswerResponse(
+        val answer: String
+    )
+
+    override suspend fun generate(input: DirectAnswerInput): DirectAnswerOutput {
+        logger.debug("Generating direct answer for query: '{}' on URL: {}", 
+            input.searchQuery.query, input.searchQuery.url)
+
+        val userPrompt = """
+            Search Query: ${input.searchQuery.query}
+            URL: ${input.searchQuery.url}
+            
+            HTML Content:
+            ${input.html}
+        """.trimIndent()
+
+        val response = retryLlmCall<DirectAnswerResponse> {
+            val result = client.models.generateContent(
+                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                listOf(
+                    Content.fromParts(
+                        Part.fromBytes(input.screenshotBytes, "image/png"),
+                        Part.fromText(userPrompt)
+                    )
+                ),
+                GenerateContentConfig.builder()
+                    .temperature(0F)
+                    .responseSchema(outputSchema)
+                    .thinkingConfig(
+                        ThinkingConfig.builder()
+                            .thinkingBudget(0)
+                            .build()
+                    )
+                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                    .build()
+            )
+
+            result.checkFinishReason()
+
+            result.text() ?: throw RuntimeException("No text response from model")
+        }
+
+        logger.debug("Direct answer generated: {} chars", response.answer.length)
+        return DirectAnswerOutput(answer = response.answer)
+    }
+}
+
+

@@ -42,7 +42,7 @@ class GoogleCombinedSearchAgentImpl : IGoogleCombinedSearchAgent {
             (
                 """
                 You are a Google search agent. 
-                1. First, use Google Search tool to find the most relevant pages
+                First, use Google Search tool to find the most relevant pages
                 for the user's query and target site. Then use the URL Context tool to fetch those page(s)
                 and answer using ONLY the retrieved content. Provide citations when possible.
                 """

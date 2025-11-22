@@ -1,8 +1,5 @@
-package io.deepsearch.domain.agents.googleadkimpl
+package io.deepsearch.domain.agents.googlegenaiimpl
 
-import com.google.adk.agents.LlmAgent
-import com.google.adk.agents.RunConfig
-import com.google.adk.runner.InMemoryRunner
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
@@ -14,18 +11,15 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
-import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.services.ICssSelectorConstructionService
-import kotlinx.coroutines.reactive.asFlow
-import kotlinx.coroutines.rx3.await
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-class TableIdentificationAgentAdkImpl(
+class TableIdentificationAgentGenAiImpl(
+    private val client: com.google.genai.Client,
     private val cssSelectorConstructionService: ICssSelectorConstructionService
 ) : ITableIdentificationAgent {
 
@@ -60,54 +54,31 @@ class TableIdentificationAgentAdkImpl(
         .required(listOf("tables"))
         .build()
 
-    private val agent: LlmAgent = LlmAgent.builder().run {
-        name("tableIdentificationAgent")
-        description("Identify tables in webpage using cleaned HTML, return their stable IDs")
-        model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
-        outputSchema(outputSchema)
-        disallowTransferToPeers(true)
-        disallowTransferToParent(true)
-        generateContentConfig(
-            GenerateContentConfig.builder()
-                .temperature(0F)
-                .thinkingConfig(
-                    ThinkingConfig.builder()
-                        .thinkingBudget(0)
-                        .build()
-                )
-                .build()
-        )
-        instruction(
-            """
-            Your task is to identify table structures in the provided webpage and return the stable identifiers of their root containers.
+    private val systemInstruction = """
+        Your task is to identify table structures in the provided webpage and return the stable identifiers of their root containers.
 
-            Inputs:
-            - Cleaned HTML structure of the webpage, all possible table containers are injected with data-ds-id attribute 
+        Inputs:
+        - Cleaned HTML structure of the webpage, all possible table containers are injected with data-ds-id attribute 
 
-            Instructions:
-            - Analyze the HTML to identify tables or grid-like structures in the webpage
-            - Always target the root containers instead of individual rows and columns, a typical webpage should have a limited number of tables/grids
-            - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
-            - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
-            - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
-              - The table's description
-              - The column headers
+        Instructions:
+        - Analyze the HTML to identify tables or grid-like structures in the webpage
+        - Always target the root containers instead of individual rows and columns, a typical webpage should have a limited number of tables/grids
+        - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
+        - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
+        - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
+          - The table's description
+          - The column headers
 
-            Expected output shape:
-            {
-                "tables": [
-                    {
-                        "id": "string",
-                        "auxiliaryInfo": "string"
-                    }
-                ]
-            }
-            """.trimIndent()
-        )
-        build()
-    }
-
-    private val runner = InMemoryRunner(agent)
+        Expected output shape:
+        {
+            "tables": [
+                {
+                    "id": "string",
+                    "auxiliaryInfo": "string"
+                }
+            ]
+        }
+    """.trimIndent()
 
     @Serializable
     private data class TableIdentificationResponse(
@@ -131,60 +102,37 @@ class TableIdentificationAgentAdkImpl(
         // Step 2: Inject stable identifiers into jsoup copy
         val htmlWithIds = injectStableIdentifiers(originalHtml, "ds-table")
 
-        // Step 3: Inject bounding boxes into jsoup copy
-//        val htmlWithIdsAndBboxes = injectBoundingBoxes(htmlWithIds, boundingBoxes)
-
         // Programmatic extraction of semantic tables to reduce LLM input
         val (programmaticTables, reducedHtml) = extractSemanticTables(htmlWithIds)
         logger.debug("Programmatically extracted {} semantic tables", programmaticTables.size)
 
-        // Step 4: Clean HTML (after identifier and bbox injection)
+        // Step 3: Clean HTML (after identifier injection)
         val cleanedHtml = cleanHtml(reducedHtml)
 
         if (cleanedHtml.isEmpty()) {
             return TableIdentificationOutput(tables = emptyList())
         }
 
-        // Step 5: Pass to LLM
+        // Step 4: Pass to LLM
         val response = retryLlmCall<TableIdentificationResponse> {
-            val session = runner
-                .sessionService()
-                .createSession(
-                    this::class.simpleName,
-                    this::class.simpleName,
-                    null,
-                    null
-                )
-                .await()
+            val result = client.models.generateContent(
+                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                cleanedHtml,
+                GenerateContentConfig.builder()
+                    .temperature(0F)
+                    .responseSchema(outputSchema)
+                    .thinkingConfig(
+                        ThinkingConfig.builder()
+                            .thinkingBudget(0)
+                            .build()
+                    )
+                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                    .build()
+            )
 
-            var llmResponse = ""
+            result.checkFinishReason()
 
-            val eventsFlow = runner.runAsync(
-                session,
-                Content.fromParts(
-                    Part.fromText(cleanedHtml)
-                ),
-                RunConfig.builder().apply {
-                    setStreamingMode(RunConfig.StreamingMode.NONE)
-                    setMaxLlmCalls(1)
-                }.build()
-            ).asFlow()
-
-            eventsFlow.collect { event ->
-                if (event.finalResponse() && event.content().isPresent) {
-                    val content = event.content().get()
-                    if (content.parts().isPresent
-                        && !content.parts().get().isEmpty()
-                        && content.parts().get()[0].text().isPresent
-                    ) {
-                        if (!event.partial().orElse(false)) {
-                            llmResponse = content.parts().get()[0].text().get()
-                        }
-                    }
-                }
-            }
-
-            llmResponse
+            result.text() ?: throw RuntimeException("No text response from model")
         }
 
         val allTableResults = programmaticTables + response.tables
@@ -193,7 +141,7 @@ class TableIdentificationAgentAdkImpl(
             allTableResults.size, programmaticTables.size, response.tables.size
         )
 
-        // Step 6 & 7: Reconstruct CSS selectors and inject into webpage
+        // Step 5 & 6: Reconstruct CSS selectors and inject into webpage
         val tableIdentifications = allTableResults.mapNotNull { llmResult ->
             convertToTableIdentification(llmResult, htmlWithIds, input)
         }
@@ -206,17 +154,11 @@ class TableIdentificationAgentAdkImpl(
         return TableIdentificationOutput(tables = tableIdentifications)
     }
 
-    /**
-     * Converts an LLM table result (ID + auxiliaryInfo) to a TableIdentification.
-     * Uses the ID to construct a CSS selector, injects the identifier into the actual webpage,
-     * and returns a table identification with a selector that points to the injected identifier.
-     */
     private suspend fun convertToTableIdentification(
         llmResult: LlmTableResult,
         htmlWithIds: String,
         input: TableIdentificationInput
     ): TableIdentification? {
-        // Step 6: Reconstruct CSS selector using identifier
         val cssSelector = cssSelectorConstructionService.constructCssSelectorFromIdentifier(
             identifier = llmResult.id,
             htmlWithIdentifiers = htmlWithIds
@@ -232,30 +174,35 @@ class TableIdentificationAgentAdkImpl(
 
         logger.debug("Constructed CSS selector '{}' for identifier '{}'", cssSelector, llmResult.id)
 
-        // Step 7: Inject identifier into actual webpage
         input.webpage.injectAttributeByCssSelector(cssSelector, "data-ds-id", llmResult.id)
 
-        // Return table identification with selector that matches the injected identifier
         return TableIdentification(
             cssSelector = "[data-ds-id=\"${llmResult.id}\"]",
             auxiliaryInfo = llmResult.auxiliaryInfo
         )
     }
 
+    private fun injectStableIdentifiers(cleanedHtml: String, idPrefix: String): String {
+        val doc: Document = Jsoup.parse(cleanedHtml)
+
+        var idCounter = 0
+        doc.select("table, div, section, article, main, aside, ul, ol, dl").forEach { element ->
+            element.attr("data-ds-id", "$idPrefix-${idCounter++}")
+        }
+
+        return doc.outerHtml()
+    }
+
     private fun extractSemanticTables(htmlWithIds: String): Pair<List<LlmTableResult>, String> {
         val doc = Jsoup.parse(htmlWithIds)
         val tables = mutableListOf<LlmTableResult>()
 
-        // Select ONLY <table> elements with data-ds-id
-        // NOTE: role="table" is intentionally ignored as per user requirement
         val tableElements = doc.select("table[data-ds-id]")
 
         tableElements.forEach { element ->
             val id = element.attr("data-ds-id")
-            // Extract simple auxiliary info (e.g., caption or summary)
             val caption = element.select("caption").text()
             val summary = element.attr("summary")
-            // Use caption or summary or empty string
             val auxiliaryInfo = when {
                 caption.isNotBlank() -> caption
                 summary.isNotBlank() -> summary
@@ -263,7 +210,7 @@ class TableIdentificationAgentAdkImpl(
             }
 
             tables.add(LlmTableResult(id, auxiliaryInfo))
-            element.remove() // Remove from DOM to reduce LLM input
+            element.remove()
         }
 
         return Pair(tables, doc.outerHtml())
@@ -370,129 +317,6 @@ class TableIdentificationAgentAdkImpl(
         )
         return cleanedHtml
     }
-
-    /**
-     * Injects stable identifiers into potential table elements for LLM processing.
-     *
-     * @param cleanedHtml The cleaned HTML (without IDs)
-     * @param idPrefix The prefix for generated IDs (e.g., "ds-table")
-     * @return HTML with injected data-ds-id attributes
-     */
-    private fun injectStableIdentifiers(html: String, prefix: String): String {
-        val doc: Document = Jsoup.parse(html)
-
-        var idCounter = 0
-        doc.select("table, div, section, article, main, aside, ul, ol, dl").forEach { element ->
-            element.attr("data-ds-id", "$prefix-${idCounter++}")
-        }
-
-        return doc.outerHtml()
-    }
-
-    /**
-     * Injects bounding box coordinates into HTML elements.
-     * Each element receives a ds-bounding-box attribute with format "left top right bottom".
-     * Only injects on elements that could potentially be table roots.
-     */
-    private fun injectBoundingBoxes(
-        html: String,
-        boundingBoxes: Map<String, IBrowserPage.BoundingBox>
-    ): String {
-        if (boundingBoxes.isEmpty()) {
-            return html
-        }
-
-        try {
-            // Parse the HTML
-            val doc = Jsoup.parse(html)
-            doc.outputSettings().prettyPrint(false)
-
-            // The body should be the root
-            val root = doc.body()
-
-            // Pre-compile regex for performance
-            val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
-            
-            // Tags relevant for table identification (potential table root containers)
-            // Includes semantic table elements and common container elements used for CSS-based tables
-            val relevantTags = setOf("table", "div", "section", "article", "main", "aside", "ul", "ol", "dl")
-
-            for ((xpath, bbox) in boundingBoxes) {
-                val width = bbox.right - bbox.left
-                val height = bbox.bottom - bbox.top
-
-                // If the element truly has 0 0 0 0 bounding box (or 0 size), do not inject as it has no meaning
-                if (width <= 0.0 && height <= 0.0) {
-                    continue
-                }
-
-                val bboxValue = "${bbox.left.toInt()} ${bbox.top.toInt()} ${bbox.right.toInt()} ${bbox.bottom.toInt()}"
-
-                // XPath format: ./tagname[index]/tagname[index]/...
-                val element = findElementByRelativeXPath(root, xpath, xpathRegex)
-                
-                // Only inject bounding boxes on elements that could be table roots
-                if (element != null && element.tagName() in relevantTags) {
-                    element.attr("ds-bounding-box", bboxValue)
-                }
-            }
-
-            // Return the full HTML
-            return doc.outerHtml()
-        } catch (e: Exception) {
-            logger.warn("Failed to inject bounding boxes: {}", e.message)
-            return html
-        }
-    }
-
-    /**
-     * Find an element using a relative XPath expression starting from a root element.
-     * XPath format: ./tagname[index]/tagname[index]/... or "." for the root itself
-     */
-    private fun findElementByRelativeXPath(
-        root: org.jsoup.nodes.Element,
-        xpath: String,
-        regex: Regex
-    ): org.jsoup.nodes.Element? {
-        if (xpath == ".") {
-            return root
-        }
-
-        if (!xpath.startsWith("./")) {
-            return null
-        }
-
-        val parts = xpath.substring(2).split("/")
-        var current = root
-
-        for (part in parts) {
-            // Parse "tagname[index]"
-            val match = regex.find(part) ?: return null
-            val tagName = match.groupValues[1]
-            val index = match.groupValues[2].toInt()
-
-            // Find the nth child with the matching tag name (1-based index)
-            // Optimize: traverse children manually to avoid creating new lists
-            var count = 0
-            var found: org.jsoup.nodes.Element? = null
-
-            val children = current.children()
-            for (child in children) {
-                if (child.tagName().equals(tagName, ignoreCase = true)) {
-                    count++
-                    if (count == index) {
-                        found = child
-                        break
-                    }
-                }
-            }
-
-            if (found == null) {
-                return null
-            }
-            current = found
-        }
-
-        return current
-    }
 }
+
+
