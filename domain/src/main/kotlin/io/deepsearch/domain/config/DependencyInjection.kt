@@ -1,9 +1,7 @@
 package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.*
-import io.deepsearch.domain.agents.googleadkimpl.*
-import io.deepsearch.domain.agents.googleadkimpl.AnswerReviewerAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
+import io.deepsearch.domain.agents.googlegenaiimpl.*
 import io.deepsearch.domain.browser.BrowserRuntimePool
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
@@ -22,7 +20,6 @@ import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
-import io.deepsearch.domain.services.VertexAiTextEmbeddingServiceImpl
 import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -39,27 +36,29 @@ val domainModule = module {
     singleOf(::TesseractPoolImpl) { createdAtStart() } bind ITesseractPool::class
 
     requestScope {
-        // domain agents (request scoped)
-        scopedOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
-        scopedOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class
-        scopedOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
-        scopedOf(::GoogleSearchLinkDiscoveryAgentAdkImpl) bind IGoogleSearchLinkDiscoveryAgent::class
-        scopedOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
-        scopedOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
-        scopedOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
-        scopedOf(::QueryBreakdownAgentAdkImpl) bind IQueryBreakdownAgent::class
-        scopedOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
-        scopedOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
-        scopedOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
-        scopedOf(::MultiIconInterpreterAgentAdkImpl) bind IMultiIconInterpreterAgent::class
-        scopedOf(::MultiImageTextExtractionAgentAdkImpl) bind IMultiImageTextExtractionAgent::class
-        scopedOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
-        scopedOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
-        scopedOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
-        scopedOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
-        scopedOf(::StreamingAnswerAgentAdkImpl) bind IStreamingAnswerAgent::class
-        scopedOf(::AnswerReviewerAgentAdkImpl) bind IAnswerReviewerAgent::class
-        scopedOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
+        // domain agents (request scoped) - now using GenAI SDK implementations
+        scopedOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
+        scopedOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
+        scopedOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class
+        scopedOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
+        scopedOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class
+        scopedOf(::GoogleCombinedSearchAgentGenAiImpl) bind IGoogleCombinedSearchAgent::class
+        scopedOf(::GoogleSearchLinkDiscoveryAgentGenAiImpl) bind IGoogleSearchLinkDiscoveryAgent::class
+        scopedOf(::GoogleTextSearchAgentGenAiImpl) bind IGoogleTextSearchAgent::class
+        scopedOf(::GoogleUrlContextSearchAgentGenAiImpl) bind IGoogleUrlContextSearchAgent::class
+        scopedOf(::IconInterpreterAgentGenAiImpl) bind IIconInterpreterAgent::class
+        scopedOf(::LinkRelevanceAnalysisAgentGenAiImpl) bind ILinkRelevanceAnalysisAgent::class
+        scopedOf(::MarkdownConversionAgentGenAiImpl) bind IMarkdownConversionAgent::class
+        scopedOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
+        scopedOf(::MultiImageTextExtractionAgentGenAiImpl) bind IMultiImageTextExtractionAgent::class
+        scopedOf(::PdfToMarkdownAgentGenAiImpl) bind IPdfToMarkdownAgent::class
+        scopedOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
+        scopedOf(::QueryBreakdownAgentGenAiImpl) bind IQueryBreakdownAgent::class
+        scopedOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
+        scopedOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
+        scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
+        scopedOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
+        scopedOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
 
         // domain services
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
@@ -68,15 +67,6 @@ val domainModule = module {
         scopedOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
         scopedOf(::SerperService) bind ISerperService::class
         scopedOf(::NormalizeUrlService) bind INormalizeUrlService::class
-        
-        // Text embedding service - environment-based selection
-        scoped<ITextEmbeddingService> {
-            val environmentConfig = get<EnvironmentConfig>()
-            if (environmentConfig.isDevelopmentMode) {
-                GeminiTextEmbeddingServiceImpl(get())
-            } else {
-                VertexAiTextEmbeddingServiceImpl(get())
-            }
-        }
+        scopedOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
     }
 }

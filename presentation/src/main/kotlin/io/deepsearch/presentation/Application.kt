@@ -2,16 +2,15 @@ package io.deepsearch.presentation
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
+import com.google.genai.Client
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.EnvironmentConfig
-import io.deepsearch.domain.config.GeminiApiConfig
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.config.OAuthConfig
 import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.domain.config.GoogleOAuthConfig
-import io.deepsearch.domain.config.VertexAiConfig
 import io.deepsearch.presentation.config.presentationModule
 import io.deepsearch.presentation.routes.*
 import io.ktor.client.*
@@ -133,15 +132,17 @@ private fun Application.configureDependencyInjection() {
                     )
                 }
                 single {
-                    GeminiApiConfig(
-                        apiKey = environment.config.property("gemini.apiKey").getString()
-                    )
-                }
-                single {
-                    VertexAiConfig(
-                        projectId = environment.config.property("vertexai.projectId").getString(),
-                        location = environment.config.property("vertexai.location").getString()
-                    )
+                    if (environment.config.property("ktor.development").getString().toBoolean()) {
+                        Client.builder()
+                            .apiKey(environment.config.property("gemini.apiKey").getString())
+                            .build()
+                    } else {
+                        Client.builder()
+                            .project(environment.config.property("vertexai.projectId").getString())
+                            .location(environment.config.property("vertexai.location").getString())
+                            .vertexAI(true)
+                            .build()
+                    }
                 }
                 single {
                     PostgresConfig(

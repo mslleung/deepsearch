@@ -2,7 +2,6 @@ package io.deepsearch.domain.services
 
 import com.google.genai.Client
 import com.google.genai.types.EmbedContentConfig
-import io.deepsearch.domain.config.GeminiApiConfig
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -17,16 +16,10 @@ import kotlin.math.sqrt
  * suitable for development environments.
  */
 class GeminiTextEmbeddingServiceImpl(
-    private val geminiApiConfig: GeminiApiConfig
+    private val client: Client
 ) : ITextEmbeddingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    
-    private val client: Client by lazy {
-        Client.builder()
-            .apiKey(geminiApiConfig.apiKey)
-            .build()
-    }
 
     override suspend fun embedDocuments(texts: List<String>): List<List<Float>> {
         if (texts.isEmpty()) {

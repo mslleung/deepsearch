@@ -1,47 +1,8 @@
 package io.deepsearch.domain.config
 
-import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
-import io.deepsearch.domain.agents.IAnswerReviewerAgent
-import io.deepsearch.domain.agents.IBlinkTestAgent
-import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
-import io.deepsearch.domain.agents.IMultiImageTextExtractionAgent
-import io.deepsearch.domain.agents.IGoogleTextSearchAgent
-import io.deepsearch.domain.agents.IGoogleSearchLinkDiscoveryAgent
-import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
-import io.deepsearch.domain.agents.IDirectAnswerAgent
-import io.deepsearch.domain.agents.IGenerateAnswerAgent
-import io.deepsearch.domain.agents.IStreamingAnswerAgent
-import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
-import io.deepsearch.domain.agents.IMarkdownConversionAgent
-import io.deepsearch.domain.agents.IMultiIconInterpreterAgent
-import io.deepsearch.domain.agents.IPdfToMarkdownAgent
-import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
-import io.deepsearch.domain.agents.IQueryExpansionAgent
-import io.deepsearch.domain.agents.IQueryBreakdownAgent
-import io.deepsearch.domain.agents.ISemanticIdentificationAgent
-import io.deepsearch.domain.agents.ITableIdentificationAgent
-import io.deepsearch.domain.agents.ITableInterpretationAgent
-import io.deepsearch.domain.agents.googleadkimpl.AggregateSearchResultsAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.AnswerReviewerAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.BlinkTestAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.GoogleCombinedSearchAgentImpl
-import io.deepsearch.domain.agents.googleadkimpl.MultiImageTextExtractionAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.GoogleTextSearchAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.GoogleSearchLinkDiscoveryAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.GoogleUrlContextSearchAgentImpl
-import io.deepsearch.domain.agents.googleadkimpl.DirectAnswerAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.GenerateAnswerAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.StreamingAnswerAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.LinkRelevanceAnalysisAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.MarkdownConversionAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.MultiIconInterpreterAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.PdfToMarkdownAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.PopupContainerIdentificationAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.QueryExpansionAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.QueryBreakdownAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.SemanticIdentificationAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.TableIdentificationAgentAdkImpl
-import io.deepsearch.domain.agents.googleadkimpl.TableInterpretationAgentAdkImpl
+import com.google.genai.Client
+import io.deepsearch.domain.agents.*
+import io.deepsearch.domain.agents.googlegenaiimpl.*
 import io.deepsearch.domain.browser.BrowserRuntimePool
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
@@ -75,9 +36,10 @@ private val domainCommonTestModule = module {
         )
     }
     single {
-        GeminiApiConfig(
-            apiKey = System.getenv("GOOGLE_API_KEY")?.ifBlank { "test-gemini-api-key" } ?: "test-gemini-api-key"
-        )
+        val apiKey = System.getenv("GOOGLE_API_KEY")?.ifBlank { "test-gemini-api-key" } ?: "test-gemini-api-key"
+        Client.builder()
+            .apiKey(apiKey)
+            .build()
     }
     single {
         EnvironmentConfig(
@@ -86,32 +48,33 @@ private val domainCommonTestModule = module {
     }
 
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
-    
+
     singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) bind ITesseractPool::class
 
-    // Google ADK agent has its own lifecycle management, so we make it singleton
-    singleOf(::AggregateSearchResultsAgentAdkImpl) bind IAggregateSearchResultsAgent::class
-    singleOf(::BlinkTestAgentAdkImpl) bind IBlinkTestAgent::class
-    singleOf(::GoogleTextSearchAgentAdkImpl) bind IGoogleTextSearchAgent::class
-    singleOf(::GoogleSearchLinkDiscoveryAgentAdkImpl) bind IGoogleSearchLinkDiscoveryAgent::class
-    singleOf(::GoogleUrlContextSearchAgentImpl) bind IGoogleUrlContextSearchAgent::class
-    singleOf(::GoogleCombinedSearchAgentImpl) bind IGoogleCombinedSearchAgent::class
-    singleOf(::QueryExpansionAgentAdkImpl) bind IQueryExpansionAgent::class
-    singleOf(::QueryBreakdownAgentAdkImpl) bind IQueryBreakdownAgent::class
-    singleOf(::TableIdentificationAgentAdkImpl) bind ITableIdentificationAgent::class
-    singleOf(::TableInterpretationAgentAdkImpl) bind ITableInterpretationAgent::class
-    singleOf(::PopupContainerIdentificationAgentAdkImpl) bind IPopupContainerIdentificationAgent::class
-    singleOf(::SemanticIdentificationAgentAdkImpl) bind ISemanticIdentificationAgent::class
-    singleOf(::MultiImageTextExtractionAgentAdkImpl) bind IMultiImageTextExtractionAgent::class
-    singleOf(::DirectAnswerAgentAdkImpl) bind IDirectAnswerAgent::class
-    singleOf(::GenerateAnswerAgentAdkImpl) bind IGenerateAnswerAgent::class
-    singleOf(::StreamingAnswerAgentAdkImpl) bind IStreamingAnswerAgent::class
-    singleOf(::AnswerReviewerAgentAdkImpl) bind IAnswerReviewerAgent::class
-    singleOf(::MarkdownConversionAgentAdkImpl) bind IMarkdownConversionAgent::class
-    singleOf(::LinkRelevanceAnalysisAgentAdkImpl) bind ILinkRelevanceAnalysisAgent::class
-    singleOf(::PdfToMarkdownAgentAdkImpl) bind IPdfToMarkdownAgent::class
-    singleOf(::MultiIconInterpreterAgentAdkImpl) bind IMultiIconInterpreterAgent::class
+    // GenAI agents as singletons for tests
+    singleOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
+    singleOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
+    singleOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class
+    singleOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
+    singleOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class
+    singleOf(::GoogleCombinedSearchAgentGenAiImpl) bind IGoogleCombinedSearchAgent::class
+    singleOf(::GoogleSearchLinkDiscoveryAgentGenAiImpl) bind IGoogleSearchLinkDiscoveryAgent::class
+    singleOf(::GoogleTextSearchAgentGenAiImpl) bind IGoogleTextSearchAgent::class
+    singleOf(::GoogleUrlContextSearchAgentGenAiImpl) bind IGoogleUrlContextSearchAgent::class
+    singleOf(::IconInterpreterAgentGenAiImpl) bind IIconInterpreterAgent::class
+    singleOf(::LinkRelevanceAnalysisAgentGenAiImpl) bind ILinkRelevanceAnalysisAgent::class
+    singleOf(::MarkdownConversionAgentGenAiImpl) bind IMarkdownConversionAgent::class
+    singleOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
+    singleOf(::MultiImageTextExtractionAgentGenAiImpl) bind IMultiImageTextExtractionAgent::class
+    singleOf(::PdfToMarkdownAgentGenAiImpl) bind IPdfToMarkdownAgent::class
+    singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
+    singleOf(::QueryBreakdownAgentGenAiImpl) bind IQueryBreakdownAgent::class
+    singleOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
+    singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
+    singleOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
+    singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
+    singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
 
     // domain services
     singleOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
