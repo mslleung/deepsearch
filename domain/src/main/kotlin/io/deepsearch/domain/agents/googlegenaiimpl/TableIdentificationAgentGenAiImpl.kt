@@ -117,10 +117,11 @@ class TableIdentificationAgentGenAiImpl(
         val response = retryLlmCall<TableIdentificationResponse> {
             val result = client.models.generateContent(
                 ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
-                cleanedHtml,
+                listOf(Content.fromParts(Part.fromText(cleanedHtml))),
                 GenerateContentConfig.builder()
                     .temperature(0F)
                     .responseSchema(outputSchema)
+                    .responseMimeType("application/json")
                     .thinkingConfig(
                         ThinkingConfig.builder()
                             .thinkingBudget(0)

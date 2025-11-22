@@ -104,6 +104,7 @@ class QueryExpansionAgentGenAiImpl(
                 GenerateContentConfig.builder()
                     .temperature(0.2F)
                     .responseSchema(queryExpansionOutputSchema)
+                    .responseMimeType("application/json")
                     .thinkingConfig(
                         ThinkingConfig.builder()
                             .thinkingBudget(0)

@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
+import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
@@ -29,6 +30,33 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 ) : ILinkRelevanceAnalysisAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    private val relevantLinkSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .description("A relevant link with URL and reasoning")
+        .properties(
+            mapOf(
+                "url" to Schema.builder().type("STRING")
+                    .description("The absolute URL of the relevant link")
+                    .build(),
+                "reason" to Schema.builder().type("STRING")
+                    .description("Brief explanation of why this link is relevant to the query")
+                    .build()
+            )
+        )
+        .build()
+
+    private val outputSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .description("Collection of relevant links identified from the webpage")
+        .properties(
+            mapOf(
+                "links" to Schema.builder().type("ARRAY").items(relevantLinkSchema)
+                    .description("List of all relevant links found in the webpage")
+                    .build()
+            )
+        )
+        .build()
 
     @Serializable
     private data class RelevantLinkJson(
@@ -83,6 +111,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     userPrompt,
                     GenerateContentConfig.builder()
                         .temperature(0.2F)
+                        .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()

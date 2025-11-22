@@ -79,6 +79,7 @@ class BlinkTestAgentGenAiImpl(
                 GenerateContentConfig.builder()
                     .temperature(0.1F)
                     .responseSchema(outputSchema)
+                    .responseMimeType("application/json")
                     .thinkingConfig(
                         ThinkingConfig.builder()
                             .thinkingBudget(0)

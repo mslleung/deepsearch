@@ -116,6 +116,7 @@ class StreamingAnswerAgentGenAiImpl(
                 GenerateContentConfig.builder()
                     .temperature(0F)
                     .responseSchema(outputSchema)
+                    .responseMimeType("application/json")
                     .thinkingConfig(
                         ThinkingConfig.builder()
                             .thinkingBudget(0)
