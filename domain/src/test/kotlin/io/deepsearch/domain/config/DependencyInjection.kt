@@ -20,7 +20,7 @@ import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
 import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.domain.services.JwtService
-import io.deepsearch.domain.services.NoOpLlmTokenUsageService
+import io.deepsearch.domain.services.LlmTokenUsageService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
 import kotlinx.coroutines.CoroutineDispatcher
@@ -82,7 +82,7 @@ private val domainCommonTestModule = module {
     singleOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
     singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
     singleOf(::JwtService) bind IJwtService::class
-    singleOf(::NoOpLlmTokenUsageService) bind ILlmTokenUsageService::class
+    singleOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::SerperService) bind ISerperService::class
     singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
