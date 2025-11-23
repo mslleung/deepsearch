@@ -2,6 +2,7 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 data class DirectAnswerInput(
     val screenshotBytes: ByteArray,
@@ -10,7 +11,8 @@ data class DirectAnswerInput(
 ) : IAgent.IAgentInput
 
 data class DirectAnswerOutput(
-    val answer: String
+    val answer: String,
+    val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
 interface IDirectAnswerAgent : IAgent<DirectAnswerInput, DirectAnswerOutput> {

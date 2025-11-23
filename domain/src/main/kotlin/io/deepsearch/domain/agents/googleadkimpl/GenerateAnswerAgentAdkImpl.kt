@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -141,7 +143,8 @@ class GenerateAnswerAgentAdkImpl : IGenerateAnswerAgent {
         }
 
         logger.debug("Generated answer: {} chars", response.answer.length)
-        return GenerateAnswerOutput(answer = response.answer)
+        return GenerateAnswerOutput(answer = response.answer,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
     }
 }
 

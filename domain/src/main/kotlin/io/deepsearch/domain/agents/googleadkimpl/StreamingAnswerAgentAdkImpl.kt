@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -112,7 +114,8 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
             logger.warn("Empty markdown batch received, returning current answer or empty")
             return StreamingAnswerOutput(
                 updatedAnswer = input.currentAnswer ?: ""
-            )
+            ,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
         }
 
         return processBatch(input.query, input.currentAnswer, input.markdownBatch)
@@ -188,7 +191,8 @@ class StreamingAnswerAgentAdkImpl : IStreamingAnswerAgent {
         
         return StreamingAnswerOutput(
             updatedAnswer = response.answer
-        )
+        ,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
     }
 }
 

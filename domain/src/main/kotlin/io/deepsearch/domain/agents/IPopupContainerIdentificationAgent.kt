@@ -2,6 +2,8 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 
 data class PopupContainerIdentificationInput(
@@ -12,7 +14,8 @@ data class PopupContainerIdentificationInput(
 
 @Serializable
 data class PopupContainerIdentificationOutput(
-    val popupContainerXPaths: List<String>
+    val popupContainerXPaths: List<String>,
+    @Contextual val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
 interface IPopupContainerIdentificationAgent : IAgent<PopupContainerIdentificationInput, PopupContainerIdentificationOutput> {

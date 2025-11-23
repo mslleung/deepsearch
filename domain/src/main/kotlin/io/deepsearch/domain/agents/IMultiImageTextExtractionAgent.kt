@@ -2,6 +2,7 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 /**
  * Input for multi-image text extraction.
@@ -22,7 +23,8 @@ data class MultiImageTextExtractionInput(
  * The order of extractions matches the order of images in the input.
  */
 data class MultiImageTextExtractionOutput(
-    val extractions: List<TextExtraction>
+    val extractions: List<TextExtraction>,
+    val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput {
     data class TextExtraction(
         val extractedText: String?

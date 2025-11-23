@@ -2,6 +2,7 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 data class BlinkTestInput(
     val searchQuery: SearchQuery,
@@ -10,7 +11,8 @@ data class BlinkTestInput(
 
 data class BlinkTestOutput(
     val decision: IBlinkTestAgent.Decision,
-    val rationale: String
+    val rationale: String,
+    val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
 interface IBlinkTestAgent :

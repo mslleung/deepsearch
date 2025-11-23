@@ -10,6 +10,7 @@ import io.deepsearch.domain.agents.GenerateAnswerOutput
 import io.deepsearch.domain.agents.IGenerateAnswerAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -74,9 +75,12 @@ class GenerateAnswerAgentGenAiImpl(
             ${input.markdowns}
         """.trimIndent()
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+        
         val response = retryLlmCall<GenerateAnswerResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 userPrompt,
                 GenerateContentConfig.builder()
                     .temperature(0F)
@@ -92,12 +96,25 @@ class GenerateAnswerAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage from result
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
         logger.debug("Generated answer: {} chars", response.answer.length)
-        return GenerateAnswerOutput(answer = response.answer)
+        return GenerateAnswerOutput(
+            answer = response.answer,
+            tokenUsage = tokenUsage
+        )
     }
 }
 

@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.services.ICssSelectorConstructionService
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -109,14 +110,21 @@ class TableIdentificationAgentGenAiImpl(
         // Step 3: Clean HTML (after identifier injection)
         val cleanedHtml = cleanHtml(reducedHtml)
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+        
         if (cleanedHtml.isEmpty()) {
-            return TableIdentificationOutput(tables = emptyList())
+            return TableIdentificationOutput(
+                tables = emptyList(),
+                tokenUsage = tokenUsage
+            )
         }
 
         // Step 4: Pass to LLM
+        
         val response = retryLlmCall<TableIdentificationResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 listOf(Content.fromParts(Part.fromText(cleanedHtml))),
                 GenerateContentConfig.builder()
                     .temperature(0F)
@@ -132,6 +140,16 @@ class TableIdentificationAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: throw RuntimeException("No text response from model")
         }
@@ -152,7 +170,10 @@ class TableIdentificationAgentGenAiImpl(
             tableIdentifications.size
         )
 
-        return TableIdentificationOutput(tables = tableIdentifications)
+        return TableIdentificationOutput(
+            tables = tableIdentifications,
+            tokenUsage = tokenUsage
+        )
     }
 
     private suspend fun convertToTableIdentification(

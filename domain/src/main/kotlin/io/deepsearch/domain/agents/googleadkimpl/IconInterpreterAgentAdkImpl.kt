@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -101,7 +103,8 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
         // Skip LLM invocation to save cost/latency and return a null label instead.
         if (isPlainColourIcon(input.bytes, input.mimeType)) {
             logger.debug("Detected plain-colour icon; returning null label")
-            return IconInterpreterOutput(label = null)
+            return IconInterpreterOutput(label = null,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
         }
 
         val response = retryLlmCall<IconInterpretationResponse> {
@@ -150,10 +153,12 @@ class IconInterpreterAgentAdkImpl : IIconInterpreterAgent {
 
             val formattedLabel = formatIconLabel(response.label)
 
-            return IconInterpreterOutput(label = formattedLabel)
+            return IconInterpreterOutput(label = formattedLabel,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
         } else {
             logger.debug("Icon cannot be interpreted ({} bytes)", input.bytes.size)
-            return IconInterpreterOutput(label = null)
+            return IconInterpreterOutput(label = null,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
         }
     }
 

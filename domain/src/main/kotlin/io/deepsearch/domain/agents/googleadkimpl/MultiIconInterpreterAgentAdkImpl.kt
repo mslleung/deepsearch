@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -132,7 +134,10 @@ class MultiIconInterpreterAgentAdkImpl : IMultiIconInterpreterAgent {
         logger.debug("Interpreting {} icons (will process in batches of {})", input.icons.size, BATCH_SIZE)
 
         if (input.icons.isEmpty()) {
-            return MultiIconInterpreterOutput(interpretations = emptyList())
+            return MultiIconInterpreterOutput(
+                interpretations = emptyList(),
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+            )
         }
 
         // Split icons into batches of BATCH_SIZE and process in parallel
@@ -161,7 +166,10 @@ class MultiIconInterpreterAgentAdkImpl : IMultiIconInterpreterAgent {
 
         // Combine results from all batches in order
         val allInterpretations = batchResults.flatMap { it.interpretations }
-        MultiIconInterpreterOutput(interpretations = allInterpretations)
+        MultiIconInterpreterOutput(
+            interpretations = allInterpretations,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+        )
     }
 
     /**
@@ -188,7 +196,8 @@ class MultiIconInterpreterAgentAdkImpl : IMultiIconInterpreterAgent {
             return MultiIconInterpreterOutput(
                 interpretations = icons.map {
                     MultiIconInterpreterOutput.IconInterpretation(label = null)
-                }
+                },
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
             )
         }
 
@@ -272,7 +281,10 @@ class MultiIconInterpreterAgentAdkImpl : IMultiIconInterpreterAgent {
             MultiIconInterpreterOutput.IconInterpretation(label = label)
         }
 
-        return MultiIconInterpreterOutput(interpretations = interpretations)
+        return MultiIconInterpreterOutput(
+            interpretations = interpretations,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+        )
     }
 
     /**

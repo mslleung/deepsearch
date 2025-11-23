@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -142,7 +144,10 @@ class TableIdentificationAgentAdkImpl(
         val cleanedHtml = cleanHtml(reducedHtml)
 
         if (cleanedHtml.isEmpty()) {
-            return TableIdentificationOutput(tables = emptyList())
+            return TableIdentificationOutput(
+                tables = emptyList(),
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+            )
         }
 
         // Step 5: Pass to LLM
@@ -203,7 +208,8 @@ class TableIdentificationAgentAdkImpl(
             tableIdentifications.size
         )
 
-        return TableIdentificationOutput(tables = tableIdentifications)
+        return TableIdentificationOutput(tables = tableIdentifications,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
     }
 
     /**

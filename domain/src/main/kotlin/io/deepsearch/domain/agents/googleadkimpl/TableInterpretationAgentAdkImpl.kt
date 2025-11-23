@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -190,7 +192,8 @@ class TableInterpretationAgentAdkImpl : ITableInterpretationAgent {
             appendLine("**End of table**")
         }
 
-        return TableInterpretationOutput(markdown = finalMarkdown)
+        return TableInterpretationOutput(markdown = finalMarkdown,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
     }
 
     /**

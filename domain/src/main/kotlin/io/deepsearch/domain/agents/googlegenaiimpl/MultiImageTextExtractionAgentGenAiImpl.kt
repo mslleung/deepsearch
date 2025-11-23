@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.MultiImageTextExtractionOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -150,14 +151,21 @@ class MultiImageTextExtractionAgentGenAiImpl(
     override suspend fun generate(input: MultiImageTextExtractionInput): MultiImageTextExtractionOutput {
         logger.debug("Extracting text from {} images (will process in batches of {})", input.images.size, BATCH_SIZE)
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
+
         if (input.images.isEmpty()) {
-            return MultiImageTextExtractionOutput(extractions = emptyList())
+            return MultiImageTextExtractionOutput(
+                extractions = emptyList(),
+                tokenUsage = emptyTokenUsage
+            )
         }
 
         // Split images into batches of BATCH_SIZE and process in parallel
         return if (input.images.size <= BATCH_SIZE) {
             // Single batch - process directly
-            processBatch(input.images)
+            val (output, tokenUsage) = processBatch(input.images)
+            output.copy(tokenUsage = tokenUsage)
         } else {
             // Multiple batches - process in parallel
             processInParallelBatches(input.images)
@@ -180,15 +188,31 @@ class MultiImageTextExtractionAgentGenAiImpl(
             }.awaitAll()
 
             // Combine results from all batches in order
-            val allExtractions = batchResults.flatMap { it.extractions }
-            MultiImageTextExtractionOutput(extractions = allExtractions)
+            val allExtractions = batchResults.flatMap { it.first.extractions }
+            val aggregatedTokenUsage = batchResults.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
+                TokenUsageMetrics(
+                    modelName = acc.modelName,
+                    promptTokens = acc.promptTokens + tokenUsage.promptTokens,
+                    outputTokens = acc.outputTokens + tokenUsage.outputTokens,
+                    totalTokens = acc.totalTokens + tokenUsage.totalTokens
+                )
+            }
+            
+            MultiImageTextExtractionOutput(
+                extractions = allExtractions,
+                tokenUsage = aggregatedTokenUsage
+            )
         }
 
     /**
      * Process a single batch of images (up to BATCH_SIZE).
+     * Returns a Pair of (output, tokenUsage) for aggregation.
      */
-    private suspend fun processBatch(images: List<MultiImageTextExtractionInput.ImageItem>): MultiImageTextExtractionOutput {
+    private suspend fun processBatch(images: List<MultiImageTextExtractionInput.ImageItem>): Pair<MultiImageTextExtractionOutput, TokenUsageMetrics> {
         logger.debug("Processing batch of {} images", images.size)
+
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Pre-filter oversized images to avoid LLM processing
         val oversizedPositions = mutableSetOf<Int>()
@@ -211,8 +235,9 @@ class MultiImageTextExtractionAgentGenAiImpl(
             return MultiImageTextExtractionOutput(
                 extractions = images.map {
                     MultiImageTextExtractionOutput.TextExtraction(extractedText = "")
-                }
-            )
+                },
+                tokenUsage = tokenUsage
+            ) to tokenUsage
         }
 
         // Build content with all images
@@ -229,7 +254,7 @@ class MultiImageTextExtractionAgentGenAiImpl(
 
         val response = retryLlmCall<MultiImageTextExtractionResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 listOf(Content.fromParts(*(contentParts.toTypedArray()))),
                 GenerateContentConfig.builder()
                     .temperature(0.0F)
@@ -246,6 +271,16 @@ class MultiImageTextExtractionAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: throw RuntimeException("No text response from model")
         }
@@ -283,7 +318,10 @@ class MultiImageTextExtractionAgentGenAiImpl(
             MultiImageTextExtractionOutput.TextExtraction(extractedText = extractedText)
         }
 
-        return MultiImageTextExtractionOutput(extractions = extractions)
+        return MultiImageTextExtractionOutput(
+            extractions = extractions,
+            tokenUsage = tokenUsage
+        ) to tokenUsage
     }
 
     /**

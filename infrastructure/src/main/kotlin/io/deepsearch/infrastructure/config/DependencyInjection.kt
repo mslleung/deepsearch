@@ -38,6 +38,7 @@ val infrastructureModule = module {
     singleOf(::UrlAccessTable)
     singleOf(::PrecacheJobTable)
     singleOf(::SitemapCacheTable)
+    singleOf(::LlmTokenUsageTable)
 
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
@@ -55,5 +56,6 @@ val infrastructureModule = module {
         scopedOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
         scopedOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
         scopedOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
+        scopedOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
     }
 }

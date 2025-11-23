@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -146,7 +148,10 @@ class MarkdownConversionAgentAdkImpl : IMarkdownConversionAgent {
         }
         
         logger.debug("Markdown conversion completed: {} characters", response.markdown.length)
-        return MarkdownConversionOutput(markdown = response.markdown.trim())
+        return MarkdownConversionOutput(
+            markdown = response.markdown.trim(),
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+        )
     }
 
     /**

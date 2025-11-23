@@ -2,6 +2,7 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 
 data class TableIdentificationInput(
@@ -15,7 +16,8 @@ data class TableIdentification(
 )
 
 data class TableIdentificationOutput(
-    val tables: List<TableIdentification>
+    val tables: List<TableIdentification>,
+    val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
 interface ITableIdentificationAgent : IAgent<TableIdentificationInput, TableIdentificationOutput> {

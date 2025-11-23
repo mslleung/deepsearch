@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.PdfToMarkdownInput
 import io.deepsearch.domain.agents.PdfToMarkdownOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.future.await
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
@@ -93,10 +94,13 @@ class PdfToMarkdownAgentGenAiImpl(
         
         val textPart = Part.fromText("Convert this PDF document to markdown format, preserving structure, headings, tables, and formatting.")
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+        
         val response = try {
             retryLlmCall<PdfToMarkdownResponse> {
                 val result = client.models.generateContent(
-                    ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                    modelId,
                     listOf(Content.fromParts(pdfPart, textPart)),
                     GenerateContentConfig.builder()
                         .temperature(0F)
@@ -112,6 +116,16 @@ class PdfToMarkdownAgentGenAiImpl(
                 )
 
                 result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
 
                 result.text() ?: throw RuntimeException("No text response from model")
             }
@@ -122,7 +136,10 @@ class PdfToMarkdownAgentGenAiImpl(
         }
 
         logger.debug("Converted PDF to markdown: {} chars", response.markdown.length)
-        return PdfToMarkdownOutput(markdown = response.markdown)
+        return PdfToMarkdownOutput(
+            markdown = response.markdown,
+            tokenUsage = tokenUsage
+        )
     }
     
     /**

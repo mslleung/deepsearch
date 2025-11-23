@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.ext.toSafeUri
 import io.deepsearch.domain.models.valueobjects.LinkSource
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
@@ -104,10 +105,13 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
             appendLine(cleanedHtml)
         }
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+        
         val links = try {
             val response = retryLlmCall<LinkAnalysisResponse> {
                 val result = client.models.generateContent(
-                    ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                    modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
                         .temperature(0.2F)
@@ -123,6 +127,16 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                 )
 
                 result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
 
                 result.text() ?: throw RuntimeException("No text response from model")
             }
@@ -154,7 +168,10 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
         logger.debug("Link relevance analysis found {} relevant links", links.size)
 
-        return LinkRelevanceAnalysisOutput(links)
+        return LinkRelevanceAnalysisOutput(
+            links = links,
+            tokenUsage = tokenUsage
+        )
     }
 
     /**

@@ -1,6 +1,7 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 data class GenerateAnswerInput(
     val query: String,
@@ -8,7 +9,8 @@ data class GenerateAnswerInput(
 ) : IAgent.IAgentInput
 
 data class GenerateAnswerOutput(
-    val answer: String
+    val answer: String,
+    val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
 interface IGenerateAnswerAgent : IAgent<GenerateAnswerInput, GenerateAnswerOutput> {

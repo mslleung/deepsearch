@@ -2,13 +2,18 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 data class GoogleUrlContextSearchInput(
     val query: String,
     val urls: List<String>
 ) : IAgent.IAgentInput
 
-data class GoogleUrlContextSearchOutput(val content: String, val sources: List<String>) : IAgent.IAgentOutput
+data class GoogleUrlContextSearchOutput(
+    val content: String,
+    val sources: List<String>,
+    val tokenUsage: TokenUsageMetrics
+) : IAgent.IAgentOutput
 
 interface IGoogleUrlContextSearchAgent :
     IAgent<GoogleUrlContextSearchInput, GoogleUrlContextSearchOutput> {

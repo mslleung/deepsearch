@@ -2,6 +2,7 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 /**
  * Input for multi-icon interpretation.
@@ -22,7 +23,8 @@ data class MultiIconInterpreterInput(
  * The order of interpretations matches the order of icons in the input.
  */
 data class MultiIconInterpreterOutput(
-    val interpretations: List<IconInterpretation>
+    val interpretations: List<IconInterpretation>,
+    val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput {
     data class IconInterpretation(
         val label: String?

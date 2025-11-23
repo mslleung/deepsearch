@@ -10,6 +10,7 @@ import io.deepsearch.domain.agents.QueryExpansionAgentOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -97,9 +98,12 @@ class QueryExpansionAgentGenAiImpl(
     override suspend fun generate(input: io.deepsearch.domain.agents.QueryExpansionAgentInput): io.deepsearch.domain.agents.QueryExpansionAgentOutput {
         logger.debug("Expand query: {}", input.searchQuery)
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+
         val response = retryLlmCall<QueryExpansionResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 input.searchQuery.query,
                 GenerateContentConfig.builder()
                     .temperature(0.2F)
@@ -115,6 +119,16 @@ class QueryExpansionAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: throw RuntimeException("No text response from model")
         }
@@ -123,7 +137,10 @@ class QueryExpansionAgentGenAiImpl(
 
         logger.debug("Expanded queries: {}", expandedQueries)
 
-        return QueryExpansionAgentOutput(expandedQueries = expandedQueries)
+        return QueryExpansionAgentOutput(
+            expandedQueries = expandedQueries,
+            tokenUsage = tokenUsage
+        )
     }
 
     @Serializable

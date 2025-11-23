@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.MultiIconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -106,14 +107,21 @@ class MultiIconInterpreterAgentGenAiImpl(
     override suspend fun generate(input: MultiIconInterpreterInput): MultiIconInterpreterOutput {
         logger.debug("Interpreting {} icons (will process in batches of {})", input.icons.size, BATCH_SIZE)
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
+
         if (input.icons.isEmpty()) {
-            return MultiIconInterpreterOutput(interpretations = emptyList())
+            return MultiIconInterpreterOutput(
+                interpretations = emptyList(),
+                tokenUsage = emptyTokenUsage
+            )
         }
 
         // Split icons into batches of BATCH_SIZE and process in parallel
         return if (input.icons.size <= BATCH_SIZE) {
             // Single batch - process directly
-            processBatch(input.icons)
+            val (output, tokenUsage) = processBatch(input.icons)
+            output.copy(tokenUsage = tokenUsage)
         } else {
             // Multiple batches - process in parallel
             processInParallelBatches(input.icons)
@@ -136,15 +144,31 @@ class MultiIconInterpreterAgentGenAiImpl(
             }.awaitAll()
 
             // Combine results from all batches in order
-            val allInterpretations = batchResults.flatMap { it.interpretations }
-            MultiIconInterpreterOutput(interpretations = allInterpretations)
+            val allInterpretations = batchResults.flatMap { it.first.interpretations }
+            val aggregatedTokenUsage = batchResults.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
+                TokenUsageMetrics(
+                    modelName = acc.modelName,
+                    promptTokens = acc.promptTokens + tokenUsage.promptTokens,
+                    outputTokens = acc.outputTokens + tokenUsage.outputTokens,
+                    totalTokens = acc.totalTokens + tokenUsage.totalTokens
+                )
+            }
+            
+            MultiIconInterpreterOutput(
+                interpretations = allInterpretations,
+                tokenUsage = aggregatedTokenUsage
+            )
         }
 
     /**
      * Process a single batch of icons (up to BATCH_SIZE).
+     * Returns a Pair of (output, tokenUsage) for aggregation.
      */
-    private suspend fun processBatch(icons: List<MultiIconInterpreterInput.IconItem>): MultiIconInterpreterOutput {
+    private suspend fun processBatch(icons: List<MultiIconInterpreterInput.IconItem>): Pair<MultiIconInterpreterOutput, TokenUsageMetrics> {
         logger.debug("Processing batch of {} icons", icons.size)
+
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Pre-filter plain color icons to reduce LLM usage
         val plainColorPositions = mutableSetOf<Int>()
@@ -162,8 +186,9 @@ class MultiIconInterpreterAgentGenAiImpl(
             return MultiIconInterpreterOutput(
                 interpretations = icons.map {
                     MultiIconInterpreterOutput.IconInterpretation(label = null)
-                }
-            )
+                },
+                tokenUsage = tokenUsage
+            ) to tokenUsage
         }
 
         // Build content with all non-plain-color icons
@@ -180,7 +205,7 @@ class MultiIconInterpreterAgentGenAiImpl(
 
         val response = retryLlmCall<MultiIconInterpretationResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 listOf(Content.fromParts(*(contentParts.toTypedArray()))),
                 GenerateContentConfig.builder()
                     .temperature(0.0F)
@@ -196,6 +221,16 @@ class MultiIconInterpreterAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: throw RuntimeException("No text response from model")
         }
@@ -212,7 +247,10 @@ class MultiIconInterpreterAgentGenAiImpl(
             MultiIconInterpreterOutput.IconInterpretation(label = label)
         }
 
-        return MultiIconInterpreterOutput(interpretations = interpretations)
+        return MultiIconInterpreterOutput(
+            interpretations = interpretations,
+            tokenUsage = tokenUsage
+        ) to tokenUsage
     }
 
     /**

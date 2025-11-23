@@ -3,10 +3,16 @@ package io.deepsearch.domain.agents
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
-data class GoogleTextSearchInput(val searchQuery: SearchQuery) : IAgent.IAgentInput
+data class GoogleTextSearchInput(
+    val searchQuery: SearchQuery
+) : IAgent.IAgentInput
 
-data class GoogleTextSearchOutput(val searchResult: SearchResult) : IAgent.IAgentOutput
+data class GoogleTextSearchOutput(
+    val searchResult: SearchResult,
+    val tokenUsage: TokenUsageMetrics
+) : IAgent.IAgentOutput
 
 interface IGoogleTextSearchAgent :
     IAgent<GoogleTextSearchInput, GoogleTextSearchOutput> {

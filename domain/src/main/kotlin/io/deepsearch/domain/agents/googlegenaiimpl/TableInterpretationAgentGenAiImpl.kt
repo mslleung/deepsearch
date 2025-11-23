@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.TableInterpretationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
 import org.slf4j.Logger
@@ -113,9 +114,12 @@ class TableInterpretationAgentGenAiImpl(
             appendLine(cleanedHtml)
         }
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+
         val response = retryLlmCall<TableInterpretationResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 userPrompt,
                 GenerateContentConfig.builder()
                     .temperature(0F)
@@ -131,12 +135,25 @@ class TableInterpretationAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
         logger.debug("Table interpretation complete: {} chars", response.markdown.length)
-        return TableInterpretationOutput(markdown = response.markdown)
+        return TableInterpretationOutput(
+            markdown = response.markdown,
+            tokenUsage = tokenUsage
+        )
     }
 
     private fun injectBoundingBoxes(html: String, boundingBoxes: Map<String, IBrowserPage.BoundingBox>): String {

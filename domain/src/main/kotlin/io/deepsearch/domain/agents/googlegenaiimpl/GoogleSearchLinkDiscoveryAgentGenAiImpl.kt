@@ -10,6 +10,7 @@ import io.deepsearch.domain.agents.GoogleSearchLinkDiscoveryOutput
 import io.deepsearch.domain.agents.IGoogleSearchLinkDiscoveryAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.LinkSource
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
@@ -58,9 +59,11 @@ class GoogleSearchLinkDiscoveryAgentGenAiImpl(
         logger.debug("Google search link discovery: '{}' on site {}", query, url)
 
         val userPrompt = "$query $url"
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = client.models.generateContent(
-            ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            modelId,
             userPrompt,
             GenerateContentConfig.builder()
                 .temperature(0.2F)
@@ -73,12 +76,25 @@ class GoogleSearchLinkDiscoveryAgentGenAiImpl(
                 .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                 .build()
         )
+        
+        // Extract token usage
+        response.usageMetadata().ifPresent { metadata ->
+            tokenUsage = TokenUsageMetrics(
+                modelName = modelId,
+                promptTokens = metadata.promptTokenCount().orElse(0),
+                outputTokens = metadata.candidatesTokenCount().orElse(0),
+                totalTokens = metadata.totalTokenCount().orElse(0)
+            )
+        }
 
         val groundingMetadata = response.candidates().orElse(listOf()).firstOrNull()?.groundingMetadata()
 
         if (groundingMetadata == null) {
             logger.warn("No grounding metadata in response")
-            return GoogleSearchLinkDiscoveryOutput(links = emptyList())
+            return GoogleSearchLinkDiscoveryOutput(
+                links = emptyList(),
+                tokenUsage = tokenUsage
+            )
         }
 
         // Collect all grounding chunk URIs and resolve redirects in parallel
@@ -147,7 +163,10 @@ class GoogleSearchLinkDiscoveryAgentGenAiImpl(
 
         logger.debug("Google search link discovery found {} links", links.size)
 
-        return GoogleSearchLinkDiscoveryOutput(links = links)
+        return GoogleSearchLinkDiscoveryOutput(
+            links = links,
+            tokenUsage = tokenUsage
+        )
     }
 
     private suspend fun resolveRedirectSafely(url: String): String {

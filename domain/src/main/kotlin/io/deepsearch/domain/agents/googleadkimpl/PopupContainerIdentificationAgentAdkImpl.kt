@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -142,7 +144,8 @@ class PopupContainerIdentificationAgentAdkImpl : IPopupContainerIdentificationAg
             .filter { it.isNotBlank() }
             .map { normalizeXPath(it) }
 
-        return PopupContainerIdentificationOutput(popupContainerXPaths = validXPaths)
+        return PopupContainerIdentificationOutput(popupContainerXPaths = validXPaths,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
     }
 
     /**

@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -171,7 +173,8 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
             aggregated.answer.length,
             aggregated.sources.size
         )
-        return AggregateSearchResultsOutput(aggregatedResult = aggregated)
+        return AggregateSearchResultsOutput(aggregatedResult = aggregated,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
     }
 
     @Serializable

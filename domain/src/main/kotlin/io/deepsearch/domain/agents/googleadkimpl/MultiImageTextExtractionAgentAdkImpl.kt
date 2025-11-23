@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -178,7 +180,10 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
         logger.debug("Extracting text from {} images (will process in batches of {})", input.images.size, BATCH_SIZE)
 
         if (input.images.isEmpty()) {
-            return MultiImageTextExtractionOutput(extractions = emptyList())
+            return MultiImageTextExtractionOutput(
+                extractions = emptyList(),
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+            )
         }
 
         // Split images into batches of BATCH_SIZE and process in parallel
@@ -208,7 +213,10 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
 
             // Combine results from all batches in order
             val allExtractions = batchResults.flatMap { it.extractions }
-            MultiImageTextExtractionOutput(extractions = allExtractions)
+            MultiImageTextExtractionOutput(
+                extractions = allExtractions,
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+            )
         }
 
     /**
@@ -239,7 +247,8 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
             return MultiImageTextExtractionOutput(
                 extractions = images.map {
                     MultiImageTextExtractionOutput.TextExtraction(extractedText = "")
-                }
+                },
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
             )
         }
 
@@ -327,7 +336,10 @@ class MultiImageTextExtractionAgentAdkImpl : IMultiImageTextExtractionAgent {
             MultiImageTextExtractionOutput.TextExtraction(extractedText = extractedText)
         }
 
-        return MultiImageTextExtractionOutput(extractions = extractions)
+        return MultiImageTextExtractionOutput(
+            extractions = extractions,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+        )
     }
 
     /**

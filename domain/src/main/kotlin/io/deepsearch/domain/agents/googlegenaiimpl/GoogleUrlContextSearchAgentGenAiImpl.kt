@@ -7,6 +7,7 @@ import com.google.genai.types.Tool
 import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -48,8 +49,11 @@ class GoogleUrlContextSearchAgentGenAiImpl(
             appendLine("$query ${urls.joinToString(" ")}")
         }
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+
         val response = client.models.generateContent(
-            ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            modelId,
             userPrompt,
             GenerateContentConfig.builder()
                 .temperature(0.2F)
@@ -57,11 +61,25 @@ class GoogleUrlContextSearchAgentGenAiImpl(
                 .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                 .build()
         )
+        
+        // Extract token usage
+        response.usageMetadata().ifPresent { metadata ->
+            tokenUsage = TokenUsageMetrics(
+                modelName = modelId,
+                promptTokens = metadata.promptTokenCount().orElse(0),
+                outputTokens = metadata.candidatesTokenCount().orElse(0),
+                totalTokens = metadata.totalTokenCount().orElse(0)
+            )
+        }
 
         val llmResponse = response.text() ?: ""
 
         logger.debug("URL-context search results: '{}' from {} source(s)", llmResponse, urls.size)
 
-        return io.deepsearch.domain.agents.GoogleUrlContextSearchOutput(llmResponse, urls)
+        return io.deepsearch.domain.agents.GoogleUrlContextSearchOutput(
+            content = llmResponse,
+            sources = urls,
+            tokenUsage = tokenUsage
+        )
     }
 }

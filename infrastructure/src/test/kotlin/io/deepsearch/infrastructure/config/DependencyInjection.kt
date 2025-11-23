@@ -51,6 +51,7 @@ private val infrastructureCommonTestModule = module {
     singleOf(::UrlAccessTable)
     singleOf(::PrecacheJobTable)
     singleOf(::SitemapCacheTable)
+    singleOf(::LlmTokenUsageTable)
     
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -66,6 +67,7 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
     singleOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
     singleOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
+    singleOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
 }
 
 val infrastructureTestModule = module {

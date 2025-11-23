@@ -14,6 +14,7 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.valueobjects.IdentifiedElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.services.ICssSelectorConstructionService
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -134,16 +135,21 @@ class SemanticIdentificationAgentGenAiImpl(
         // Step 3: Clean HTML (after identifier injection)
         val cleanedHtml = cleanHtml(htmlWithIds)
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+        
         if (cleanedHtml.isEmpty()) {
             return SemanticIdentificationOutput(
-                elements = SemanticElements()
+                elements = SemanticElements(),
+                tokenUsage = tokenUsage
             )
         }
 
         // Step 4: Pass to LLM
+        
         val response = retryLlmCall<SemanticIdentificationResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 cleanedHtml,
                 GenerateContentConfig.builder()
                     .temperature(0F)
@@ -159,6 +165,16 @@ class SemanticIdentificationAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: throw RuntimeException("No text response from model")
         }
@@ -210,7 +226,10 @@ class SemanticIdentificationAgentGenAiImpl(
             semanticElements.popups.size
         )
 
-        return SemanticIdentificationOutput(elements = semanticElements)
+        return SemanticIdentificationOutput(
+            elements = semanticElements,
+            tokenUsage = tokenUsage
+        )
     }
 
     /**

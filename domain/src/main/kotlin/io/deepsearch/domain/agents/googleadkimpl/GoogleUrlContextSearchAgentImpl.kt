@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -100,6 +102,10 @@ class GoogleUrlContextSearchAgentImpl : IGoogleUrlContextSearchAgent {
 
         logger.debug("URL-context search results: '{}' from {} source(s)", llmResponse, urls.size)
 
-        return io.deepsearch.domain.agents.GoogleUrlContextSearchOutput(llmResponse, urls)
+        return io.deepsearch.domain.agents.GoogleUrlContextSearchOutput(
+            content = llmResponse,
+            sources = urls,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+        )
     }
 }

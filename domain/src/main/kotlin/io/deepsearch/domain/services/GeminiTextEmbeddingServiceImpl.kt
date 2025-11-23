@@ -16,12 +16,13 @@ import kotlin.math.sqrt
  * suitable for development environments.
  */
 class GeminiTextEmbeddingServiceImpl(
-    private val client: Client
+    private val client: Client,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : ITextEmbeddingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun embedDocuments(texts: List<String>): List<List<Float>> {
+    override suspend fun embedDocuments(texts: List<String>, sessionId: String?): List<List<Float>> {
         if (texts.isEmpty()) {
             return emptyList()
         }
@@ -35,7 +36,8 @@ class GeminiTextEmbeddingServiceImpl(
                     async {
                         embedSingleText(
                             text = text,
-                            taskType = "RETRIEVAL_DOCUMENT"
+                            taskType = "RETRIEVAL_DOCUMENT",
+                            sessionId = sessionId
                         )
                     }
                 }.awaitAll()
@@ -46,13 +48,14 @@ class GeminiTextEmbeddingServiceImpl(
         }
     }
 
-    override suspend fun embedQuery(text: String): List<Float> {
+    override suspend fun embedQuery(text: String, sessionId: String?): List<Float> {
         logger.debug("Embedding query with Gemini API")
 
         return try {
             embedSingleText(
                 text = text,
-                taskType = "RETRIEVAL_QUERY"
+                taskType = "RETRIEVAL_QUERY",
+                sessionId = sessionId
             )
         } catch (e: Exception) {
             logger.error("Error generating query embedding: ${e.message}", e)
@@ -63,14 +66,27 @@ class GeminiTextEmbeddingServiceImpl(
     /**
      * Embed a single text using the Gemini API via REST.
      */
-    private suspend fun embedSingleText(text: String, taskType: String): List<Float> {
+    private suspend fun embedSingleText(text: String, taskType: String, sessionId: String?): List<Float> {
         // Use the SDK's REST embedContent method with proper configuration
         val config = EmbedContentConfig.builder()
             .taskType(taskType)
             .outputDimensionality(1536)
             .build()
 
-        val response = client.models.embedContent("gemini-embedding-001", text, config)
+        val modelName = "gemini-embedding-001"
+        val response = client.models.embedContent(modelName, text, config)
+
+        // Extract and record token usage (note: embedding responses may not have full usageMetadata)
+        // The token count is typically just the input tokens
+        val tokenCount = text.split("\\s+".toRegex()).size // Rough estimate
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "GeminiTextEmbeddingService",
+            modelName = modelName,
+            promptTokens = tokenCount,
+            outputTokens = 0, // Embeddings don't have output tokens
+            totalTokens = tokenCount
+        )
 
         logger.debug("Successfully generated embedding for task type {}", taskType)
 

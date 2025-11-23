@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.IconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -73,14 +74,20 @@ class IconInterpreterAgentGenAiImpl(
 
         // Plain colour icons carry no semantic meaning (they are just uniform background blocks).
         // Catch these early to reduce token usage.
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+        
         if (isPlainColorIcon(input.bytes, input.mimeType)) {
             logger.debug("Icon is a plain color image, skipping LLM interpretation")
-            return IconInterpreterOutput(label = null)
+            return IconInterpreterOutput(
+                label = null,
+                tokenUsage = tokenUsage
+            )
         }
-
+        
         val response = retryLlmCall<IconInterpretationResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 listOf(Content.fromParts(Part.fromBytes(input.bytes, input.mimeType.value))),
                 GenerateContentConfig.builder()
                     .temperature(0.0F)
@@ -96,13 +103,26 @@ class IconInterpreterAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
         logger.debug("Icon interpretation complete: label='{}'", response.label)
 
-        return IconInterpreterOutput(label = response.label)
+        return IconInterpreterOutput(
+            label = response.label,
+            tokenUsage = tokenUsage
+        )
     }
 
     /**

@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.events.Event
@@ -112,7 +114,10 @@ class GoogleCombinedSearchAgentImpl : IGoogleCombinedSearchAgent {
 
         logger.debug("Combined search results: '{}'", contentText)
 
-        return io.deepsearch.domain.agents.GoogleCombinedSearchOutput(searchResult)
+        return io.deepsearch.domain.agents.GoogleCombinedSearchOutput(
+            searchResult = searchResult,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+        )
     }
 }
 

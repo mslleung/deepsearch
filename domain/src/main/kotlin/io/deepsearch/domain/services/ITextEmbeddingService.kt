@@ -15,9 +15,10 @@ interface ITextEmbeddingService {
      * the embeddings for being retrieved by search queries.
      *
      * @param texts List of text strings to embed
+     * @param sessionId Optional query session ID for tracking token usage
      * @return List of embeddings, where each embedding is a list of 1536 float values
      */
-    suspend fun embedDocuments(texts: List<String>): List<List<Float>>
+    suspend fun embedDocuments(texts: List<String>, sessionId: String? = null): List<List<Float>>
 
     /**
      * Generate an embedding for a search query.
@@ -27,8 +28,9 @@ interface ITextEmbeddingService {
      * which optimizes the embedding for finding semantically similar documents.
      *
      * @param text The query text to embed
+     * @param sessionId Optional query session ID for tracking token usage
      * @return An embedding as a list of 1536 float values
      */
-    suspend fun embedQuery(text: String): List<Float>
+    suspend fun embedQuery(text: String, sessionId: String? = null): List<Float>
 }
 

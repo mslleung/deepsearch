@@ -1,6 +1,7 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 
 data class LinkRelevanceAnalysisInput(
@@ -9,7 +10,10 @@ data class LinkRelevanceAnalysisInput(
     val url: String
 ) : IAgent.IAgentInput
 
-data class LinkRelevanceAnalysisOutput(val links: List<WebpageLink>) : IAgent.IAgentOutput
+data class LinkRelevanceAnalysisOutput(
+    val links: List<WebpageLink>,
+    val tokenUsage: TokenUsageMetrics
+) : IAgent.IAgentOutput
 
 interface ILinkRelevanceAnalysisAgent :
     IAgent<LinkRelevanceAnalysisInput, LinkRelevanceAnalysisOutput> {

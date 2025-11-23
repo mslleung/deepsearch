@@ -14,10 +14,12 @@ import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IJwtService
+import io.deepsearch.domain.services.ILlmTokenUsageService
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
 import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.domain.services.JwtService
+import io.deepsearch.domain.services.LlmTokenUsageService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
 import org.koin.core.module.dsl.createdAtStart
@@ -34,6 +36,9 @@ val domainModule = module {
     // OCR services
     singleOf(::BrowserRuntimePool) { createdAtStart() } bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) { createdAtStart() } bind ITesseractPool::class
+    
+    // LLM token usage tracking
+    singleOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
 
     requestScope {
         // domain agents (request scoped) - now using GenAI SDK implementations

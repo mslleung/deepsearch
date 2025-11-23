@@ -1,5 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
 import com.google.adk.runner.InMemoryRunner
@@ -170,7 +172,8 @@ class QueryBreakdownAgentAdkImpl : IQueryBreakdownAgent {
 
         logger.debug("Breakdown points: {}", response.requirements)
 
-        return QueryBreakdownAgentOutput(breakdownPoints = response.requirements)
+        return QueryBreakdownAgentOutput(breakdownPoints = response.requirements,
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId))
     }
 
     @Serializable

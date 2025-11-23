@@ -9,6 +9,7 @@ import io.deepsearch.domain.agents.GoogleTextSearchOutput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.request.*
@@ -58,8 +59,11 @@ class GoogleTextSearchAgentGenAiImpl(
             appendLine("$query $url")
         }
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+
         val response = client.models.generateContent(
-            ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            modelId,
             userPrompt,
             GenerateContentConfig.builder()
                 .temperature(0.2F)
@@ -67,6 +71,16 @@ class GoogleTextSearchAgentGenAiImpl(
                 .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                 .build()
         )
+        
+        // Extract token usage
+        response.usageMetadata().ifPresent { metadata ->
+            tokenUsage = TokenUsageMetrics(
+                modelName = modelId,
+                promptTokens = metadata.promptTokenCount().orElse(0),
+                outputTokens = metadata.candidatesTokenCount().orElse(0),
+                totalTokens = metadata.totalTokenCount().orElse(0)
+            )
+        }
 
         // Extract grounding metadata
         val groundingMetadata = response.candidates().orElse(listOf()).firstOrNull()?.groundingMetadata()
@@ -74,12 +88,13 @@ class GoogleTextSearchAgentGenAiImpl(
         if (groundingMetadata == null) {
             logger.warn("No grounding metadata found in response")
             return GoogleTextSearchOutput(
-                SearchResult(
+                searchResult = SearchResult(
                     originalQuery = input.searchQuery,
                     answer = "",
                     content = "",
                     sources = emptyList()
-                )
+                ),
+                tokenUsage = tokenUsage
             )
         }
 
@@ -136,7 +151,10 @@ class GoogleTextSearchAgentGenAiImpl(
 
         logger.debug("Google text search results: '{}' from sources {}", concatenatedText, sources)
 
-        return GoogleTextSearchOutput(searchResult)
+        return GoogleTextSearchOutput(
+            searchResult = searchResult,
+            tokenUsage = tokenUsage
+        )
     }
 
     private suspend fun resolveRedirectSafely(url: String): String {

@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
@@ -104,9 +105,12 @@ class AggregateSearchResultsAgentGenAiImpl(
             appendLine(Json.encodeToString(jsonResults))
         }
 
+        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+        
         val response = retryLlmCall<AggregateSearchResultsResponse> {
             val result = client.models.generateContent(
-                ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId,
                 userPrompt,
                 GenerateContentConfig.builder()
                     .temperature(0F)
@@ -122,6 +126,16 @@ class AggregateSearchResultsAgentGenAiImpl(
             )
 
             result.checkFinishReason()
+            
+            // Extract token usage
+            result.usageMetadata().ifPresent { metadata ->
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = metadata.promptTokenCount().orElse(0),
+                    outputTokens = metadata.candidatesTokenCount().orElse(0),
+                    totalTokens = metadata.totalTokenCount().orElse(0)
+                )
+            }
 
             result.text() ?: run {
                 throw RuntimeException("No text response from model")
@@ -147,7 +161,10 @@ class AggregateSearchResultsAgentGenAiImpl(
             aggregated.sources.size
         )
 
-        return AggregateSearchResultsOutput(aggregatedResult = aggregated)
+        return AggregateSearchResultsOutput(
+            aggregatedResult = aggregated,
+            tokenUsage = tokenUsage
+        )
     }
 }
 
