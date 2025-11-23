@@ -39,7 +39,7 @@ import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.ILlmTokenUsageService
 import io.deepsearch.application.services.IUrlProcessingLockRegistry
 import io.deepsearch.application.services.ISitemapLinkDiscoveryLockRegistry
-import io.deepsearch.application.services.LlmTokenUsageService
+import io.deepsearch.application.services.TestLlmTokenUsageService
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.application.services.PrecacheJobRegistry
 import io.deepsearch.application.services.QuerySessionService
@@ -90,7 +90,7 @@ private val applicationCommonTestModule = module {
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class
     singleOf(::TransactionService) bind ITransactionService::class
-    singleOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
+    singleOf(::TestLlmTokenUsageService) bind ILlmTokenUsageService::class
 }
 
 val applicationTestModule = module {
