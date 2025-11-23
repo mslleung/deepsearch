@@ -29,7 +29,7 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
         val url = "https://www.example.com/"
 
         // When
-        val events = urlContentProcessingService.processUrlAsFlow(url).toList()
+        val events = urlContentProcessingService.processUrlAsFlow(url, sessionId = "test-session-id").toList()
 
         // Then
         assertTrue(events.isNotEmpty(), "Should emit at least one event")
@@ -61,7 +61,7 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
         val query = "What is this page about?"
 
         // When
-        val events = urlContentProcessingService.processUrlAsFlow(url, query).toList()
+        val events = urlContentProcessingService.processUrlAsFlow(url, query, sessionId = "test-session-id").toList()
 
         // Then
         assertTrue(events.size >= 2, "Should emit at least two events")
