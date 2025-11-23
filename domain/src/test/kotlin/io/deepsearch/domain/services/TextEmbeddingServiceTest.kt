@@ -33,14 +33,15 @@ class TextEmbeddingServiceTest : KoinTest {
         )
 
         // When
-        val embeddings = textEmbeddingService.embedDocuments(documents)
+        val result = textEmbeddingService.embedDocuments(documents)
 
         // Then
-        assertEquals(3, embeddings.size, "Should generate 3 embeddings")
-        embeddings.forEach { embedding ->
+        assertEquals(3, result.embeddings.size, "Should generate 3 embeddings")
+        result.embeddings.forEach { embedding ->
             assertEquals(1536, embedding.size, "Each embedding should have 1536 dimensions")
             assertTrue(embedding.any { it != 0f }, "Embedding should contain non-zero values")
         }
+        assertTrue(result.tokenUsage.totalTokens > 0, "Should have token usage")
     }
 
     @Test
@@ -49,11 +50,12 @@ class TextEmbeddingServiceTest : KoinTest {
         val query = "What is machine learning?"
 
         // When
-        val embedding = textEmbeddingService.embedQuery(query)
+        val result = textEmbeddingService.embedQuery(query)
 
         // Then
-        assertEquals(1536, embedding.size, "Embedding should have 1536 dimensions")
-        assertTrue(embedding.any { it != 0f }, "Embedding should contain non-zero values")
+        assertEquals(1536, result.embedding.size, "Embedding should have 1536 dimensions")
+        assertTrue(result.embedding.any { it != 0f }, "Embedding should contain non-zero values")
+        assertTrue(result.tokenUsage.totalTokens > 0, "Should have token usage")
     }
 
     @Test
@@ -62,10 +64,10 @@ class TextEmbeddingServiceTest : KoinTest {
         val documents = emptyList<String>()
 
         // When
-        val embeddings = textEmbeddingService.embedDocuments(documents)
+        val result = textEmbeddingService.embedDocuments(documents)
 
         // Then
-        assertEquals(0, embeddings.size, "Should return empty list for empty input")
+        assertEquals(0, result.embeddings.size, "Should return empty list for empty input")
     }
 
     @Test
@@ -78,11 +80,11 @@ class TextEmbeddingServiceTest : KoinTest {
         )
 
         // When
-        val embeddings = textEmbeddingService.embedDocuments(documents)
+        val result = textEmbeddingService.embedDocuments(documents)
 
         // Then
-        val similarityCatFeline = cosineSimilarity(embeddings[0], embeddings[1])
-        val similarityCatPython = cosineSimilarity(embeddings[0], embeddings[2])
+        val similarityCatFeline = cosineSimilarity(result.embeddings[0], result.embeddings[1])
+        val similarityCatPython = cosineSimilarity(result.embeddings[0], result.embeddings[2])
 
         assertTrue(
             similarityCatFeline > similarityCatPython,
@@ -97,15 +99,15 @@ class TextEmbeddingServiceTest : KoinTest {
         val text = "What is artificial intelligence?"
 
         // When
-        val queryEmbedding = textEmbeddingService.embedQuery(text)
-        val documentEmbeddings = textEmbeddingService.embedDocuments(listOf(text))
-        val documentEmbedding = documentEmbeddings[0]
+        val queryResult = textEmbeddingService.embedQuery(text)
+        val documentResult = textEmbeddingService.embedDocuments(listOf(text))
+        val documentEmbedding = documentResult.embeddings[0]
 
         // Then
         // They should be different because they use different task types
         // (RETRIEVAL_QUERY vs RETRIEVAL_DOCUMENT)
-        val areDifferent = queryEmbedding.indices.any { i ->
-            queryEmbedding[i] != documentEmbedding[i]
+        val areDifferent = queryResult.embedding.indices.any { i ->
+            queryResult.embedding[i] != documentEmbedding[i]
         }
         assertTrue(areDifferent, "Query and document embeddings should differ due to different task types")
     }

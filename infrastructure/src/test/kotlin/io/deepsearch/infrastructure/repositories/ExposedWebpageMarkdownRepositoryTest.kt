@@ -39,7 +39,8 @@ class ExposedWebpageMarkdownRepositoryTest : KoinTest {
         val markdown3 = "Rust is a systems programming language focused on safety, speed, and concurrency without garbage collection."
         
         // Generate real embeddings for the documents
-        val embeddings = textEmbeddingService.embedDocuments(listOf(markdown1, markdown2, markdown3))
+        val embeddingResult = textEmbeddingService.embedDocuments(listOf(markdown1, markdown2, markdown3))
+        val embeddings = embeddingResult.embeddings
         
         // Insert test webpages with searchable content and real embeddings
         val webpage1 = WebpageMarkdown(
@@ -84,12 +85,12 @@ class ExposedWebpageMarkdownRepositoryTest : KoinTest {
         webpageMarkdownRepository.upsert(webpage3)
         
         // Generate real embedding for the search query
-        val queryEmbedding = textEmbeddingService.embedQuery("Kotlin programming language")
+        val queryEmbeddingResult = textEmbeddingService.embedQuery("Kotlin programming language")
         
         // Perform hybrid search for "Kotlin"
         val searchResults = webpageMarkdownRepository.searchHybrid(
             textQuery = "Kotlin",
-            queryEmbedding = queryEmbedding,
+            queryEmbedding = queryEmbeddingResult.embedding,
             urlPrefix = urlPrefix,
             minUpdatedAtEpochMs = null,
             limit = 10

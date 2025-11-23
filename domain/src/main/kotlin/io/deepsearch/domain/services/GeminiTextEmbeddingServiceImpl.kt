@@ -2,6 +2,7 @@ package io.deepsearch.domain.services
 
 import com.google.genai.Client
 import com.google.genai.types.EmbedContentConfig
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -16,46 +17,71 @@ import kotlin.math.sqrt
  * suitable for development environments.
  */
 class GeminiTextEmbeddingServiceImpl(
-    private val client: Client,
-    private val tokenUsageService: ILlmTokenUsageService
+    private val client: Client
 ) : ITextEmbeddingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+    private val modelName = "gemini-embedding-001"
 
-    override suspend fun embedDocuments(texts: List<String>, sessionId: String?): List<List<Float>> {
+    override suspend fun embedDocuments(texts: List<String>): EmbeddingResult {
         if (texts.isEmpty()) {
-            return emptyList()
+            return EmbeddingResult(
+                embeddings = emptyList(),
+                tokenUsage = TokenUsageMetrics.empty(modelName)
+            )
         }
 
         logger.debug("Embedding {} documents with Gemini API", texts.size)
 
         return try {
+            var totalTokens = 0
+            
             // Process each document individually (not using batch API)
-            coroutineScope {
+            val embeddings = coroutineScope {
                 texts.map { text ->
                     async {
-                        embedSingleText(
+                        val (embedding, tokens) = embedSingleText(
                             text = text,
-                            taskType = "RETRIEVAL_DOCUMENT",
-                            sessionId = sessionId
+                            taskType = "RETRIEVAL_DOCUMENT"
                         )
+                        totalTokens += tokens
+                        embedding
                     }
                 }.awaitAll()
             }
+            
+            EmbeddingResult(
+                embeddings = embeddings,
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelName,
+                    promptTokens = totalTokens,
+                    outputTokens = 0, // Embeddings don't have output tokens
+                    totalTokens = totalTokens
+                )
+            )
         } catch (e: Exception) {
             logger.error("Error generating document embeddings: ${e.message}", e)
             throw e
         }
     }
 
-    override suspend fun embedQuery(text: String, sessionId: String?): List<Float> {
+    override suspend fun embedQuery(text: String): QueryEmbeddingResult {
         logger.debug("Embedding query with Gemini API")
 
         return try {
-            embedSingleText(
+            val (embedding, tokenCount) = embedSingleText(
                 text = text,
-                taskType = "RETRIEVAL_QUERY",
-                sessionId = sessionId
+                taskType = "RETRIEVAL_QUERY"
+            )
+            
+            QueryEmbeddingResult(
+                embedding = embedding,
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelName,
+                    promptTokens = tokenCount,
+                    outputTokens = 0, // Embeddings don't have output tokens
+                    totalTokens = tokenCount
+                )
             )
         } catch (e: Exception) {
             logger.error("Error generating query embedding: ${e.message}", e)
@@ -65,28 +91,20 @@ class GeminiTextEmbeddingServiceImpl(
 
     /**
      * Embed a single text using the Gemini API via REST.
+     * Returns pair of (embedding, tokenCount)
      */
-    private suspend fun embedSingleText(text: String, taskType: String, sessionId: String?): List<Float> {
+    private suspend fun embedSingleText(text: String, taskType: String): Pair<List<Float>, Int> {
         // Use the SDK's REST embedContent method with proper configuration
         val config = EmbedContentConfig.builder()
             .taskType(taskType)
             .outputDimensionality(1536)
             .build()
 
-        val modelName = "gemini-embedding-001"
         val response = client.models.embedContent(modelName, text, config)
 
-        // Extract and record token usage (note: embedding responses may not have full usageMetadata)
+        // Estimate token count (embedding responses may not have full usageMetadata)
         // The token count is typically just the input tokens
         val tokenCount = text.split("\\s+".toRegex()).size // Rough estimate
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "GeminiTextEmbeddingService",
-            modelName = modelName,
-            promptTokens = tokenCount,
-            outputTokens = 0, // Embeddings don't have output tokens
-            totalTokens = tokenCount
-        )
 
         logger.debug("Successfully generated embedding for task type {}", taskType)
 
@@ -108,7 +126,7 @@ class GeminiTextEmbeddingServiceImpl(
         
         // Normalize the embedding for dimensions other than 3072
         // See: https://ai.google.dev/gemini-api/docs/embeddings#quality-for-smaller-dimensions
-        return normalizeEmbedding(embedding)
+        return Pair(normalizeEmbedding(embedding), tokenCount)
     }
 
     /**

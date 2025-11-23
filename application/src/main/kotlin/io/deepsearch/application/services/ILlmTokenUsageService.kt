@@ -1,4 +1,4 @@
-package io.deepsearch.domain.services
+package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.LlmTokenUsage
 import io.deepsearch.domain.repositories.ILlmTokenUsageRepository

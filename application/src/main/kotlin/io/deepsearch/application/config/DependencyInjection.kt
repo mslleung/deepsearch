@@ -28,6 +28,7 @@ val applicationModule = module {
         scopedOf(::UsageService) bind IUsageService::class
         scopedOf(::PrecacheService) bind IPrecacheService::class
         scopedOf(::CacheQueryService) bind ICacheQueryService::class
+        scopedOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
         scopedOf(::UserService) bind IUserService::class
         scopedOf(::SearchService) bind ISearchService::class

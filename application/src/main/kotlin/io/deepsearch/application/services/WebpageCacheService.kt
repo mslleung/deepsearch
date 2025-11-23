@@ -166,16 +166,17 @@ class WebpageCacheService(
             try {
                 logger.debug("Generating embedding for URL: {}", url)
 
-                // Generate embedding (returns list with single embedding)
-                val embeddings = textEmbeddingService.embedDocuments(listOf(markdown))
+                // Generate embedding (returns EmbeddingResult with embeddings and token usage)
+                val result = textEmbeddingService.embedDocuments(listOf(markdown))
 
-                if (embeddings.isEmpty()) {
+                if (result.embeddings.isEmpty()) {
                     logger.error("No embedding returned for URL: {}", url)
                     return@launch
                 }
 
-                val embedding = embeddings[0]
-                logger.debug("Generated embedding with {} dimensions for URL: {}", embedding.size, url)
+                val embedding = result.embeddings[0]
+                logger.debug("Generated embedding with {} dimensions for URL: {} (used {} tokens)", 
+                    embedding.size, url, result.tokenUsage.totalTokens)
 
                 // Fetch current webpage data and update with embedding
                 val existing = webpageMarkdownRepository.findByUrl(url)
@@ -217,8 +218,10 @@ class WebpageCacheService(
             // Generate query embedding
             // Include the url in the query to increase the likelihood of getting documents with the url prefix
             // This is because pgvector applies filtering after retrieving from vector db
-            val queryEmbedding = textEmbeddingService.embedQuery("$query $baseUrl")
-            logger.debug("Hybrid search: Generated query embedding with {} dimensions", queryEmbedding.size)
+            val embeddingResult = textEmbeddingService.embedQuery("$query $baseUrl")
+            val queryEmbedding = embeddingResult.embedding
+            logger.debug("Hybrid search: Generated query embedding with {} dimensions (used {} tokens)", 
+                queryEmbedding.size, embeddingResult.tokenUsage.totalTokens)
 
             // Calculate minimum updated timestamp for cache expiry (null if no expiry filtering)
             val minUpdatedAtEpochMs = if (cacheExpiryMs != null) {
