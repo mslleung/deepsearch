@@ -246,7 +246,7 @@ class PrecacheJobRegistry(
 
                 // Process URL and collect events
                 // Use .catch{} to handle UrlProcessingException
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, "need to find a way to record precache llm token usage")
                     .catch { e ->
                         // Handle URL processing errors using Flow's catch operator
                         if (e is CancellationException) {
@@ -350,7 +350,7 @@ class PrecacheJobRegistry(
     private suspend fun discoverSeeds(baseUrl: String): List<WebpageLink> {
         val query = SearchQuery(query = baseUrl, url = baseUrl)
         return webpageLinkDiscoveryService
-            .discoverRelevantLinksByGoogleSearch(query)
+            .discoverRelevantLinksByGoogleSearch(query, "need to find a way to record precache llm token usage")
             .filter { normalize(it.url).startsWith(baseUrl) }
             .distinctBy { normalize(it.url) }
             .take(50)
