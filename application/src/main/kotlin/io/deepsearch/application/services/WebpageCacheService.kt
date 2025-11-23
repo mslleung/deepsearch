@@ -75,7 +75,8 @@ class WebpageCacheService(
     private val webpageMarkdownRepository: IWebpageMarkdownRepository,
     private val applicationScope: IApplicationCoroutineScope,
     private val textEmbeddingService: ITextEmbeddingService,
-    private val normalizeUrlService: io.deepsearch.domain.services.INormalizeUrlService
+    private val normalizeUrlService: io.deepsearch.domain.services.INormalizeUrlService,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : IWebpageCacheService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -178,6 +179,16 @@ class WebpageCacheService(
                 logger.debug("Generated embedding with {} dimensions for URL: {} (used {} tokens)", 
                     embedding.size, url, result.tokenUsage.totalTokens)
 
+                // Record token usage (no session ID for background embedding generation)
+                tokenUsageService.recordTokenUsage(
+                    sessionId = null,
+                    agentName = "WebpageCacheService",
+                    modelName = result.tokenUsage.modelName,
+                    promptTokens = result.tokenUsage.promptTokens,
+                    outputTokens = result.tokenUsage.outputTokens,
+                    totalTokens = result.tokenUsage.totalTokens
+                )
+
                 // Fetch current webpage data and update with embedding
                 val existing = webpageMarkdownRepository.findByUrl(url)
                 if (existing != null) {
@@ -222,6 +233,16 @@ class WebpageCacheService(
             val queryEmbedding = embeddingResult.embedding
             logger.debug("Hybrid search: Generated query embedding with {} dimensions (used {} tokens)", 
                 queryEmbedding.size, embeddingResult.tokenUsage.totalTokens)
+
+            // Record token usage (no session ID for cache search - caller can track separately if needed)
+            tokenUsageService.recordTokenUsage(
+                sessionId = null,
+                agentName = "WebpageCacheService.searchHybrid",
+                modelName = embeddingResult.tokenUsage.modelName,
+                promptTokens = embeddingResult.tokenUsage.promptTokens,
+                outputTokens = embeddingResult.tokenUsage.outputTokens,
+                totalTokens = embeddingResult.tokenUsage.totalTokens
+            )
 
             // Calculate minimum updated timestamp for cache expiry (null if no expiry filtering)
             val minUpdatedAtEpochMs = if (cacheExpiryMs != null) {
