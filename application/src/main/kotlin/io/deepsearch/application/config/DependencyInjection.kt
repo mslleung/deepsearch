@@ -2,6 +2,8 @@ package io.deepsearch.application.config
 
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.AgenticBrowserSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.application.services.*
 import io.deepsearch.domain.config.domainModule
 import io.deepsearch.infrastructure.config.infrastructureModule
@@ -30,6 +32,7 @@ val applicationModule = module {
         scopedOf(::CacheQueryService) bind ICacheQueryService::class
         scopedOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
+        scopedOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
         scopedOf(::UserService) bind IUserService::class
         scopedOf(::SearchService) bind ISearchService::class
         scopedOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class

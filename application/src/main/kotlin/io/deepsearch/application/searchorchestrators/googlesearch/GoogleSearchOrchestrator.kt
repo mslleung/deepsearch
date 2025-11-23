@@ -24,7 +24,9 @@ interface IGoogleSearchOrchestrator : ISearchOrchestrator
 class GoogleSearchOrchestrator(
     // private val googleCombinedSearchAgent: IGoogleCombinedSearchAgent
     private val googleTextSearchAgent: IGoogleTextSearchAgent,
-    private val googleUrlContextSearchAgent: IGoogleUrlContextSearchAgent
+    private val googleUrlContextSearchAgent: IGoogleUrlContextSearchAgent,
+    private val querySessionService: io.deepsearch.application.services.IQuerySessionService,
+    private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService
 ) : IGoogleSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -32,6 +34,11 @@ class GoogleSearchOrchestrator(
     override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long?, apiKeyId: ApiKeyId): SearchResult {
         // Note: This orchestrator uses Google's search API and doesn't support custom budget or cache expiry parameters
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
+        
+        // Create query session to get sessionId
+        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
+        val sessionId = session.id
+        
         // Previous implementation using the combined search agent (not supported yet):
         // val output = googleCombinedSearchAgent.generate(
         //     IGoogleCombinedSearchAgent.GoogleCombinedSearchInput(searchQuery)
@@ -42,6 +49,17 @@ class GoogleSearchOrchestrator(
         val googleTextSearchOutput = googleTextSearchAgent.generate(
             GoogleTextSearchInput(searchQuery)
         )
+        
+        // Record token usage for text search
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "GoogleTextSearchAgent",
+            modelName = googleTextSearchOutput.tokenUsage.modelName,
+            promptTokens = googleTextSearchOutput.tokenUsage.promptTokens,
+            outputTokens = googleTextSearchOutput.tokenUsage.outputTokens,
+            totalTokens = googleTextSearchOutput.tokenUsage.totalTokens
+        )
+        
         val textSources = googleTextSearchOutput.searchResult.sources
         logger.debug("Text search found {} sources; first: {}", textSources.size, textSources.firstOrNull())
 
@@ -66,6 +84,17 @@ class GoogleSearchOrchestrator(
                 urls = selectedUrls
             )
         )
+        
+        // Record token usage for URL context search
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "GoogleUrlContextSearchAgent",
+            modelName = urlContextOutput.tokenUsage.modelName,
+            promptTokens = urlContextOutput.tokenUsage.promptTokens,
+            outputTokens = urlContextOutput.tokenUsage.outputTokens,
+            totalTokens = urlContextOutput.tokenUsage.totalTokens
+        )
+        
         logger.debug(
             "URL-context content length: {}, sources: {}",
             urlContextOutput.content.length,

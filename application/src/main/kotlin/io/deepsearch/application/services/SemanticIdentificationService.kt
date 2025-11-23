@@ -18,22 +18,26 @@ interface ISemanticIdentificationService {
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
      *
      * @param webpage The webpage to analyze
+     * @param sessionId Query session ID for token tracking
      * @return SemanticElements containing all identified semantic elements grouped by type
      */
     suspend fun identifySemanticElements(
-        webpage: IBrowserPage
+        webpage: IBrowserPage,
+        sessionId: String
     ): SemanticElements
 }
 
 class SemanticIdentificationService(
     private val semanticIdentificationAgent: ISemanticIdentificationAgent,
-    private val webpageSemanticElementRepository: IWebpageNavigationElementRepository
+    private val webpageSemanticElementRepository: IWebpageNavigationElementRepository,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : ISemanticIdentificationService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun identifySemanticElements(
-        webpage: IBrowserPage
+        webpage: IBrowserPage,
+        sessionId: String
     ): SemanticElements {
         // Get HTML for caching
         val html = webpage.getFullHtml()
@@ -51,6 +55,16 @@ class SemanticIdentificationService(
             SemanticIdentificationInput(
                 webpage = webpage
             )
+        )
+
+        // Record token usage
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "SemanticIdentificationAgent",
+            modelName = identificationResult.tokenUsage.modelName,
+            promptTokens = identificationResult.tokenUsage.promptTokens,
+            outputTokens = identificationResult.tokenUsage.outputTokens,
+            totalTokens = identificationResult.tokenUsage.totalTokens
         )
 
         val elements = identificationResult.elements

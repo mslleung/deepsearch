@@ -26,7 +26,7 @@ interface IWebpageLinkDiscoveryService {
     /**
      * Discovers relevant links using Google search
      */
-    suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery): List<WebpageLink>
+    suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery, sessionId: String): List<WebpageLink>
 
     /**
      * Discovers relevant links using SERP search (serper.dev API)
@@ -36,7 +36,7 @@ interface IWebpageLinkDiscoveryService {
     /**
      * Discovers relevant links by analyzing links on the current webpage
      */
-    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String): List<WebpageLink>
+    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: String): List<WebpageLink>
 
     /**
      * Discovers all links on the page regardless of relevance.
@@ -56,7 +56,8 @@ class WebpageLinkDiscoveryService(
     private val linkRelevanceAnalysisAgent: ILinkRelevanceAnalysisAgent,
     private val sitemapCacheRepository: ISitemapCacheRepository,
     private val sitemapLockRegistry: ISitemapLinkDiscoveryLockRegistry,
-    private val normalizeUrlService: INormalizeUrlService
+    private val normalizeUrlService: INormalizeUrlService,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : IWebpageLinkDiscoveryService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -81,15 +82,25 @@ class WebpageLinkDiscoveryService(
         return normalizeUrlService.normalize(baseDomain) ?: baseDomain
     }
 
-    override suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery): List<WebpageLink> {
+    override suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery, sessionId: String): List<WebpageLink> {
         logger.debug("Discovering links via Google search for query: '{}' on {}", searchQuery.query, searchQuery.url)
 
-        val links = googleSearchLinkDiscoveryAgent.generate(
+        val output = googleSearchLinkDiscoveryAgent.generate(
             GoogleSearchLinkDiscoveryInput(searchQuery)
-        ).links
+        )
 
-        logger.debug("Discovered {} links from Google search", links.size)
-        return links
+        // Record token usage
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "GoogleSearchLinkDiscoveryAgent",
+            modelName = output.tokenUsage.modelName,
+            promptTokens = output.tokenUsage.promptTokens,
+            outputTokens = output.tokenUsage.outputTokens,
+            totalTokens = output.tokenUsage.totalTokens
+        )
+
+        logger.debug("Discovered {} links from Google search", output.links.size)
+        return output.links
     }
 
     override suspend fun discoverRelevantLinksBySerper(searchQuery: SearchQuery): List<WebpageLink> {
@@ -101,7 +112,7 @@ class WebpageLinkDiscoveryService(
         return links
     }
 
-    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String): List<WebpageLink> {
+    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: String): List<WebpageLink> {
         logger.debug("Discovering links via on-page analysis for query: '{}'", query)
 
         val baseDomain = extractBaseDomain(url)
@@ -110,20 +121,30 @@ class WebpageLinkDiscoveryService(
             return emptyList()
         }
 
-        val links = linkRelevanceAnalysisAgent.generate(
+        val output = linkRelevanceAnalysisAgent.generate(
             LinkRelevanceAnalysisInput(
                 html = html,
                 query = query,
                 url = url
             )
-        ).links
+        )
 
-        val filteredLinks = links.filter { link ->
+        // Record token usage
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "LinkRelevanceAnalysisAgent",
+            modelName = output.tokenUsage.modelName,
+            promptTokens = output.tokenUsage.promptTokens,
+            outputTokens = output.tokenUsage.outputTokens,
+            totalTokens = output.tokenUsage.totalTokens
+        )
+
+        val filteredLinks = output.links.filter { link ->
             val normalizedLinkUrl = normalizeUrlService.normalize(link.url) ?: link.url
             val normalizedLinkBaseDomain = extractBaseDomain(normalizedLinkUrl)
             normalizedLinkBaseDomain == baseDomain
         }
-        logger.debug("Discovered {} links from on-page analysis (filtered to {} same-domain links)", links.size, filteredLinks.size)
+        logger.debug("Discovered {} links from on-page analysis (filtered to {} same-domain links)", output.links.size, filteredLinks.size)
         return filteredLinks
     }
 

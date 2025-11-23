@@ -41,7 +41,8 @@ interface IUrlContentProcessingService {
     fun processUrlAsFlow(
         url: String,
         query: String,
-        cacheExpiryMs: Long? = null
+        cacheExpiryMs: Long? = null,
+        sessionId: String
     ): Flow<UrlProcessingEvent>
 
     /**
@@ -50,7 +51,8 @@ interface IUrlContentProcessingService {
      */
     fun processUrlAsFlow(
         url: String,
-        cacheExpiryMs: Long? = null
+        cacheExpiryMs: Long? = null,
+        sessionId: String
     ): Flow<UrlProcessingEvent>
 }
 
@@ -70,18 +72,20 @@ class UrlContentProcessingService(
     override fun processUrlAsFlow(
         url: String,
         query: String,
-        cacheExpiryMs: Long?
+        cacheExpiryMs: Long?,
+        sessionId: String
     ): Flow<UrlProcessingEvent> {
-        return processInternalAsFlow(url, cacheExpiryMs) { html ->
-            webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url)
+        return processInternalAsFlow(url, cacheExpiryMs, sessionId) { html ->
+            webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url, sessionId)
         }
     }
 
     override fun processUrlAsFlow(
         url: String,
-        cacheExpiryMs: Long?
+        cacheExpiryMs: Long?,
+        sessionId: String
     ): Flow<UrlProcessingEvent> {
-        return processInternalAsFlow(url, cacheExpiryMs) { html ->
+        return processInternalAsFlow(url, cacheExpiryMs, sessionId) { html ->
             webpageLinkDiscoveryService.discoverAllLinks(html, url)
         }
     }
@@ -89,6 +93,7 @@ class UrlContentProcessingService(
     private fun processInternalAsFlow(
         url: String,
         cacheExpiryMs: Long?,
+        sessionId: String,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
         logger.debug("Processing URL: {}", url)
@@ -112,12 +117,12 @@ class UrlContentProcessingService(
                 when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
                     is ContentTypeResult.Html -> {
                         logger.debug("Detected HTML content for: {}", normalizedUrl)
-                        processHtmlUrlAsFlow(normalizedUrl, discoverLinks)
+                        processHtmlUrlAsFlow(normalizedUrl, sessionId, discoverLinks)
                             .collect { event -> emit(event) }
                     }
                     is ContentTypeResult.Pdf -> {
                         logger.debug("Detected PDF content for: {} ({} bytes)", normalizedUrl, contentTypeResult.bytes.size)
-                        processPdfUrlAsFlow(normalizedUrl, contentTypeResult)
+                        processPdfUrlAsFlow(normalizedUrl, contentTypeResult, sessionId)
                             .collect { event -> emit(event) }
                     }
                     is ContentTypeResult.Unsupported -> {
@@ -128,7 +133,7 @@ class UrlContentProcessingService(
                 }
             } catch (e: UrlProcessingException) {
                 // Cache the failure before rethrowing
-                cacheFailure(normalizedUrl, e)
+                cacheFailure(normalizedUrl, e, sessionId)
                 throw e
             }
         }
@@ -158,6 +163,7 @@ class UrlContentProcessingService(
 
     private fun processHtmlUrlAsFlow(
         normalizedUrl: String,
+        sessionId: String,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
         browserRuntimePool.acquireRuntime { runtime ->
@@ -179,7 +185,7 @@ class UrlContentProcessingService(
 
                 val markdownExtractionFlow = flow {
                     try {
-                        val extractedMarkdown = webpageExtractionService.extractWebpage(page)
+                        val extractedMarkdown = webpageExtractionService.extractWebpage(page, sessionId)
                         logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractedMarkdown.length)
 
                         webpageCacheService.cacheWebpage(
@@ -188,7 +194,8 @@ class UrlContentProcessingService(
                             html = extractedHtml,
                             httpStatus = 200,
                             httpReason = "OK",
-                            mimeType = "text/html"
+                            mimeType = "text/html",
+                            sessionId = sessionId
                         )
 
                         emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown, wasCached = false))
@@ -216,9 +223,10 @@ class UrlContentProcessingService(
 
     private fun processPdfUrlAsFlow(
         normalizedUrl: String,
-        result: ContentTypeResult.Pdf
+        result: ContentTypeResult.Pdf,
+        sessionId: String
     ): Flow<UrlProcessingEvent> = flow {
-        val markdown = pdfConversionService.convertPdfToMarkdown(result.bytes)
+        val markdown = pdfConversionService.convertPdfToMarkdown(result.bytes, sessionId)
 
         webpageCacheService.cacheWebpage(
             url = normalizedUrl,
@@ -226,7 +234,8 @@ class UrlContentProcessingService(
             html = null,
             httpStatus = result.statusCode,
             httpReason = result.reasonPhrase,
-            mimeType = result.mimeType
+            mimeType = result.mimeType,
+            sessionId = sessionId
         )
 
         logger.debug("Processed PDF for URL: {} ({} chars)", normalizedUrl, markdown.length)
@@ -237,7 +246,8 @@ class UrlContentProcessingService(
 
     private suspend fun cacheFailure(
         normalizedUrl: String,
-        exception: UrlProcessingException
+        exception: UrlProcessingException,
+        sessionId: String
     ) {
         val (statusCode, reasonPhrase, mimeType) = when (exception) {
             is HttpClientErrorException -> Triple(exception.statusCode, exception.reasonPhrase, null)
@@ -252,7 +262,8 @@ class UrlContentProcessingService(
             html = null,
             httpStatus = statusCode,
             httpReason = reasonPhrase,
-            mimeType = mimeType
+            mimeType = mimeType,
+            sessionId = sessionId
         )
     }
 }

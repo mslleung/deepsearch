@@ -12,13 +12,14 @@ import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 interface IWebpageIconInterpretationService {
-    suspend fun interpretIcon(icon: IBrowserPage.Icon): String?
-    suspend fun interpretIcons(icons: List<IBrowserPage.Icon>): List<String?>
+    suspend fun interpretIcon(icon: IBrowserPage.Icon, sessionId: String): String?
+    suspend fun interpretIcons(icons: List<IBrowserPage.Icon>, sessionId: String): List<String?>
 }
 
 class WebpageIconInterpretationService(
     private val multiIconInterpreterAgent: IMultiIconInterpreterAgent,
-    private val webpageIconRepository: IWebpageIconRepository
+    private val webpageIconRepository: IWebpageIconRepository,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : IWebpageIconInterpretationService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -30,8 +31,8 @@ class WebpageIconInterpretationService(
      * Note: Uses the multi-icon agent with a batch of 1 for consistency.
      * For better performance with multiple icons, use interpretIcons instead.
      */
-    override suspend fun interpretIcon(icon: IBrowserPage.Icon): String? {
-        return interpretIcons(listOf(icon)).firstOrNull()
+    override suspend fun interpretIcon(icon: IBrowserPage.Icon, sessionId: String): String? {
+        return interpretIcons(listOf(icon), sessionId).firstOrNull()
     }
 
     /**
@@ -44,7 +45,7 @@ class WebpageIconInterpretationService(
      * Results are cached to avoid reprocessing the same icons.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun interpretIcons(icons: List<IBrowserPage.Icon>): List<String?> {
+    override suspend fun interpretIcons(icons: List<IBrowserPage.Icon>, sessionId: String): List<String?> {
         if (icons.isEmpty()) {
             return emptyList()
         }
@@ -77,6 +78,16 @@ class WebpageIconInterpretationService(
                         )
                     }
                 )
+            )
+
+            // Record token usage
+            tokenUsageService.recordTokenUsage(
+                sessionId = sessionId,
+                agentName = "MultiIconInterpreterAgent",
+                modelName = interpreterAgentOutput.tokenUsage.modelName,
+                promptTokens = interpreterAgentOutput.tokenUsage.promptTokens,
+                outputTokens = interpreterAgentOutput.tokenUsage.outputTokens,
+                totalTokens = interpreterAgentOutput.tokenUsage.totalTokens
             )
 
             // Cache results

@@ -36,6 +36,7 @@ interface IWebpageCacheService {
      * @param httpStatus HTTP status code
      * @param httpReason HTTP reason phrase
      * @param mimeType Content MIME type
+     * @param sessionId Query session ID for token tracking
      */
     suspend fun cacheWebpage(
         url: String,
@@ -43,7 +44,8 @@ interface IWebpageCacheService {
         html: String?,
         httpStatus: Int,
         httpReason: String,
-        mimeType: String?
+        mimeType: String?,
+        sessionId: String
     )
 
     /**
@@ -60,13 +62,15 @@ interface IWebpageCacheService {
      * @param baseUrl The base URL to filter by (will be normalized, e.g., "https://example.com")
      * @param cacheExpiryMs Cache expiration time in milliseconds (null means no expiry filtering)
      * @param limit Maximum number of results to return
+     * @param sessionId Query session ID for token tracking
      * @return List of WebpageMarkdown objects, ordered by RRF combined score (most relevant first)
      */
     suspend fun searchHybrid(
         query: String,
         baseUrl: String,
         cacheExpiryMs: Long?,
-        limit: Int
+        limit: Int,
+        sessionId: String
     ): List<WebpageMarkdown>
 }
 
@@ -121,7 +125,8 @@ class WebpageCacheService(
         html: String?,
         httpStatus: Int,
         httpReason: String,
-        mimeType: String?
+        mimeType: String?,
+        sessionId: String
     ) {
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
@@ -150,7 +155,7 @@ class WebpageCacheService(
 
         // Generate and store embedding asynchronously if markdown is available
         if (markdown != null && markdown.isNotBlank()) {
-            generateAndStoreEmbeddingAsync(url, markdown)
+            generateAndStoreEmbeddingAsync(url, markdown, sessionId)
         }
     }
 
@@ -161,7 +166,7 @@ class WebpageCacheService(
      * If embedding generation or storage fails, the error is logged but not propagated.
      * This ensures that embedding failures don't break the main request flow.
      */
-    private fun generateAndStoreEmbeddingAsync(url: String, markdown: String) {
+    private fun generateAndStoreEmbeddingAsync(url: String, markdown: String, sessionId: String) {
         // Launch in application scope (fire-and-forget)
         applicationScope.scope.launch {
             try {
@@ -179,10 +184,10 @@ class WebpageCacheService(
                 logger.debug("Generated embedding with {} dimensions for URL: {} (used {} tokens)", 
                     embedding.size, url, result.tokenUsage.totalTokens)
 
-                // Record token usage (no session ID for background embedding generation)
+                // Record token usage
                 tokenUsageService.recordTokenUsage(
-                    sessionId = null,
-                    agentName = "WebpageCacheService",
+                    sessionId = sessionId,
+                    agentName = "WebpageCacheService.embedDocuments",
                     modelName = result.tokenUsage.modelName,
                     promptTokens = result.tokenUsage.promptTokens,
                     outputTokens = result.tokenUsage.outputTokens,
@@ -219,7 +224,8 @@ class WebpageCacheService(
         query: String,
         baseUrl: String,
         cacheExpiryMs: Long?,
-        limit: Int
+        limit: Int,
+        sessionId: String
     ): List<WebpageMarkdown> {
         try {
             // Normalize URL to get prefix for filtering
@@ -234,10 +240,10 @@ class WebpageCacheService(
             logger.debug("Hybrid search: Generated query embedding with {} dimensions (used {} tokens)", 
                 queryEmbedding.size, embeddingResult.tokenUsage.totalTokens)
 
-            // Record token usage (no session ID for cache search - caller can track separately if needed)
+            // Record token usage
             tokenUsageService.recordTokenUsage(
-                sessionId = null,
-                agentName = "WebpageCacheService.searchHybrid",
+                sessionId = sessionId,
+                agentName = "WebpageCacheService.embedQuery",
                 modelName = embeddingResult.tokenUsage.modelName,
                 promptTokens = embeddingResult.tokenUsage.promptTokens,
                 outputTokens = embeddingResult.tokenUsage.outputTokens,

@@ -65,7 +65,8 @@ class AgenticBrowserSearchOrchestrator(
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
-    private val dispatchers: IDispatcherProvider
+    private val dispatchers: IDispatcherProvider,
+    private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -256,9 +257,9 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
 
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs)
-                    .filter { link ->
-                        val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId)
+                    .filter { event ->
+                        val normalizedUrl = normalizeUrlService.normalize(event.url) ?: event.url
 
                         if (seenUrls.contains(normalizedUrl)) {
                             logger.debug(
@@ -347,7 +348,7 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId)
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> {
@@ -572,7 +573,7 @@ class AgenticBrowserSearchOrchestrator(
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId)
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> {
@@ -754,12 +755,32 @@ class AgenticBrowserSearchOrchestrator(
             )
         )
 
+        // Record token usage for streaming answer agent
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "StreamingAnswerAgent",
+            modelName = answerOutput.tokenUsage.modelName,
+            promptTokens = answerOutput.tokenUsage.promptTokens,
+            outputTokens = answerOutput.tokenUsage.outputTokens,
+            totalTokens = answerOutput.tokenUsage.totalTokens
+        )
+
         // Then, check if the answer is complete
         val reviewOutput = answerReviewerAgent.generate(
             AnswerReviewerInput(
                 query = searchQuery.query,
                 currentAnswer = answerOutput.updatedAnswer
             )
+        )
+
+        // Record token usage for answer reviewer agent
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "AnswerReviewerAgent",
+            modelName = reviewOutput.tokenUsage.modelName,
+            promptTokens = reviewOutput.tokenUsage.promptTokens,
+            outputTokens = reviewOutput.tokenUsage.outputTokens,
+            totalTokens = reviewOutput.tokenUsage.totalTokens
         )
 
         logger.debug(
@@ -809,7 +830,7 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {
         try {
-            val googleLinks = webpageLinkDiscoveryService.discoverRelevantLinksByGoogleSearch(searchQuery)
+            val googleLinks = webpageLinkDiscoveryService.discoverRelevantLinksByGoogleSearch(searchQuery, sessionId)
             logger.debug("[{}] Google search discovered {} links", sessionId, googleLinks.size)
             googleLinks.forEach { emit(it) }
         } catch (e: Exception) {
@@ -871,7 +892,8 @@ class AgenticBrowserSearchOrchestrator(
             query = searchQuery.query,
             baseUrl = searchQuery.url,
             cacheExpiryMs = cacheExpiryMs,
-            limit = 15
+            limit = 15,
+            sessionId = sessionId
         )
         logger.debug("[{}] Hybrid search: Found {} similar webpages", sessionId, similarWebpages.size)
 
@@ -895,7 +917,8 @@ class AgenticBrowserSearchOrchestrator(
                         val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
                             query = searchQuery.query,
                             html = webpage.html!!,
-                            url = webpage.url
+                            url = webpage.url,
+                            sessionId = sessionId
                         )
                         logger.debug(
                             "[{}] Hybrid search: Discovered {} links from cached page {}",

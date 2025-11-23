@@ -15,14 +15,15 @@ import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 interface IWebpageImageTextExtractionService {
-    suspend fun extractTextFromImage(image: IBrowserPage.WebImage): String?
-    suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>): List<String?>
+    suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: String): String?
+    suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: String): List<String?>
 }
 
 class WebpageImageTextExtractionService(
     private val multiImageTextExtractionAgent: IMultiImageTextExtractionAgent,
     private val webpageImageRepository: IWebpageImageRepository,
-    private val ocrService: IOcrImageTextExtractionService
+    private val ocrService: IOcrImageTextExtractionService,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : IWebpageImageTextExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -33,8 +34,8 @@ class WebpageImageTextExtractionService(
      * If text is detected, uses LLM to extract it with proper formatting (including tables).
      * Results are cached to avoid reprocessing the same image.
      */
-    override suspend fun extractTextFromImage(image: IBrowserPage.WebImage): String? {
-        return extractTextFromImages(listOf(image)).firstOrNull()
+    override suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: String): String? {
+        return extractTextFromImages(listOf(image), sessionId).firstOrNull()
     }
 
     /**
@@ -46,7 +47,7 @@ class WebpageImageTextExtractionService(
      * Results are cached to avoid reprocessing the same images.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>): List<String?> {
+    override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: String): List<String?> {
         if (images.isEmpty()) {
             return emptyList()
         }
@@ -115,6 +116,16 @@ class WebpageImageTextExtractionService(
                             )
                         }
                     )
+                )
+
+                // Record token usage
+                tokenUsageService.recordTokenUsage(
+                    sessionId = sessionId,
+                    agentName = "MultiImageTextExtractionAgent",
+                    modelName = extractionOutput.tokenUsage.modelName,
+                    promptTokens = extractionOutput.tokenUsage.promptTokens,
+                    outputTokens = extractionOutput.tokenUsage.outputTokens,
+                    totalTokens = extractionOutput.tokenUsage.totalTokens
                 )
 
                 // Cache results

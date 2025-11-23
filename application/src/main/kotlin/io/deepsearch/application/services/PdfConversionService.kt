@@ -12,7 +12,7 @@ import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 interface IPdfConversionService {
-    suspend fun convertPdfToMarkdown(pdfBytes: ByteArray): String
+    suspend fun convertPdfToMarkdown(pdfBytes: ByteArray, sessionId: String): String
 }
 
 /**
@@ -21,7 +21,8 @@ interface IPdfConversionService {
  */
 class PdfConversionService(
     private val pdfToMarkdownAgent: IPdfToMarkdownAgent,
-    private val pdfMarkdownRepository: IPdfMarkdownRepository
+    private val pdfMarkdownRepository: IPdfMarkdownRepository,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : IPdfConversionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -32,7 +33,7 @@ class PdfConversionService(
     }
 
     @OptIn(ExperimentalTime::class)
-    override suspend fun convertPdfToMarkdown(pdfBytes: ByteArray): String {
+    override suspend fun convertPdfToMarkdown(pdfBytes: ByteArray, sessionId: String): String {
         // Calculate PDF hash for caching
         val pdfHash = calculateHash(pdfBytes)
         
@@ -60,6 +61,16 @@ class PdfConversionService(
         
         // Convert PDF to markdown using agent
         val output = pdfToMarkdownAgent.generate(PdfToMarkdownInput(pdfBytes))
+        
+        // Record token usage
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "PdfToMarkdownAgent",
+            modelName = output.tokenUsage.modelName,
+            promptTokens = output.tokenUsage.promptTokens,
+            outputTokens = output.tokenUsage.outputTokens,
+            totalTokens = output.tokenUsage.totalTokens
+        )
         
         // Cache the result
         pdfMarkdownRepository.upsert(

@@ -12,17 +12,19 @@ interface IPopupContainerIdentificationService {
     /**
      * Identifies popup containers on a webpage and returns their XPaths.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
+     * @param sessionId Query session ID for token tracking
      */
-    suspend fun identifyPopupContainers(webpage: IBrowserPage): List<String>
+    suspend fun identifyPopupContainers(webpage: IBrowserPage, sessionId: String): List<String>
 }
 
 class PopupContainerIdentificationService(
     private val popupContainerIdentificationAgent: IPopupContainerIdentificationAgent,
-    private val webpagePopupRepository: IWebpagePopupRepository
+    private val webpagePopupRepository: IWebpagePopupRepository,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : IPopupContainerIdentificationService {
 
     @OptIn(ExperimentalTime::class)
-    override suspend fun identifyPopupContainers(webpage: IBrowserPage): List<String> {
+    override suspend fun identifyPopupContainers(webpage: IBrowserPage, sessionId: String): List<String> {
         val screenshot = webpage.takeScreenshot()
         val html = webpage.getFullHtml()
 
@@ -39,6 +41,16 @@ class PopupContainerIdentificationService(
                 mimetype = screenshot.mimeType,
                 html = html
             )
+        )
+
+        // Record token usage
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "PopupContainerIdentificationAgent",
+            modelName = identificationResult.tokenUsage.modelName,
+            promptTokens = identificationResult.tokenUsage.promptTokens,
+            outputTokens = identificationResult.tokenUsage.outputTokens,
+            totalTokens = identificationResult.tokenUsage.totalTokens
         )
 
         val popupXPaths = identificationResult.popupContainerXPaths

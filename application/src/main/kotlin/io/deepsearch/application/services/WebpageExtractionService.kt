@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory
 import kotlin.system.measureTimeMillis
 
 interface IWebpageExtractionService {
-    suspend fun extractWebpage(webpage: IBrowserPage): String
+    suspend fun extractWebpage(webpage: IBrowserPage, sessionId: String): String
 }
 
 class WebpageExtractionService(
@@ -34,17 +34,17 @@ class WebpageExtractionService(
      * Converts a webpage into text for downstream LLM processing.
      * The extracted text is primed for information retrieval on the current page.
      */
-    override suspend fun extractWebpage(webpage: IBrowserPage): String = coroutineScope {
+    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: String): String = coroutineScope {
         val result: String
         val duration = measureTimeMillis {
             val title = webpage.getTitle()
             val description = webpage.getDescription()
 
             // Step 1: Run LLM operations concurrently using Flow
-            val semanticElementsFlow = identifySemanticElementsFlow(webpage)
-            val iconReplacementsFlow = interpretIconsFlow(webpage)
-            val imageReplacementsFlow = interpretImagesFlow(webpage)
-            val identifiedTablesFlow = identifyTablesFlow(webpage)
+            val semanticElementsFlow = identifySemanticElementsFlow(webpage, sessionId)
+            val iconReplacementsFlow = interpretIconsFlow(webpage, sessionId)
+            val imageReplacementsFlow = interpretImagesFlow(webpage, sessionId)
+            val identifiedTablesFlow = identifyTablesFlow(webpage, sessionId)
 
             // Combine all four flows and collect
             data class FlowResults(
@@ -73,7 +73,7 @@ class WebpageExtractionService(
             removeSemanticElements(webpage, results.semanticElements)
 
             // Step 6: Interpret and replace tables (after filtering out removed elements)
-            interpretAndReplaceTables(webpage, results.identifiedTables)
+            interpretAndReplaceTables(webpage, results.identifiedTables, sessionId)
 
             // Step 7: Extract final text and build result
             val extractedText = webpage.extractTextContent()
@@ -96,22 +96,24 @@ class WebpageExtractionService(
     }
 
     private fun identifySemanticElementsFlow(
-        webpage: IBrowserPage
+        webpage: IBrowserPage,
+        sessionId: String
     ) = flow {
         val duration = measureTimeMillis {
             val semanticElements = semanticIdentificationService.identifySemanticElements(
-                webpage
+                webpage,
+                sessionId
             )
             emit(semanticElements)
         }
         logger.debug("Semantic element identification took {} ms", duration)
     }
 
-    private fun interpretIconsFlow(webpage: IBrowserPage) = flow {
+    private fun interpretIconsFlow(webpage: IBrowserPage, sessionId: String) = flow {
         val duration = measureTimeMillis {
             val icons = webpage.extractIcons()
 
-            val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons)
+            val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons, sessionId)
             val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
                 icon.cssSelectors.map { cssSelector ->
                     IBrowserPage.CssSelectorReplacementWithText(cssSelector, interpretedText)
@@ -123,11 +125,11 @@ class WebpageExtractionService(
         logger.debug("Icon interpretation took {} ms", duration)
     }
 
-    private fun interpretImagesFlow(webpage: IBrowserPage) = flow {
+    private fun interpretImagesFlow(webpage: IBrowserPage, sessionId: String) = flow {
         val duration = measureTimeMillis {
             val images = webpage.extractImages()
 
-            val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images)
+            val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(images, sessionId)
             val replacements = images.zip(extractedTexts).flatMap { (image, extractedText) ->
                 image.cssSelectors.map { cssSelector ->
                     IBrowserPage.CssSelectorReplacementWithText(cssSelector, extractedText)
@@ -138,9 +140,9 @@ class WebpageExtractionService(
         logger.debug("Image interpretation took {} ms", duration)
     }
 
-    private fun identifyTablesFlow(webpage: IBrowserPage) = flow {
+    private fun identifyTablesFlow(webpage: IBrowserPage, sessionId: String) = flow {
         val duration = measureTimeMillis {
-            val tables = tableIdentificationService.identifyTables(webpage)
+            val tables = tableIdentificationService.identifyTables(webpage, sessionId)
             emit(tables)
         }
         logger.debug("Table identification took {} ms", duration)
@@ -166,7 +168,8 @@ class WebpageExtractionService(
 
     private suspend fun interpretAndReplaceTables(
         webpage: IBrowserPage,
-        identifiedTables: List<TableIdentification>
+        identifiedTables: List<TableIdentification>,
+        sessionId: String
     ) {
         val url = webpage.getUrl()
         
@@ -211,7 +214,7 @@ class WebpageExtractionService(
             // Interpret all remaining tables in batch
             val cssSelectors = tableInputs.map { it.first }
             val inputs = tableInputs.map { it.second }
-            val markdowns = tableInterpretationService.interpretTablesBatch(inputs)
+            val markdowns = tableInterpretationService.interpretTablesBatch(inputs, sessionId)
             
             val replacements = cssSelectors.zip(markdowns).map { (cssSelector, markdown) ->
                 IBrowserPage.CssSelectorReplacementWithText(cssSelector, markdown)

@@ -11,13 +11,14 @@ import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
 interface ITableInterpretationService {
-    suspend fun interpretTable(input: TableInterpretationInput): String
-    suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>): List<String>
+    suspend fun interpretTable(input: TableInterpretationInput, sessionId: String): String
+    suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: String): List<String>
 }
 
 class TableInterpretationService(
     private val tableInterpretationAgent: ITableInterpretationAgent,
-    private val webpageTableInterpretationRepository: IWebpageTableInterpretationRepository
+    private val webpageTableInterpretationRepository: IWebpageTableInterpretationRepository,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : ITableInterpretationService {
 
     /**
@@ -25,7 +26,7 @@ class TableInterpretationService(
      * Results are cached in the repository to avoid repeated calls with the same input.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun interpretTable(input: TableInterpretationInput): String {
+    override suspend fun interpretTable(input: TableInterpretationInput, sessionId: String): String {
         // Create a hash from all input parameters that affect the interpretation
         val digest = MessageDigest.getInstance("SHA-256")
         val tableHtml = input.webpage.getElementHtmlByCssSelector(input.tableIdentification.cssSelector)
@@ -38,6 +39,17 @@ class TableInterpretationService(
         }
 
         val agentOutput = tableInterpretationAgent.generate(input)
+
+        // Record token usage
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "TableInterpretationAgent",
+            modelName = agentOutput.tokenUsage.modelName,
+            promptTokens = agentOutput.tokenUsage.promptTokens,
+            outputTokens = agentOutput.tokenUsage.outputTokens,
+            totalTokens = agentOutput.tokenUsage.totalTokens
+        )
+
         val markdown = agentOutput.markdown
 
         webpageTableInterpretationRepository.upsert(
@@ -55,10 +67,11 @@ class TableInterpretationService(
      * to reduce concurrent upsert issues.
      * 
      * @param inputs List of table interpretation inputs
+     * @param sessionId Query session ID for token tracking
      * @return List of markdown strings in the same order as inputs
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>): List<String> {
+    override suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: String): List<String> {
         if (inputs.isEmpty()) return emptyList()
 
         // Initialize result storage
@@ -90,6 +103,17 @@ class TableInterpretationService(
             uncachedEntries.map { (index, input, hash) ->
                 async {
                     val agentOutput = tableInterpretationAgent.generate(input)
+                    
+                    // Record token usage
+                    tokenUsageService.recordTokenUsage(
+                        sessionId = sessionId,
+                        agentName = "TableInterpretationAgent",
+                        modelName = agentOutput.tokenUsage.modelName,
+                        promptTokens = agentOutput.tokenUsage.promptTokens,
+                        outputTokens = agentOutput.tokenUsage.outputTokens,
+                        totalTokens = agentOutput.tokenUsage.totalTokens
+                    )
+                    
                     index to WebpageTableInterpretation(
                         tableDataHash = hash,
                         markdown = agentOutput.markdown

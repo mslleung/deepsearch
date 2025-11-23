@@ -11,12 +11,13 @@ import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
 interface ITableIdentificationService {
-    suspend fun identifyTables(webpage: IBrowserPage): List<TableIdentification>
+    suspend fun identifyTables(webpage: IBrowserPage, sessionId: String): List<TableIdentification>
 }
 
 class TableIdentificationService(
     private val tableIdentificationAgent: ITableIdentificationAgent,
-    private val webpageTableRepository: IWebpageTableRepository
+    private val webpageTableRepository: IWebpageTableRepository,
+    private val tokenUsageService: ILlmTokenUsageService
 ) : ITableIdentificationService {
 
     /**
@@ -24,7 +25,7 @@ class TableIdentificationService(
      * Results are cached in the repository to avoid repeated calls with the same HTML.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun identifyTables(webpage: IBrowserPage): List<TableIdentification> {
+    override suspend fun identifyTables(webpage: IBrowserPage, sessionId: String): List<TableIdentification> {
         // Get HTML for caching
         val html = webpage.getFullHtml()
         val htmlHash = MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
@@ -37,6 +38,17 @@ class TableIdentificationService(
         val agentOutput = tableIdentificationAgent.generate(
             TableIdentificationInput(webpage = webpage)
         )
+
+        // Record token usage
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "TableIdentificationAgent",
+            modelName = agentOutput.tokenUsage.modelName,
+            promptTokens = agentOutput.tokenUsage.promptTokens,
+            outputTokens = agentOutput.tokenUsage.outputTokens,
+            totalTokens = agentOutput.tokenUsage.totalTokens
+        )
+
         val tables = agentOutput.tables
 
         webpageTableRepository.upsert(
