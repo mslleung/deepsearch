@@ -9,11 +9,14 @@ import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
-import io.deepsearch.domain.agents.AnswerReviewerInput
+import io.deepsearch.domain.agents.IAnswerSynthesisAgent
+import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
-import io.deepsearch.domain.agents.StreamingAnswerInput
+import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
+import io.deepsearch.domain.agents.StreamingSourceShortlistInput
+import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
@@ -27,6 +30,7 @@ import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.exceptions.MarkdownConversionException
 import io.deepsearch.domain.ext.chunkedWithTimeout
+import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -62,6 +66,8 @@ class AgenticBrowserSearchOrchestrator(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
     private val answerReviewerAgent: IAnswerReviewerAgent,
+    private val streamingSourceShortlistAgent: IStreamingSourceShortlistAgent,
+    private val answerSynthesisAgent: IAnswerSynthesisAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
@@ -252,7 +258,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long?
-    ): Flow<MarkdownResult> {
+    ): Flow<MarkdownSource> {
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
@@ -305,7 +311,7 @@ class AgenticBrowserSearchOrchestrator(
                         }
                     }
                     .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                    .map { event -> MarkdownResult(event.url, event.markdown) }
+                    .map { event -> MarkdownSource(event.url, event.markdown) }
                     .onCompletion {
                         logger.info("[{}] Initial link processing complete", sessionId)
                         initialDiscoveredLinksChannel.close()
@@ -327,7 +333,7 @@ class AgenticBrowserSearchOrchestrator(
         discoveredLinksChannel: Channel<WebpageLink>,
         flowName: String,
         cacheExpiryMs: Long?
-    ): Flow<MarkdownResult> {
+    ): Flow<MarkdownSource> {
         return linkSource
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
@@ -348,7 +354,12 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId)
+                    urlContentProcessingService.processUrlAsFlow(
+                        normalizedUrl,
+                        searchQuery.query,
+                        cacheExpiryMs,
+                        sessionId
+                    )
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> {
@@ -422,7 +433,7 @@ class AgenticBrowserSearchOrchestrator(
                             }
                         }
                         .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                        .map { event -> MarkdownResult(event.url, event.markdown) }
+                        .map { event -> MarkdownSource(event.url, event.markdown) }
                         .collect { emit(it) }
                 }
             }
@@ -453,7 +464,7 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long?
-    ): Flow<MarkdownResult> {
+    ): Flow<MarkdownSource> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
             searchQuery = searchQuery,
@@ -478,7 +489,7 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long?
-    ): Flow<MarkdownResult> {
+    ): Flow<MarkdownSource> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
             searchQuery = searchQuery,
@@ -503,7 +514,7 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long?
-    ): Flow<MarkdownResult> {
+    ): Flow<MarkdownSource> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
             searchQuery = searchQuery,
@@ -529,7 +540,7 @@ class AgenticBrowserSearchOrchestrator(
         hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long?
-    ): Flow<MarkdownResult> {
+    ): Flow<MarkdownSource> {
         val inFlightLinkDiscoveryProcessing = ConcurrentHashMap.newKeySet<String>()
 
         return merge(
@@ -573,7 +584,12 @@ class AgenticBrowserSearchOrchestrator(
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId)
+                    urlContentProcessingService.processUrlAsFlow(
+                        normalizedUrl,
+                        searchQuery.query,
+                        cacheExpiryMs,
+                        sessionId
+                    )
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> {
@@ -676,7 +692,7 @@ class AgenticBrowserSearchOrchestrator(
                             }
                         }
                         .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                        .map { event -> MarkdownResult(event.url, event.markdown) }
+                        .map { event -> MarkdownSource(event.url, event.markdown) }
                         .collect { emit(it) }
                 }
             }
@@ -700,98 +716,67 @@ class AgenticBrowserSearchOrchestrator(
      * State accumulated during answer generation from markdown batches.
      */
     private data class AnswerAccumulator(
-        val currentAnswer: String?,
+        val currentShortlist: List<ShortlistedSource>,
         val allUrls: List<String>,
         val allMarkdowns: List<String>,
         val isComplete: Boolean
     ) {
-        constructor() : this(null, emptyList(), emptyList(), false)
+        constructor() : this(emptyList(), emptyList(), emptyList(), false)
     }
 
     /**
      * Flow operator that aggregates markdown batches into a complete answer.
-     * Transforms Flow<List<MarkdownResult>> into Flow<SearchResult> that emits once.
+     * Uses two-stage approach: first curates shortlist, then synthesizes answer when ready.
      */
     private suspend fun aggregateMarkdownResultIntoAnswer(
         sessionId: String,
         searchQuery: SearchQuery,
         state: AnswerAccumulator,
-        markdownResults: List<MarkdownResult>,
+        markdownSources: List<MarkdownSource>,
     ): AnswerAccumulator {
-        val newUrls = state.allUrls + markdownResults.map { it.url }
-        val newMarkdowns = state.allMarkdowns + markdownResults.map { it.markdown }
+        val newUrls = state.allUrls + markdownSources.map { it.url }
+        val newMarkdowns = state.allMarkdowns + markdownSources.map { it.markdown }
 
         logger.debug(
             "[{}] Processing batch of {} markdowns (total: {})",
             sessionId,
-            markdownResults.size,
+            markdownSources.size,
             newMarkdowns.size
         )
 
-        // TODO use an agent to classify the markdown into [Canonical/Temporal/Ancillary]
-        //Canonical Source (High Authority): A page that is meant to be a timeless, definitive source of truth. Its job is to be correct right now.
-        //
-        //Examples: Product specification page, API documentation, pricing page, company directory.
-        //Rule: Information from a Canonical source is the default truth.
-        //Temporal Source (Contextual Authority): A page that announces a change or provides an update at a specific point in time. Its authority is tied to its date.
-        //
-        //Examples: Blog posts, press releases, news articles, patch notes.
-        //Rule: Information from a Temporal source overrides a Canonical source only if it is more recent and explicitly states a change.
-        //Ancillary Source (Low Authority): A page where the information is mentioned incidentally.
-        //
-        //Examples: "About Us" pages, user forums, case studies, comments.
-        //Rule: Information from an Ancillary source is generally a weak signal and should only be used for corroboration.
-
-        // TODO streamingAnswerAgent llm must also respect the authority and use the higher priority source when dealing with conflicting data, no need to note the discrepency, the answer should be confident and absolute
-
-        // TODO answerReviewerAgent should only return complete=true if there is at least one canonical source
-
-        // First, build/update the answer
-        val answerOutput = streamingAnswerAgent.generate(
-            StreamingAnswerInput(
+        // Update source shortlist
+        val shortlistOutput = streamingSourceShortlistAgent.generate(
+            StreamingSourceShortlistInput(
                 query = searchQuery.query,
-                currentAnswer = state.currentAnswer,
-                markdownBatch = markdownResults.map { it.markdown }
+                currentShortlist = state.currentShortlist,
+                newMarkdownBatch = markdownSources
             )
         )
 
-        // Record token usage for streaming answer agent
+        // Record token usage for shortlist agent
         tokenUsageService.recordTokenUsage(
             sessionId = sessionId,
-            agentName = "StreamingAnswerAgent",
-            modelName = answerOutput.tokenUsage.modelName,
-            promptTokens = answerOutput.tokenUsage.promptTokens,
-            outputTokens = answerOutput.tokenUsage.outputTokens,
-            totalTokens = answerOutput.tokenUsage.totalTokens
-        )
-
-        // Then, check if the answer is complete
-        val reviewOutput = answerReviewerAgent.generate(
-            AnswerReviewerInput(
-                query = searchQuery.query,
-                currentAnswer = answerOutput.updatedAnswer
-            )
-        )
-
-        // Record token usage for answer reviewer agent
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "AnswerReviewerAgent",
-            modelName = reviewOutput.tokenUsage.modelName,
-            promptTokens = reviewOutput.tokenUsage.promptTokens,
-            outputTokens = reviewOutput.tokenUsage.outputTokens,
-            totalTokens = reviewOutput.tokenUsage.totalTokens
+            agentName = "StreamingSourceShortlistAgent",
+            modelName = shortlistOutput.tokenUsage.modelName,
+            promptTokens = shortlistOutput.tokenUsage.promptTokens,
+            outputTokens = shortlistOutput.tokenUsage.outputTokens,
+            totalTokens = shortlistOutput.tokenUsage.totalTokens
         )
 
         logger.debug(
-            "[{}] Answer updated: {} chars, complete: {}, reason: {}",
+            "[{}] Shortlist updated: {} sources, isGoodEnough: {}, reason: {}",
             sessionId,
-            answerOutput.updatedAnswer.length,
-            reviewOutput.isComplete,
-            reviewOutput.reason
+            shortlistOutput.updatedShortlist.size,
+            shortlistOutput.isGoodEnough,
+            shortlistOutput.reason
         )
 
-        return AnswerAccumulator(answerOutput.updatedAnswer, newUrls, newMarkdowns, reviewOutput.isComplete)
+        return AnswerAccumulator(
+            currentShortlist = shortlistOutput.updatedShortlist,
+            allUrls = newUrls,
+            allMarkdowns = newMarkdowns,
+            isComplete = shortlistOutput.isGoodEnough
+        )
     }
 
     private suspend fun finishQuerySession(
@@ -801,20 +786,43 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         resultDeferred: CompletableDeferred<SearchResult>,
     ) {
-        val answer = finalAnswerAccumulator.currentAnswer ?: "No information found"
+        logger.info(
+            "[{}] Flow ending without complete answer, synthesizing from {} shortlisted sources",
+            sessionId,
+            finalAnswerAccumulator.currentShortlist.size
+        )
+
+        val synthesisOutput = answerSynthesisAgent.generate(
+            AnswerSynthesisInput(
+                query = searchQuery.query,
+                shortlistedSources = finalAnswerAccumulator.currentShortlist
+            )
+        )
+
+        // Record token usage for synthesis agent
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "AnswerSynthesisAgent",
+            modelName = synthesisOutput.tokenUsage.modelName,
+            promptTokens = synthesisOutput.tokenUsage.promptTokens,
+            outputTokens = synthesisOutput.tokenUsage.outputTokens,
+            totalTokens = synthesisOutput.tokenUsage.totalTokens
+        )
+
+        val finalAnswerText = synthesisOutput.answer
 
         if (finalAnswerAccumulator.isComplete) {
-            querySessionService.completeSessionAnswerComplete(sessionId, answer)
+            querySessionService.completeSessionAnswerComplete(sessionId, finalAnswerText)
         } else if (querySessionService.isBudgetExceeded(sessionId, budget)) {
-            querySessionService.completeSessionBudgetExceeded(sessionId, answer, budget)
+            querySessionService.completeSessionBudgetExceeded(sessionId, finalAnswerText, budget)
         } else {
             // Flow completed naturally - all links exhausted
-            querySessionService.completeSessionLinksExhausted(sessionId, answer)
+            querySessionService.completeSessionLinksExhausted(sessionId, finalAnswerText)
         }
 
         val result = SearchResult(
             originalQuery = searchQuery,
-            answer = answer,
+            answer = finalAnswerText,
             content = finalAnswerAccumulator.allMarkdowns.joinToString("\n\n---\n\n"),
             sources = finalAnswerAccumulator.allUrls
         )
@@ -886,7 +894,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         cacheExpiryMs: Long?,
         hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>
-    ): Flow<MarkdownResult> = flow {
+    ): Flow<MarkdownSource> = flow {
         // Search using hybrid search (RRF combining keyword + semantic search)
         val similarWebpages = webpageCacheService.searchHybrid(
             query = searchQuery.query,
@@ -906,12 +914,12 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls.addAll(validWebpages.map { it.url })
 
         // immediately emit the valid webpages found from hybrid search
-        validWebpages.forEach { emit(MarkdownResult(it.url, it.markdown!!)) }
+        validWebpages.forEach { emit(MarkdownSource(it.url, it.markdown!!)) }
 
         // Process similar webpages through the standard flow
         validWebpages.asFlow()
             .flatMapMerge(concurrency = 15) { webpage ->
-                flow<MarkdownResult> {
+                flow<MarkdownSource> {
                     try {
                         // Discover relevant links from this cached webpage
                         val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
@@ -956,13 +964,4 @@ class AgenticBrowserSearchOrchestrator(
             }
             .collect {}
     }
-
-    /**
-     * Result containing only markdown data for downstream processing.
-     */
-    private data class MarkdownResult(
-        val url: String,
-        val markdown: String
-    )
-
 }

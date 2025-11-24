@@ -55,6 +55,7 @@ private val domainCommonTestModule = module {
     // GenAI agents as singletons for tests
     singleOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
     singleOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
+    singleOf(::AnswerSynthesisAgentGenAiImpl) bind IAnswerSynthesisAgent::class
     singleOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class
     singleOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
     singleOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class
@@ -73,6 +74,7 @@ private val domainCommonTestModule = module {
     singleOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
     singleOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
+    singleOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
 

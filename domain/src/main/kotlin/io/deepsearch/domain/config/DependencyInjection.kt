@@ -39,6 +39,7 @@ val domainModule = module {
         // domain agents (request scoped) - now using GenAI SDK implementations
         scopedOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
         scopedOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
+        scopedOf(::AnswerSynthesisAgentGenAiImpl) bind IAnswerSynthesisAgent::class
         scopedOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class
         scopedOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
         scopedOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class
@@ -57,6 +58,7 @@ val domainModule = module {
         scopedOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
         scopedOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
         scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
+        scopedOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
         scopedOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
         scopedOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
 
