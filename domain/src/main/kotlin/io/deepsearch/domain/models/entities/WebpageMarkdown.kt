@@ -7,6 +7,8 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 data class WebpageMarkdown(
     val url: String, // normalized URL
+    val title: String?,
+    val description: String?,
     val markdown: String?,
     val html: String?,
     val httpStatus: Int?,

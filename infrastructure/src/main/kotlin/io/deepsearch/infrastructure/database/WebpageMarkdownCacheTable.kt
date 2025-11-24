@@ -9,6 +9,8 @@ class WebpageMarkdownCacheTable(
     private val databaseCryptoService: IDatabaseCryptoService
 ) : Table("webpage_markdowns") {
     val url = varchar("url", length = 2048)
+    val title = text("title").nullable()
+    val description = text("description").nullable()
     val markdown = text("markdown").nullable()
     val html = text("html").nullable()
     val httpStatus = integer("http_status").nullable()

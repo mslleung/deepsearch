@@ -14,9 +14,17 @@ data class SearchRequest(
 )
 
 @Serializable
+data class SearchContentDto(
+    val url: String,
+    val title: String?,
+    val description: String?,
+    val markdown: String
+)
+
+@Serializable
 data class SearchResponse(
     val answer: String,
-    val content: String,
+    val contentSources: List<SearchContentDto>,
     val answerSources: List<String>,
     val exploredSources: List<String>,
     val durationMs: Long,
@@ -25,7 +33,14 @@ data class SearchResponse(
 fun SearchResult.toResponse(): SearchResponse {
     return SearchResponse(
         answer = answer,
-        content = content,
+        contentSources = contentSources.map { content ->
+            SearchContentDto(
+                url = content.url,
+                title = content.title,
+                description = content.description,
+                markdown = content.markdown
+            )
+        },
         answerSources = answerSources,
         exploredSources = exploredSources,
         durationMs = durationMs

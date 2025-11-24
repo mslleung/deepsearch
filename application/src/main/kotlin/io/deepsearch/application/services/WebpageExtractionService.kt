@@ -14,8 +14,17 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.system.measureTimeMillis
 
+/**
+ * Result of webpage extraction containing markdown content and metadata.
+ */
+data class WebpageExtractionResult(
+    val markdown: String,
+    val title: String?,
+    val description: String?
+)
+
 interface IWebpageExtractionService {
-    suspend fun extractWebpage(webpage: IBrowserPage, sessionId: String): String
+    suspend fun extractWebpage(webpage: IBrowserPage, sessionId: String): WebpageExtractionResult
 }
 
 class WebpageExtractionService(
@@ -34,8 +43,8 @@ class WebpageExtractionService(
      * Converts a webpage into text for downstream LLM processing.
      * The extracted text is primed for information retrieval on the current page.
      */
-    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: String): String = coroutineScope {
-        val result: String
+    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: String): WebpageExtractionResult = coroutineScope {
+        val result: WebpageExtractionResult
         val duration = measureTimeMillis {
             val title = webpage.getTitle()
             val description = webpage.getDescription()
@@ -77,7 +86,7 @@ class WebpageExtractionService(
 
             // Step 7: Extract final text and build result
             val extractedText = webpage.extractTextContent()
-            result = buildString {
+            val markdown = buildString {
                 appendLine("URL: ${webpage.getUrl()}")
                 appendLine("Title: $title")
                 if (!description.isNullOrBlank()) {
@@ -90,6 +99,12 @@ class WebpageExtractionService(
                 appendLine()
                 appendLine(extractedText)
             }.trim()
+            
+            result = WebpageExtractionResult(
+                markdown = markdown,
+                title = title,
+                description = description
+            )
         }
         logger.debug("Webpage extraction took {} ms", duration)
         result

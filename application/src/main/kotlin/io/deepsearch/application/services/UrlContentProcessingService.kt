@@ -30,6 +30,8 @@ interface IUrlContentProcessingService {
         data class MarkdownExtractionComplete(
             override val url: String,
             val markdown: String,
+            val title: String?,
+            val description: String?,
             val wasCached: Boolean
         ) : UrlProcessingEvent
     }
@@ -146,7 +148,7 @@ class UrlContentProcessingService(
     ): Flow<UrlProcessingEvent> = flow {
         if (cached.httpStatus != null && cached.httpStatus !in 200..299) {
             logger.debug("Cached failure for URL: {} (status: {})", originalUrl, cached.httpStatus)
-            emit(UrlProcessingEvent.MarkdownExtractionComplete(originalUrl, "", wasCached = true))
+            emit(UrlProcessingEvent.MarkdownExtractionComplete(originalUrl, "", null, null, wasCached = true))
             return@flow
         }
 
@@ -158,7 +160,7 @@ class UrlContentProcessingService(
         emit(UrlProcessingEvent.LinkDiscoveryComplete(originalUrl, links))
         
         logger.debug("Emitting cached markdown for URL: {} ({} chars)", originalUrl, cached.markdown?.length ?: 0)
-        emit(UrlProcessingEvent.MarkdownExtractionComplete(originalUrl, cached.markdown ?: "", wasCached = true))
+        emit(UrlProcessingEvent.MarkdownExtractionComplete(originalUrl, cached.markdown ?: "", cached.title, cached.description, wasCached = true))
     }
 
     private fun processHtmlUrlAsFlow(
@@ -185,12 +187,14 @@ class UrlContentProcessingService(
 
                 val markdownExtractionFlow = flow {
                     try {
-                        val extractedMarkdown = webpageExtractionService.extractWebpage(page, sessionId)
-                        logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractedMarkdown.length)
+                        val extractionResult = webpageExtractionService.extractWebpage(page, sessionId)
+                        logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractionResult.markdown.length)
 
                         webpageCacheService.cacheWebpage(
                             url = normalizedUrl,
-                            markdown = extractedMarkdown,
+                            title = extractionResult.title,
+                            description = extractionResult.description,
+                            markdown = extractionResult.markdown,
                             html = extractedHtml,
                             httpStatus = 200,
                             httpReason = "OK",
@@ -198,7 +202,13 @@ class UrlContentProcessingService(
                             sessionId = sessionId
                         )
 
-                        emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, extractedMarkdown, wasCached = false))
+                        emit(UrlProcessingEvent.MarkdownExtractionComplete(
+                            normalizedUrl, 
+                            extractionResult.markdown,
+                            extractionResult.title,
+                            extractionResult.description,
+                            wasCached = false
+                        ))
                     } catch (e: Exception) {
                         // Wrap markdown extraction failures
                         throw MarkdownExtractionException(normalizedUrl, e)
@@ -230,6 +240,8 @@ class UrlContentProcessingService(
 
         webpageCacheService.cacheWebpage(
             url = normalizedUrl,
+            title = null,
+            description = null,
             markdown = markdown,
             html = null,
             httpStatus = result.statusCode,
@@ -241,7 +253,7 @@ class UrlContentProcessingService(
         logger.debug("Processed PDF for URL: {} ({} chars)", normalizedUrl, markdown.length)
 
         // PDFs don't have discoverable links, only markdown
-        emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, markdown, wasCached = false))
+        emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, markdown, null, null, wasCached = false))
     }
 
     private suspend fun cacheFailure(
@@ -258,6 +270,8 @@ class UrlContentProcessingService(
         
         webpageCacheService.cacheWebpage(
             url = normalizedUrl,
+            title = null,
+            description = null,
             markdown = null,
             html = null,
             httpStatus = statusCode,

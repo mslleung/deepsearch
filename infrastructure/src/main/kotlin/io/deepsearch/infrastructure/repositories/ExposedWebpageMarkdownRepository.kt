@@ -56,6 +56,8 @@ class ExposedWebpageMarkdownRepository(
             keys = arrayOf(webpageMarkdownTable.url)
         ) {
             it[url] = webpage.url
+            it[title] = webpage.title
+            it[description] = webpage.description
             it[markdown] = webpage.markdown
             it[html] = webpage.html
             it[httpStatus] = webpage.httpStatus
@@ -276,6 +278,8 @@ class ExposedWebpageMarkdownRepository(
     private fun mapRowToWebpageMarkdown(row: ResultRow): WebpageMarkdown {
         return WebpageMarkdown(
             url = row[webpageMarkdownTable.url],
+            title = row[webpageMarkdownTable.title],
+            description = row[webpageMarkdownTable.description],
             markdown = row[webpageMarkdownTable.markdown],
             html = row[webpageMarkdownTable.html],
             httpStatus = row[webpageMarkdownTable.httpStatus],

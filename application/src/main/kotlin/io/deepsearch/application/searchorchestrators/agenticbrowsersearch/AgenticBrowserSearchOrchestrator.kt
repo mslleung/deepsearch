@@ -311,7 +311,7 @@ class AgenticBrowserSearchOrchestrator(
                         }
                     }
                     .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                    .map { event -> MarkdownSource(event.url, event.markdown) }
+                    .map { event -> MarkdownSource(event.url, event.title, event.description, event.markdown) }
                     .onCompletion {
                         logger.info("[{}] Initial link processing complete", sessionId)
                         initialDiscoveredLinksChannel.close()
@@ -433,7 +433,7 @@ class AgenticBrowserSearchOrchestrator(
                             }
                         }
                         .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                        .map { event -> MarkdownSource(event.url, event.markdown) }
+                        .map { event -> MarkdownSource(event.url, event.title, event.description, event.markdown) }
                         .collect { emit(it) }
                 }
             }
@@ -692,7 +692,7 @@ class AgenticBrowserSearchOrchestrator(
                             }
                         }
                         .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                        .map { event -> MarkdownSource(event.url, event.markdown) }
+                        .map { event -> MarkdownSource(event.url, event.title, event.description, event.markdown) }
                         .collect { emit(it) }
                 }
             }
@@ -717,11 +717,10 @@ class AgenticBrowserSearchOrchestrator(
      */
     private data class AnswerAccumulator(
         val currentShortlist: List<ShortlistedSource>,
-        val allUrls: List<String>,
-        val allMarkdowns: List<String>,
+        val allMarkdownSources: List<MarkdownSource>,
         val isComplete: Boolean
     ) {
-        constructor() : this(emptyList(), emptyList(), emptyList(), false)
+        constructor() : this(emptyList(), emptyList(), false)
     }
 
     /**
@@ -734,14 +733,13 @@ class AgenticBrowserSearchOrchestrator(
         state: AnswerAccumulator,
         markdownSources: List<MarkdownSource>,
     ): AnswerAccumulator {
-        val newUrls = state.allUrls + markdownSources.map { it.url }
-        val newMarkdowns = state.allMarkdowns + markdownSources.map { it.markdown }
+        val newMarkdownSources = state.allMarkdownSources + markdownSources
 
         logger.debug(
             "[{}] Processing batch of {} markdowns (total: {})",
             sessionId,
             markdownSources.size,
-            newMarkdowns.size
+            newMarkdownSources.size
         )
 
         // Update source shortlist
@@ -773,8 +771,7 @@ class AgenticBrowserSearchOrchestrator(
 
         return AnswerAccumulator(
             currentShortlist = shortlistOutput.updatedShortlist,
-            allUrls = newUrls,
-            allMarkdowns = newMarkdowns,
+            allMarkdownSources = newMarkdownSources,
             isComplete = shortlistOutput.isGoodEnough
         )
     }
@@ -825,12 +822,14 @@ class AgenticBrowserSearchOrchestrator(
 
         // Calculate explored sources: all URLs minus shortlisted URLs
         val shortlistedUrls = finalAnswerAccumulator.currentShortlist.map { it.url }.toSet()
-        val exploredSources = finalAnswerAccumulator.allUrls.filter { it !in shortlistedUrls }
+        val exploredSources = finalAnswerAccumulator.allMarkdownSources
+            .map { it.url }
+            .filter { it !in shortlistedUrls }
 
         val result = SearchResult(
             originalQuery = searchQuery,
             answer = finalAnswerText,
-            content = finalAnswerAccumulator.allMarkdowns.joinToString("\n\n---\n\n"),
+            contentSources = finalAnswerAccumulator.allMarkdownSources,
             answerSources = answerSources,
             exploredSources = exploredSources
         )
@@ -922,7 +921,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls.addAll(validWebpages.map { it.url })
 
         // immediately emit the valid webpages found from hybrid search
-        validWebpages.forEach { emit(MarkdownSource(it.url, it.markdown!!)) }
+        validWebpages.forEach { emit(MarkdownSource(it.url, it.title, it.description, it.markdown!!)) }
 
         // Process similar webpages through the standard flow
         validWebpages.asFlow()

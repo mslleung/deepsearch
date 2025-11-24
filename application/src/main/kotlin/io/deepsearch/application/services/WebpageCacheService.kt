@@ -33,6 +33,8 @@ interface IWebpageCacheService {
     /**
      * Cache webpage markdown and metadata.
      * @param url The normalized URL
+     * @param title The webpage title
+     * @param description The webpage description
      * @param markdown The extracted markdown content (null if extraction failed)
      * @param html The original HTML (null for non-HTML content)
      * @param httpStatus HTTP status code
@@ -42,6 +44,8 @@ interface IWebpageCacheService {
      */
     suspend fun cacheWebpage(
         url: String,
+        title: String?,
+        description: String?,
         markdown: String?,
         html: String?,
         httpStatus: Int,
@@ -123,6 +127,8 @@ class WebpageCacheService(
 
     override suspend fun cacheWebpage(
         url: String,
+        title: String?,
+        description: String?,
         markdown: String?,
         html: String?,
         httpStatus: Int,
@@ -137,6 +143,8 @@ class WebpageCacheService(
         webpageMarkdownRepository.upsert(
             WebpageMarkdown(
                 url = url,
+                title = title,
+                description = description,
                 markdown = markdown,
                 html = html,
                 httpStatus = httpStatus,
