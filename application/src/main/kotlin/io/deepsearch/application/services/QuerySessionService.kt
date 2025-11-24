@@ -105,7 +105,11 @@ class QuerySessionService(
         return isTimeBudgetExceeded || isMaxLinksBudgetExceeded
     }
 
-    override suspend fun completeSessionBudgetExceeded(sessionId: String, answer: String, budget: SearchBudget) {
+    override suspend fun completeSessionBudgetExceeded(
+        sessionId: String, 
+        answer: String, 
+        budget: SearchBudget
+    ) {
         val session = getSessionOrThrow(sessionId)
 
         // Determine which budget was exceeded
@@ -133,7 +137,10 @@ class QuerySessionService(
         }
     }
 
-    override suspend fun completeSessionLinksExhausted(sessionId: String, answer: String) {
+    override suspend fun completeSessionLinksExhausted(
+        sessionId: String, 
+        answer: String
+    ) {
         val session = getSessionOrThrow(sessionId)
         session.completeWithAnswer(answer, FinishReason.LINKS_EXHAUSTED)
         querySessionRepository.update(session)

@@ -4,6 +4,7 @@ import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IQuerySessionRepository
+import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.presentation.dto.QuerySessionListResponse
 import io.deepsearch.presentation.dto.toDetailDto
 import io.deepsearch.presentation.dto.toSummaryDto
@@ -17,7 +18,8 @@ import org.slf4j.LoggerFactory
 
 class QuerySessionController(
     private val querySessionRepository: IQuerySessionRepository,
-    private val urlAccessService: IUrlAccessService
+    private val urlAccessService: IUrlAccessService,
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository
 ) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -92,7 +94,14 @@ class QuerySessionController(
             }
 
             val urlAccesses = urlAccessService.getUrlAccessesBySession(sessionId)
-            call.respond(HttpStatusCode.OK, session.toDetailDto(urlAccesses))
+            
+            // Fetch cached webpages for URLs that were accessed
+            val urls = urlAccesses.map { it.url }
+            val cachedWebpages = urls.mapNotNull { url ->
+                webpageMarkdownRepository.findByUrl(url)
+            }
+            
+            call.respond(HttpStatusCode.OK, session.toDetailDto(urlAccesses, cachedWebpages))
         } catch (e: Exception) {
             logger.error("Unexpected error in getQuerySessionDetail: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))

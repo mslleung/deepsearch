@@ -17,6 +17,7 @@ import kotlin.time.Instant
 sealed class UrlAccess {
     abstract val url: String
     abstract val timestamp: Instant
+    abstract val isUsedInAnswer: Boolean
 }
 
 /**
@@ -26,7 +27,8 @@ sealed class UrlAccess {
 @Serializable
 data class CachedUrlAccess(
     override val url: String,
-    override val timestamp: Instant
+    override val timestamp: Instant,
+    override val isUsedInAnswer: Boolean = false
 ) : UrlAccess()
 
 /**
@@ -36,7 +38,8 @@ data class CachedUrlAccess(
 @Serializable
 data class UncachedUrlAccess(
     override val url: String,
-    override val timestamp: Instant
+    override val timestamp: Instant,
+    override val isUsedInAnswer: Boolean = false
 ) : UrlAccess()
 
 /**
@@ -51,6 +54,7 @@ data class UncachedUrlAccess(
 data class FailedUrlAccess(
     override val url: String,
     override val timestamp: Instant,
+    override val isUsedInAnswer: Boolean = false,
     val exceptionType: String,
     val message: String
 ) : UrlAccess()

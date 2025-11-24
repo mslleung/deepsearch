@@ -804,15 +804,6 @@ class AgenticBrowserSearchOrchestrator(
 
         val finalAnswerText = synthesisOutput.answer
 
-        if (finalAnswerAccumulator.isComplete) {
-            querySessionService.completeSessionAnswerComplete(sessionId, finalAnswerText)
-        } else if (querySessionService.isBudgetExceeded(sessionId, budget)) {
-            querySessionService.completeSessionBudgetExceeded(sessionId, finalAnswerText, budget)
-        } else {
-            // Flow completed naturally - all links exhausted
-            querySessionService.completeSessionLinksExhausted(sessionId, finalAnswerText)
-        }
-
         // Extract answer sources from shortlist
         val answerSources = finalAnswerAccumulator.currentShortlist.map { it.url }
 
@@ -821,6 +812,21 @@ class AgenticBrowserSearchOrchestrator(
         val exploredSources = finalAnswerAccumulator.allMarkdownSources
             .map { it.url }
             .filter { it !in shortlistedUrls }
+
+        // Mark answer sources as used in answer
+        if (answerSources.isNotEmpty()) {
+            urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
+        }
+
+        // Complete session
+        if (finalAnswerAccumulator.isComplete) {
+            querySessionService.completeSessionAnswerComplete(sessionId, finalAnswerText)
+        } else if (querySessionService.isBudgetExceeded(sessionId, budget)) {
+            querySessionService.completeSessionBudgetExceeded(sessionId, finalAnswerText, budget)
+        } else {
+            // Flow completed naturally - all links exhausted
+            querySessionService.completeSessionLinksExhausted(sessionId, finalAnswerText)
+        }
 
         val result = SearchResult(
             originalQuery = searchQuery,
@@ -916,6 +922,12 @@ class AgenticBrowserSearchOrchestrator(
         logger.debug("[{}] Hybrid search: {} valid webpages after filtering", sessionId, validWebpages.size)
 
         seenUrls.addAll(validWebpages.map { it.url })
+
+        // Record URL access for cached entries
+        validWebpages.forEach { webpage ->
+            val cachedAccess = CachedUrlAccess(webpage.url, Clock.System.now())
+            urlAccessService.recordUrlAccess(sessionId, cachedAccess)
+        }
 
         // immediately emit the valid webpages found from hybrid search
         validWebpages.forEach { emit(MarkdownSource(it.url, it.title, it.description, it.markdown!!)) }

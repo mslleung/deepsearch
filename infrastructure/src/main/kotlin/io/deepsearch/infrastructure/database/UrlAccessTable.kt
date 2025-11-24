@@ -20,6 +20,7 @@ class UrlAccessTable(
     val url = varchar("url", 2048)
     val timestampEpochMs = long("timestamp_epoch_ms")
     val status = varchar("status", 20)  // "CACHED", "UNCACHED", "FAILED"
+    val isUsedInAnswer = bool("is_used_in_answer").default(false)
     val exceptionType = varchar("exception_type", 100).nullable()  // Exception class name (e.g., "NetworkTimeoutException")
     val exceptionMessage = text("exception_message").nullable()  // Detailed error message
     

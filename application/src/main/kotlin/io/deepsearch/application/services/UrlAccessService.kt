@@ -33,6 +33,9 @@ interface IUrlAccessService {
 
     /** Check if the maximum link budget has been exceeded for a query session. */
     suspend fun checkMaxLinkBudget(querySessionId: String, maxLinks: Int): Boolean
+    
+    /** Mark URLs as used in answer for a query session. */
+    suspend fun markUrlsAsUsedInAnswer(querySessionId: String, urls: List<String>): Int
 }
 
 /**
@@ -82,6 +85,11 @@ class UrlAccessService(
     override suspend fun checkMaxLinkBudget(querySessionId: String, maxLinks: Int): Boolean {
         val urlAccessCount = countUrlAccessesBySession(querySessionId)
         return urlAccessCount >= maxLinks
+    }
+    
+    override suspend fun markUrlsAsUsedInAnswer(querySessionId: String, urls: List<String>): Int {
+        logger.debug("[{}] Marking {} URLs as used in answer", querySessionId, urls.size)
+        return urlAccessRepository.markUrlsAsUsedInAnswer(querySessionId, urls)
     }
 }
 

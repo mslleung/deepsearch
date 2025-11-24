@@ -44,5 +44,10 @@ interface IUrlAccessRepository {
      * Check if a URL has been accessed in a given query session.
      */
     suspend fun existsByQuerySessionIdAndUrl(querySessionId: String, url: String): Boolean
+    
+    /**
+     * Mark URLs as used in answer for a given query session.
+     */
+    suspend fun markUrlsAsUsedInAnswer(querySessionId: String, urls: List<String>): Int
 }
 

@@ -29,12 +29,23 @@ data class QuerySessionSummaryDto(
 )
 
 @Serializable
+data class ContentSourceDto(
+    val url: String,
+    val title: String?,
+    val description: String?,
+    val markdown: String
+)
+
+@Serializable
 data class QuerySessionDetailDto(
     val id: String,
     val query: String,
     val url: String,
     val status: String,
     val answer: String?,
+    val contentSources: List<ContentSourceDto>,
+    val answerSources: List<String>,
+    val exploredSources: List<String>,
     val traversedUrls: List<UrlAccessDto>,
     val createdAt: Long,
     val updatedAt: Long
@@ -71,8 +82,38 @@ fun QuerySession.toSummaryDto(urlCount: Int): QuerySessionSummaryDto {
 }
 
 @OptIn(ExperimentalTime::class)
-fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>): QuerySessionDetailDto {
+fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>, cachedWebpages: List<io.deepsearch.domain.models.entities.WebpageMarkdown> = emptyList()): QuerySessionDetailDto {
     val status = finishReason?.name ?: "IN_PROGRESS"
+    
+    // Build a map of URL to cached webpage for efficient lookup
+    val urlToWebpage = cachedWebpages.associateBy { it.url }
+    
+    // Content sources: all successfully accessed URLs with their content (excluding failed)
+    val contentSources = urlAccesses
+        .filterNot { it is FailedUrlAccess }
+        .mapNotNull { urlAccess ->
+            val webpage = urlToWebpage[urlAccess.url]
+            val markdownContent = webpage?.markdown
+            if (markdownContent != null) {
+                ContentSourceDto(
+                    url = urlAccess.url,
+                    title = webpage.title,
+                    description = webpage.description,
+                    markdown = markdownContent
+                )
+            } else null
+        }
+    
+    // Answer sources: URLs marked as used in answer
+    val answerSources = urlAccesses
+        .filter { it.isUsedInAnswer }
+        .map { it.url }
+    
+    // Explored sources: URLs not used in answer (excluding failed)
+    val exploredSources = urlAccesses
+        .filterNot { it is FailedUrlAccess }
+        .filterNot { it.isUsedInAnswer }
+        .map { it.url }
     
     return QuerySessionDetailDto(
         id = id,
@@ -80,6 +121,9 @@ fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>): QuerySessionDetailDt
         url = url,
         status = status,
         answer = answer,
+        contentSources = contentSources,
+        answerSources = answerSources,
+        exploredSources = exploredSources,
         traversedUrls = urlAccesses.map { urlAccess ->
             UrlAccessDto(
                 url = urlAccess.url,

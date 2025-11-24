@@ -10,8 +10,10 @@ import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
+import org.jetbrains.exposed.v1.r2dbc.update
 import kotlin.time.ExperimentalTime
 
 /**
@@ -35,6 +37,7 @@ class ExposedUrlAccessRepository(
             it[urlAccessTable.querySessionId] = querySessionId
             it[url] = urlAccess.url
             it[timestampEpochMs] = urlAccess.timestamp.toEpochMilliseconds()
+            it[isUsedInAnswer] = urlAccess.isUsedInAnswer
             
             when (urlAccess) {
                 is CachedUrlAccess -> {
@@ -110,6 +113,17 @@ class ExposedUrlAccessRepository(
             .count() > 0
     }
 
+    override suspend fun markUrlsAsUsedInAnswer(querySessionId: String, urls: List<String>): Int = transactionService.withTransaction {
+        if (urls.isEmpty()) return@withTransaction 0
+        
+        urlAccessTable.update({
+            (urlAccessTable.querySessionId eq querySessionId) and 
+            (urlAccessTable.url inList urls)
+        }) {
+            it[isUsedInAnswer] = true
+        }
+    }
+
     /**
      * Map a database row to a UrlAccess domain object (polymorphic mapping).
      */
@@ -118,16 +132,17 @@ class ExposedUrlAccessRepository(
         val timestampMs = row[urlAccessTable.timestampEpochMs]
         val timestamp = kotlin.time.Instant.fromEpochMilliseconds(timestampMs)
         val status = row[urlAccessTable.status]
+        val isUsedInAnswer = row[urlAccessTable.isUsedInAnswer]
 
         return when (status) {
-            UrlAccessStatus.CACHED.name -> CachedUrlAccess(url, timestamp)
-            UrlAccessStatus.UNCACHED.name -> UncachedUrlAccess(url, timestamp)
+            UrlAccessStatus.CACHED.name -> CachedUrlAccess(url, timestamp, isUsedInAnswer)
+            UrlAccessStatus.UNCACHED.name -> UncachedUrlAccess(url, timestamp, isUsedInAnswer)
             UrlAccessStatus.FAILED.name -> {
                 val exceptionType = row[urlAccessTable.exceptionType]
                     ?: throw IllegalStateException("FAILED status must have an exception type")
                 val exceptionMessage = row[urlAccessTable.exceptionMessage]
                     ?: throw IllegalStateException("FAILED status must have an exception message")
-                FailedUrlAccess(url, timestamp, exceptionType, exceptionMessage)
+                FailedUrlAccess(url, timestamp, isUsedInAnswer, exceptionType, exceptionMessage)
             }
             else -> throw IllegalStateException("Unknown URL access status: $status")
         }
