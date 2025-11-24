@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
+import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.infrastructure.database.WebpageMarkdownCacheTable
@@ -35,7 +36,22 @@ class ExposedWebpageMarkdownRepository(
     }
 
     override suspend fun upsert(webpage: WebpageMarkdown): Unit = transactionService.withTransaction {
-        // Upsert webpage markdown record with embedding
+        // Check for existing version to implement optimistic locking
+        val existingVersion = webpageMarkdownTable
+            .selectAll()
+            .where { webpageMarkdownTable.url eq webpage.url }
+            .map { it[webpageMarkdownTable.version] }
+            .singleOrNull()
+        
+        // If record exists, verify version matches to prevent concurrent modification issues
+        if (existingVersion != null && existingVersion != webpage.version) {
+            throw OptimisticLockException("WebpageMarkdown", webpage.url, webpage.version)
+        }
+        
+        // Calculate new version (increment from existing, or use provided version for new records)
+        val newVersion = if (existingVersion != null) existingVersion + 1 else webpage.version
+        
+        // Upsert webpage markdown record with incremented version
         webpageMarkdownTable.upsert(
             keys = arrayOf(webpageMarkdownTable.url)
         ) {
@@ -48,8 +64,13 @@ class ExposedWebpageMarkdownRepository(
             it[embedding] = webpage.embedding
             it[createdAtEpochMs] = webpage.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpage.updatedAt.toEpochMilliseconds()
-            it[version] = webpage.version
+            it[version] = newVersion
         }
+        
+        // Update the webpage object's version to reflect the new version
+        webpage.version = newVersion
+        
+        logger.debug("Upserted webpage for URL: {} (version: {} -> {})", webpage.url, existingVersion ?: "new", newVersion)
     }
 
     override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {

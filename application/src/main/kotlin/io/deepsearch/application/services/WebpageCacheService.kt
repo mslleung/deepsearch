@@ -1,9 +1,11 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.config.IApplicationCoroutineScope
+import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.domain.services.ITextEmbeddingService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -194,18 +196,36 @@ class WebpageCacheService(
                     totalTokens = result.tokenUsage.totalTokens
                 )
 
-                // Fetch current webpage data and update with embedding
-                val existing = webpageMarkdownRepository.findByUrl(url)
-                if (existing != null) {
-                    webpageMarkdownRepository.upsert(
-                        existing.copy(
-                            embedding = embedding,
-                            updatedAt = Clock.System.now()
-                        )
-                    )
-                    logger.debug("Successfully stored embedding for URL: {}", url)
-                } else {
-                    logger.warn("Webpage not found for URL {} when trying to store embedding", url)
+                // Retry logic for optimistic lock exceptions
+                var retries = 0
+                val maxRetries = 3
+                while (retries < maxRetries) {
+                    try {
+                        // Fetch current webpage data and update with embedding
+                        val existing = webpageMarkdownRepository.findByUrl(url)
+                        if (existing != null) {
+                            webpageMarkdownRepository.upsert(
+                                existing.copy(
+                                    embedding = embedding,
+                                    updatedAt = Clock.System.now()
+                                )
+                            )
+                            logger.debug("Successfully stored embedding for URL: {} (attempt {})", url, retries + 1)
+                            break // Success, exit retry loop
+                        } else {
+                            logger.warn("Webpage not found for URL {} when trying to store embedding", url)
+                            break // No point retrying if record doesn't exist
+                        }
+                    } catch (e: OptimisticLockException) {
+                        retries++
+                        if (retries < maxRetries) {
+                            logger.debug("Optimistic lock conflict storing embedding for URL {}, retrying (attempt {}/{})", url, retries + 1, maxRetries)
+                            delay(100L * retries) // Exponential backoff: 100ms, 200ms, 300ms
+                        } else {
+                            logger.warn("Failed to store embedding for URL {} after {} retries due to optimistic lock conflicts", url, maxRetries)
+                            throw e // Re-throw to be caught by outer catch block
+                        }
+                    }
                 }
 
             } catch (e: Exception) {
