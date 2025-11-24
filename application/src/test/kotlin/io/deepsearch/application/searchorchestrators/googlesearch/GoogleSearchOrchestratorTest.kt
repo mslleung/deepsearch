@@ -39,7 +39,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Then
         assertEquals(searchQuery, result.originalQuery)
         assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
-        assertTrue(!result.sources.isEmpty(), "Sources should not be empty")
+        assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "Sources should not be empty")
     }
 
     @Test
@@ -57,7 +57,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Then
         assertEquals(searchQuery, result.originalQuery)
         assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
-        assertTrue(!result.sources.isEmpty(), "Sources should not be empty")
+        assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "Sources should not be empty")
     }
 
     @Test
@@ -75,7 +75,8 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Then
         assertEquals(searchQuery, result.originalQuery)
         assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
-        assertTrue(result.sources.contains(url), "Sources should include the target URL")
+        val allUrls = result.answerSources.map { it.url } + result.exploredSources
+        assertTrue(allUrls.contains(url), "Sources should include the target URL")
     }
 
     @Test
@@ -93,7 +94,8 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Then
         assertEquals(searchQuery, result.originalQuery)
         assertTrue(result.content.isNotBlank(), "Search result content should not be blank for pricing/SLA query")
-        assertTrue(result.sources.contains(url), "Sources should include the target URL")
+        val allUrls = result.answerSources.map { it.url } + result.exploredSources
+        assertTrue(allUrls.contains(url), "Sources should include the target URL")
     }
 
     @Test
@@ -112,7 +114,8 @@ class GoogleSearchOrchestratorTest : KoinTest {
         assertEquals(searchQuery, result.originalQuery)
         assertTrue(result.content.isNotBlank(), "Search result content should not be blank even for unrelated query")
         // The combined agent always grounds sources to the provided URL for now
-        assertEquals(listOf(url), result.sources, "Sources should reflect the target URL used for context")
+        val allUrls = result.answerSources.map { it.url } + result.exploredSources
+        assertEquals(listOf(url), allUrls, "Sources should reflect the target URL used for context")
     }
 
     @Test
@@ -130,7 +133,8 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Then
         assertEquals(searchQuery, result.originalQuery)
         assertTrue(result.content.isNotBlank(), "Search result content should not be blank for non-English query")
-        assertTrue(result.sources.contains(url), "Sources should include the target URL")
+        val allUrls = result.answerSources.map { it.url } + result.exploredSources
+        assertTrue(allUrls.contains(url), "Sources should include the target URL")
     }
 }
 

@@ -38,7 +38,7 @@ class GoogleCombinedSearchAgentAdkImplTest : KoinTest {
         // Then
         val result = output.searchResult
         assertTrue(result.content.isNotBlank(), "content should not be blank")
-        assertTrue(result.sources.isNotEmpty(), "should include at least one cited source")
+        assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "should include at least one cited source")
     }
 }
 

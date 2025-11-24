@@ -9,6 +9,7 @@ import io.deepsearch.domain.agents.GoogleTextSearchOutput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
@@ -92,7 +93,8 @@ class GoogleTextSearchAgentGenAiImpl(
                     originalQuery = input.searchQuery,
                     answer = "",
                     content = "",
-                    sources = emptyList()
+                    answerSources = emptyList(),
+                    exploredSources = emptyList()
                 ),
                 tokenUsage = tokenUsage
             )
@@ -142,11 +144,16 @@ class GoogleTextSearchAgentGenAiImpl(
             chunkIndexToResolvedUrl[idx]
         }.distinct()
 
+        val answerSources = sources.map { url ->
+            SourceWithRelevance(url = url, relevanceScore = 1.0f)
+        }
+
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,
             answer = "",
             content = concatenatedText,
-            sources = sources
+            answerSources = answerSources,
+            exploredSources = emptyList()
         )
 
         logger.debug("Google text search results: '{}' from sources {}", concatenatedText, sources)

@@ -23,6 +23,7 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.SearchBudget
+import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
@@ -820,11 +821,30 @@ class AgenticBrowserSearchOrchestrator(
             querySessionService.completeSessionLinksExhausted(sessionId, finalAnswerText)
         }
 
+        // Extract answer sources from shortlist with relevance scores
+        val answerSources = finalAnswerAccumulator.currentShortlist
+            .map { shortlistedSource ->
+                // Calculate composite relevance score: content (60%), temporal (20%), authority (20%)
+                val compositeScore = shortlistedSource.contentRelevance * 0.6f +
+                    shortlistedSource.temporalRelevance * 0.2f +
+                    shortlistedSource.authority * 0.2f
+                SourceWithRelevance(
+                    url = shortlistedSource.url,
+                    relevanceScore = compositeScore
+                )
+            }
+            .sortedByDescending { it.relevanceScore }
+
+        // Calculate explored sources: all URLs minus shortlisted URLs
+        val shortlistedUrls = finalAnswerAccumulator.currentShortlist.map { it.url }.toSet()
+        val exploredSources = finalAnswerAccumulator.allUrls.filter { it !in shortlistedUrls }
+
         val result = SearchResult(
             originalQuery = searchQuery,
             answer = finalAnswerText,
             content = finalAnswerAccumulator.allMarkdowns.joinToString("\n\n---\n\n"),
-            sources = finalAnswerAccumulator.allUrls
+            answerSources = answerSources,
+            exploredSources = exploredSources
         )
 
         resultDeferred.complete(result)

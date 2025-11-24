@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -142,8 +143,15 @@ class AggregateSearchResultsAgentGenAiImpl(
             }
         }
 
-        // Collect all unique sources from input search results
-        val allSources = input.searchResults.flatMap { it.sources }.distinct()
+        // Collect all unique answer sources from input search results
+        val allAnswerSources = input.searchResults
+            .flatMap { it.answerSources }
+            .distinctBy { it.url }
+        
+        // Collect all explored sources
+        val allExploredSources = input.searchResults
+            .flatMap { it.exploredSources }
+            .distinct()
         
         // Combine all content from input search results
         val allContent = input.searchResults.joinToString("\n\n---\n\n") { it.content }
@@ -152,13 +160,15 @@ class AggregateSearchResultsAgentGenAiImpl(
             originalQuery = input.searchQuery,
             answer = response.answer,
             content = allContent,
-            sources = allSources
+            answerSources = allAnswerSources,
+            exploredSources = allExploredSources
         )
 
         logger.debug(
-            "Aggregated answer length: {} chars, sources: {}",
+            "Aggregated answer length: {} chars, answerSources: {}, exploredSources: {}",
             aggregated.answer.length,
-            aggregated.sources.size
+            aggregated.answerSources.size,
+            aggregated.exploredSources.size
         )
 
         return AggregateSearchResultsOutput(

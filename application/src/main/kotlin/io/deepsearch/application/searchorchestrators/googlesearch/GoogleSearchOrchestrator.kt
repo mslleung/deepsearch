@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
+import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.domain.agents.GoogleTextSearchInput
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
@@ -60,11 +61,12 @@ class GoogleSearchOrchestrator(
             totalTokens = googleTextSearchOutput.tokenUsage.totalTokens
         )
         
-        val textSources = googleTextSearchOutput.searchResult.sources
-        logger.debug("Text search found {} sources; first: {}", textSources.size, textSources.firstOrNull())
+        val textSources = googleTextSearchOutput.searchResult.answerSources
+        logger.debug("Text search found {} sources; first: {}", textSources.size, textSources.firstOrNull()?.url)
 
         val baseUrl = searchQuery.url
-        val candidateSources = googleTextSearchOutput.searchResult.sources
+        val candidateSources = googleTextSearchOutput.searchResult.answerSources
+            .map { it.url }
             .filter { it.startsWith(baseUrl) }
 
         logger.debug("Filtered to {} candidate sources starting with '{}'", candidateSources.size, baseUrl)
@@ -98,15 +100,21 @@ class GoogleSearchOrchestrator(
         logger.debug(
             "URL-context content length: {}, sources: {}",
             urlContextOutput.content.length,
-            urlContextOutput.sources
+            urlContextOutput.sources.size
         )
 
         // 4) Return the results, preserving the original query
+        // Note: This orchestrator doesn't use shortlisting, so all sources are treated as answer sources
+        val answerSources = urlContextOutput.sources.map { sourceUrl ->
+            SourceWithRelevance(url = sourceUrl, relevanceScore = 1.0f)
+        }
+        
         return SearchResult(
             originalQuery = searchQuery,
             answer = "",
             content = urlContextOutput.content,
-            sources = urlContextOutput.sources
+            answerSources = answerSources,
+            exploredSources = emptyList()
         )
     }
 }

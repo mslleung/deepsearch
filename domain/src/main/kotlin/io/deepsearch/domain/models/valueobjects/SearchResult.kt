@@ -7,6 +7,7 @@ data class SearchResult(
     val originalQuery: SearchQuery,
     val answer: String,
     val content: String,
-    val sources: List<String>,
+    val answerSources: List<SourceWithRelevance>,
+    val exploredSources: List<String>,
     val durationMs: Long = 0L
 )

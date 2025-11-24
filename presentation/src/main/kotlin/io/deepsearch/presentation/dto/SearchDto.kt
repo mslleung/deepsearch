@@ -14,10 +14,17 @@ data class SearchRequest(
 )
 
 @Serializable
+data class SourceWithRelevance(
+    val url: String,
+    val relevanceScore: Float
+)
+
+@Serializable
 data class SearchResponse(
     val answer: String,
     val content: String,
-    val sources: List<String>,
+    val answerSources: List<SourceWithRelevance>,
+    val exploredSources: List<String>,
     val durationMs: Long,
 )
 
@@ -25,7 +32,13 @@ fun SearchResult.toResponse(): SearchResponse {
     return SearchResponse(
         answer = answer,
         content = content,
-        sources = sources,
+        answerSources = answerSources.map { 
+            SourceWithRelevance(
+                url = it.url,
+                relevanceScore = it.relevanceScore
+            )
+        },
+        exploredSources = exploredSources,
         durationMs = durationMs
     )
 }

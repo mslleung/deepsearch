@@ -1,6 +1,7 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
@@ -104,12 +105,14 @@ class GoogleCombinedSearchAgentImpl : IGoogleCombinedSearchAgent {
             }
         }
 
+        val answerSources = listOf(SourceWithRelevance(url = url, relevanceScore = 1.0f))
+        
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,
             answer = "",
             content = contentText,
-            // Sources will be inferred from the model response or can be enhanced later
-            sources = listOf(url)
+            answerSources = answerSources,
+            exploredSources = emptyList()
         )
 
         logger.debug("Combined search results: '{}'", contentText)
