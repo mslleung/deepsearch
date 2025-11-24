@@ -26,6 +26,7 @@ data class SearchResponse(
     val answerSources: List<String>,
     val exploredSources: List<String>,
     val durationMs: Long,
+    val sessionId: String? = null
 )
 
 fun SearchResult.toResponse(): SearchResponse {
@@ -41,6 +42,7 @@ fun SearchResult.toResponse(): SearchResponse {
         },
         answerSources = answerSources,
         exploredSources = exploredSources,
-        durationMs = durationMs
+        durationMs = durationMs,
+        sessionId = sessionId
     )
 }

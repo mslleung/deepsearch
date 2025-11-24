@@ -16,5 +16,6 @@ val presentationModule = module {
         scopedOf(::CacheController)
         scopedOf(::PrecacheController)
         scopedOf(::UsageController)
+        scopedOf(::QuerySessionController)
     }
 } 

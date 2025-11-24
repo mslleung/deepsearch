@@ -63,6 +63,7 @@ fun Application.module() {
     configurePrecacheRoutes()
     configureCacheRoutes()
     configureUsageRoutes()
+    configureQuerySessionRoutes()
 }
 
 private fun Application.configureSerialization() {

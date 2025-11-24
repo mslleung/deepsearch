@@ -827,7 +827,8 @@ class AgenticBrowserSearchOrchestrator(
             answer = finalAnswerText,
             contentSources = finalAnswerAccumulator.allMarkdownSources,
             answerSources = answerSources,
-            exploredSources = exploredSources
+            exploredSources = exploredSources,
+            sessionId = sessionId
         )
 
         resultDeferred.complete(result)

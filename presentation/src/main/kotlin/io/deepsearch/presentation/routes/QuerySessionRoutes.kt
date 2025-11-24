@@ -1,0 +1,26 @@
+package io.deepsearch.presentation.routes
+
+import io.deepsearch.presentation.controllers.QuerySessionController
+import io.ktor.server.application.*
+import io.ktor.server.auth.*
+import io.ktor.server.routing.*
+import org.koin.ktor.plugin.scope
+
+fun Application.configureQuerySessionRoutes() {
+    routing {
+        authenticate("auth-jwt") {
+            route("/api/query-sessions") {
+                get {
+                    val controller = call.scope.get<QuerySessionController>()
+                    controller.getQuerySessions(call)
+                }
+
+                get("/{id}") {
+                    val controller = call.scope.get<QuerySessionController>()
+                    controller.getQuerySessionDetail(call)
+                }
+            }
+        }
+    }
+}
+

@@ -41,5 +41,16 @@ interface IQuerySessionRepository {
      * This requires joining with the api_keys table.
      */
     suspend fun findByUserIdAndDateRange(userId: UserId, start: Instant, end: Instant): List<QuerySession>
+    
+    /**
+     * Find query sessions by user ID with pagination.
+     * Ordered by creation date descending (newest first).
+     */
+    suspend fun findByUserIdPaginated(userId: UserId, offset: Int, limit: Int): List<QuerySession>
+    
+    /**
+     * Count total query sessions for a user.
+     */
+    suspend fun countByUserId(userId: UserId): Long
 }
 

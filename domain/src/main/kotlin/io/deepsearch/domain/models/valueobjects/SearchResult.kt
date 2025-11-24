@@ -9,5 +9,6 @@ data class SearchResult(
     val contentSources: List<MarkdownSource>,
     val answerSources: List<String>,
     val exploredSources: List<String>,
-    val durationMs: Long = 0L
+    val durationMs: Long = 0L,
+    val sessionId: String? = null
 )

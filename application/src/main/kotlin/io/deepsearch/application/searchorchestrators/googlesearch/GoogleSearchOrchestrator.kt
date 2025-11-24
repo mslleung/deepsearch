@@ -119,7 +119,8 @@ class GoogleSearchOrchestrator(
             answer = "",
             contentSources = contentSources,
             answerSources = answerSources,
-            exploredSources = emptyList()
+            exploredSources = emptyList(),
+            sessionId = sessionId
         )
     }
 }

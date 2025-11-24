@@ -115,6 +115,28 @@ class ExposedQuerySessionRepository(
             .toList()
     }
 
+    override suspend fun findByUserIdPaginated(userId: UserId, offset: Int, limit: Int): List<QuerySession> = transactionService.withTransaction {
+        querySessionTable
+            .join(apiKeyTable, JoinType.INNER, querySessionTable.apiKeyId, apiKeyTable.id)
+            .selectAll()
+            .where { apiKeyTable.userId eq userId.value }
+            .orderBy(querySessionTable.createdAtEpochMs to org.jetbrains.exposed.v1.core.SortOrder.DESC)
+            .limit(limit)
+            .offset(offset.toLong())
+            .map { mapRowToQuerySession(it) }
+            .toList()
+    }
+
+    override suspend fun countByUserId(userId: UserId): Long = transactionService.withTransaction {
+        val results = querySessionTable
+            .join(apiKeyTable, JoinType.INNER, querySessionTable.apiKeyId, apiKeyTable.id)
+            .selectAll()
+            .where { apiKeyTable.userId eq userId.value }
+            .map { it }
+            .toList()
+        results.size.toLong()
+    }
+
     private fun mapRowToQuerySession(row: ResultRow): QuerySession {
         return QuerySession(
             id = row[querySessionTable.id],
