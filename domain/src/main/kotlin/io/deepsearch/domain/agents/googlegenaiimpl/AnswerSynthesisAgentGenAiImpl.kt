@@ -151,10 +151,10 @@ class AnswerSynthesisAgentGenAiImpl(
             input.shortlistedSources.forEachIndexed { index, source ->
                 appendLine("## Source ${index + 1}")
                 appendLine("URL: ${source.url}")
-                appendLine("Content Relevance: ${source.contentRelevance}")
-                appendLine("Temporal Relevance: ${source.temporalRelevance}")
-                appendLine("Authority: ${source.authority}")
-                appendLine("Note: ${source.note}")
+                appendLine("Source Classification: ${source.sourceClassification}")
+                appendLine("Content Date: ${source.contentDate ?: "Not found"}")
+                appendLine("Answer Type: ${source.answerType}")
+                appendLine("Relevance Justification: ${source.relevanceJustification}")
                 appendLine()
                 appendLine("### Content")
                 appendLine(source.markdown)
@@ -166,7 +166,7 @@ class AnswerSynthesisAgentGenAiImpl(
             appendLine()
             appendLine("# Instructions")
             appendLine("Generate a comprehensive answer to the query using the shortlisted sources above.")
-            appendLine("Prioritize sources with higher relevance scores when synthesizing information.")
+            appendLine("Prioritize sources with DIRECT_ANSWER type and OFFICIAL_LIVING_DOC classification when synthesizing information.")
         }
     }
 }

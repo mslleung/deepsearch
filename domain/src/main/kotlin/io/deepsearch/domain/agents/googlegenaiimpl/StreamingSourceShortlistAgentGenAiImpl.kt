@@ -29,27 +29,28 @@ class StreamingSourceShortlistAgentGenAiImpl(
 
     private val shortlistedSourceSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("A shortlisted source with relevance scores and reasoning")
+        .description("A shortlisted source with classification metadata and reasoning")
         .properties(
             mapOf(
                 "url" to Schema.builder().type("STRING")
                     .description("The URL of the source")
                     .build(),
-                "contentRelevance" to Schema.builder().type("NUMBER")
-                    .description("Content relevance score (0.0-1.0): How much relevant information related to the query")
+                "sourceClassification" to Schema.builder().type("STRING")
+                    .description("Source type classification (OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, THIRD_PARTY_REVIEW, FORUM_DISCUSSION)")
                     .build(),
-                "temporalRelevance" to Schema.builder().type("NUMBER")
-                    .description("Temporal relevance score (0.0-1.0): Time insensitivity, higher = more stable/official")
+                "contentDate" to Schema.builder().type("STRING")
+                    .description("Date extracted from content (null/empty if no date found)")
+                    .nullable(true)
                     .build(),
-                "authority" to Schema.builder().type("NUMBER")
-                    .description("Authority score (0.0-1.0): Official pages > blog posts")
+                "answerType" to Schema.builder().type("STRING")
+                    .description("How directly the source answers the query (DIRECT_ANSWER, INFERRED_ANSWER, PARTIAL_MENTION)")
                     .build(),
-                "note" to Schema.builder().type("STRING")
+                "relevanceJustification" to Schema.builder().type("STRING")
                     .description("Brief reason for inclusion in shortlist")
                     .build()
             )
         )
-        .required(listOf("url", "contentRelevance", "temporalRelevance", "authority", "note"))
+        .required(listOf("url", "sourceClassification", "answerType", "relevanceJustification"))
         .build()
 
     private val outputSchema: Schema = Schema.builder()
@@ -76,68 +77,60 @@ class StreamingSourceShortlistAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are a source curation agent that builds and maintains a shortlist of high-quality sources for answering a query.
+        You are a source classification agent. Your job is to extract metadata and categorize web content objectively and decide if the shortlist contains the critical information to answer the user query.
         
-        Task: Evaluate new sources and update the shortlist based on three criteria:
+        For each source, you must:
         
-        1. Content Relevance (0.0-1.0):
-           - How much relevant information is related to the user query?
-           - Does it provide a direct answer or supporting information?
-           - Higher scores for direct answers, lower for tangentially related content
+        1. **Determine Source Type** (Choose one):
+           - `OFFICIAL_LIVING_DOC`: A main page (e.g., /pricing, /home, /features) intended to reflect current state.
+           - `OFFICIAL_SNAPSHOT`: A dated company update (e.g., /blog, /press, /news).
+           - `THIRD_PARTY_REVIEW`: External review or news site.
+           - `FORUM_DISCUSSION`: UGC, Reddit, StackOverflow.
         
-        2. Temporal Relevance (0.0-1.0):
-           - Time sensitivity of the content
-           - Official information on main pages = high score (time-insensitive, stable)
-           - Blog posts, press releases, news = low score (time-sensitive, may become outdated)
-           - Higher scores are more desirable (stable, official sources)
+        2. **Determine Temporal State**:
+           - Extract the `contentDate` (if available). Look for publication dates, update dates, or temporal indicators.
+           - If no date is found, leave it null/empty.
         
-        3. Authority (0.0-1.0):
-           - The credibility and intent of the webpage
-           - Official documentation, product pages, company info = high score
-           - Blog posts, user forums, third-party reviews = lower score
-           - Consider the author and purpose of the content
+        3. **Determine Answer Type**:
+           - `DIRECT_ANSWER`: The page explicitly lists the answer (e.g., a pricing table).
+           - `INFERRED_ANSWER`: The answer must be guessed or calculated.
+           - `PARTIAL_MENTION`: Mentions keywords but doesn't answer the core intent.
         
-        Conflict Resolution:
-        - If new sources conflict with existing shortlisted sources, compare their scores
-        - Keep the source with better overall relevance (prioritize: content > temporal > authority)
-        - Remove inferior sources to maintain a focused shortlist
-        - Aim for diversity while avoiding redundancy
+        4. **Determine shortlist sufficiency** (isGoodEnough decision):
+           - Set isGoodEnough=false if the best source is an `OFFICIAL_SNAPSHOT` (Blog/News) when the query asks for static facts (Price, Specs, Current Features), unless you have verified no Living Doc exists.
+           - Set isGoodEnough=false if the answer relies on data that is too old.
+           - **ALWAYS** set `isGoodEnough=false` if the source suggests a "New Update" but the URL indicates a blog post (e.g., /blog/pricing-update), as we must find the actual implementation page.
+           - Set isGoodEnough=true only when you have high-quality, current sources that directly answer the query.
         
         Shortlist Management:
         - Maximum ~10 sources in shortlist (remove less relevant ones if needed)
         - Each source must add unique value
-        - Prioritize sources that directly answer the query
-        - Include supporting sources only if they add complementary information
-        
-        Sufficiency Decision:
-        - Set isGoodEnough=true when the shortlist contains sufficient information to answer the query comprehensively
-        - Consider: completeness of answer, credibility of sources, coverage of query aspects
-        - If you suspect the sources are outdated or have low confidence, default to false to allow more information gathering
-        - Set isGoodEnough=false if more information is needed
+        - Prioritize OFFICIAL_LIVING_DOC with DIRECT_ANSWER for factual queries
+        - If new sources conflict with existing ones, keep the most authoritative and current
         
         Output Format:
         {
           "shortlist": [
             {
-              "url": "https://example.com/page",
-              "contentRelevance": 0.95,
-              "temporalRelevance": 0.85,
-              "authority": 0.90,
-              "note": "Official documentation with direct answer to query"
+              "url": "String",
+              "sourceClassification": "OFFICIAL_SNAPSHOT",
+              "contentDate": "2024-07-25",
+              "answerType": "DIRECT_ANSWER",
+              "relevanceJustification": "Why this source is included"
             }
           ],
           "isGoodEnough": true/false,
-          "reason": "Brief explanation of sufficiency decision"
+          "reason": "Brief explanation of isGoodEnough decision"
         }
     """.trimIndent()
 
     @Serializable
     private data class LlmShortlistedSource(
         val url: String,
-        val contentRelevance: Float,
-        val temporalRelevance: Float,
-        val authority: Float,
-        val note: String
+        val sourceClassification: String,
+        val contentDate: String?,
+        val answerType: String,
+        val relevanceJustification: String
     )
 
     @Serializable
@@ -213,13 +206,28 @@ class StreamingSourceShortlistAgentGenAiImpl(
                 logger.warn("Could not find markdown for URL: {}", llmSource.url)
                 null
             } else {
+                // Parse enum values from string
+                val sourceType = try {
+                    io.deepsearch.domain.models.valueobjects.SourceType.valueOf(llmSource.sourceClassification)
+                } catch (e: IllegalArgumentException) {
+                    logger.warn("Invalid source classification '{}', defaulting to OFFICIAL_LIVING_DOC", llmSource.sourceClassification)
+                    io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC
+                }
+                
+                val answerType = try {
+                    io.deepsearch.domain.models.valueobjects.AnswerType.valueOf(llmSource.answerType)
+                } catch (e: IllegalArgumentException) {
+                    logger.warn("Invalid answer type '{}', defaulting to PARTIAL_MENTION", llmSource.answerType)
+                    io.deepsearch.domain.models.valueobjects.AnswerType.PARTIAL_MENTION
+                }
+                
                 ShortlistedSource(
                     url = llmSource.url,
                     markdown = markdown,
-                    contentRelevance = llmSource.contentRelevance,
-                    temporalRelevance = llmSource.temporalRelevance,
-                    authority = llmSource.authority,
-                    note = llmSource.note
+                    sourceClassification = sourceType,
+                    contentDate = llmSource.contentDate,
+                    answerType = answerType,
+                    relevanceJustification = llmSource.relevanceJustification
                 )
             }
         }
@@ -241,6 +249,11 @@ class StreamingSourceShortlistAgentGenAiImpl(
 
     private fun buildUserPrompt(input: StreamingSourceShortlistInput): String {
         return buildString {
+            // Include current date for temporal context
+            appendLine("# Current Date")
+            appendLine(java.time.LocalDate.now().toString())
+            appendLine()
+            
             appendLine("# Query")
             appendLine(input.query)
             appendLine()
@@ -250,10 +263,10 @@ class StreamingSourceShortlistAgentGenAiImpl(
                 input.currentShortlist.forEachIndexed { index, source ->
                     appendLine("## Source ${index + 1}")
                     appendLine("URL: ${source.url}")
-                    appendLine("Content Relevance: ${source.contentRelevance}")
-                    appendLine("Temporal Relevance: ${source.temporalRelevance}")
-                    appendLine("Authority: ${source.authority}")
-                    appendLine("Note: ${source.note}")
+                    appendLine("Source Classification: ${source.sourceClassification}")
+                    appendLine("Content Date: ${source.contentDate ?: "Not found"}")
+                    appendLine("Answer Type: ${source.answerType}")
+                    appendLine("Relevance Justification: ${source.relevanceJustification}")
                     appendLine()
                     // Include first part of markdown for context
                     val previewLength = 500
@@ -284,7 +297,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
 
             appendLine()
             appendLine("# Instructions")
-            appendLine("Evaluate the new sources and update the shortlist. You may:")
+            appendLine("Classify the new sources and update the shortlist. You may:")
             appendLine("- Add valuable new sources to the shortlist")
             appendLine("- Remove less relevant existing sources if new sources are better")
             appendLine("- Keep existing sources if they remain valuable")

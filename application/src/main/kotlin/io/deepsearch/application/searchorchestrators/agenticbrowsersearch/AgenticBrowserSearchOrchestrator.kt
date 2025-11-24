@@ -824,10 +824,23 @@ class AgenticBrowserSearchOrchestrator(
         // Extract answer sources from shortlist with relevance scores
         val answerSources = finalAnswerAccumulator.currentShortlist
             .map { shortlistedSource ->
-                // Calculate composite relevance score: content (60%), temporal (20%), authority (20%)
-                val compositeScore = shortlistedSource.contentRelevance * 0.6f +
-                    shortlistedSource.temporalRelevance * 0.2f +
-                    shortlistedSource.authority * 0.2f
+                // Calculate composite relevance score based on classification
+                val sourceTypeScore = when (shortlistedSource.sourceClassification) {
+                    io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC -> 1.0f
+                    io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_SNAPSHOT -> 0.7f
+                    io.deepsearch.domain.models.valueobjects.SourceType.THIRD_PARTY_REVIEW -> 0.5f
+                    io.deepsearch.domain.models.valueobjects.SourceType.FORUM_DISCUSSION -> 0.3f
+                }
+                
+                val answerTypeScore = when (shortlistedSource.answerType) {
+                    io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER -> 1.0f
+                    io.deepsearch.domain.models.valueobjects.AnswerType.INFERRED_ANSWER -> 0.7f
+                    io.deepsearch.domain.models.valueobjects.AnswerType.PARTIAL_MENTION -> 0.4f
+                }
+                
+                // Composite: source type (70%), answer type (30%)
+                val compositeScore = sourceTypeScore * 0.7f + answerTypeScore * 0.3f
+                
                 SourceWithRelevance(
                     url = shortlistedSource.url,
                     relevanceScore = compositeScore
