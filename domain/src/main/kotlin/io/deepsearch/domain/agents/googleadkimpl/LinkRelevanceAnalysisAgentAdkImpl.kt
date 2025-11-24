@@ -54,7 +54,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
         model(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
         generateContentConfig(
             GenerateContentConfig.builder()
-                .temperature(0.2F)
+                .temperature(0F)
                 .responseMimeType("application/json")
                 .thinkingConfig(
                     ThinkingConfig.builder()
@@ -69,7 +69,7 @@ class LinkRelevanceAnalysisAgentAdkImpl : ILinkRelevanceAnalysisAgent {
                 1. Identify all <a href> links in the provided text
                 2. Using the surrounding context, analyze which links are most relevant to the user's query
                 3. Return all relevant links with reasons why they are relevant
-                4. The links must be unique
+                4. The output links must be unique and exactly the same as given in the source text
                 
                 Focus on links that would help answer the user's query or provide more detailed information.
                 
