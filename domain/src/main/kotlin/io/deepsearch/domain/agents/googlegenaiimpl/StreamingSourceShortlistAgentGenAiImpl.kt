@@ -284,7 +284,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
             appendLine()
             appendLine("# Instructions")
             appendLine("Evaluate the new sources and update the shortlist. You may:")
-            appendLine("- Add valuable new sources")
+            appendLine("- Add valuable new sources to the shortlist")
             appendLine("- Remove less relevant existing sources if new sources are better")
             appendLine("- Keep existing sources if they remain valuable")
             appendLine("- Decide if the current shortlist is sufficient to answer the query comprehensively")
