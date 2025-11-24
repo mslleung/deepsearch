@@ -1,10 +1,9 @@
 package io.deepsearch.presentation.controllers
 
+import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.UserId
-import io.deepsearch.domain.repositories.IQuerySessionRepository
-import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.presentation.dto.QuerySessionListResponse
 import io.deepsearch.presentation.dto.toDetailDto
 import io.deepsearch.presentation.dto.toSummaryDto
@@ -17,9 +16,8 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 class QuerySessionController(
-    private val querySessionRepository: IQuerySessionRepository,
-    private val urlAccessService: IUrlAccessService,
-    private val webpageMarkdownRepository: IWebpageMarkdownRepository
+    private val querySessionService: IQuerySessionService,
+    private val urlAccessService: IUrlAccessService
 ) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -40,8 +38,8 @@ class QuerySessionController(
             }
 
             val offset = (page - 1) * pageSize
-            val sessions = querySessionRepository.findByUserIdPaginated(userId, offset, pageSize)
-            val totalCount = querySessionRepository.countByUserId(userId).toInt()
+            val sessions = querySessionService.getSessionsByUserId(userId, offset, pageSize)
+            val totalCount = querySessionService.countSessionsByUserId(userId).toInt()
 
             // Get URL count for each session
             val sessionsWithUrlCount = sessions.map { session ->
@@ -77,31 +75,20 @@ class QuerySessionController(
                 return
             }
 
-            val session = querySessionRepository.findById(sessionId)
-            if (session == null) {
+            val sessionDetail = try {
+                querySessionService.getSessionDetail(sessionId, userId)
+            } catch (e: IllegalArgumentException) {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "Session not found"))
                 return
-            }
-
-            // Verify the session belongs to the user (through API key)
-            // We need to check if the session's API key belongs to this user
-            // For now, we'll fetch all user sessions and check if this session ID is in the list
-            // A more efficient approach would be to join with api_keys table in the query
-            val userSessions = querySessionRepository.findByUserIdPaginated(userId, 0, Int.MAX_VALUE)
-            if (!userSessions.any { it.id == sessionId }) {
+            } catch (e: IllegalAccessException) {
                 call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
                 return
             }
-
-            val urlAccesses = urlAccessService.getUrlAccessesBySession(sessionId)
             
-            // Fetch cached webpages for URLs that were accessed
-            val urls = urlAccesses.map { it.url }
-            val cachedWebpages = urls.mapNotNull { url ->
-                webpageMarkdownRepository.findByUrl(url)
-            }
-            
-            call.respond(HttpStatusCode.OK, session.toDetailDto(urlAccesses, cachedWebpages))
+            call.respond(
+                HttpStatusCode.OK,
+                sessionDetail.session.toDetailDto(sessionDetail.urlAccesses, sessionDetail.cachedWebpages)
+            )
         } catch (e: Exception) {
             logger.error("Unexpected error in getQuerySessionDetail: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))

@@ -2,13 +2,26 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.FinishReason
+import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
+import io.deepsearch.domain.models.valueobjects.UrlAccess
+import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IQuerySessionRepository
+import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.UUID
 import kotlin.time.Duration.Companion.milliseconds
+
+/**
+ * Data class to encapsulate query session detail with its related data.
+ */
+data class QuerySessionDetail(
+    val session: QuerySession,
+    val urlAccesses: List<UrlAccess>,
+    val cachedWebpages: List<WebpageMarkdown>
+)
 
 /**
  * Application-level coordinator for `QuerySession` persistence and lifecycle orchestration.
@@ -54,6 +67,32 @@ interface IQuerySessionService {
 
     /** Get complete session. */
     suspend fun getSession(sessionId: String): QuerySession
+
+    /**
+     * Get paginated query sessions for a user.
+     * @param userId The user ID to fetch sessions for
+     * @param offset The offset for pagination
+     * @param limit The maximum number of sessions to return
+     * @return List of query sessions
+     */
+    suspend fun getSessionsByUserId(userId: UserId, offset: Int, limit: Int): List<QuerySession>
+
+    /**
+     * Count total query sessions for a user.
+     * @param userId The user ID to count sessions for
+     * @return Total number of sessions
+     */
+    suspend fun countSessionsByUserId(userId: UserId): Long
+
+    /**
+     * Get query session detail with URL accesses and cached webpages.
+     * @param sessionId The session ID
+     * @param userId The user ID (for authorization check)
+     * @return QuerySessionDetail containing session, URL accesses, and cached webpages
+     * @throws IllegalArgumentException if session not found
+     * @throws IllegalAccessException if user doesn't have access to the session
+     */
+    suspend fun getSessionDetail(sessionId: String, userId: UserId): QuerySessionDetail
 }
 
 /**
@@ -62,7 +101,8 @@ interface IQuerySessionService {
  */
 class QuerySessionService(
     private val querySessionRepository: IQuerySessionRepository,
-    private val urlAccessService: IUrlAccessService
+    private val urlAccessService: IUrlAccessService,
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository
 ) : IQuerySessionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -160,6 +200,40 @@ class QuerySessionService(
 
     override suspend fun getSession(sessionId: String): QuerySession {
         return getSessionOrThrow(sessionId)
+    }
+
+    override suspend fun getSessionsByUserId(userId: UserId, offset: Int, limit: Int): List<QuerySession> {
+        return querySessionRepository.findByUserIdPaginated(userId, offset, limit)
+    }
+
+    override suspend fun countSessionsByUserId(userId: UserId): Long {
+        return querySessionRepository.countByUserId(userId)
+    }
+
+    override suspend fun getSessionDetail(sessionId: String, userId: UserId): QuerySessionDetail {
+        // Get the session
+        val session = getSessionOrThrow(sessionId)
+
+        // Verify the session belongs to the user
+        val userSessions = querySessionRepository.findByUserIdPaginated(userId, 0, Int.MAX_VALUE)
+        if (!userSessions.any { it.id == sessionId }) {
+            throw IllegalAccessException("User $userId does not have access to session $sessionId")
+        }
+
+        // Get URL accesses for the session
+        val urlAccesses = urlAccessService.getUrlAccessesBySession(sessionId)
+
+        // Fetch cached webpages for URLs that were accessed
+        val urls = urlAccesses.map { it.url }
+        val cachedWebpages = urls.mapNotNull { url ->
+            webpageMarkdownRepository.findByUrl(url)
+        }
+
+        return QuerySessionDetail(
+            session = session,
+            urlAccesses = urlAccesses,
+            cachedWebpages = cachedWebpages
+        )
     }
 
     private suspend fun getSessionOrThrow(sessionId: String): QuerySession {

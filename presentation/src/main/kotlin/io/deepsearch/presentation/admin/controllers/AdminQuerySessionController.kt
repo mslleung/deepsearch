@@ -1,14 +1,14 @@
 package io.deepsearch.presentation.admin.controllers
 
+import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
-import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.presentation.admin.dto.toAdminDetailDto
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 
 class AdminQuerySessionController(
-    private val querySessionRepository: IQuerySessionRepository,
+    private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService
 ) {
 
@@ -20,8 +20,9 @@ class AdminQuerySessionController(
                 return
             }
 
-            val session = querySessionRepository.findById(sessionId)
-            if (session == null) {
+            val session = try {
+                querySessionService.getSession(sessionId)
+            } catch (e: IllegalArgumentException) {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "Session not found"))
                 return
             }
