@@ -23,7 +23,6 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.SearchBudget
-import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
@@ -821,32 +820,8 @@ class AgenticBrowserSearchOrchestrator(
             querySessionService.completeSessionLinksExhausted(sessionId, finalAnswerText)
         }
 
-        // Extract answer sources from shortlist with relevance scores
-        val answerSources = finalAnswerAccumulator.currentShortlist
-            .map { shortlistedSource ->
-                // Calculate composite relevance score based on classification
-                val sourceTypeScore = when (shortlistedSource.sourceClassification) {
-                    io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC -> 1.0f
-                    io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_SNAPSHOT -> 0.7f
-                    io.deepsearch.domain.models.valueobjects.SourceType.THIRD_PARTY_REVIEW -> 0.5f
-                    io.deepsearch.domain.models.valueobjects.SourceType.FORUM_DISCUSSION -> 0.3f
-                }
-                
-                val answerTypeScore = when (shortlistedSource.answerType) {
-                    io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER -> 1.0f
-                    io.deepsearch.domain.models.valueobjects.AnswerType.INFERRED_ANSWER -> 0.7f
-                    io.deepsearch.domain.models.valueobjects.AnswerType.PARTIAL_MENTION -> 0.4f
-                }
-                
-                // Composite: source type (70%), answer type (30%)
-                val compositeScore = sourceTypeScore * 0.7f + answerTypeScore * 0.3f
-                
-                SourceWithRelevance(
-                    url = shortlistedSource.url,
-                    relevanceScore = compositeScore
-                )
-            }
-            .sortedByDescending { it.relevanceScore }
+        // Extract answer sources from shortlist
+        val answerSources = finalAnswerAccumulator.currentShortlist.map { it.url }
 
         // Calculate explored sources: all URLs minus shortlisted URLs
         val shortlistedUrls = finalAnswerAccumulator.currentShortlist.map { it.url }.toSet()

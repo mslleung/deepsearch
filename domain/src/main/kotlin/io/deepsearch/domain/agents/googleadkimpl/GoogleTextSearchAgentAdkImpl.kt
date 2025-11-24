@@ -1,7 +1,6 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
-import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
@@ -158,9 +157,7 @@ class GoogleTextSearchAgentAdkImpl :
 //            .filter { source -> source.startsWith(url) }
             .distinct()
 
-        val answerSources = sources.map { url ->
-            SourceWithRelevance(url = url, relevanceScore = 1.0f)
-        }
+        val answerSources = sources
 
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,

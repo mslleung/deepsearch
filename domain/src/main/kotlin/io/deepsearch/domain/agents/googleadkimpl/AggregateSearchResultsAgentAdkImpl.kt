@@ -1,7 +1,6 @@
 package io.deepsearch.domain.agents.googleadkimpl
 
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
-import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 
 import com.google.adk.agents.LlmAgent
 import com.google.adk.agents.RunConfig
@@ -160,7 +159,6 @@ class AggregateSearchResultsAgentAdkImpl : IAggregateSearchResultsAgent {
         // Collect all unique answer sources from input search results
         val allAnswerSources = input.searchResults
             .flatMap { it.answerSources }
-            .distinctBy { it.url }
         
         // Collect all explored sources
         val allExploredSources = input.searchResults

@@ -9,7 +9,6 @@ import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.SearchResult
-import io.deepsearch.domain.models.valueobjects.SourceWithRelevance
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -77,7 +76,7 @@ class GoogleCombinedSearchAgentGenAiImpl(
 
         val contentText = response.text() ?: ""
 
-        val answerSources = listOf(SourceWithRelevance(url = url, relevanceScore = 1.0f))
+        val answerSources = listOf(url)
         
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,
