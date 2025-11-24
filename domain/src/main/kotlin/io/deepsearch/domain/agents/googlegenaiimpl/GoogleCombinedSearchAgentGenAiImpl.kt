@@ -78,10 +78,19 @@ class GoogleCombinedSearchAgentGenAiImpl(
 
         val answerSources = listOf(url)
         
+        val contentSources = listOf(
+            io.deepsearch.domain.models.valueobjects.MarkdownSource(
+                url = url,
+                title = null,
+                description = null,
+                markdown = contentText
+            )
+        )
+        
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,
             answer = "",
-            content = contentText,
+            contentSources = contentSources,
             answerSources = answerSources,
             exploredSources = emptyList()
         )

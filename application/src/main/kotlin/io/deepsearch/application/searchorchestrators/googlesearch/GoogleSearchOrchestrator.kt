@@ -105,10 +105,19 @@ class GoogleSearchOrchestrator(
         // Note: This orchestrator doesn't use shortlisting, so all sources are treated as answer sources
         val answerSources = urlContextOutput.sources
         
+        val contentSources = urlContextOutput.sources.map { url ->
+            io.deepsearch.domain.models.valueobjects.MarkdownSource(
+                url = url,
+                title = null,
+                description = null,
+                markdown = urlContextOutput.content
+            )
+        }
+        
         return SearchResult(
             originalQuery = searchQuery,
             answer = "",
-            content = urlContextOutput.content,
+            contentSources = contentSources,
             answerSources = answerSources,
             exploredSources = emptyList()
         )

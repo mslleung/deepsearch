@@ -151,13 +151,13 @@ class AggregateSearchResultsAgentGenAiImpl(
             .flatMap { it.exploredSources }
             .distinct()
         
-        // Combine all content from input search results
-        val allContent = input.searchResults.joinToString("\n\n---\n\n") { it.content }
+        // Combine all content sources from input search results
+        val allContentSources = input.searchResults.flatMap { it.contentSources }
 
         val aggregated = SearchResult(
             originalQuery = input.searchQuery,
             answer = response.answer,
-            content = allContent,
+            contentSources = allContentSources,
             answerSources = allAnswerSources,
             exploredSources = allExploredSources
         )

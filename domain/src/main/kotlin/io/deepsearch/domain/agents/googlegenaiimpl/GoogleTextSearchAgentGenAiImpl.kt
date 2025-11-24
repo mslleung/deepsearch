@@ -91,7 +91,7 @@ class GoogleTextSearchAgentGenAiImpl(
                 searchResult = SearchResult(
                     originalQuery = input.searchQuery,
                     answer = "",
-                    content = "",
+                    contentSources = emptyList(),
                     answerSources = emptyList(),
                     exploredSources = emptyList()
                 ),
@@ -144,11 +144,20 @@ class GoogleTextSearchAgentGenAiImpl(
         }.distinct()
 
         val answerSources = sources
+        
+        val contentSources = sources.map { url ->
+            io.deepsearch.domain.models.valueobjects.MarkdownSource(
+                url = url,
+                title = null,
+                description = null,
+                markdown = concatenatedText
+            )
+        }
 
         val searchResult = SearchResult(
             originalQuery = input.searchQuery,
             answer = "",
-            content = concatenatedText,
+            contentSources = contentSources,
             answerSources = answerSources,
             exploredSources = emptyList()
         )
