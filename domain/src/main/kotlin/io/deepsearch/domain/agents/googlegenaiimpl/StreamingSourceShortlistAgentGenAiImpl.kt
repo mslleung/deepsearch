@@ -112,6 +112,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
         Sufficiency Decision:
         - Set isGoodEnough=true when the shortlist contains sufficient information to answer the query comprehensively
         - Consider: completeness of answer, credibility of sources, coverage of query aspects
+        - If you suspect the sources are outdated or have low confidence, default to false to allow more information gathering
         - Set isGoodEnough=false if more information is needed
         
         Output Format:
