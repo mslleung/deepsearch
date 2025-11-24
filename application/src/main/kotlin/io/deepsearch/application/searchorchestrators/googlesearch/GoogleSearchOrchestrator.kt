@@ -31,8 +31,8 @@ class GoogleSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, maxUrls: Int?, searchDurationSeconds: Int?, cacheExpiryMs: Long?, apiKeyId: ApiKeyId): SearchResult {
-        // Note: This orchestrator uses Google's search API and doesn't support custom budget or cache expiry parameters
+    override suspend fun execute(searchQuery: SearchQuery, cacheExpiryMs: Long?, apiKeyId: ApiKeyId): SearchResult {
+        // Note: This orchestrator uses Google's search API and doesn't support custom cache expiry parameters
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
         
         // Create query session to get sessionId

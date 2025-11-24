@@ -12,8 +12,6 @@ interface ISearchService {
         query: String, 
         url: String, 
         sitemapUrl: String? = null,
-        maxUrls: Int? = null,
-        searchDurationSeconds: Int? = null,
         cacheExpiryMs: Long? = null,
         apiKeyId: ApiKeyId
     ): SearchResult
@@ -28,12 +26,10 @@ class SearchService(
         query: String, 
         url: String, 
         sitemapUrl: String?,
-        maxUrls: Int?,
-        searchDurationSeconds: Int?,
         cacheExpiryMs: Long?,
         apiKeyId: ApiKeyId
     ): SearchResult {
         val searchQuery = SearchQuery(query, url, sitemapUrl)
-        return agenticBrowserSearchOrchestrator.execute(searchQuery, maxUrls, searchDurationSeconds, cacheExpiryMs, apiKeyId)
+        return agenticBrowserSearchOrchestrator.execute(searchQuery, cacheExpiryMs, apiKeyId)
     }
 }

@@ -78,27 +78,7 @@ class SearchController(
             
             val request = call.receive<SearchRequest>()
             
-            // Validate search budget parameters
-            request.maxUrls?.let { maxUrls ->
-                if (maxUrls !in 1..1000) {
-                    call.respond(
-                        HttpStatusCode.BadRequest,
-                        mapOf("error" to "maxUrls must be greater than 0 and at most 1000. Received: $maxUrls")
-                    )
-                    return
-                }
-            }
-            
-            request.searchDurationSeconds?.let { searchDurationSeconds ->
-                if (searchDurationSeconds !in 3..300) {
-                    call.respond(
-                        HttpStatusCode.BadRequest,
-                        mapOf("error" to "searchDurationSeconds must be at least 3 seconds and at most 300 seconds (5 minutes). Received: $searchDurationSeconds")
-                    )
-                    return
-                }
-            }
-            
+            // Validate cache expiry parameter
             request.cacheExpiryMs?.let { cacheExpiryMs ->
                 // Max 90 days = 7776000000ms
                 if (cacheExpiryMs <= 0 || cacheExpiryMs > 7776000000L) {
@@ -117,8 +97,6 @@ class SearchController(
                     request.query, 
                     request.url, 
                     request.sitemapUrl,
-                    request.maxUrls,
-                    request.searchDurationSeconds,
                     request.cacheExpiryMs,
                     apiKey.id!!
                 )

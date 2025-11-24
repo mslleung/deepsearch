@@ -79,15 +79,13 @@ class AgenticBrowserSearchOrchestrator(
 
     override suspend fun execute(
         searchQuery: SearchQuery,
-        maxUrls: Int?,
-        searchDurationSeconds: Int?,
         cacheExpiryMs: Long?,
         apiKeyId: ApiKeyId
     ): SearchResult =
         withContext(dispatchers.io) {
             val result: SearchResult
             val executionTime = measureTimeMillis {
-                result = executeSearchForQuery(searchQuery, maxUrls, searchDurationSeconds, cacheExpiryMs, apiKeyId)
+                result = executeSearchForQuery(searchQuery, cacheExpiryMs, apiKeyId)
             }
 
             logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
@@ -101,8 +99,6 @@ class AgenticBrowserSearchOrchestrator(
      */
     private suspend fun executeSearchForQuery(
         searchQuery: SearchQuery,
-        maxUrls: Int? = null,
-        searchDurationSeconds: Int? = null,
         cacheExpiryMs: Long?,
         apiKeyId: ApiKeyId
     ): SearchResult {
@@ -110,8 +106,8 @@ class AgenticBrowserSearchOrchestrator(
         val sessionId = session.id
         try {
             val budget = SearchBudget(
-                timeLimitMs = (searchDurationSeconds ?: 60) * 1000L,
-                maxLinks = maxUrls ?: 20
+                timeLimitMs = 300 * 1000L,
+                maxLinks = 100
             )
             logger.debug("[{}] Executing search for query: {}", sessionId, searchQuery.query)
 
