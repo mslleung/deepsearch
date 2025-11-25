@@ -24,6 +24,7 @@ class PeriodicIndexConfig(
     val id: Long? = null,
     val userId: UserId,
     var url: String,
+    var sitemapUrl: String? = null,
     var periodDays: Int? = null, // null means one-off
     var enabled: Boolean = true,
     val createdAt: Long = Clock.System.now().toEpochMilliseconds(),
@@ -62,8 +63,9 @@ class PeriodicIndexConfig(
         return next <= currentTimeMs
     }
 
-    fun updateConfig(newUrl: String, newPeriodDays: Int?) {
+    fun updateConfig(newUrl: String, newSitemapUrl: String?, newPeriodDays: Int?) {
         url = newUrl
+        sitemapUrl = newSitemapUrl
         periodDays = newPeriodDays
         updatedAt = Clock.System.now().toEpochMilliseconds()
     }

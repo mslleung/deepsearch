@@ -24,6 +24,7 @@ class ExposedPeriodicIndexConfigRepository(
         val id = periodicIndexConfigTable.insert {
             it[userId] = config.userId.value
             it[url] = config.url
+            it[sitemapUrl] = config.sitemapUrl
             it[periodDays] = config.periodDays
             it[enabled] = config.enabled
             it[createdAt] = config.createdAt
@@ -36,6 +37,7 @@ class ExposedPeriodicIndexConfigRepository(
             id = id,
             userId = config.userId,
             url = config.url,
+            sitemapUrl = config.sitemapUrl,
             periodDays = config.periodDays,
             enabled = config.enabled,
             createdAt = config.createdAt,
@@ -50,6 +52,7 @@ class ExposedPeriodicIndexConfigRepository(
         val rows = periodicIndexConfigTable.update({ periodicIndexConfigTable.id eq id }) {
             it[userId] = config.userId.value
             it[url] = config.url
+            it[sitemapUrl] = config.sitemapUrl
             it[periodDays] = config.periodDays
             it[enabled] = config.enabled
             it[updatedAt] = config.updatedAt
@@ -89,6 +92,7 @@ class ExposedPeriodicIndexConfigRepository(
             id = row[periodicIndexConfigTable.id],
             userId = UserId(row[periodicIndexConfigTable.userId]),
             url = row[periodicIndexConfigTable.url],
+            sitemapUrl = row[periodicIndexConfigTable.sitemapUrl],
             periodDays = row[periodicIndexConfigTable.periodDays],
             enabled = row[periodicIndexConfigTable.enabled],
             createdAt = row[periodicIndexConfigTable.createdAt],

@@ -55,7 +55,7 @@ class PeriodicIndexController(
             return
         }
 
-        val config = periodicIndexService.createOrUpdateConfig(userId, request.url, request.periodDays)
+        val config = periodicIndexService.createOrUpdateConfig(userId, request.url, request.sitemapUrl, request.periodDays)
         call.respond(HttpStatusCode.OK, config.toResponse())
     }
 

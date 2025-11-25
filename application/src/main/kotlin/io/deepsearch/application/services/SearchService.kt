@@ -11,7 +11,6 @@ interface ISearchService {
     suspend fun searchWebsite(
         query: String, 
         url: String, 
-        sitemapUrl: String? = null,
         cacheExpiryMs: Long? = null,
         apiKeyId: ApiKeyId
     ): SearchResult
@@ -25,11 +24,10 @@ class SearchService(
     override suspend fun searchWebsite(
         query: String, 
         url: String, 
-        sitemapUrl: String?,
         cacheExpiryMs: Long?,
         apiKeyId: ApiKeyId
     ): SearchResult {
-        val searchQuery = SearchQuery(query, url, sitemapUrl)
+        val searchQuery = SearchQuery(query, url)
         return agenticBrowserSearchOrchestrator.execute(searchQuery, cacheExpiryMs, apiKeyId)
     }
 }

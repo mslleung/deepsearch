@@ -96,7 +96,6 @@ class SearchController(
                 searchResult = searchService.searchWebsite(
                     request.query, 
                     request.url, 
-                    request.sitemapUrl,
                     request.cacheExpiryMs,
                     apiKey.id!!
                 )

@@ -6,6 +6,7 @@ class PeriodicIndexConfigTable : Table("periodic_index_configs") {
     val id = long("id").autoIncrement()
     val userId = integer("user_id")
     val url = varchar("url", length = 2048)
+    val sitemapUrl = varchar("sitemap_url", length = 2048).nullable()
     val periodDays = integer("period_days").nullable()
     val enabled = bool("enabled").default(true)
     val createdAt = long("created_at")

@@ -7,7 +7,6 @@ import kotlinx.serialization.Serializable
 data class SearchRequest(
     val query: String,
     val url: String,
-    val sitemapUrl: String? = null,
     val cacheExpiryMs: Long? = null, // Default 7 days = 604800000ms
 )
 

@@ -2,7 +2,7 @@ package io.deepsearch.domain.models.valueobjects
 
 import java.net.URI
 
-data class SearchQuery(val query: String, val url: String, val sitemapUrl: String? = null) {
+data class SearchQuery(val query: String, val url: String) {
 
     init {
         require(query.isNotBlank()) { "Search query cannot be blank" }
@@ -14,14 +14,5 @@ data class SearchQuery(val query: String, val url: String, val sitemapUrl: Strin
         require(urlObj.protocol in listOf("http", "https")) {
             "URL must use HTTP or HTTPS protocol"
         }
-
-        // Validate sitemap URL if provided
-        if (sitemapUrl != null) {
-            require(sitemapUrl.isNotBlank()) { "Sitemap URL cannot be blank" }
-            val sitemapUrlObj = URI.create(sitemapUrl).toURL()
-            require(sitemapUrlObj.protocol in listOf("http", "https")) {
-                "Sitemap URL must use HTTP or HTTPS protocol"
-            }
         }
     }
-} 

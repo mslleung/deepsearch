@@ -119,15 +119,9 @@ class AgenticBrowserSearchOrchestrator(
 
             // Channel for discovered links
             val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
-            val googleSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val serperSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
-            val sitemapDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val hybridSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
-
-            // To be removed:
-            googleSearchDiscoveredLinksChannel.close()
-            sitemapDiscoveredLinksChannel.close()
 
             // Launch flow processing in background
             val flowJob = applicationScope.scope.launch {
@@ -142,14 +136,6 @@ class AgenticBrowserSearchOrchestrator(
                             initialDiscoveredLinksChannel,
                             cacheExpiryMs
                         ),
-//                        processGoogleSearchLinksFlow(
-//                            sessionId,
-//                            searchQuery,
-//                            seenUrls,
-//                            budget,
-//                            googleSearchDiscoveredLinksChannel,
-//                            cacheExpiryMs
-//                        ),
                         processSerperSearchLinksFlow(
                             sessionId,
                             searchQuery,
@@ -158,14 +144,6 @@ class AgenticBrowserSearchOrchestrator(
                             serperSearchDiscoveredLinksChannel,
                             cacheExpiryMs
                         ),
-//                        processSitemapLinksFlow(
-//                            sessionId,
-//                            searchQuery,
-//                            seenUrls,
-//                            budget,
-//                            sitemapDiscoveredLinksChannel,
-//                            cacheExpiryMs
-//                        ),
                         processHybridSearchFlow(
                             sessionId,
                             searchQuery,
@@ -179,9 +157,7 @@ class AgenticBrowserSearchOrchestrator(
                             seenUrls,
                             budget,
                             initialDiscoveredLinksChannel,
-                            googleSearchDiscoveredLinksChannel,
                             serperSearchDiscoveredLinksChannel,
-                            sitemapDiscoveredLinksChannel,
                             hybridSearchDiscoveredLinksChannel,
                             recursiveDiscoveredLinksChannel,
                             cacheExpiryMs
@@ -449,31 +425,6 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Process discovered links from Google search.
-     * Network and markdown conversion errors are caught and recorded, allowing other links to continue.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun processGoogleSearchLinksFlow(
-        sessionId: String,
-        searchQuery: SearchQuery,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        budget: SearchBudget,
-        googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long?
-    ): Flow<MarkdownSource> {
-        return processDiscoveredLinksFlow(
-            sessionId = sessionId,
-            searchQuery = searchQuery,
-            seenUrls = seenUrls,
-            budget = budget,
-            linkSource = createGoogleSearchLinkDiscoveryFlow(sessionId, searchQuery),
-            discoveredLinksChannel = googleSearchDiscoveredLinksChannel,
-            flowName = "processGoogleSearchLinksFlow",
-            cacheExpiryMs = cacheExpiryMs
-        )
-    }
-
-    /**
      * Process discovered links from SERP search.
      * Network and markdown conversion errors are caught and recorded, allowing other links to continue.
      */
@@ -498,31 +449,6 @@ class AgenticBrowserSearchOrchestrator(
         )
     }
 
-    /**
-     * Process discovered links from sitemap.
-     * Network and markdown conversion errors are caught and recorded, allowing other links to continue.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun processSitemapLinksFlow(
-        sessionId: String,
-        searchQuery: SearchQuery,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        budget: SearchBudget,
-        sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long?
-    ): Flow<MarkdownSource> {
-        return processDiscoveredLinksFlow(
-            sessionId = sessionId,
-            searchQuery = searchQuery,
-            seenUrls = seenUrls,
-            budget = budget,
-            linkSource = createSitemapLinkDiscoveryFlow(sessionId, searchQuery),
-            discoveredLinksChannel = sitemapDiscoveredLinksChannel,
-            flowName = "processSitemapLinksFlow",
-            cacheExpiryMs = cacheExpiryMs
-        )
-    }
-
     @OptIn(DelicateCoroutinesApi::class)
     private fun processRecursiveDiscoveredLinksFlow(
         sessionId: String,
@@ -530,9 +456,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        googleSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
-        sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
         hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
         cacheExpiryMs: Long?
@@ -542,9 +466,7 @@ class AgenticBrowserSearchOrchestrator(
         return merge(
             merge(
                 initialDiscoveredLinksChannel.receiveAsFlow(),
-//                googleSearchDiscoveredLinksChannel.receiveAsFlow(),
                 serperSearchDiscoveredLinksChannel.receiveAsFlow(),
-//                sitemapDiscoveredLinksChannel.receiveAsFlow(),
                 hybridSearchDiscoveredLinksChannel.receiveAsFlow(),
             )
                 .onCompletion {
@@ -602,9 +524,7 @@ class AgenticBrowserSearchOrchestrator(
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
                                     inFlightLinkDiscoveryProcessing.remove(e.url)
                                     if (initialDiscoveredLinksChannel.isClosedForSend &&
-//                                        googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         serperSearchDiscoveredLinksChannel.isClosedForSend &&
-//                                        sitemapDiscoveredLinksChannel.isClosedForSend &&
                                         hybridSearchDiscoveredLinksChannel.isClosedForSend &&
                                         inFlightLinkDiscoveryProcessing.isEmpty()
                                     ) {
@@ -655,9 +575,7 @@ class AgenticBrowserSearchOrchestrator(
                                         inFlightLinkDiscoveryProcessing.count()
                                     )
                                     if (initialDiscoveredLinksChannel.isClosedForSend &&
-//                                        googleSearchDiscoveredLinksChannel.isClosedForSend &&
                                         serperSearchDiscoveredLinksChannel.isClosedForSend &&
-//                                        sitemapDiscoveredLinksChannel.isClosedForSend &&
                                         hybridSearchDiscoveredLinksChannel.isClosedForSend &&
                                         // if there are no in-flight links being processed (where we may discover more links)
                                         // and we are not emitting any new links
@@ -869,27 +787,6 @@ class AgenticBrowserSearchOrchestrator(
             serperLinks.forEach { emit(it) }
         } catch (e: Exception) {
             logger.error("[{}] Failed SERP search: {}", sessionId, e.message, e)
-        }
-    }
-
-    /**
-     * Sitemap link discovery flow
-     */
-    private fun createSitemapLinkDiscoveryFlow(
-        sessionId: String,
-        searchQuery: SearchQuery
-    ): Flow<WebpageLink> = flow {
-        try {
-            val sitemapUrl = searchQuery.sitemapUrl
-            if (sitemapUrl.isNullOrBlank()) {
-                return@flow
-            }
-
-            val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
-            logger.debug("[{}] Sitemap discovered {} links", sessionId, sitemapLinks.size)
-            sitemapLinks.forEach { emit(it) }
-        } catch (e: Exception) {
-            logger.error("[{}] Failed sitemap discovery: {}", sessionId, e.message, e)
         }
     }
 
