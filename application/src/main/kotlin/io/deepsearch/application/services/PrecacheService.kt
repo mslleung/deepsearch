@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.PrecacheJob
 import io.deepsearch.domain.models.entities.PrecacheJobState
+import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IPrecacheJobRepository
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.flow.SharedFlow
@@ -26,7 +27,7 @@ interface IPrecacheService {
         val timestampMs: Long = System.currentTimeMillis()
     )
 
-    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null): PrecacheJob
+    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, userId: UserId? = null): PrecacheJob
     suspend fun stop(jobId: Long)
     suspend fun list(state: PrecacheJobState? = null): List<PrecacheJob>
     fun events(jobId: Long): SharedFlow<IPrecacheService.PrecacheEvent>
@@ -41,7 +42,7 @@ class PrecacheService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?): PrecacheJob {
+    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?, userId: UserId?): PrecacheJob {
         val normalizedBase = normalize(baseUrl)
         val existing = jobRepository.findActiveByBaseUrl(normalizedBase)
         if (existing != null) return existing
@@ -50,6 +51,7 @@ class PrecacheService(
         val created = jobRepository.create(
             PrecacheJob(
                 id = null,
+                userId = userId,
                 baseUrl = normalizedBase,
                 maxUrlCount = maxUrlCount,
                 sitemapUrl = sitemapUrl,
@@ -73,5 +75,3 @@ class PrecacheService(
 
     private fun normalize(url: String): String = normalizeUrlService.normalize(url) ?: url
 }
-
-

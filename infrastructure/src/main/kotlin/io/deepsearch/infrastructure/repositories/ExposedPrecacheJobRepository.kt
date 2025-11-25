@@ -19,6 +19,8 @@ import org.jetbrains.exposed.v1.r2dbc.update
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
+import io.deepsearch.domain.models.valueobjects.UserId
+
 @OptIn(ExperimentalTime::class)
 class ExposedPrecacheJobRepository(
     private val precacheJobTable: PrecacheJobTable,
@@ -27,6 +29,7 @@ class ExposedPrecacheJobRepository(
 
     override suspend fun create(job: PrecacheJob): PrecacheJob = transactionService.withTransaction {
         val id = precacheJobTable.insert {
+            it[userId] = job.userId?.value
             it[baseUrl] = job.baseUrl
             it[maxUrlCount] = job.maxUrlCount
             it[sitemapUrl] = job.sitemapUrl
@@ -85,6 +88,7 @@ class ExposedPrecacheJobRepository(
 
     private fun mapRow(row: ResultRow): PrecacheJob = PrecacheJob(
         id = row[precacheJobTable.id],
+        userId = row[precacheJobTable.userId]?.let { UserId(it) },
         baseUrl = row[precacheJobTable.baseUrl],
         maxUrlCount = row[precacheJobTable.maxUrlCount],
         sitemapUrl = row[precacheJobTable.sitemapUrl],

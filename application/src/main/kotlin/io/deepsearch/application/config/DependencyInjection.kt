@@ -13,6 +13,8 @@ import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.koin.module.requestScope
 
+import org.koin.core.module.dsl.createdAtStart
+
 val applicationModule = module {
     includes(domainModule)
     includes(infrastructureModule)
@@ -21,6 +23,7 @@ val applicationModule = module {
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
+    singleOf(::PeriodicIndexScheduler) { createdAtStart() }
 
     requestScope {
         scopedOf(::ApiKeyService) bind IApiKeyService::class
@@ -29,7 +32,7 @@ val applicationModule = module {
         scopedOf(::UserSubscriptionService) bind IUserSubscriptionService::class
         scopedOf(::UsageService) bind IUsageService::class
         scopedOf(::PrecacheService) bind IPrecacheService::class
-        scopedOf(::CacheQueryService) bind ICacheQueryService::class
+        scopedOf(::PeriodicIndexService) bind IPeriodicIndexService::class
         scopedOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
         scopedOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class

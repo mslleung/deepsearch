@@ -13,8 +13,8 @@ val presentationModule = module {
         scopedOf(::AuthController)
         scopedOf(::ApiKeyController)
         scopedOf(::SearchController)
-        scopedOf(::CacheController)
         scopedOf(::PrecacheController)
+        scopedOf(::PeriodicIndexController)
         scopedOf(::UsageController)
         scopedOf(::QuerySessionController)
     }

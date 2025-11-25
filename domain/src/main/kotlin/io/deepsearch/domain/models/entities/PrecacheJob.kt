@@ -1,5 +1,6 @@
 package io.deepsearch.domain.models.entities
 
+import io.deepsearch.domain.models.valueobjects.UserId
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -12,6 +13,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 class PrecacheJob(
     var id: Long? = null,
+    val userId: UserId? = null, // Nullable for backward compatibility
     val baseUrl: String,
     val maxUrlCount: Int,
     val sitemapUrl: String? = null,

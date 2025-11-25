@@ -7,6 +7,7 @@ class PrecacheJobTable(
     private val databaseCryptoService: IDatabaseCryptoService
 ) : Table("precache_jobs") {
     val id = long("id").autoIncrement()
+    val userId = integer("user_id").nullable()
     val baseUrl = varchar("base_url", length = 2048)
     val maxUrlCount = integer("max_url_count")
     val sitemapUrl = varchar("sitemap_url", length = 2048).nullable()

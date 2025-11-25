@@ -41,6 +41,7 @@ class DatabaseConfigurationService(
     private val sitemapCacheTable: SitemapCacheTable,
     private val urlAccessTable: UrlAccessTable,
     private val llmTokenUsageTable: LlmTokenUsageTable,
+    private val periodicIndexConfigTable: PeriodicIndexConfigTable,
 ) : IDatabaseConfigurationService {
 
     private val _database: R2dbcDatabase = configureDatabase()
@@ -83,6 +84,7 @@ class DatabaseConfigurationService(
                     sitemapCacheTable,
                     urlAccessTable,
                     llmTokenUsageTable,
+                    periodicIndexConfigTable,
                 )
 
                 // Create HNSW index for efficient vector similarity search on webpage embeddings
