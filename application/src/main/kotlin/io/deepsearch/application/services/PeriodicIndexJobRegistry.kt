@@ -3,11 +3,11 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
-import io.deepsearch.domain.models.entities.PrecacheJob
-import io.deepsearch.domain.models.entities.PrecacheJobState
+import io.deepsearch.domain.models.entities.PeriodicIndexJob
+import io.deepsearch.domain.models.entities.PeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import io.deepsearch.domain.repositories.IPrecacheJobRepository
+import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.domain.exceptions.UrlProcessingException
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.CancellationException
@@ -30,27 +30,27 @@ import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-interface IPrecacheJobRegistry {
-    fun events(jobId: Long): SharedFlow<IPrecacheService.PrecacheEvent>
-    suspend fun ensureRunning(job: PrecacheJob)
+interface IPeriodicIndexJobRegistry {
+    fun events(jobId: Long): SharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>
+    suspend fun ensureRunning(job: PeriodicIndexJob)
     suspend fun stop(jobId: Long)
 }
 
-class PrecacheJobRegistry(
+class PeriodicIndexJobRegistry(
     private val browserRuntimePool: IBrowserRuntimePool,
     private val normalizeUrlService: INormalizeUrlService,
     private val webpageCacheService: IWebpageCacheService,
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
-    private val precacheJobRepository: IPrecacheJobRepository,
+    private val periodicIndexJobRepository: IPeriodicIndexJobRepository,
     private val dispatchers: IDispatcherProvider,
     private val applicationScope: IApplicationCoroutineScope
-) : IPrecacheJobRegistry {
+) : IPeriodicIndexJobRegistry {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     private data class Run(
-        val flow: MutableSharedFlow<IPrecacheService.PrecacheEvent>,
+        val flow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
         val job: Job
     )
 
@@ -59,22 +59,22 @@ class PrecacheJobRegistry(
     init {
         // Resume all in-progress jobs at startup
         applicationScope.scope.launch {
-            val active = precacheJobRepository.listAll(PrecacheJobState.IN_PROGRESS)
+            val active = periodicIndexJobRepository.listAll(PeriodicIndexJobState.IN_PROGRESS)
             active.forEach { job ->
                 ensureRunning(job)
             }
         }
     }
 
-    override fun events(jobId: Long): SharedFlow<IPrecacheService.PrecacheEvent> = runs[jobId]?.flow
+    override fun events(jobId: Long): SharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent> = runs[jobId]?.flow
         ?: MutableSharedFlow(replay = 1)
 
-    override suspend fun ensureRunning(job: PrecacheJob) {
+    override suspend fun ensureRunning(job: PeriodicIndexJob) {
         val id = requireNotNull(job.id) { "Job must have an id" }
         runs.compute(id) { _, existing ->
             if (existing == null) {
-                val flow = MutableSharedFlow<IPrecacheService.PrecacheEvent>(replay = 1)
-                val coroutine = applicationScope.scope.launch { runPrecache(job, flow) }
+                val flow = MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>(replay = 1)
+                val coroutine = applicationScope.scope.launch { runPeriodicIndex(job, flow) }
                 Run(flow, coroutine)
             } else existing
         }
@@ -82,17 +82,17 @@ class PrecacheJobRegistry(
 
     override suspend fun stop(jobId: Long) {
         runs.remove(jobId)?.job?.cancel()
-        val record = precacheJobRepository.findById(jobId) ?: return
+        val record = periodicIndexJobRepository.findById(jobId) ?: return
         record.markStopped()
-        precacheJobRepository.update(record)
+        periodicIndexJobRepository.update(record)
     }
 
     private fun normalize(url: String): String = normalizeUrlService.normalize(url) ?: url
 
-    private suspend fun runPrecache(job: PrecacheJob, flow: MutableSharedFlow<IPrecacheService.PrecacheEvent>) {
+    private suspend fun runPeriodicIndex(job: PeriodicIndexJob, flow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>) {
         val jobId: Long = requireNotNull(job.id) { "Job must have an id" }
         flow.emit(
-            IPrecacheService.PrecacheEvent(
+            IPeriodicIndexJobService.PeriodicIndexEvent(
                 jobId = jobId,
                 baseUrl = job.baseUrl,
                 url = null,
@@ -113,9 +113,9 @@ class PrecacheJobRegistry(
             )
 
             job.markCompleted()
-            precacheJobRepository.update(job)
+            periodicIndexJobRepository.update(job)
             flow.emit(
-                IPrecacheService.PrecacheEvent(
+                IPeriodicIndexJobService.PeriodicIndexEvent(
                     jobId = jobId,
                     baseUrl = job.baseUrl,
                     url = null,
@@ -128,11 +128,11 @@ class PrecacheJobRegistry(
                 )
             )
         } catch (t: Throwable) {
-            logger.warn("Precache failed for {}: {}", job.baseUrl, t.message)
+            logger.warn("Periodic index failed for {}: {}", job.baseUrl, t.message)
             job.markStopped()
-            precacheJobRepository.update(job)
+            periodicIndexJobRepository.update(job)
             flow.emit(
-                IPrecacheService.PrecacheEvent(
+                IPeriodicIndexJobService.PeriodicIndexEvent(
                     jobId = jobId,
                     baseUrl = job.baseUrl,
                     url = null,
@@ -150,13 +150,13 @@ class PrecacheJobRegistry(
     }
 
     /**
-     * Reactive flow orchestration for precaching links.
+     * Reactive flow orchestration for periodic indexing links.
      * Similar to AgenticBrowserSearchOrchestrator but without query filtering.
      */
     private suspend fun extractAndCacheLinks(
         jobId: Long,
-        job: PrecacheJob,
-        eventFlow: MutableSharedFlow<IPrecacheService.PrecacheEvent>
+        job: PeriodicIndexJob,
+        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>
     ) {
         val visitedUrls = ConcurrentHashMap.newKeySet<String>()
         val processedCount = AtomicInteger(job.processedCount)
@@ -187,7 +187,7 @@ class PrecacheJobRegistry(
             .onEach { result ->
                 // Emit progress event
                 eventFlow.emit(
-                    IPrecacheService.PrecacheEvent(
+                    IPeriodicIndexJobService.PeriodicIndexEvent(
                         jobId = jobId,
                         baseUrl = job.baseUrl,
                         url = result.url,
@@ -200,7 +200,7 @@ class PrecacheJobRegistry(
                 )
             }
             .onCompletion {
-                logger.info("[{}] Precache complete: {} pages processed", jobId, processedCount.get())
+                logger.info("[{}] Periodic index complete: {} pages processed", jobId, processedCount.get())
             }
             .collect { /* Terminal operator */ }
     }
@@ -218,16 +218,16 @@ class PrecacheJobRegistry(
 
     /**
      * Flow extension: process links to extract content and discover new links.
-     * Similar to AgenticBrowserSearchOrchestrator.processLinksToMarkdown but for precaching.
+     * Similar to AgenticBrowserSearchOrchestrator.processLinksToMarkdown but for periodic indexing.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun Flow<String>.processLinks(
         jobId: Long,
-        job: PrecacheJob,
+        job: PeriodicIndexJob,
         visitedUrls: MutableSet<String>,
         processedCount: AtomicInteger,
         discoveredLinksFlow: MutableSharedFlow<String>
-    ): Flow<PrecacheStepResult> = flatMapMerge(concurrency = 10) { url ->
+    ): Flow<PeriodicIndexStepResult> = flatMapMerge(concurrency = 10) { url ->
         flow {
             try {
                 val normalizedUrl = normalize(url)
@@ -246,7 +246,7 @@ class PrecacheJobRegistry(
 
                 // Process URL and collect events
                 // Use .catch{} to handle UrlProcessingException
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, "need to find a way to record precache llm token usage")
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, "need to find a way to record periodic index llm token usage")
                     .catch { e ->
                         // Handle URL processing errors using Flow's catch operator
                         if (e is CancellationException) {
@@ -265,7 +265,7 @@ class PrecacheJobRegistry(
                             // Still increment processed count for failed URLs
                             processedCount.incrementAndGet()
                             job.incrementProcessed()
-                            precacheJobRepository.update(job)
+                            periodicIndexJobRepository.update(job)
                         } else {
                             // Unexpected exception - log and rethrow
                             logger.error("[{}] Unexpected error processing {}: {}", jobId, normalizedUrl, e.message, e)
@@ -293,7 +293,7 @@ class PrecacheJobRegistry(
                                 // Markdown extraction complete, increment counter and emit result
                                 val count = processedCount.incrementAndGet()
                                 job.incrementProcessed()
-                                precacheJobRepository.update(job)
+                                periodicIndexJobRepository.update(job)
                                 
                                 logger.debug(
                                     "[{}] Markdown cached for {}: {} chars (progress: {}/{})",
@@ -306,7 +306,7 @@ class PrecacheJobRegistry(
                                 
                                 // Determine if this was a cache hit by checking if markdown was already cached
                                 val cachedHit = event.markdown.isNotEmpty()
-                                emit(PrecacheStepResult(url = normalizedUrl, cachedHit = cachedHit))
+                                emit(PeriodicIndexStepResult(url = normalizedUrl, cachedHit = cachedHit))
                             }
                         }
                     }
@@ -334,7 +334,7 @@ class PrecacheJobRegistry(
     /**
      * Create a flow of links from sitemap.
      */
-    private fun createSitemapLinkFlow(job: PrecacheJob): Flow<String> = flow {
+    private fun createSitemapLinkFlow(job: PeriodicIndexJob): Flow<String> = flow {
         val sitemapUrl = job.sitemapUrl ?: return@flow
         try {
             val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
@@ -350,16 +350,15 @@ class PrecacheJobRegistry(
     private suspend fun discoverSeeds(baseUrl: String): List<WebpageLink> {
         val query = SearchQuery(query = baseUrl, url = baseUrl)
         return webpageLinkDiscoveryService
-            .discoverRelevantLinksByGoogleSearch(query, "need to find a way to record precache llm token usage")
+            .discoverRelevantLinksByGoogleSearch(query, "need to find a way to record periodic index llm token usage")
             .filter { normalize(it.url).startsWith(baseUrl) }
             .distinctBy { normalize(it.url) }
             .take(50)
     }
 
-    private data class PrecacheStepResult(
+    private data class PeriodicIndexStepResult(
         val url: String,
         val cachedHit: Boolean
     )
 }
-
 

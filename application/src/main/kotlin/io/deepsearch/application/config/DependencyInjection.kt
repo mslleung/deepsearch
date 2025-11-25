@@ -22,7 +22,7 @@ val applicationModule = module {
     // Shared across requests
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
-    singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
+    singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
     singleOf(::PeriodicIndexScheduler) { createdAtStart() }
 
     requestScope {
@@ -31,7 +31,7 @@ val applicationModule = module {
         scopedOf(::RateLimitService) bind IRateLimitService::class
         scopedOf(::UserSubscriptionService) bind IUserSubscriptionService::class
         scopedOf(::UsageService) bind IUsageService::class
-        scopedOf(::PrecacheService) bind IPrecacheService::class
+        scopedOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
         scopedOf(::PeriodicIndexService) bind IPeriodicIndexService::class
         scopedOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class

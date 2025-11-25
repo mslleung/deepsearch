@@ -16,8 +16,7 @@ val adminPresentationModule = module {
         scopedOf(::AdminApiKeyController)
         scopedOf(::AdminUsageController)
         scopedOf(::AdminQuerySessionController)
-        scopedOf(::AdminPrecacheController)
-        scopedOf(::AdminCacheController)
+        scopedOf(::AdminPeriodicIndexJobController)
     }
 }
 

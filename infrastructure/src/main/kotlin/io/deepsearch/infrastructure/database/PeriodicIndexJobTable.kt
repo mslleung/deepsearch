@@ -3,11 +3,11 @@ package io.deepsearch.infrastructure.database
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 
-class PrecacheJobTable(
+class PeriodicIndexJobTable(
     private val databaseCryptoService: IDatabaseCryptoService
-) : Table("precache_jobs") {
+) : Table("periodic_index_jobs") {
     val id = long("id").autoIncrement()
-    val userId = integer("user_id").nullable()
+    val userId = integer("user_id")
     val baseUrl = varchar("base_url", length = 2048)
     val maxUrlCount = integer("max_url_count")
     val sitemapUrl = varchar("sitemap_url", length = 2048).nullable()
@@ -19,9 +19,9 @@ class PrecacheJobTable(
 
     init {
         index(false, baseUrl)
+        index(false, userId)
     }
 
     override val primaryKey = PrimaryKey(id)
 }
-
 

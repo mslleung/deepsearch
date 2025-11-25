@@ -16,7 +16,7 @@ import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.HttpContentTypeResolutionService
 import io.deepsearch.application.services.IHttpContentTypeResolutionService
 import io.deepsearch.application.services.IPdfConversionService
-import io.deepsearch.application.services.IPrecacheJobRegistry
+import io.deepsearch.application.services.IPeriodicIndexJobRegistry
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.IWebpageImageTextExtractionService
@@ -41,7 +41,7 @@ import io.deepsearch.application.services.IUrlProcessingLockRegistry
 import io.deepsearch.application.services.ISitemapLinkDiscoveryLockRegistry
 import io.deepsearch.application.services.TestLlmTokenUsageService
 import io.deepsearch.infrastructure.services.ITransactionService
-import io.deepsearch.application.services.PrecacheJobRegistry
+import io.deepsearch.application.services.PeriodicIndexJobRegistry
 import io.deepsearch.application.services.QuerySessionService
 import io.deepsearch.application.services.SitemapLinkDiscoveryLockRegistry
 import io.deepsearch.infrastructure.services.TransactionService
@@ -70,7 +70,7 @@ private val applicationCommonTestModule = module {
     // Shared across test components
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
-    singleOf(::PrecacheJobRegistry) bind IPrecacheJobRegistry::class
+    singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
 
     singleOf(::UserService) bind IUserService::class
     singleOf(::SearchService) bind ISearchService::class

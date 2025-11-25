@@ -9,10 +9,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
-import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.lessEq
-import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
@@ -32,7 +29,6 @@ class ExposedPeriodicIndexConfigRepository(
             it[createdAt] = config.createdAt
             it[updatedAt] = config.updatedAt
             it[lastRunAt] = config.lastRunAt
-            it[nextRunAt] = config.nextRunAt
             it[version] = config.version
         }[periodicIndexConfigTable.id]
 
@@ -45,7 +41,6 @@ class ExposedPeriodicIndexConfigRepository(
             createdAt = config.createdAt,
             updatedAt = config.updatedAt,
             lastRunAt = config.lastRunAt,
-            nextRunAt = config.nextRunAt,
             version = config.version
         )
     }
@@ -59,7 +54,6 @@ class ExposedPeriodicIndexConfigRepository(
             it[enabled] = config.enabled
             it[updatedAt] = config.updatedAt
             it[lastRunAt] = config.lastRunAt
-            it[nextRunAt] = config.nextRunAt
             it[version] = config.version + 1
         }
         if (rows > 0) {
@@ -76,14 +70,9 @@ class ExposedPeriodicIndexConfigRepository(
             .singleOrNull()
     }
 
-    override suspend fun findDueConfigs(limit: Int): List<PeriodicIndexConfig> = transactionService.withTransaction {
-        val now = System.currentTimeMillis()
+    override suspend fun findEnabledConfigs(limit: Int): List<PeriodicIndexConfig> = transactionService.withTransaction {
         periodicIndexConfigTable.selectAll()
-            .where {
-                (periodicIndexConfigTable.enabled eq true) and
-                        (periodicIndexConfigTable.nextRunAt neq null) and
-                        (periodicIndexConfigTable.nextRunAt lessEq now)
-            }
+            .where { periodicIndexConfigTable.enabled eq true }
             .limit(limit)
             .map { toDomain(it) }
             .toList()
@@ -105,7 +94,6 @@ class ExposedPeriodicIndexConfigRepository(
             createdAt = row[periodicIndexConfigTable.createdAt],
             updatedAt = row[periodicIndexConfigTable.updatedAt],
             lastRunAt = row[periodicIndexConfigTable.lastRunAt],
-            nextRunAt = row[periodicIndexConfigTable.nextRunAt],
             version = row[periodicIndexConfigTable.version]
         )
     }

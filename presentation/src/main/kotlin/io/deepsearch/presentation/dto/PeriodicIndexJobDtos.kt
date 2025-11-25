@@ -1,18 +1,18 @@
 package io.deepsearch.presentation.dto
 
-import io.deepsearch.domain.models.entities.PrecacheJob
+import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import kotlinx.serialization.Serializable
 import kotlin.time.ExperimentalTime
 
 @Serializable
-data class PrecacheStartRequest(
+data class PeriodicIndexJobStartRequest(
     val baseUrl: String,
     val maxUrlCount: Int = 100,
     val sitemapUrl: String? = null
 )
 
 @Serializable
-data class PrecacheJobResponse(
+data class PeriodicIndexJobResponse(
     val id: Long?,
     val baseUrl: String,
     val maxUrlCount: Int,
@@ -24,7 +24,7 @@ data class PrecacheJobResponse(
 )
 
 @OptIn(ExperimentalTime::class)
-fun PrecacheJob.toResponse(): PrecacheJobResponse = PrecacheJobResponse(
+fun PeriodicIndexJob.toResponse(): PeriodicIndexJobResponse = PeriodicIndexJobResponse(
     id = id,
     baseUrl = baseUrl,
     maxUrlCount = maxUrlCount,
@@ -34,5 +34,4 @@ fun PrecacheJob.toResponse(): PrecacheJobResponse = PrecacheJobResponse(
     createdAtMs = createdAt.toEpochMilliseconds(),
     updatedAtMs = updatedAt.toEpochMilliseconds()
 )
-
 

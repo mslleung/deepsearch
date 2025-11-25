@@ -60,7 +60,7 @@ fun Application.module() {
     configureAuthRoutes()
     configureApiKeyRoutes()
     configureSearchRoutes()
-    configurePrecacheRoutes()
+    configurePeriodicIndexJobRoutes()
     configurePeriodicIndexRoutes()
     configureUsageRoutes()
     configureQuerySessionRoutes()

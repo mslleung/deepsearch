@@ -1,28 +1,28 @@
 package io.deepsearch.presentation.admin.controllers
 
-import io.deepsearch.domain.models.entities.PrecacheJobState
-import io.deepsearch.domain.repositories.IPrecacheJobRepository
+import io.deepsearch.application.services.IPeriodicIndexJobService
+import io.deepsearch.domain.models.entities.PeriodicIndexJobState
 import io.deepsearch.presentation.admin.dto.toAdminDto
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 
-class AdminPrecacheController(
-    private val precacheJobRepository: IPrecacheJobRepository
+class AdminPeriodicIndexJobController(
+    private val periodicIndexJobService: IPeriodicIndexJobService
 ) {
 
-    suspend fun getAllPrecacheJobs(call: ApplicationCall) {
+    suspend fun getAllPeriodicIndexJobs(call: ApplicationCall) {
         try {
             val stateParam = call.request.queryParameters["state"]
             val state = stateParam?.let { 
                 try {
-                    PrecacheJobState.valueOf(it.uppercase())
+                    PeriodicIndexJobState.valueOf(it.uppercase())
                 } catch (e: Exception) {
                     null
                 }
             }
             
-            val jobs = precacheJobRepository.listAll(state)
+            val jobs = periodicIndexJobService.list(state)
             val jobsDto = jobs.map { it.toAdminDto() }
             
             call.respond(HttpStatusCode.OK, jobsDto)
@@ -31,7 +31,7 @@ class AdminPrecacheController(
         }
     }
 
-    suspend fun getPrecacheJobById(call: ApplicationCall) {
+    suspend fun getPeriodicIndexJobById(call: ApplicationCall) {
         try {
             val jobId = call.parameters["id"]?.toLongOrNull()
             if (jobId == null) {
@@ -39,7 +39,7 @@ class AdminPrecacheController(
                 return
             }
 
-            val job = precacheJobRepository.findById(jobId)
+            val job = periodicIndexJobService.findById(jobId)
             if (job == null) {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "Job not found"))
                 return
@@ -51,7 +51,7 @@ class AdminPrecacheController(
         }
     }
 
-    suspend fun stopPrecacheJob(call: ApplicationCall) {
+    suspend fun stopPeriodicIndexJob(call: ApplicationCall) {
         try {
             val jobId = call.parameters["id"]?.toLongOrNull()
             if (jobId == null) {
@@ -59,19 +59,23 @@ class AdminPrecacheController(
                 return
             }
 
-            val job = precacheJobRepository.findById(jobId)
+            val job = periodicIndexJobService.findById(jobId)
             if (job == null) {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "Job not found"))
                 return
             }
 
-            job.markStopped()
-            val updatedJob = precacheJobRepository.update(job)
+            periodicIndexJobService.stop(jobId)
             
-            call.respond(HttpStatusCode.OK, updatedJob.toAdminDto())
+            // Fetch the updated job to return
+            val updatedJob = periodicIndexJobService.findById(jobId)
+            if (updatedJob != null) {
+                call.respond(HttpStatusCode.OK, updatedJob.toAdminDto())
+            } else {
+                call.respond(HttpStatusCode.NoContent)
+            }
         } catch (e: Exception) {
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }
 }
-

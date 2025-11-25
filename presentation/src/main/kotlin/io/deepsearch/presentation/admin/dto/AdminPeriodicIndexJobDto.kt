@@ -1,12 +1,12 @@
 package io.deepsearch.presentation.admin.dto
 
-import io.deepsearch.domain.models.entities.PrecacheJob
+import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import kotlinx.serialization.Serializable
 import kotlin.time.ExperimentalTime
 
 @OptIn(ExperimentalTime::class)
 @Serializable
-data class AdminPrecacheJobDto(
+data class AdminPeriodicIndexJobDto(
     val id: Long,
     val baseUrl: String,
     val maxUrlCount: Int,
@@ -18,8 +18,8 @@ data class AdminPrecacheJobDto(
 )
 
 @OptIn(ExperimentalTime::class)
-fun PrecacheJob.toAdminDto(): AdminPrecacheJobDto {
-    return AdminPrecacheJobDto(
+fun PeriodicIndexJob.toAdminDto(): AdminPeriodicIndexJobDto {
+    return AdminPeriodicIndexJobDto(
         id = this.id!!,
         baseUrl = this.baseUrl,
         maxUrlCount = this.maxUrlCount,

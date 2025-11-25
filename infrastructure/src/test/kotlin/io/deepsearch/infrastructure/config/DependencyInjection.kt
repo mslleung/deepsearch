@@ -49,7 +49,8 @@ private val infrastructureCommonTestModule = module {
     singleOf(::PdfMarkdownCacheTable)
     singleOf(::QuerySessionTable)
     singleOf(::UrlAccessTable)
-    singleOf(::PrecacheJobTable)
+    singleOf(::PeriodicIndexJobTable)
+    singleOf(::PeriodicIndexConfigTable)
     singleOf(::SitemapCacheTable)
     singleOf(::LlmTokenUsageTable)
     

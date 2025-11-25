@@ -1,9 +1,9 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.models.entities.PrecacheJob
-import io.deepsearch.domain.models.entities.PrecacheJobState
+import io.deepsearch.domain.models.entities.PeriodicIndexJob
+import io.deepsearch.domain.models.entities.PeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.UserId
-import io.deepsearch.domain.repositories.IPrecacheJobRepository
+import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.Serializable
@@ -12,9 +12,9 @@ import org.slf4j.LoggerFactory
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
-interface IPrecacheService {
+interface IPeriodicIndexJobService {
     @Serializable
-    data class PrecacheEvent(
+    data class PeriodicIndexEvent(
         val jobId: Long,
         val baseUrl: String,
         val url: String?,
@@ -22,34 +22,35 @@ interface IPrecacheService {
         val maxUrlCount: Int,
         val cachedHit: Boolean?,
         val totalQueued: Int,
-        val state: PrecacheJobState,
+        val state: PeriodicIndexJobState,
         val message: String? = null,
         val timestampMs: Long = System.currentTimeMillis()
     )
 
-    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, userId: UserId? = null): PrecacheJob
+    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, userId: UserId): PeriodicIndexJob
     suspend fun stop(jobId: Long)
-    suspend fun list(state: PrecacheJobState? = null): List<PrecacheJob>
-    fun events(jobId: Long): SharedFlow<IPrecacheService.PrecacheEvent>
+    suspend fun findById(jobId: Long): PeriodicIndexJob?
+    suspend fun list(state: PeriodicIndexJobState? = null): List<PeriodicIndexJob>
+    fun events(jobId: Long): SharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>
 }
 
 @OptIn(ExperimentalTime::class)
-class PrecacheService(
+class PeriodicIndexJobService(
     private val normalizeUrlService: INormalizeUrlService,
-    private val jobRepository: IPrecacheJobRepository,
-    private val registry: IPrecacheJobRegistry
-) : IPrecacheService {
+    private val jobRepository: IPeriodicIndexJobRepository,
+    private val registry: IPeriodicIndexJobRegistry
+) : IPeriodicIndexJobService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?, userId: UserId?): PrecacheJob {
+    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?, userId: UserId): PeriodicIndexJob {
         val normalizedBase = normalize(baseUrl)
         val existing = jobRepository.findActiveByBaseUrl(normalizedBase)
         if (existing != null) return existing
 
         val now = Clock.System.now()
         val created = jobRepository.create(
-            PrecacheJob(
+            PeriodicIndexJob(
                 id = null,
                 userId = userId,
                 baseUrl = normalizedBase,
@@ -58,7 +59,7 @@ class PrecacheService(
                 createdAt = now,
                 updatedAt = now,
                 processedCount = 0,
-                state = PrecacheJobState.IN_PROGRESS
+                state = PeriodicIndexJobState.IN_PROGRESS
             )
         )
         registry.ensureRunning(created)
@@ -69,9 +70,12 @@ class PrecacheService(
         registry.stop(jobId)
     }
 
-    override suspend fun list(state: PrecacheJobState?): List<PrecacheJob> = jobRepository.listAll(state)
+    override suspend fun findById(jobId: Long): PeriodicIndexJob? = jobRepository.findById(jobId)
 
-    override fun events(jobId: Long): SharedFlow<IPrecacheService.PrecacheEvent> = registry.events(jobId)
+    override suspend fun list(state: PeriodicIndexJobState?): List<PeriodicIndexJob> = jobRepository.listAll(state)
+
+    override fun events(jobId: Long): SharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent> = registry.events(jobId)
 
     private fun normalize(url: String): String = normalizeUrlService.normalize(url) ?: url
 }
+

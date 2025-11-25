@@ -20,7 +20,7 @@ data class PeriodicIndexConfigResponse(
 
 @Serializable
 data class PeriodicIndexJobHistoryResponse(
-    val jobs: List<PrecacheJobResponse>,
+    val jobs: List<PeriodicIndexJobResponse>,
     val totalCount: Int
 )
 

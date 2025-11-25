@@ -36,14 +36,14 @@ val infrastructureModule = module {
     singleOf(::PdfMarkdownCacheTable)
     singleOf(::QuerySessionTable)
     singleOf(::UrlAccessTable)
-    singleOf(::PrecacheJobTable)
+    singleOf(::PeriodicIndexJobTable)
     singleOf(::SitemapCacheTable)
     singleOf(::LlmTokenUsageTable)
     singleOf(::PeriodicIndexConfigTable)
 
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
-        scopedOf(::ExposedPrecacheJobRepository) bind IPrecacheJobRepository::class
+        scopedOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class
         scopedOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class

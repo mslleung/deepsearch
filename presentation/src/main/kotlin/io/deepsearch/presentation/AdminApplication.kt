@@ -36,8 +36,7 @@ fun Application.adminModule() {
     configureAdminApiKeyRoutes()
     configureAdminUsageRoutes()
     configureAdminQuerySessionRoutes()
-    configureAdminPrecacheRoutes()
-    configureAdminCacheRoutes()
+    configureAdminPeriodicIndexJobRoutes()
 }
 
 private fun Application.configureSerialization() {

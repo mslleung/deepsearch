@@ -1,21 +1,19 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.PeriodicIndexConfig
-import io.deepsearch.domain.models.entities.PrecacheJob
-import io.deepsearch.domain.models.entities.PrecacheJobState
+import io.deepsearch.domain.models.entities.PeriodicIndexJob
+import io.deepsearch.domain.models.entities.PeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IPeriodicIndexConfigRepository
-import io.deepsearch.domain.repositories.IPrecacheJobRepository
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import kotlin.time.ExperimentalTime
 
 interface IPeriodicIndexService {
     suspend fun getConfig(userId: UserId): PeriodicIndexConfig?
     suspend fun createOrUpdateConfig(userId: UserId, url: String, periodDays: Int?): PeriodicIndexConfig
     suspend fun deleteConfig(userId: UserId)
-    suspend fun triggerNow(userId: UserId): PrecacheJob
-    suspend fun listJobHistory(userId: UserId, page: Int, pageSize: Int): Pair<List<PrecacheJob>, Int>
+    suspend fun triggerNow(userId: UserId): PeriodicIndexJob
+    suspend fun listJobHistory(userId: UserId, page: Int, pageSize: Int): Pair<List<PeriodicIndexJob>, Int>
     
     // For scheduler
     suspend fun checkAndRunDueConfigs()
@@ -24,8 +22,8 @@ interface IPeriodicIndexService {
 @OptIn(ExperimentalTime::class)
 class PeriodicIndexService(
     private val periodicIndexConfigRepository: IPeriodicIndexConfigRepository,
-    private val precacheService: IPrecacheService,
-    private val precacheJobRepository: IPrecacheJobRepository
+    private val periodicIndexJobService: IPeriodicIndexJobService,
+    private val periodicIndexJobRepository: IPeriodicIndexJobRepository
 ) : IPeriodicIndexService {
 
     override suspend fun getConfig(userId: UserId): PeriodicIndexConfig? {
@@ -55,13 +53,12 @@ class PeriodicIndexService(
         periodicIndexConfigRepository.delete(config)
     }
 
-    override suspend fun triggerNow(userId: UserId): PrecacheJob {
+    override suspend fun triggerNow(userId: UserId): PeriodicIndexJob {
         val config = periodicIndexConfigRepository.findByUserId(userId)
             ?: throw IllegalArgumentException("No periodic index configuration found for user")
 
-        // Start the precache job
-        // Note: We are passing userId to start() which will need to be added to IPrecacheService
-        val job = precacheService.start(
+        // Start the job
+        val job = periodicIndexJobService.start(
             baseUrl = config.url,
             maxUrlCount = 100, // Default limit for periodic jobs
             sitemapUrl = null, // Sitemap discovery handled internally if needed, or added to config later
@@ -75,28 +72,22 @@ class PeriodicIndexService(
         return job
     }
 
-    override suspend fun listJobHistory(userId: UserId, page: Int, pageSize: Int): Pair<List<PrecacheJob>, Int> {
-        // This requires a new method on IPrecacheJobRepository to filter by userId
-        // For now, we'll fetch all and filter in memory (inefficient but works for MVP with low volume)
-        // TODO: Implement proper pagination in repository
-        val allJobs = precacheJobRepository.listAll(null)
-            .filter { it.userId == userId }
-            .sortedByDescending { it.createdAt.toEpochMilliseconds() }
-
-        val total = allJobs.size
-        val fromIndex = (page - 1) * pageSize
-        if (fromIndex >= total) return emptyList<PrecacheJob>() to total
-        
-        val toIndex = minOf(fromIndex + pageSize, total)
-        return allJobs.subList(fromIndex, toIndex) to total
+    override suspend fun listJobHistory(userId: UserId, page: Int, pageSize: Int): Pair<List<PeriodicIndexJob>, Int> {
+        val offset = (page - 1) * pageSize
+        val jobs = periodicIndexJobRepository.listByUserId(userId, state = null, offset = offset, limit = pageSize)
+        val total = periodicIndexJobRepository.countByUserId(userId, state = null).toInt()
+        return jobs to total
     }
 
     override suspend fun checkAndRunDueConfigs() {
-        val dueConfigs = periodicIndexConfigRepository.findDueConfigs(limit = 10)
+        // Fetch all enabled configs and filter by isDue() in the domain model
+        val enabledConfigs = periodicIndexConfigRepository.findEnabledConfigs(limit = 100)
+        val dueConfigs = enabledConfigs.filter { it.isDue() }.take(10)
+        
         for (config in dueConfigs) {
             try {
                 // Start job
-                precacheService.start(
+                periodicIndexJobService.start(
                     baseUrl = config.url,
                     maxUrlCount = 100,
                     sitemapUrl = null,

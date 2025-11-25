@@ -1,8 +1,8 @@
 package io.deepsearch.presentation.controllers
 
-import io.deepsearch.application.services.IPrecacheService
-import io.deepsearch.domain.models.entities.PrecacheJobState
-import io.deepsearch.presentation.dto.PrecacheStartRequest
+import io.deepsearch.application.services.IPeriodicIndexJobService
+import io.deepsearch.domain.models.entities.PeriodicIndexJobState
+import io.deepsearch.presentation.dto.PeriodicIndexJobStartRequest
 import io.deepsearch.presentation.dto.toResponse
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -14,7 +14,7 @@ import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-class PrecacheController(private val precacheService: IPrecacheService) {
+class PeriodicIndexJobController(private val periodicIndexJobService: IPeriodicIndexJobService) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     suspend fun stream(call: ApplicationCall, sse: ServerSSESession) {
@@ -25,10 +25,10 @@ class PrecacheController(private val precacheService: IPrecacheService) {
             return
         }
 
-        val events = precacheService.events(jobId)
+        val events = periodicIndexJobService.events(jobId)
         try {
-            events.collect { event: IPrecacheService.PrecacheEvent ->
-                val payload = Json.encodeToString(IPrecacheService.PrecacheEvent.serializer(), event)
+            events.collect { event: IPeriodicIndexJobService.PeriodicIndexEvent ->
+                val payload = Json.encodeToString(IPeriodicIndexJobService.PeriodicIndexEvent.serializer(), event)
                 sse.send(ServerSentEvent(payload))
             }
         } catch (e: Throwable) {
@@ -37,36 +37,18 @@ class PrecacheController(private val precacheService: IPrecacheService) {
         }
     }
 
-    suspend fun start(call: ApplicationCall) {
-        val request = call.receive<PrecacheStartRequest>()
-        
-        if (request.baseUrl.isBlank()) {
-            call.respond(HttpStatusCode.BadRequest, "Missing 'baseUrl' parameter")
-            return
-        }
-
-        if (request.maxUrlCount !in 1..1000) {
-            call.respond(HttpStatusCode.BadRequest, "Max url count must be within [1, 1000]. ${request.maxUrlCount}")
-            return
-        }
-        
-        val job = precacheService.start(request.baseUrl, request.maxUrlCount, request.sitemapUrl)
-        call.respond(HttpStatusCode.OK, job.toResponse())
-    }
-
     suspend fun stop(call: ApplicationCall) {
         val jobId = call.parameters["jobId"]?.toLongOrNull()
             ?: return call.respond(HttpStatusCode.BadRequest, "Invalid jobId")
-        precacheService.stop(jobId)
+        periodicIndexJobService.stop(jobId)
         call.respond(HttpStatusCode.NoContent)
     }
 
     suspend fun list(call: ApplicationCall) {
         val stateParam = call.request.queryParameters["state"]
-        val state = stateParam?.let { runCatching { PrecacheJobState.valueOf(it) }.getOrNull() }
-        val jobs = precacheService.list(state)
+        val state = stateParam?.let { runCatching { PeriodicIndexJobState.valueOf(it) }.getOrNull() }
+        val jobs = periodicIndexJobService.list(state)
         call.respond(jobs.map { it.toResponse() })
     }
 }
-
 
