@@ -82,8 +82,8 @@ class PeriodicIndexService(
 
     override suspend fun checkAndRunDueConfigs() {
         // Fetch all enabled configs and filter by isDue() in the domain model
-        val enabledConfigs = periodicIndexConfigRepository.findEnabledConfigs(limit = 100)
-        val dueConfigs = enabledConfigs.filter { it.isDue() }.take(10)
+        val enabledConfigs = periodicIndexConfigRepository.findEnabledConfigs()
+        val dueConfigs = enabledConfigs.filter { it.isDue() }
         
         for (config in dueConfigs) {
             try {

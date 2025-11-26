@@ -73,10 +73,9 @@ class ExposedPeriodicIndexConfigRepository(
             .singleOrNull()
     }
 
-    override suspend fun findEnabledConfigs(limit: Int): List<PeriodicIndexConfig> = transactionService.withTransaction {
+    override suspend fun findEnabledConfigs(): List<PeriodicIndexConfig> = transactionService.withTransaction {
         periodicIndexConfigTable.selectAll()
             .where { periodicIndexConfigTable.enabled eq true }
-            .limit(limit)
             .map { toDomain(it) }
             .toList()
     }
