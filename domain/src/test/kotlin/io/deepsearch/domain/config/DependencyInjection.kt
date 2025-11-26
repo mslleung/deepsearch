@@ -52,6 +52,9 @@ private val domainCommonTestModule = module {
     singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) bind ITesseractPool::class
 
+    // used by periodic index service
+    singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
+
     // GenAI agents as singletons for tests
     singleOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
     singleOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
@@ -84,7 +87,6 @@ private val domainCommonTestModule = module {
     singleOf(::JwtService) bind IJwtService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::SerperService) bind ISerperService::class
-    singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
     singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
 }
 

@@ -43,10 +43,10 @@ val infrastructureModule = module {
 
     // this lives outside the request scopr
     singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
+    singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
 
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
-        scopedOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class
         scopedOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
