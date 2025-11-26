@@ -19,39 +19,42 @@ val applicationModule = module {
     includes(domainModule)
     includes(infrastructureModule)
 
-    // Shared across requests
+    // Singleton services (shared across requests, stateless)
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
 
+    // Singleton services needed by PeriodicIndexScheduler/PeriodicIndexJobRegistry
+    singleOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
+    singleOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
+    singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
+    singleOf(::PopupContainerIdentificationService) bind IPopupContainerIdentificationService::class
+    singleOf(::TableIdentificationService) bind ITableIdentificationService::class
+    singleOf(::TableInterpretationService) bind ITableInterpretationService::class
+    singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
+    singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
+    singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
+    singleOf(::PdfConversionService) bind IPdfConversionService::class
+    singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
+    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
+    singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
+    singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
+    singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
+
     singleOf(::PeriodicIndexScheduler) { createdAtStart() }
 
+    // Request-scoped services (user/auth related)
     requestScope {
         scopedOf(::ApiKeyService) bind IApiKeyService::class
         scopedOf(::AuthService) bind IAuthService::class
         scopedOf(::RateLimitService) bind IRateLimitService::class
         scopedOf(::UserSubscriptionService) bind IUserSubscriptionService::class
         scopedOf(::UsageService) bind IUsageService::class
-        scopedOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
         scopedOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
         scopedOf(::UserService) bind IUserService::class
         scopedOf(::SearchService) bind ISearchService::class
-        scopedOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
-        scopedOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
-        scopedOf(::PopupContainerIdentificationService) bind IPopupContainerIdentificationService::class
-        scopedOf(::TableIdentificationService) bind ITableIdentificationService::class
-        scopedOf(::TableInterpretationService) bind ITableInterpretationService::class
-        scopedOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
-        scopedOf(::WebpageExtractionService) bind IWebpageExtractionService::class
-        scopedOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
-        scopedOf(::PdfConversionService) bind IPdfConversionService::class
-        scopedOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
-        scopedOf(::WebpageCacheService) bind IWebpageCacheService::class
-        scopedOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
         scopedOf(::UrlAccessService) bind IUrlAccessService::class
         scopedOf(::QuerySessionService) bind IQuerySessionService::class
-        scopedOf(::PeriodicIndexService) bind IPeriodicIndexService::class
-        scopedOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
     }
 }

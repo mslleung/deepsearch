@@ -41,23 +41,26 @@ val infrastructureModule = module {
     singleOf(::LlmTokenUsageTable)
     singleOf(::PeriodicIndexConfigTable)
 
+    // Singleton repositories (stateless, used by singleton services)
+    singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
+    singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
+    singleOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
+    singleOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
+    singleOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class
+    singleOf(::ExposedWebpageNavigationElementRepository) bind IWebpageNavigationElementRepository::class
+    singleOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
+    singleOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
+    singleOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
+    singleOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
+    singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
+    singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
+
+    // Request-scoped repositories (user/auth related)
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class
-        scopedOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
-        scopedOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
-        scopedOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
-        scopedOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
-        scopedOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class
-        scopedOf(::ExposedWebpageNavigationElementRepository) bind IWebpageNavigationElementRepository::class
-        scopedOf(::ExposedWebpageMarkdownRepository) bind IWebpageMarkdownRepository::class
-        scopedOf(::ExposedPdfMarkdownRepository) bind IPdfMarkdownRepository::class
         scopedOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
         scopedOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
-        scopedOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
-        scopedOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
-        scopedOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
-        scopedOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
     }
 }
