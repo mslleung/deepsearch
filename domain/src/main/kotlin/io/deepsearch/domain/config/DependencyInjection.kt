@@ -35,8 +35,26 @@ val domainModule = module {
     singleOf(::BrowserRuntimePool) { createdAtStart() } bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) { createdAtStart() } bind ITesseractPool::class
 
+    // Singleton domain services (used by singleton application services)
+    singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
+    singleOf(::SerperService) bind ISerperService::class
+    singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
+    singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
+    singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
+
+    // Singleton domain agents (used by singleton application services)
+    singleOf(::GoogleSearchLinkDiscoveryAgentGenAiImpl) bind IGoogleSearchLinkDiscoveryAgent::class
+    singleOf(::LinkRelevanceAnalysisAgentGenAiImpl) bind ILinkRelevanceAnalysisAgent::class
+    singleOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
+    singleOf(::MultiImageTextExtractionAgentGenAiImpl) bind IMultiImageTextExtractionAgent::class
+    singleOf(::PdfToMarkdownAgentGenAiImpl) bind IPdfToMarkdownAgent::class
+    singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
+    singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
+    singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
+    singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
+
+    // Request-scoped domain agents (used by request-scoped application services)
     requestScope {
-        // domain agents (request scoped) - now using GenAI SDK implementations
         scopedOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
         scopedOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
         scopedOf(::AnswerSynthesisAgentGenAiImpl) bind IAnswerSynthesisAgent::class
@@ -44,31 +62,17 @@ val domainModule = module {
         scopedOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
         scopedOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class
         scopedOf(::GoogleCombinedSearchAgentGenAiImpl) bind IGoogleCombinedSearchAgent::class
-        scopedOf(::GoogleSearchLinkDiscoveryAgentGenAiImpl) bind IGoogleSearchLinkDiscoveryAgent::class
         scopedOf(::GoogleTextSearchAgentGenAiImpl) bind IGoogleTextSearchAgent::class
         scopedOf(::GoogleUrlContextSearchAgentGenAiImpl) bind IGoogleUrlContextSearchAgent::class
         scopedOf(::IconInterpreterAgentGenAiImpl) bind IIconInterpreterAgent::class
-        scopedOf(::LinkRelevanceAnalysisAgentGenAiImpl) bind ILinkRelevanceAnalysisAgent::class
         scopedOf(::MarkdownConversionAgentGenAiImpl) bind IMarkdownConversionAgent::class
-        scopedOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
-        scopedOf(::MultiImageTextExtractionAgentGenAiImpl) bind IMultiImageTextExtractionAgent::class
-        scopedOf(::PdfToMarkdownAgentGenAiImpl) bind IPdfToMarkdownAgent::class
-        scopedOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
         scopedOf(::QueryBreakdownAgentGenAiImpl) bind IQueryBreakdownAgent::class
         scopedOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
-        scopedOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
         scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
         scopedOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
-        scopedOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
-        scopedOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
 
-        // domain services
+        // Request-scoped domain services (user/auth related)
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
-        scopedOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
         scopedOf(::JwtService) bind IJwtService::class
-        scopedOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
-        scopedOf(::SerperService) bind ISerperService::class
-        scopedOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
-        scopedOf(::NormalizeUrlService) bind INormalizeUrlService::class
     }
 }
