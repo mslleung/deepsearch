@@ -38,7 +38,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
+        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank")
         assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "Sources should not be empty")
     }
 
@@ -55,7 +55,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
+        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank")
         assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "Sources should not be empty")
     }
 
@@ -72,7 +72,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
+        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank")
         assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "Sources should not be empty")
     }
 
@@ -90,7 +90,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
+        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank")
         assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "Sources should not be empty")
     }
 
@@ -108,7 +108,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.content.isNotBlank(), "Search result content should not be blank")
+        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank")
         val allUrls = result.answerSources + result.exploredSources
         assertTrue(allUrls.contains(url), "Sources should include the target URL")
     }
@@ -127,7 +127,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.content.isNotBlank(), "Search result content should not be blank for pricing/SLA query")
+        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank for pricing/SLA query")
         val allUrls = result.answerSources + result.exploredSources
         assertTrue(allUrls.contains(url), "Sources should include the target URL")
     }
@@ -146,7 +146,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.content.isNotBlank(), "Search result content should not be blank even for unrelated query")
+        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank even for unrelated query")
         // The combined agent always grounds sources to the provided URL for now
         val allUrls = result.answerSources + result.exploredSources
         assertEquals(listOf(url), allUrls, "Sources should reflect the target URL used for context")
@@ -166,7 +166,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
 
         // Then
         assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.content.isNotBlank(), "Search result content should not be blank for non-English query")
+        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank for non-English query")
         val allUrls = result.answerSources + result.exploredSources
         assertTrue(allUrls.contains(url), "Sources should include the target URL")
     }

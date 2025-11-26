@@ -45,6 +45,8 @@ class ExposedWebpageMarkdownRepositoryTest : KoinTest {
         // Insert test webpages with searchable content and real embeddings
         val webpage1 = WebpageMarkdown(
             url = "${urlPrefix}kotlin-guide",
+            title = null,
+            description = null,
             markdown = markdown1,
             html = "<html><body>Kotlin guide</body></html>",
             httpStatus = 200,
@@ -57,6 +59,8 @@ class ExposedWebpageMarkdownRepositoryTest : KoinTest {
         
         val webpage2 = WebpageMarkdown(
             url = "${urlPrefix}java-tutorial",
+            title = null,
+            description = null,
             markdown = markdown2,
             html = "<html><body>Java tutorial</body></html>",
             httpStatus = 200,
@@ -69,6 +73,8 @@ class ExposedWebpageMarkdownRepositoryTest : KoinTest {
         
         val webpage3 = WebpageMarkdown(
             url = "${urlPrefix}rust-intro",
+            title = null,
+            description = null,
             markdown = markdown3,
             html = "<html><body>Rust intro</body></html>",
             httpStatus = 200,

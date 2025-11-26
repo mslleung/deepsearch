@@ -45,7 +45,7 @@ class WebpageExtractionServiceBenchmarkTest : KoinTest {
             val extractionTime = measureTimeMillis {
                 withContext(Dispatchers.IO) {
                     val text = webpageExtractionService.extractWebpage(page, "test-session-id")
-                    assertTrue(text.length > 200)
+                    assertTrue(text.markdown.length > 200)
                 }
             }
 
