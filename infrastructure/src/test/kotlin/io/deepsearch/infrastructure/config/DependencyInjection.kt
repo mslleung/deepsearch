@@ -54,10 +54,6 @@ private val infrastructureCommonTestModule = module {
     singleOf(::SitemapCacheTable)
     singleOf(::LlmTokenUsageTable)
 
-    // this lives outside the request scopr
-    singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
-    singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
-
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
     singleOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
@@ -73,6 +69,8 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
     singleOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
     singleOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
+    singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
+    singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
 }
 
 val infrastructureTestModule = module {

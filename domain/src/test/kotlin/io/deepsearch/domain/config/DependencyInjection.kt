@@ -52,9 +52,6 @@ private val domainCommonTestModule = module {
     singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) bind ITesseractPool::class
 
-    // used by periodic index service
-    singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
-
     // GenAI agents as singletons for tests
     singleOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
     singleOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
@@ -88,6 +85,7 @@ private val domainCommonTestModule = module {
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::SerperService) bind ISerperService::class
     singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
+    singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
 }
 
 val domainTestModule = module {

@@ -93,8 +93,6 @@ private val applicationCommonTestModule = module {
     singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
 
     singleOf(::PeriodicIndexScheduler) { createdAtStart() }
-    singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
-    singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
 
     singleOf(::ApiKeyService) bind IApiKeyService::class
     singleOf(::AuthService) bind IAuthService::class
@@ -119,6 +117,8 @@ private val applicationCommonTestModule = module {
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
     singleOf(::UrlAccessService) bind IUrlAccessService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class
+    singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
+    singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
 
     // test stubs
     singleOf(::TestLlmTokenUsageService) bind ILlmTokenUsageService::class

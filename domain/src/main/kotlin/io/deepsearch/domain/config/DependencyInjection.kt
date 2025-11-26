@@ -35,9 +35,6 @@ val domainModule = module {
     singleOf(::BrowserRuntimePool) { createdAtStart() } bind IBrowserRuntimePool::class
     singleOf(::TesseractPoolImpl) { createdAtStart() } bind ITesseractPool::class
 
-    // used by periodic index service
-    singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
-
     requestScope {
         // domain agents (request scoped) - now using GenAI SDK implementations
         scopedOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
@@ -72,5 +69,6 @@ val domainModule = module {
         scopedOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
         scopedOf(::SerperService) bind ISerperService::class
         scopedOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
+        scopedOf(::NormalizeUrlService) bind INormalizeUrlService::class
     }
 }

@@ -41,10 +41,6 @@ val infrastructureModule = module {
     singleOf(::LlmTokenUsageTable)
     singleOf(::PeriodicIndexConfigTable)
 
-    // this lives outside the request scopr
-    singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
-    singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
-
     requestScope {
         scopedOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
@@ -61,5 +57,7 @@ val infrastructureModule = module {
         scopedOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
         scopedOf(::ExposedSitemapCacheRepository) bind ISitemapCacheRepository::class
         scopedOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
+        scopedOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
+        scopedOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
     }
 }
