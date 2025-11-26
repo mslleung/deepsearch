@@ -31,7 +31,7 @@ interface IPeriodicIndexJobService {
     suspend fun stop(jobId: Long)
     suspend fun findById(jobId: Long): PeriodicIndexJob?
     suspend fun list(state: PeriodicIndexJobState? = null): List<PeriodicIndexJob>
-    fun events(jobId: Long): SharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>
+    fun events(jobId: Long): SharedFlow<PeriodicIndexEvent>
 }
 
 @OptIn(ExperimentalTime::class)

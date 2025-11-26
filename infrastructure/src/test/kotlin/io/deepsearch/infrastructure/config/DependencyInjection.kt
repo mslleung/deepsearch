@@ -53,7 +53,10 @@ private val infrastructureCommonTestModule = module {
     singleOf(::PeriodicIndexConfigTable)
     singleOf(::SitemapCacheTable)
     singleOf(::LlmTokenUsageTable)
-    
+
+    // this lives outside the request scopr
+    singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
+
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
     singleOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class

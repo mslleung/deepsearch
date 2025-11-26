@@ -4,6 +4,8 @@ import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.Agenti
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
+import io.deepsearch.application.services.ApiKeyService
+import io.deepsearch.application.services.AuthService
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.application.services.IPopupContainerIdentificationService
@@ -14,6 +16,8 @@ import io.deepsearch.application.services.ITableInterpretationService
 import io.deepsearch.application.services.IUserService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.HttpContentTypeResolutionService
+import io.deepsearch.application.services.IApiKeyService
+import io.deepsearch.application.services.IAuthService
 import io.deepsearch.application.services.IHttpContentTypeResolutionService
 import io.deepsearch.application.services.IPdfConversionService
 import io.deepsearch.application.services.IPeriodicIndexJobRegistry
@@ -37,19 +41,35 @@ import io.deepsearch.application.services.IWebpageCacheService
 import io.deepsearch.application.services.UrlContentProcessingService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.ILlmTokenUsageService
+import io.deepsearch.application.services.IPeriodicIndexJobService
+import io.deepsearch.application.services.IPeriodicIndexService
+import io.deepsearch.application.services.IRateLimitService
 import io.deepsearch.application.services.IUrlProcessingLockRegistry
 import io.deepsearch.application.services.ISitemapLinkDiscoveryLockRegistry
+import io.deepsearch.application.services.IUrlAccessService
+import io.deepsearch.application.services.IUsageService
+import io.deepsearch.application.services.IUserSubscriptionService
+import io.deepsearch.application.services.LlmTokenUsageService
 import io.deepsearch.application.services.TestLlmTokenUsageService
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.application.services.PeriodicIndexJobRegistry
+import io.deepsearch.application.services.PeriodicIndexJobService
+import io.deepsearch.application.services.PeriodicIndexScheduler
+import io.deepsearch.application.services.PeriodicIndexService
 import io.deepsearch.application.services.QuerySessionService
+import io.deepsearch.application.services.RateLimitService
 import io.deepsearch.application.services.SitemapLinkDiscoveryLockRegistry
+import io.deepsearch.application.services.UrlAccessService
 import io.deepsearch.infrastructure.services.TransactionService
 import io.deepsearch.application.services.UrlProcessingLockRegistry
+import io.deepsearch.application.services.UsageService
+import io.deepsearch.application.services.UserSubscriptionService
 import io.deepsearch.domain.config.domainBenchmarkTestModule
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.infrastructure.config.infrastructureBenchmarkTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
+import org.koin.core.module.dsl.createdAtStart
+import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -72,24 +92,35 @@ private val applicationCommonTestModule = module {
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
 
+    singleOf(::PeriodicIndexScheduler) { createdAtStart() }
+    singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
+    singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
+
+    singleOf(::ApiKeyService) bind IApiKeyService::class
+    singleOf(::AuthService) bind IAuthService::class
+    singleOf(::RateLimitService) bind IRateLimitService::class
+    singleOf(::UserSubscriptionService) bind IUserSubscriptionService::class
+    singleOf(::UsageService) bind IUsageService::class
+    singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
+    singleOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
     singleOf(::UserService) bind IUserService::class
     singleOf(::SearchService) bind ISearchService::class
     singleOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
+    singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     singleOf(::PopupContainerIdentificationService) bind IPopupContainerIdentificationService::class
-    singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
     singleOf(::TableIdentificationService) bind ITableIdentificationService::class
     singleOf(::TableInterpretationService) bind ITableInterpretationService::class
     singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
-    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
-    singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
-    singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
-    singleOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
-    singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
+    singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
     singleOf(::PdfConversionService) bind IPdfConversionService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
+    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
+    singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
+    singleOf(::UrlAccessService) bind IUrlAccessService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class
-    singleOf(::TransactionService) bind ITransactionService::class
+
+    // test stubs
     singleOf(::TestLlmTokenUsageService) bind ILlmTokenUsageService::class
 }
 

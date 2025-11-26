@@ -23,7 +23,11 @@ val applicationModule = module {
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
+
+    // The scheduler cannot be request scoped so all dependency services are forced to be singleton
     singleOf(::PeriodicIndexScheduler) { createdAtStart() }
+    singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
+    singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
 
     requestScope {
         scopedOf(::ApiKeyService) bind IApiKeyService::class
@@ -31,8 +35,6 @@ val applicationModule = module {
         scopedOf(::RateLimitService) bind IRateLimitService::class
         scopedOf(::UserSubscriptionService) bind IUserSubscriptionService::class
         scopedOf(::UsageService) bind IUsageService::class
-        scopedOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
-        scopedOf(::PeriodicIndexService) bind IPeriodicIndexService::class
         scopedOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
         scopedOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
