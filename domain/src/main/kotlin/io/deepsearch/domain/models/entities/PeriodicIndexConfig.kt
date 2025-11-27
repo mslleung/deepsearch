@@ -13,8 +13,18 @@ enum class PeriodicIndexPeriod(val days: Int?) {
     ONE_OFF(null);
 
     companion object {
+        val ALLOWED_DAYS: Set<Int?> = entries.map { it.days }.toSet()
+
         fun fromDays(days: Int?): PeriodicIndexPeriod {
             return entries.find { it.days == days } ?: ONE_OFF
+        }
+
+        fun isValidPeriodDays(days: Int?): Boolean = days in ALLOWED_DAYS
+
+        fun requireValidPeriodDays(days: Int?) {
+            require(isValidPeriodDays(days)) {
+                "Invalid period days: $days. Allowed values are: ${ALLOWED_DAYS.filterNotNull().sorted().joinToString(", ")} (or null for one-off)"
+            }
         }
     }
 }
@@ -25,13 +35,19 @@ class PeriodicIndexConfig(
     val userId: UserId,
     var url: String,
     var sitemapUrl: String? = null,
-    var periodDays: Int? = null, // null means one-off
+    periodDays: Int? = null, // null means one-off
     var enabled: Boolean = true,
     val createdAt: Long = Clock.System.now().toEpochMilliseconds(),
     var updatedAt: Long = Clock.System.now().toEpochMilliseconds(),
     var lastRunAt: Long? = null,
     var version: Long = 0
 ) {
+    var periodDays: Int? = periodDays
+        private set
+
+    init {
+        PeriodicIndexPeriod.requireValidPeriodDays(periodDays)
+    }
     /**
      * Calculates the next run time based on lastRunAt and periodDays.
      * Returns null if:
@@ -64,6 +80,7 @@ class PeriodicIndexConfig(
     }
 
     fun updateConfig(newUrl: String, newSitemapUrl: String?, newPeriodDays: Int?) {
+        PeriodicIndexPeriod.requireValidPeriodDays(newPeriodDays)
         url = newUrl
         sitemapUrl = newSitemapUrl
         periodDays = newPeriodDays

@@ -2,6 +2,7 @@ package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IPeriodicIndexService
 import io.deepsearch.domain.config.JwtConfig
+import io.deepsearch.domain.models.entities.PeriodicIndexPeriod
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.presentation.dto.*
 import io.ktor.http.*
@@ -51,7 +52,16 @@ class PeriodicIndexController(
         }
 
         if (request.url.isBlank()) {
-            call.respond(HttpStatusCode.BadRequest, "URL is required")
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "URL is required"))
+            return
+        }
+
+        if (!PeriodicIndexPeriod.isValidPeriodDays(request.periodDays)) {
+            val allowedValues = PeriodicIndexPeriod.ALLOWED_DAYS.filterNotNull().sorted().joinToString(", ")
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Invalid indexing period. Allowed values are: $allowedValues days (or null for one-off)")
+            )
             return
         }
 
