@@ -1,6 +1,8 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -28,8 +30,8 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
         // Given
         val url = "https://www.example.com/"
 
-        // When
-        val events = urlContentProcessingService.processUrlAsFlow(url, sessionId = "test-session-id").toList()
+        // When - using PeriodicIndexSessionId for the non-query version
+        val events = urlContentProcessingService.processUrlAsFlow(url, sessionId = PeriodicIndexSessionId(1L)).toList()
 
         // Then
         assertTrue(events.isNotEmpty(), "Should emit at least one event")
@@ -60,8 +62,8 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
         val url = "https://www.example.com/"
         val query = "What is this page about?"
 
-        // When
-        val events = urlContentProcessingService.processUrlAsFlow(url, query, sessionId = "test-session-id").toList()
+        // When - using QuerySessionId for the query version
+        val events = urlContentProcessingService.processUrlAsFlow(url, query, sessionId = QuerySessionId("test-session-id")).toList()
 
         // Then
         assertTrue(events.size >= 2, "Should emit at least two events")

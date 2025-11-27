@@ -1,6 +1,6 @@
 package io.deepsearch.domain.models.entities
 
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -14,7 +14,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 data class LlmTokenUsage(
     val id: String,
-    val querySessionId: QuerySessionId?,
+    val sessionId: SessionId?,
     val agentName: String,
     val modelName: String,
     val promptTokens: Int,

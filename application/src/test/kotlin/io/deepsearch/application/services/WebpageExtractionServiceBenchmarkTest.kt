@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationBenchmarkTestModule
 import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
@@ -44,7 +45,7 @@ class WebpageExtractionServiceBenchmarkTest : KoinTest {
 
             val extractionTime = measureTimeMillis {
                 withContext(Dispatchers.IO) {
-                    val text = webpageExtractionService.extractWebpage(page, "test-session-id")
+                    val text = webpageExtractionService.extractWebpage(page, QuerySessionId("test-session-id"))
                     assertTrue(text.markdown.length > 200)
                 }
             }

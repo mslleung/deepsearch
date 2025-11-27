@@ -4,7 +4,7 @@ import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
 import io.deepsearch.domain.agents.PopupContainerIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpagePopup
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.IWebpagePopupRepository
 import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
@@ -13,9 +13,9 @@ interface IPopupContainerIdentificationService {
     /**
      * Identifies popup containers on a webpage and returns their XPaths.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
-     * @param sessionId Query session ID for token tracking
+     * @param sessionId Session ID for token tracking
      */
-    suspend fun identifyPopupContainers(webpage: IBrowserPage, sessionId: QuerySessionId): List<String>
+    suspend fun identifyPopupContainers(webpage: IBrowserPage, sessionId: SessionId): List<String>
 }
 
 class PopupContainerIdentificationService(
@@ -25,7 +25,7 @@ class PopupContainerIdentificationService(
 ) : IPopupContainerIdentificationService {
 
     @OptIn(ExperimentalTime::class)
-    override suspend fun identifyPopupContainers(webpage: IBrowserPage, sessionId: QuerySessionId): List<String> {
+    override suspend fun identifyPopupContainers(webpage: IBrowserPage, sessionId: SessionId): List<String> {
         val screenshot = webpage.takeScreenshot()
         val html = webpage.getFullHtml()
 

@@ -11,7 +11,9 @@ import kotlinx.coroutines.flow.onCompletion
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.IUrlContentProcessingService.*
+import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.services.INormalizeUrlService
 
 interface IUrlContentProcessingService {
@@ -50,12 +52,13 @@ interface IUrlContentProcessingService {
 
     /**
      * Process a URL and discover all links on the page (query-agnostic).
+     * Used for periodic index jobs.
      * Emits LinkDiscoveryComplete event first, then MarkdownExtractionComplete event.
      */
     fun processUrlAsFlow(
         url: String,
         cacheExpiryMs: Long? = null,
-        sessionId: QuerySessionId
+        sessionId: PeriodicIndexSessionId
     ): Flow<UrlProcessingEvent>
 }
 
@@ -86,7 +89,7 @@ class UrlContentProcessingService(
     override fun processUrlAsFlow(
         url: String,
         cacheExpiryMs: Long?,
-        sessionId: QuerySessionId
+        sessionId: PeriodicIndexSessionId
     ): Flow<UrlProcessingEvent> {
         return processInternalAsFlow(url, cacheExpiryMs, sessionId) { html ->
             webpageLinkDiscoveryService.discoverAllLinks(html, url)
@@ -96,7 +99,7 @@ class UrlContentProcessingService(
     private fun processInternalAsFlow(
         url: String,
         cacheExpiryMs: Long?,
-        sessionId: QuerySessionId,
+        sessionId: SessionId,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
         logger.debug("Processing URL: {}", url)
@@ -166,7 +169,7 @@ class UrlContentProcessingService(
 
     private fun processHtmlUrlAsFlow(
         normalizedUrl: String,
-        sessionId: QuerySessionId,
+        sessionId: SessionId,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
         browserRuntimePool.acquireRuntime { runtime ->
@@ -235,7 +238,7 @@ class UrlContentProcessingService(
     private fun processPdfUrlAsFlow(
         normalizedUrl: String,
         result: ContentTypeResult.Pdf,
-        sessionId: QuerySessionId
+        sessionId: SessionId
     ): Flow<UrlProcessingEvent> = flow {
         val markdown = pdfConversionService.convertPdfToMarkdown(result.bytes, sessionId)
 
@@ -260,7 +263,7 @@ class UrlContentProcessingService(
     private suspend fun cacheFailure(
         normalizedUrl: String,
         exception: UrlProcessingException,
-        sessionId: QuerySessionId
+        sessionId: SessionId
     ) {
         val (statusCode, reasonPhrase, mimeType) = when (exception) {
             is HttpClientErrorException -> Triple(exception.statusCode, exception.reasonPhrase, null)

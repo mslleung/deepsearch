@@ -3,7 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.IPdfToMarkdownAgent
 import io.deepsearch.domain.agents.PdfToMarkdownInput
 import io.deepsearch.domain.models.entities.PdfMarkdown
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.IPdfMarkdownRepository
 import org.apache.pdfbox.Loader
 import org.slf4j.Logger
@@ -13,7 +13,7 @@ import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 interface IPdfConversionService {
-    suspend fun convertPdfToMarkdown(pdfBytes: ByteArray, sessionId: QuerySessionId): String
+    suspend fun convertPdfToMarkdown(pdfBytes: ByteArray, sessionId: SessionId): String
 }
 
 /**
@@ -34,7 +34,7 @@ class PdfConversionService(
     }
 
     @OptIn(ExperimentalTime::class)
-    override suspend fun convertPdfToMarkdown(pdfBytes: ByteArray, sessionId: QuerySessionId): String {
+    override suspend fun convertPdfToMarkdown(pdfBytes: ByteArray, sessionId: SessionId): String {
         // Calculate PDF hash for caching
         val pdfHash = calculateHash(pdfBytes)
         

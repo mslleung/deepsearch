@@ -5,7 +5,7 @@ import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.entities.WebpageSemanticElement
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import org.slf4j.Logger
@@ -19,12 +19,12 @@ interface ISemanticIdentificationService {
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
      *
      * @param webpage The webpage to analyze
-     * @param sessionId Query session ID for token tracking
+     * @param sessionId Session ID for token tracking
      * @return SemanticElements containing all identified semantic elements grouped by type
      */
     suspend fun identifySemanticElements(
         webpage: IBrowserPage,
-        sessionId: QuerySessionId
+        sessionId: SessionId
     ): SemanticElements
 }
 
@@ -38,7 +38,7 @@ class SemanticIdentificationService(
 
     override suspend fun identifySemanticElements(
         webpage: IBrowserPage,
-        sessionId: QuerySessionId
+        sessionId: SessionId
     ): SemanticElements {
         // Get HTML for caching
         val html = webpage.getFullHtml()

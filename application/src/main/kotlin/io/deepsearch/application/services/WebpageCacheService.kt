@@ -3,7 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.WebpageMarkdown
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.domain.services.ITextEmbeddingService
 import kotlinx.coroutines.delay
@@ -41,7 +41,7 @@ interface IWebpageCacheService {
      * @param httpStatus HTTP status code
      * @param httpReason HTTP reason phrase
      * @param mimeType Content MIME type
-     * @param sessionId Query session ID for token tracking
+     * @param sessionId Session ID for token tracking
      */
     suspend fun cacheWebpage(
         url: String,
@@ -52,7 +52,7 @@ interface IWebpageCacheService {
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        sessionId: QuerySessionId
+        sessionId: SessionId
     )
 
     /**
@@ -69,7 +69,7 @@ interface IWebpageCacheService {
      * @param baseUrl The base URL to filter by (will be normalized, e.g., "https://example.com")
      * @param cacheExpiryMs Cache expiration time in milliseconds (null means no expiry filtering)
      * @param limit Maximum number of results to return
-     * @param sessionId Query session ID for token tracking
+     * @param sessionId Session ID for token tracking
      * @return List of WebpageMarkdown objects, ordered by RRF combined score (most relevant first)
      */
     suspend fun searchHybrid(
@@ -77,7 +77,7 @@ interface IWebpageCacheService {
         baseUrl: String,
         cacheExpiryMs: Long?,
         limit: Int,
-        sessionId: QuerySessionId
+        sessionId: SessionId
     ): List<WebpageMarkdown>
 }
 
@@ -135,7 +135,7 @@ class WebpageCacheService(
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        sessionId: QuerySessionId
+        sessionId: SessionId
     ) {
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
@@ -177,7 +177,7 @@ class WebpageCacheService(
      * If embedding generation or storage fails, the error is logged but not propagated.
      * This ensures that embedding failures don't break the main request flow.
      */
-    private fun generateAndStoreEmbeddingAsync(url: String, markdown: String, sessionId: QuerySessionId) {
+    private fun generateAndStoreEmbeddingAsync(url: String, markdown: String, sessionId: SessionId) {
         // Launch in application scope (fire-and-forget)
         applicationScope.scope.launch {
             try {
@@ -254,7 +254,7 @@ class WebpageCacheService(
         baseUrl: String,
         cacheExpiryMs: Long?,
         limit: Int,
-        sessionId: QuerySessionId
+        sessionId: SessionId
     ): List<WebpageMarkdown> {
         try {
             // Normalize URL to get prefix for filtering

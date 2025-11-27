@@ -4,7 +4,7 @@ import io.deepsearch.domain.agents.IMultiIconInterpreterAgent
 import io.deepsearch.domain.agents.MultiIconInterpreterInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageIcon
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.IWebpageIconRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -13,8 +13,8 @@ import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 interface IWebpageIconInterpretationService {
-    suspend fun interpretIcon(icon: IBrowserPage.Icon, sessionId: QuerySessionId): String?
-    suspend fun interpretIcons(icons: List<IBrowserPage.Icon>, sessionId: QuerySessionId): List<String?>
+    suspend fun interpretIcon(icon: IBrowserPage.Icon, sessionId: SessionId): String?
+    suspend fun interpretIcons(icons: List<IBrowserPage.Icon>, sessionId: SessionId): List<String?>
 }
 
 class WebpageIconInterpretationService(
@@ -32,7 +32,7 @@ class WebpageIconInterpretationService(
      * Note: Uses the multi-icon agent with a batch of 1 for consistency.
      * For better performance with multiple icons, use interpretIcons instead.
      */
-    override suspend fun interpretIcon(icon: IBrowserPage.Icon, sessionId: QuerySessionId): String? {
+    override suspend fun interpretIcon(icon: IBrowserPage.Icon, sessionId: SessionId): String? {
         return interpretIcons(listOf(icon), sessionId).firstOrNull()
     }
 
@@ -46,7 +46,7 @@ class WebpageIconInterpretationService(
      * Results are cached to avoid reprocessing the same icons.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun interpretIcons(icons: List<IBrowserPage.Icon>, sessionId: QuerySessionId): List<String?> {
+    override suspend fun interpretIcons(icons: List<IBrowserPage.Icon>, sessionId: SessionId): List<String?> {
         if (icons.isEmpty()) {
             return emptyList()
         }

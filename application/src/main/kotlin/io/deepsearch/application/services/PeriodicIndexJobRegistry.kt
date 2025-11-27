@@ -5,6 +5,7 @@ import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
+import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
@@ -251,7 +252,7 @@ class PeriodicIndexJobRegistry(
                         return@flow
                     }
 
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, "periodic-index-job-$jobId")
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, PeriodicIndexSessionId(jobId))
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -309,7 +310,7 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, "periodic-index-job-$jobId")
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, PeriodicIndexSessionId(jobId))
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -366,7 +367,7 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, "periodic-index-job-$jobId")
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, PeriodicIndexSessionId(jobId))
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -446,7 +447,7 @@ class PeriodicIndexJobRegistry(
                     val normalizedUrl = normalize(link.url)
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
 
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, "periodic-index-job-$jobId")
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, PeriodicIndexSessionId(jobId))
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> throw e

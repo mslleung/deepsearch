@@ -1,6 +1,6 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicInteger
@@ -21,7 +21,7 @@ class TestLlmTokenUsageService : ILlmTokenUsageService {
     private val callCount = AtomicInteger(0)
     
     override suspend fun recordTokenUsage(
-        sessionId: QuerySessionId?,
+        sessionId: SessionId?,
         agentName: String,
         modelName: String,
         promptTokens: Int,

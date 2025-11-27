@@ -1,7 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.LlmTokenUsage
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.ILlmTokenUsageRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -15,7 +15,7 @@ interface ILlmTokenUsageService {
     /**
      * Record token usage for an LLM API call.
      * 
-     * @param sessionId Optional query session ID for associating usage with a session
+     * @param sessionId Optional session ID for associating usage with a session (query or periodic index)
      * @param agentName Name of the agent making the call (for analysis)
      * @param modelName Name of the model used
      * @param promptTokens Number of tokens in the input prompt
@@ -23,7 +23,7 @@ interface ILlmTokenUsageService {
      * @param totalTokens Total tokens used
      */
     suspend fun recordTokenUsage(
-        sessionId: QuerySessionId?,
+        sessionId: SessionId?,
         agentName: String,
         modelName: String,
         promptTokens: Int,
@@ -44,7 +44,7 @@ class LlmTokenUsageService(
 
     @OptIn(ExperimentalTime::class)
     override suspend fun recordTokenUsage(
-        sessionId: QuerySessionId?,
+        sessionId: SessionId?,
         agentName: String,
         modelName: String,
         promptTokens: Int,
@@ -62,12 +62,12 @@ class LlmTokenUsageService(
             totalTokens
         )
 
-        // Only persist to database if session ID is available
+        // Persist to database if session ID is available
         if (sessionId != null) {
             try {
                 val usage = LlmTokenUsage(
                     id = UUID.randomUUID().toString(),
-                    querySessionId = sessionId,
+                    sessionId = sessionId,
                     agentName = agentName,
                     modelName = modelName,
                     promptTokens = promptTokens,

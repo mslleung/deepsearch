@@ -6,7 +6,7 @@ import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
 import io.deepsearch.domain.models.entities.SitemapCache
 import io.deepsearch.domain.models.valueobjects.LinkSource
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.ISitemapCacheRepository
@@ -27,7 +27,7 @@ interface IWebpageLinkDiscoveryService {
     /**
      * Discovers relevant links using Google search
      */
-    suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery, sessionId: QuerySessionId): List<WebpageLink>
+    suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery, sessionId: SessionId): List<WebpageLink>
 
     /**
      * Discovers relevant links using SERP search (serper.dev API)
@@ -37,7 +37,7 @@ interface IWebpageLinkDiscoveryService {
     /**
      * Discovers relevant links by analyzing links on the current webpage
      */
-    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: QuerySessionId): List<WebpageLink>
+    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId): List<WebpageLink>
 
     /**
      * Discovers all links on the page regardless of relevance.
@@ -83,7 +83,7 @@ class WebpageLinkDiscoveryService(
         return normalizeUrlService.normalize(baseDomain) ?: baseDomain
     }
 
-    override suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery, sessionId: QuerySessionId): List<WebpageLink> {
+    override suspend fun discoverRelevantLinksByGoogleSearch(searchQuery: SearchQuery, sessionId: SessionId): List<WebpageLink> {
         logger.debug("Discovering links via Google search for query: '{}' on {}", searchQuery.query, searchQuery.url)
 
         val output = googleSearchLinkDiscoveryAgent.generate(
@@ -113,7 +113,7 @@ class WebpageLinkDiscoveryService(
         return links
     }
 
-    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: QuerySessionId): List<WebpageLink> {
+    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId): List<WebpageLink> {
         logger.debug("Discovering links via on-page analysis for query: '{}'", query)
 
         val baseDomain = extractBaseDomain(url)
