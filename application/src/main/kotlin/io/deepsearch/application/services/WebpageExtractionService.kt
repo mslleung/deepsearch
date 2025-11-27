@@ -5,6 +5,7 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
@@ -24,7 +25,7 @@ data class WebpageExtractionResult(
 )
 
 interface IWebpageExtractionService {
-    suspend fun extractWebpage(webpage: IBrowserPage, sessionId: String): WebpageExtractionResult
+    suspend fun extractWebpage(webpage: IBrowserPage, sessionId: QuerySessionId): WebpageExtractionResult
 }
 
 class WebpageExtractionService(
@@ -43,7 +44,7 @@ class WebpageExtractionService(
      * Converts a webpage into text for downstream LLM processing.
      * The extracted text is primed for information retrieval on the current page.
      */
-    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: String): WebpageExtractionResult = coroutineScope {
+    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: QuerySessionId): WebpageExtractionResult = coroutineScope {
         val result: WebpageExtractionResult
         val duration = measureTimeMillis {
             val title = webpage.getTitle()
@@ -112,7 +113,7 @@ class WebpageExtractionService(
 
     private fun identifySemanticElementsFlow(
         webpage: IBrowserPage,
-        sessionId: String
+        sessionId: QuerySessionId
     ) = flow {
         val duration = measureTimeMillis {
             val semanticElements = semanticIdentificationService.identifySemanticElements(
@@ -124,7 +125,7 @@ class WebpageExtractionService(
         logger.debug("Semantic element identification took {} ms", duration)
     }
 
-    private fun interpretIconsFlow(webpage: IBrowserPage, sessionId: String) = flow {
+    private fun interpretIconsFlow(webpage: IBrowserPage, sessionId: QuerySessionId) = flow {
         val duration = measureTimeMillis {
             val icons = webpage.extractIcons()
 
@@ -140,7 +141,7 @@ class WebpageExtractionService(
         logger.debug("Icon interpretation took {} ms", duration)
     }
 
-    private fun interpretImagesFlow(webpage: IBrowserPage, sessionId: String) = flow {
+    private fun interpretImagesFlow(webpage: IBrowserPage, sessionId: QuerySessionId) = flow {
         val duration = measureTimeMillis {
             val images = webpage.extractImages()
 
@@ -155,7 +156,7 @@ class WebpageExtractionService(
         logger.debug("Image interpretation took {} ms", duration)
     }
 
-    private fun identifyTablesFlow(webpage: IBrowserPage, sessionId: String) = flow {
+    private fun identifyTablesFlow(webpage: IBrowserPage, sessionId: QuerySessionId) = flow {
         val duration = measureTimeMillis {
             val tables = tableIdentificationService.identifyTables(webpage, sessionId)
             emit(tables)
@@ -184,7 +185,7 @@ class WebpageExtractionService(
     private suspend fun interpretAndReplaceTables(
         webpage: IBrowserPage,
         identifiedTables: List<TableIdentification>,
-        sessionId: String
+        sessionId: QuerySessionId
     ) {
         val url = webpage.getUrl()
         

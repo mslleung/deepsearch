@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IMultiImageTextExtractionAgent
 import io.deepsearch.domain.agents.MultiImageTextExtractionInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageImage
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.repositories.IWebpageImageRepository
 import kotlinx.coroutines.async
@@ -15,8 +16,8 @@ import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 interface IWebpageImageTextExtractionService {
-    suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: String): String?
-    suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: String): List<String?>
+    suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: QuerySessionId): String?
+    suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: QuerySessionId): List<String?>
 }
 
 class WebpageImageTextExtractionService(
@@ -34,7 +35,7 @@ class WebpageImageTextExtractionService(
      * If text is detected, uses LLM to extract it with proper formatting (including tables).
      * Results are cached to avoid reprocessing the same image.
      */
-    override suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: String): String? {
+    override suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: QuerySessionId): String? {
         return extractTextFromImages(listOf(image), sessionId).firstOrNull()
     }
 
@@ -47,7 +48,7 @@ class WebpageImageTextExtractionService(
      * Results are cached to avoid reprocessing the same images.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: String): List<String?> {
+    override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: QuerySessionId): List<String?> {
         if (images.isEmpty()) {
             return emptyList()
         }

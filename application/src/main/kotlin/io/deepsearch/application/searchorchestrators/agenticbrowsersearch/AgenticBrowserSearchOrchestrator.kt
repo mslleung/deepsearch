@@ -234,7 +234,7 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
 
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId.value)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId)
                     .filter { event ->
                         val normalizedUrl = normalizeUrlService.normalize(event.url) ?: event.url
 
@@ -329,7 +329,7 @@ class AgenticBrowserSearchOrchestrator(
                         normalizedUrl,
                         searchQuery.query,
                         cacheExpiryMs,
-                        sessionId.value
+                        sessionId
                     )
                         .catch { e ->
                             when (e) {
@@ -505,7 +505,7 @@ class AgenticBrowserSearchOrchestrator(
                         normalizedUrl,
                         searchQuery.query,
                         cacheExpiryMs,
-                        sessionId.value
+                        sessionId
                     )
                         .catch { e ->
                             when (e) {
@@ -743,22 +743,6 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Flow A: Google search link discovery
-     */
-    private fun createGoogleSearchLinkDiscoveryFlow(
-        sessionId: QuerySessionId,
-        searchQuery: SearchQuery
-    ): Flow<WebpageLink> = flow {
-        try {
-            val googleLinks = webpageLinkDiscoveryService.discoverRelevantLinksByGoogleSearch(searchQuery, sessionId.value)
-            logger.debug("[{}] Google search discovered {} links", sessionId.value, googleLinks.size)
-            googleLinks.forEach { emit(it) }
-        } catch (e: Exception) {
-            logger.error("[{}] Failed Google search: {}", sessionId.value, e.message, e)
-        }
-    }
-
-    /**
      * SERP search link discovery flow
      */
     private fun createSerperSearchLinkDiscoveryFlow(
@@ -792,7 +776,7 @@ class AgenticBrowserSearchOrchestrator(
             baseUrl = searchQuery.url,
             cacheExpiryMs = cacheExpiryMs,
             limit = 15,
-            sessionId = sessionId.value
+            sessionId = sessionId
         )
         logger.debug("[{}] Hybrid search: Found {} similar webpages", sessionId.value, similarWebpages.size)
 
@@ -823,7 +807,7 @@ class AgenticBrowserSearchOrchestrator(
                             query = searchQuery.query,
                             html = webpage.html!!,
                             url = webpage.url,
-                            sessionId = sessionId.value
+                            sessionId = sessionId
                         )
                         logger.debug(
                             "[{}] Hybrid search: Discovered {} links from cached page {}",

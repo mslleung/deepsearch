@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.models.entities.WebpageTableInterpretation
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.repositories.IWebpageTableInterpretationRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -11,8 +12,8 @@ import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
 interface ITableInterpretationService {
-    suspend fun interpretTable(input: TableInterpretationInput, sessionId: String): String
-    suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: String): List<String>
+    suspend fun interpretTable(input: TableInterpretationInput, sessionId: QuerySessionId): String
+    suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: QuerySessionId): List<String>
 }
 
 class TableInterpretationService(
@@ -26,7 +27,7 @@ class TableInterpretationService(
      * Results are cached in the repository to avoid repeated calls with the same input.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun interpretTable(input: TableInterpretationInput, sessionId: String): String {
+    override suspend fun interpretTable(input: TableInterpretationInput, sessionId: QuerySessionId): String {
         // Create a hash from all input parameters that affect the interpretation
         val digest = MessageDigest.getInstance("SHA-256")
         val tableHtml = input.webpage.getElementHtmlByCssSelector(input.tableIdentification.cssSelector)
@@ -71,7 +72,7 @@ class TableInterpretationService(
      * @return List of markdown strings in the same order as inputs
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: String): List<String> {
+    override suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: QuerySessionId): List<String> {
         if (inputs.isEmpty()) return emptyList()
 
         // Initialize result storage

@@ -5,6 +5,7 @@ import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.entities.WebpageSemanticElement
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
 import org.slf4j.Logger
@@ -23,7 +24,7 @@ interface ISemanticIdentificationService {
      */
     suspend fun identifySemanticElements(
         webpage: IBrowserPage,
-        sessionId: String
+        sessionId: QuerySessionId
     ): SemanticElements
 }
 
@@ -37,7 +38,7 @@ class SemanticIdentificationService(
 
     override suspend fun identifySemanticElements(
         webpage: IBrowserPage,
-        sessionId: String
+        sessionId: QuerySessionId
     ): SemanticElements {
         // Get HTML for caching
         val html = webpage.getFullHtml()

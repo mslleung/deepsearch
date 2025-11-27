@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.WebpageMarkdown
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.domain.services.ITextEmbeddingService
 import kotlinx.coroutines.delay
@@ -51,7 +52,7 @@ interface IWebpageCacheService {
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        sessionId: String
+        sessionId: QuerySessionId
     )
 
     /**
@@ -76,7 +77,7 @@ interface IWebpageCacheService {
         baseUrl: String,
         cacheExpiryMs: Long?,
         limit: Int,
-        sessionId: String
+        sessionId: QuerySessionId
     ): List<WebpageMarkdown>
 }
 
@@ -134,7 +135,7 @@ class WebpageCacheService(
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        sessionId: String
+        sessionId: QuerySessionId
     ) {
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
@@ -176,7 +177,7 @@ class WebpageCacheService(
      * If embedding generation or storage fails, the error is logged but not propagated.
      * This ensures that embedding failures don't break the main request flow.
      */
-    private fun generateAndStoreEmbeddingAsync(url: String, markdown: String, sessionId: String) {
+    private fun generateAndStoreEmbeddingAsync(url: String, markdown: String, sessionId: QuerySessionId) {
         // Launch in application scope (fire-and-forget)
         applicationScope.scope.launch {
             try {
@@ -253,7 +254,7 @@ class WebpageCacheService(
         baseUrl: String,
         cacheExpiryMs: Long?,
         limit: Int,
-        sessionId: String
+        sessionId: QuerySessionId
     ): List<WebpageMarkdown> {
         try {
             // Normalize URL to get prefix for filtering
