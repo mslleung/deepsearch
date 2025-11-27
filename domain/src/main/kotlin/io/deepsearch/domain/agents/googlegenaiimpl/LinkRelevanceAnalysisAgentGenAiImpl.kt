@@ -175,23 +175,15 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     }
 
     /**
-     * Extracts the base domain from a URL (scheme + host).
-     * For example: "https://example.com/path" -> "https://example.com"
-     */
-    private fun extractBaseDomain(url: String): String? {
-        val regex = Regex("^(https?://[^/]+)")
-        return regex.find(url)?.value
-    }
-
-    /**
      * Cleans HTML by removing non-content elements that don't contribute to link analysis.
      * Preserves anchor tags and their surrounding context for better link relevance analysis.
-     * Filters anchor tags to only include those from the same domain as the url parameter.
+     * Filters anchor tags to only include those from the same host as the url parameter.
      * @return A Pair of (cleaned HTML text, set of extracted normalized links)
      */
     private fun cleanHtml(rawHtml: String, url: String): Pair<String, Set<String>> {
         val doc: Document = Jsoup.parse(rawHtml)
-        val baseDomain = extractBaseDomain(url)
+        val baseUri = url.toSafeUri()
+        val baseHost = baseUri.host
 
         // Step 1: Remove obvious non-content elements (scripts, styles, etc.)
         doc.select(
@@ -199,16 +191,29 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     "head, title, base"
         ).remove()
 
-        // Step 2: Filter anchor tags to only include those from the same domain
-        if (baseDomain != null) {
-            doc.select("a[href]").forEach { anchor ->
-                val href = anchor.attr("href")
-                if (href.isNotBlank() && !href.startsWith(baseDomain)) {
+        // Step 2: Filter anchor tags to only include those from the same host
+        doc.select("a[href]").forEach { anchor ->
+            val href = anchor.attr("href").trim()
+            if (href.isBlank()) {
+                anchor.remove()
+                return@forEach
+            }
+
+            try {
+                val resolvedUri = baseUri.resolve(href)
+                val resolvedHost = resolvedUri.host
+
+                // Keep only links with same host (null host means same-page reference like #fragment)
+                if (resolvedHost != null && !resolvedHost.equals(baseHost, ignoreCase = true)) {
                     anchor.remove()
                 }
+            } catch (e: Exception) {
+                // Invalid href, remove it
+                logger.debug("Removing anchor with invalid href '{}': {}", href, e.message)
+                anchor.remove()
             }
-            logger.debug("Filtered anchor tags to base domain: {}", baseDomain)
         }
+        logger.debug("Filtered anchor tags to host: {}", baseHost)
 
         // Step 3: Remove duplicate links (keep only first occurrence of each unique href)
         val seenHrefs = mutableSetOf<String>()
@@ -292,7 +297,6 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         }
 
         // Step 9: Extract and normalize all links before converting to text
-        val baseUri = url.toSafeUri()
         val normalizedLinks = mutableSetOf<String>()
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href").trim()
