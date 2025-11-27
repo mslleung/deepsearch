@@ -152,13 +152,13 @@ class SearchEndpointTest {
         assertEquals(HttpStatusCode.OK, searchResponse.status, "Expected OK status")
 
         // Parse the response body
-        val searchResult = searchResponse.body<SearchResponse>()
+        val searchResult = searchResponse.body<QuerySessionDetailDto>()
 
         // Assert response is not null and contains meaningful content
-        assertTrue(searchResult.answer.isNotBlank(), "Response answer should not be blank")
+        assertEquals(searchResult.answer?.isNotBlank(), true, "Response answer should not be blank")
         assertTrue(
-            searchResult.content.isNotBlank(),
-            "Response content should not be blank"
+            searchResult.contentSources.isNotEmpty(),
+            "Response content sources should not be empty"
         )
         println("Search response for [${testCase.url}]: ${searchResult.answer}")
     }
@@ -235,13 +235,13 @@ class SearchEndpointTest {
         // 1. A non-OK status code (4xx or 5xx)
         // 2. An OK status but with an error indication in the response
         if (searchResponse.status == HttpStatusCode.OK) {
-            val searchResult = searchResponse.body<SearchResponse>()
+            val searchResult = searchResponse.body<QuerySessionDetailDto>()
             println("Response body: ${searchResult.answer}")
             
             // If status is OK, the response should indicate an error somehow
             // This will help us understand how the API handles errors
             assertTrue(
-                searchResult.answer.isNotBlank() || searchResult.content.isNotBlank(),
+                searchResult.answer?.isNotBlank() == true || searchResult.contentSources.isNotEmpty(),
                 "Error response should contain some content explaining the error"
             )
         } else {

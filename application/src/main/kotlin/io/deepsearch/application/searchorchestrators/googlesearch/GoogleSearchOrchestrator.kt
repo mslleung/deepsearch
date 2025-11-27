@@ -3,7 +3,6 @@ package io.deepsearch.application.searchorchestrators.googlesearch
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.domain.agents.GoogleTextSearchInput
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
@@ -22,7 +21,6 @@ interface IGoogleSearchOrchestrator : ISearchOrchestrator
  * Use this as a benchmark.
  */
 class GoogleSearchOrchestrator(
-    // private val googleCombinedSearchAgent: IGoogleCombinedSearchAgent
     private val googleTextSearchAgent: IGoogleTextSearchAgent,
     private val googleUrlContextSearchAgent: IGoogleUrlContextSearchAgent,
     private val querySessionService: io.deepsearch.application.services.IQuerySessionService,
@@ -31,19 +29,13 @@ class GoogleSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, cacheExpiryMs: Long?, apiKeyId: ApiKeyId): SearchResult {
+    override suspend fun execute(searchQuery: SearchQuery, cacheExpiryMs: Long?, apiKeyId: ApiKeyId): String {
         // Note: This orchestrator uses Google's search API and doesn't support custom cache expiry parameters
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
         
         // Create query session to get sessionId
         val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
         val sessionId = session.id
-        
-        // Previous implementation using the combined search agent (not supported yet):
-        // val output = googleCombinedSearchAgent.generate(
-        //     IGoogleCombinedSearchAgent.GoogleCombinedSearchInput(searchQuery)
-        // )
-        // return output.searchResult
 
         // 1) Run text search to discover candidate sources
         val googleTextSearchOutput = googleTextSearchAgent.generate(
@@ -60,11 +52,11 @@ class GoogleSearchOrchestrator(
             totalTokens = googleTextSearchOutput.tokenUsage.totalTokens
         )
         
-        val textSources = googleTextSearchOutput.searchResult.answerSources
+        val textSources = googleTextSearchOutput.answerSources
         logger.debug("Text search found {} sources; first: {}", textSources.size, textSources.firstOrNull())
 
         val baseUrl = searchQuery.url
-        val candidateSources = googleTextSearchOutput.searchResult.answerSources
+        val candidateSources = googleTextSearchOutput.answerSources
             .filter { it.startsWith(baseUrl) }
 
         logger.debug("Filtered to {} candidate sources starting with '{}'", candidateSources.size, baseUrl)
@@ -101,26 +93,9 @@ class GoogleSearchOrchestrator(
             urlContextOutput.sources.size
         )
 
-        // 4) Return the results, preserving the original query
-        // Note: This orchestrator doesn't use shortlisting, so all sources are treated as answer sources
-        val answerSources = urlContextOutput.sources
-        
-        val contentSources = urlContextOutput.sources.map { url ->
-            io.deepsearch.domain.models.valueobjects.MarkdownSource(
-                url = url,
-                title = null,
-                description = null,
-                markdown = urlContextOutput.content
-            )
-        }
-        
-        return SearchResult(
-            originalQuery = searchQuery,
-            answer = "",
-            contentSources = contentSources,
-            answerSources = answerSources,
-            exploredSources = emptyList(),
-            sessionId = sessionId
-        )
+        // 4) Complete the session with the answer from URL context
+        querySessionService.completeSessionAnswerComplete(sessionId, urlContextOutput.content)
+
+        return sessionId
     }
 }

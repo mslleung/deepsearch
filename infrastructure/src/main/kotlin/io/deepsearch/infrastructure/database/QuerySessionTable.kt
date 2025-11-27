@@ -15,6 +15,7 @@ class QuerySessionTable(
     val budgetTimeLimitMs = long("budget_time_limit_ms")
     val budgetMaxLinks = integer("budget_max_links")
     val answer = text("answer").nullable()
+    val durationMs = long("duration_ms").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

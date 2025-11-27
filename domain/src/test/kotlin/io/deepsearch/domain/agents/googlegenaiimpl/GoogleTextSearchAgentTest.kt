@@ -25,7 +25,7 @@ class GoogleTextSearchAgentTest : KoinTest {
     private val agent by inject<IGoogleTextSearchAgent>()
 
     @Test
-    fun `basic site-restricted search returns content and at least one source`() = runTest(testCoroutineDispatcher) {
+    fun `basic site-restricted search returns at least one source`() = runTest(testCoroutineDispatcher) {
         // Given
         val query = SearchQuery(
             query = "company overview",
@@ -36,9 +36,6 @@ class GoogleTextSearchAgentTest : KoinTest {
         val output = agent.generate(GoogleTextSearchInput(query))
 
         // Then
-        val result = output.searchResult
-        assertTrue(result.contentSources.isNotEmpty(), "contentSources should not be empty")
-        assertTrue(result.contentSources.any { it.markdown.isNotBlank() }, "at least one source should have content")
-        assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "should include at least one cited source")
+        assertTrue(output.answerSources.isNotEmpty(), "should include at least one source")
     }
 }

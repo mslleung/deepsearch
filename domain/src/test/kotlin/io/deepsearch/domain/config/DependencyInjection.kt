@@ -53,7 +53,6 @@ private val domainCommonTestModule = module {
     singleOf(::TesseractPoolImpl) bind ITesseractPool::class
 
     // GenAI agents as singletons for tests
-    singleOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
     singleOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
     singleOf(::AnswerSynthesisAgentGenAiImpl) bind IAnswerSynthesisAgent::class
     singleOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class

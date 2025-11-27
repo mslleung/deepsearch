@@ -8,7 +8,6 @@ import com.google.genai.types.Tool
 import io.deepsearch.domain.agents.GoogleTextSearchOutput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
@@ -88,13 +87,7 @@ class GoogleTextSearchAgentGenAiImpl(
         if (groundingMetadata == null) {
             logger.warn("No grounding metadata found in response")
             return GoogleTextSearchOutput(
-                searchResult = SearchResult(
-                    originalQuery = input.searchQuery,
-                    answer = "",
-                    contentSources = emptyList(),
-                    answerSources = emptyList(),
-                    exploredSources = emptyList()
-                ),
+                answerSources = emptyList(),
                 tokenUsage = tokenUsage
             )
         }
@@ -143,29 +136,10 @@ class GoogleTextSearchAgentGenAiImpl(
             chunkIndexToResolvedUrl[idx]
         }.distinct()
 
-        val answerSources = sources
-        
-        val contentSources = sources.map { url ->
-            io.deepsearch.domain.models.valueobjects.MarkdownSource(
-                url = url,
-                title = null,
-                description = null,
-                markdown = concatenatedText
-            )
-        }
-
-        val searchResult = SearchResult(
-            originalQuery = input.searchQuery,
-            answer = "",
-            contentSources = contentSources,
-            answerSources = answerSources,
-            exploredSources = emptyList()
-        )
-
         logger.debug("Google text search results: '{}' from sources {}", concatenatedText, sources)
 
         return GoogleTextSearchOutput(
-            searchResult = searchResult,
+            answerSources = sources,
             tokenUsage = tokenUsage
         )
     }

@@ -8,7 +8,6 @@ import com.google.genai.types.Tool
 import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
-import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -76,29 +75,11 @@ class GoogleCombinedSearchAgentGenAiImpl(
 
         val contentText = response.text() ?: ""
 
-        val answerSources = listOf(url)
-        
-        val contentSources = listOf(
-            io.deepsearch.domain.models.valueobjects.MarkdownSource(
-                url = url,
-                title = null,
-                description = null,
-                markdown = contentText
-            )
-        )
-        
-        val searchResult = SearchResult(
-            originalQuery = input.searchQuery,
-            answer = "",
-            contentSources = contentSources,
-            answerSources = answerSources,
-            exploredSources = emptyList()
-        )
-
         logger.debug("Combined search results: '{}'", contentText)
 
         return io.deepsearch.domain.agents.GoogleCombinedSearchOutput(
-            searchResult = searchResult,
+            answer = contentText,
+            answerSources = listOf(url),
             tokenUsage = tokenUsage
         )
     }

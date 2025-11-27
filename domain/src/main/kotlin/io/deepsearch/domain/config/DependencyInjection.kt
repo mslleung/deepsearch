@@ -55,7 +55,6 @@ val domainModule = module {
 
     // Request-scoped domain agents (used by request-scoped application services)
     requestScope {
-        scopedOf(::AggregateSearchResultsAgentGenAiImpl) bind IAggregateSearchResultsAgent::class
         scopedOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
         scopedOf(::AnswerSynthesisAgentGenAiImpl) bind IAnswerSynthesisAgent::class
         scopedOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class

@@ -23,6 +23,7 @@ class QuerySession(
     var searchBudget: SearchBudget,
     var finishReason: FinishReason?,
     var answer: String?,
+    var durationMs: Long?,
     val createdAt: Instant,
     var updatedAt: Instant,
     var version: Long = 0
@@ -36,6 +37,7 @@ class QuerySession(
         searchBudget = SearchBudget(),
         finishReason = null,
         answer = null,
+        durationMs = null,
         createdAt = Clock.System.now(),
         updatedAt = Clock.System.now(),
     )
@@ -47,6 +49,7 @@ class QuerySession(
     fun finish(reason: FinishReason) {
         finishReason = reason
         updatedAt = Clock.System.now()
+        durationMs = (updatedAt - createdAt).inWholeMilliseconds
     }
 
     fun getDuration(): Duration {

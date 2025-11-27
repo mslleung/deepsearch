@@ -8,9 +8,8 @@ import io.deepsearch.domain.exceptions.AiInterpretationException
 import io.deepsearch.domain.exceptions.InvalidUrlException
 import io.deepsearch.domain.exceptions.WebScrapeException
 import io.deepsearch.domain.exceptions.WebScrapeTimeoutException
-import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.presentation.dto.SearchRequest
-import io.deepsearch.presentation.dto.toResponse
+import io.deepsearch.presentation.dto.toDetailDto
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -18,7 +17,6 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import kotlin.system.measureTimeMillis
 
 class SearchController(
     private val searchService: ISearchService,
@@ -90,24 +88,24 @@ class SearchController(
                 }
             }
             
-            // Measure search duration
-            var searchResult: SearchResult
-            val durationMs = measureTimeMillis {
-                searchResult = searchService.searchWebsite(
-                    request.query, 
-                    request.url, 
-                    request.cacheExpiryMs,
-                    apiKey.id!!
-                )
-            }
-            
-            // Add duration to result
-            val resultWithDuration = searchResult.copy(durationMs = durationMs)
+            // Execute search and get session detail
+            val sessionDetail = searchService.searchWebsite(
+                request.query, 
+                request.url, 
+                request.cacheExpiryMs,
+                apiKey.id!!,
+                apiKey.userId
+            )
             
             // Consume usage after successful search
             subscriptionPlanService.consumeUsage(apiKey.userId)
             
-            call.respond(HttpStatusCode.OK, resultWithDuration.toResponse())
+            // Convert to DTO and respond
+            val responseDto = sessionDetail.session.toDetailDto(
+                sessionDetail.urlAccesses,
+                sessionDetail.cachedWebpages
+            )
+            call.respond(HttpStatusCode.OK, responseDto)
         } catch (e: IllegalArgumentException) {
             logger.warn("Bad request in search: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))

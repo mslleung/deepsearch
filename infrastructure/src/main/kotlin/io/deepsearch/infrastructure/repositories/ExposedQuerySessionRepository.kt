@@ -42,6 +42,7 @@ class ExposedQuerySessionRepository(
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
             it[answer] = session.answer
+            it[durationMs] = session.durationMs
             it[createdAtEpochMs] = session.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
             it[version] = session.version
@@ -68,6 +69,7 @@ class ExposedQuerySessionRepository(
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
             it[answer] = session.answer
+            it[durationMs] = session.durationMs
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
             it[version] = session.version + 1
         }
@@ -149,6 +151,7 @@ class ExposedQuerySessionRepository(
             ),
             finishReason = row[querySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
             answer = row[querySessionTable.answer],
+            durationMs = row[querySessionTable.durationMs],
             createdAt = Instant.fromEpochMilliseconds(row[querySessionTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[querySessionTable.updatedAtEpochMs]),
             version = row[querySessionTable.version]

@@ -1,7 +1,6 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
-import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 data class GoogleUrlContextSearchInput(

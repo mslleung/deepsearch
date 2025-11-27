@@ -47,6 +47,7 @@ data class QuerySessionDetailDto(
     val answerSources: List<String>,
     val exploredSources: List<String>,
     val traversedUrls: List<UrlAccessDto>,
+    val durationMs: Long?,
     val createdAt: Long,
     val updatedAt: Long
 )
@@ -63,11 +64,6 @@ data class UrlAccessDto(
 @OptIn(ExperimentalTime::class)
 fun QuerySession.toSummaryDto(urlCount: Int): QuerySessionSummaryDto {
     val status = finishReason?.name ?: "IN_PROGRESS"
-    val durationMs = if (finishReason != null) {
-        (updatedAt - createdAt).inWholeMilliseconds
-    } else {
-        null
-    }
     
     return QuerySessionSummaryDto(
         id = id,
@@ -137,6 +133,7 @@ fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>, cachedWebpages: List<
                 exceptionMessage = (urlAccess as? FailedUrlAccess)?.message
             )
         },
+        durationMs = durationMs,
         createdAt = createdAt.toEpochMilliseconds(),
         updatedAt = updatedAt.toEpochMilliseconds()
     )

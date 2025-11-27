@@ -2,7 +2,6 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 data class GoogleCombinedSearchInput(
@@ -10,7 +9,8 @@ data class GoogleCombinedSearchInput(
 ) : IAgent.IAgentInput
 
 data class GoogleCombinedSearchOutput(
-    val searchResult: SearchResult,
+    val answer: String,
+    val answerSources: List<String>,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

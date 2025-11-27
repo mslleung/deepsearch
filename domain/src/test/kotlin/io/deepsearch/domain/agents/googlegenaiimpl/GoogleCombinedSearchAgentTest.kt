@@ -25,7 +25,7 @@ class GoogleCombinedSearchAgentTest : KoinTest {
     private val agent by inject<IGoogleCombinedSearchAgent>()
 
     @Test
-    fun `combined search returns content and at least one source`() = runTest(testCoroutineDispatcher) {
+    fun `combined search returns answer and sources`() = runTest(testCoroutineDispatcher) {
         // Given
         val query = SearchQuery(
             query = "what servants are S+ tier?",
@@ -36,10 +36,8 @@ class GoogleCombinedSearchAgentTest : KoinTest {
         val output = agent.generate(GoogleCombinedSearchInput(query))
 
         // Then
-        val result = output.searchResult
-        assertTrue(result.contentSources.isNotEmpty(), "contentSources should not be empty")
-        assertTrue(result.contentSources.any { it.markdown.isNotBlank() }, "at least one source should have content")
-        assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "should include at least one cited source")
+        assertTrue(output.answer.isNotBlank(), "answer should not be blank")
+        assertTrue(output.answerSources.isNotEmpty(), "should include at least one source")
     }
 }
 

@@ -1,6 +1,7 @@
 package io.deepsearch.application.searchorchestrators.googlesearch
 
 import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
@@ -24,6 +25,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val googleSearchOrchestrator by inject<IGoogleSearchOrchestrator>()
+    private val querySessionService by inject<IQuerySessionService>()
 
     @Test
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
@@ -34,12 +36,13 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val session = querySessionService.getSession(sessionId)
 
         // Then
-        assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank")
-        assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "Sources should not be empty")
+        assertEquals(searchQuery.query, session.query)
+        assertEquals(searchQuery.url, session.url)
+        assertTrue(session.answer?.isNotBlank() == true, "Search result content should not be blank")
     }
 
     @Test
@@ -52,12 +55,13 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val session = querySessionService.getSession(sessionId)
 
         // Then
-        assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank")
-        assertTrue(result.answerSources.isNotEmpty() || result.exploredSources.isNotEmpty(), "Sources should not be empty")
+        assertEquals(searchQuery.query, session.query)
+        assertEquals(searchQuery.url, session.url)
+        assertTrue(session.answer?.isNotBlank() == true, "Search result content should not be blank")
     }
 
     @Test
@@ -70,13 +74,13 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val session = querySessionService.getSession(sessionId)
 
         // Then
-        assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank")
-        val allUrls = result.answerSources + result.exploredSources
-        assertTrue(allUrls.contains(url), "Sources should include the target URL")
+        assertEquals(searchQuery.query, session.query)
+        assertEquals(searchQuery.url, session.url)
+        assertTrue(session.answer?.isNotBlank() == true, "Search result content should not be blank")
     }
 
     @Test
@@ -89,13 +93,13 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val session = querySessionService.getSession(sessionId)
 
         // Then
-        assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank for pricing/SLA query")
-        val allUrls = result.answerSources + result.exploredSources
-        assertTrue(allUrls.contains(url), "Sources should include the target URL")
+        assertEquals(searchQuery.query, session.query)
+        assertEquals(searchQuery.url, session.url)
+        assertTrue(session.answer?.isNotBlank() == true, "Search result content should not be blank for pricing/SLA query")
     }
 
     @Test
@@ -108,14 +112,13 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val session = querySessionService.getSession(sessionId)
 
         // Then
-        assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank even for unrelated query")
-        // The combined agent always grounds sources to the provided URL for now
-        val allUrls = result.answerSources + result.exploredSources
-        assertEquals(listOf(url), allUrls, "Sources should reflect the target URL used for context")
+        assertEquals(searchQuery.query, session.query)
+        assertEquals(searchQuery.url, session.url)
+        assertTrue(session.answer?.isNotBlank() == true, "Search result content should not be blank even for unrelated query")
     }
 
     @Test
@@ -128,13 +131,13 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val result = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val session = querySessionService.getSession(sessionId)
 
         // Then
-        assertEquals(searchQuery, result.originalQuery)
-        assertTrue(result.answer.isNotBlank(), "Search result content should not be blank for non-English query")
-        val allUrls = result.answerSources + result.exploredSources
-        assertTrue(allUrls.contains(url), "Sources should include the target URL")
+        assertEquals(searchQuery.query, session.query)
+        assertEquals(searchQuery.url, session.url)
+        assertTrue(session.answer?.isNotBlank() == true, "Search result content should not be blank for non-English query")
     }
 }
 

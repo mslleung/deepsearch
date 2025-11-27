@@ -7,7 +7,6 @@ import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.WebpageCacheService
-import io.deepsearch.domain.agents.IAggregateSearchResultsAgent
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
 import io.deepsearch.domain.agents.AnswerSynthesisInput
@@ -21,7 +20,6 @@ import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.models.valueobjects.SearchResult
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
@@ -62,7 +60,6 @@ class AgenticBrowserSearchOrchestrator(
     private val normalizeUrlService: INormalizeUrlService,
     private val queryExpansionAgent: IQueryExpansionAgent,
     private val queryBreakdownAgent: IQueryBreakdownAgent,
-    private val aggregateSearchResultsAgent: IAggregateSearchResultsAgent,
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
     private val answerReviewerAgent: IAnswerReviewerAgent,
@@ -81,27 +78,28 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         cacheExpiryMs: Long?,
         apiKeyId: ApiKeyId
-    ): SearchResult =
+    ): String =
         withContext(dispatchers.io) {
-            val result: SearchResult
+            val sessionId: String
             val executionTime = measureTimeMillis {
-                result = executeSearchForQuery(searchQuery, cacheExpiryMs, apiKeyId)
+                sessionId = executeSearchForQuery(searchQuery, cacheExpiryMs, apiKeyId)
             }
 
             logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
-            result
+            sessionId
         }
 
     /**
      * Execute the full search workflow for a single query using reactive flow composition.
      * Markdowns are extracted as links are discovered, batched, and fed to answer generation.
      * Flow cancellation propagates upstream when answer is complete or budget exceeded.
+     * Returns the session ID for the completed search.
      */
     private suspend fun executeSearchForQuery(
         searchQuery: SearchQuery,
         cacheExpiryMs: Long?,
         apiKeyId: ApiKeyId
-    ): SearchResult {
+    ): String {
         val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
         val sessionId = session.id
         try {
@@ -111,8 +109,8 @@ class AgenticBrowserSearchOrchestrator(
             )
             logger.debug("[{}] Executing search for query: {}", sessionId, searchQuery.query)
 
-            // Use CompletableDeferred to capture result immediately without waiting for flow cancellation
-            val resultDeferred = CompletableDeferred<SearchResult>()
+            // Use CompletableDeferred to capture completion immediately without waiting for flow cancellation
+            val completionDeferred = CompletableDeferred<Unit>()
 
             // for deduping links
             val seenUrls = ConcurrentHashMap.newKeySet<String>()
@@ -183,7 +181,7 @@ class AgenticBrowserSearchOrchestrator(
                                 searchQuery,
                                 completedAnswerAccumulator,
                                 budget,
-                                resultDeferred
+                                completionDeferred
                             )
                         }
                         .onCompletion { // answer did not complete, but the upstream flow completed, return our incomplete answer
@@ -191,27 +189,27 @@ class AgenticBrowserSearchOrchestrator(
                                 // already called the early exit in the onEach above
                                 return@onCompletion
                             }
-                            finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, resultDeferred)
+                            finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, completionDeferred)
                         }
                         .single()
                 } catch (e: CancellationException) {
                     logger.debug("[{}] Flow cancelled after result obtained", sessionId)
                 } catch (e: Exception) {
-                    if (!resultDeferred.isCompleted) {
-                        resultDeferred.completeExceptionally(e)
+                    if (!completionDeferred.isCompleted) {
+                        completionDeferred.completeExceptionally(e)
                     }
                 }
             }
 
-            // Wait for the result with timeout
-            val result = withTimeout(budget.timeLimitMs + 60000) {
-                resultDeferred.await()
+            // Wait for completion with timeout
+            withTimeout(budget.timeLimitMs + 60000) {
+                completionDeferred.await()
             }
 
             // Cancel the flow job asynchronously
             flowJob.cancel()
 
-            return result
+            return sessionId
         } catch (e: Exception) {
             logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
             querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
@@ -695,10 +693,10 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         finalAnswerAccumulator: AnswerAccumulator,
         budget: SearchBudget,
-        resultDeferred: CompletableDeferred<SearchResult>,
+        completionDeferred: CompletableDeferred<Unit>,
     ) {
         logger.info(
-            "[{}] Flow ending without complete answer, synthesizing from {} shortlisted sources",
+            "[{}] Flow ending, synthesizing from {} shortlisted sources",
             sessionId,
             finalAnswerAccumulator.currentShortlist.size
         )
@@ -725,18 +723,12 @@ class AgenticBrowserSearchOrchestrator(
         // Extract answer sources from shortlist
         val answerSources = finalAnswerAccumulator.currentShortlist.map { it.url }
 
-        // Calculate explored sources: all URLs minus shortlisted URLs
-        val shortlistedUrls = finalAnswerAccumulator.currentShortlist.map { it.url }.toSet()
-        val exploredSources = finalAnswerAccumulator.allMarkdownSources
-            .map { it.url }
-            .filter { it !in shortlistedUrls }
-
         // Mark answer sources as used in answer
         if (answerSources.isNotEmpty()) {
             urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
         }
 
-        // Complete session
+        // Complete session with appropriate finish reason
         if (finalAnswerAccumulator.isComplete) {
             querySessionService.completeSessionAnswerComplete(sessionId, finalAnswerText)
         } else if (querySessionService.isBudgetExceeded(sessionId, budget)) {
@@ -746,16 +738,7 @@ class AgenticBrowserSearchOrchestrator(
             querySessionService.completeSessionLinksExhausted(sessionId, finalAnswerText)
         }
 
-        val result = SearchResult(
-            originalQuery = searchQuery,
-            answer = finalAnswerText,
-            contentSources = finalAnswerAccumulator.allMarkdownSources,
-            answerSources = answerSources,
-            exploredSources = exploredSources,
-            sessionId = sessionId
-        )
-
-        resultDeferred.complete(result)
+        completionDeferred.complete(Unit)
     }
 
     /**
