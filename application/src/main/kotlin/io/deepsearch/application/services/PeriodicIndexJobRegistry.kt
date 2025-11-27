@@ -252,7 +252,7 @@ class PeriodicIndexJobRegistry(
                         return@flow
                     }
 
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, PeriodicIndexSessionId(jobId))
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, PeriodicIndexSessionId(jobId))
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -310,7 +310,7 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, PeriodicIndexSessionId(jobId))
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, PeriodicIndexSessionId(jobId))
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -367,7 +367,7 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, PeriodicIndexSessionId(jobId))
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, PeriodicIndexSessionId(jobId))
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -447,7 +447,7 @@ class PeriodicIndexJobRegistry(
                     val normalizedUrl = normalize(link.url)
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
 
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, cacheExpiryMs = null, PeriodicIndexSessionId(jobId))
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, PeriodicIndexSessionId(jobId))
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> throw e

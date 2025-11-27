@@ -15,7 +15,7 @@ interface ISearchService {
     suspend fun searchWebsite(
         query: String, 
         url: String, 
-        cacheExpiryMs: Long? = null,
+        maxCacheAge: Long? = null,
         apiKeyId: ApiKeyId,
         userId: UserId
     ): QuerySessionDetail
@@ -30,12 +30,12 @@ class SearchService(
     override suspend fun searchWebsite(
         query: String, 
         url: String, 
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         apiKeyId: ApiKeyId,
         userId: UserId
     ): QuerySessionDetail {
         val searchQuery = SearchQuery(query, url)
-        val sessionId: QuerySessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, cacheExpiryMs, apiKeyId)
+        val sessionId: QuerySessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, maxCacheAge, apiKeyId)
         return querySessionService.getSessionDetail(sessionId, userId)
     }
 }

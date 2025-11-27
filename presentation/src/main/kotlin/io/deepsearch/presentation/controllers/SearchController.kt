@@ -77,12 +77,11 @@ class SearchController(
             val request = call.receive<SearchRequest>()
             
             // Validate cache expiry parameter
-            request.cacheExpiryMs?.let { cacheExpiryMs ->
-                // Max 90 days = 7776000000ms
-                if (cacheExpiryMs <= 0 || cacheExpiryMs > 7776000000L) {
+            request.maxCacheAge?.let { maxCacheAge ->
+                if (maxCacheAge <= 0) {
                     call.respond(
                         HttpStatusCode.BadRequest,
-                        mapOf("error" to "cacheExpiryMs must be positive and at most 90 days (7776000000ms). Received: $cacheExpiryMs")
+                        mapOf("error" to "maxCacheAge must be positive. Received: $maxCacheAge")
                     )
                     return
                 }
@@ -92,7 +91,7 @@ class SearchController(
             val sessionDetail = searchService.searchWebsite(
                 request.query, 
                 request.url, 
-                request.cacheExpiryMs,
+                request.maxCacheAge,
                 apiKey.id!!,
                 apiKey.userId
             )

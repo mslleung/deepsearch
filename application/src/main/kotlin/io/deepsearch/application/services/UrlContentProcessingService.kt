@@ -46,7 +46,7 @@ interface IUrlContentProcessingService {
     fun processUrlAsFlow(
         url: String,
         query: String,
-        cacheExpiryMs: Long? = null,
+        maxCacheAge: Long? = null,
         sessionId: QuerySessionId
     ): Flow<UrlProcessingEvent>
 
@@ -57,7 +57,7 @@ interface IUrlContentProcessingService {
      */
     fun processUrlAsFlow(
         url: String,
-        cacheExpiryMs: Long? = null,
+        maxCacheAge: Long? = null,
         sessionId: PeriodicIndexSessionId
     ): Flow<UrlProcessingEvent>
 }
@@ -78,27 +78,27 @@ class UrlContentProcessingService(
     override fun processUrlAsFlow(
         url: String,
         query: String,
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         sessionId: QuerySessionId
     ): Flow<UrlProcessingEvent> {
-        return processInternalAsFlow(url, cacheExpiryMs, sessionId) { html ->
+        return processInternalAsFlow(url, maxCacheAge, sessionId) { html ->
             webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url, sessionId)
         }
     }
 
     override fun processUrlAsFlow(
         url: String,
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         sessionId: PeriodicIndexSessionId
     ): Flow<UrlProcessingEvent> {
-        return processInternalAsFlow(url, cacheExpiryMs, sessionId) { html ->
+        return processInternalAsFlow(url, maxCacheAge, sessionId) { html ->
             webpageLinkDiscoveryService.discoverAllLinks(html, url)
         }
     }
 
     private fun processInternalAsFlow(
         url: String,
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         sessionId: SessionId,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
@@ -107,7 +107,7 @@ class UrlContentProcessingService(
         val normalizedUrl = normalizeUrlService.normalize(url) ?: url
 
         urlProcessingLockRegistry.withKeyLock(normalizedUrl) {
-            when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl, cacheExpiryMs)) {
+            when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl, maxCacheAge)) {
                 is CachedWebpageResult.Hit -> {
                     logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
                     handleCachedResultAsFlow(url, cacheResult.webpageMarkdown, discoverLinks)

@@ -77,13 +77,13 @@ class AgenticBrowserSearchOrchestrator(
 
     override suspend fun execute(
         searchQuery: SearchQuery,
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         apiKeyId: ApiKeyId
     ): QuerySessionId =
         withContext(dispatchers.io) {
             val sessionId: QuerySessionId
             val executionTime = measureTimeMillis {
-                sessionId = executeSearchForQuery(searchQuery, cacheExpiryMs, apiKeyId)
+                sessionId = executeSearchForQuery(searchQuery, maxCacheAge, apiKeyId)
             }
 
             logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
@@ -98,7 +98,7 @@ class AgenticBrowserSearchOrchestrator(
      */
     private suspend fun executeSearchForQuery(
         searchQuery: SearchQuery,
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         apiKeyId: ApiKeyId
     ): QuerySessionId {
         val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
@@ -133,7 +133,7 @@ class AgenticBrowserSearchOrchestrator(
                             searchQuery,
                             seenUrls,
                             initialDiscoveredLinksChannel,
-                            cacheExpiryMs
+                            maxCacheAge
                         ),
                         processSerperSearchLinksFlow(
                             sessionId,
@@ -141,13 +141,13 @@ class AgenticBrowserSearchOrchestrator(
                             seenUrls,
                             budget,
                             serperSearchDiscoveredLinksChannel,
-                            cacheExpiryMs
+                            maxCacheAge
                         ),
                         processHybridSearchFlow(
                             sessionId,
                             searchQuery,
                             seenUrls,
-                            cacheExpiryMs,
+                            maxCacheAge,
                             hybridSearchDiscoveredLinksChannel
                         ),
                         processRecursiveDiscoveredLinksFlow(
@@ -159,7 +159,7 @@ class AgenticBrowserSearchOrchestrator(
                             serperSearchDiscoveredLinksChannel,
                             hybridSearchDiscoveredLinksChannel,
                             recursiveDiscoveredLinksChannel,
-                            cacheExpiryMs
+                            maxCacheAge
                         )
                     )
                         .cancellable()
@@ -228,13 +228,13 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long?
+        maxCacheAge: Long?
     ): Flow<MarkdownSource> {
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
 
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId)
                     .filter { event ->
                         val normalizedUrl = normalizeUrlService.normalize(event.url) ?: event.url
 
@@ -303,7 +303,7 @@ class AgenticBrowserSearchOrchestrator(
         linkSource: Flow<WebpageLink>,
         discoveredLinksChannel: Channel<WebpageLink>,
         flowName: String,
-        cacheExpiryMs: Long?
+        maxCacheAge: Long?
     ): Flow<MarkdownSource> {
         return linkSource
             .filter { link ->
@@ -328,7 +328,7 @@ class AgenticBrowserSearchOrchestrator(
                     urlContentProcessingService.processUrlAsFlow(
                         normalizedUrl,
                         searchQuery.query,
-                        cacheExpiryMs,
+                        maxCacheAge,
                         sessionId
                     )
                         .catch { e ->
@@ -434,7 +434,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
         serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long?
+        maxCacheAge: Long?
     ): Flow<MarkdownSource> {
         return processDiscoveredLinksFlow(
             sessionId = sessionId,
@@ -444,7 +444,7 @@ class AgenticBrowserSearchOrchestrator(
             linkSource = createSerperSearchLinkDiscoveryFlow(sessionId, searchQuery),
             discoveredLinksChannel = serperSearchDiscoveredLinksChannel,
             flowName = "processSerperSearchLinksFlow",
-            cacheExpiryMs = cacheExpiryMs
+            maxCacheAge = maxCacheAge
         )
     }
 
@@ -458,7 +458,7 @@ class AgenticBrowserSearchOrchestrator(
         serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
-        cacheExpiryMs: Long?
+        maxCacheAge: Long?
     ): Flow<MarkdownSource> {
         val inFlightLinkDiscoveryProcessing = ConcurrentHashMap.newKeySet<String>()
 
@@ -504,7 +504,7 @@ class AgenticBrowserSearchOrchestrator(
                     urlContentProcessingService.processUrlAsFlow(
                         normalizedUrl,
                         searchQuery.query,
-                        cacheExpiryMs,
+                        maxCacheAge,
                         sessionId
                     )
                         .catch { e ->
@@ -767,14 +767,14 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>
     ): Flow<MarkdownSource> = flow {
         // Search using hybrid search (RRF combining keyword + semantic search)
         val similarWebpages = webpageCacheService.searchHybrid(
             query = searchQuery.query,
             baseUrl = searchQuery.url,
-            cacheExpiryMs = cacheExpiryMs,
+            maxCacheAge = maxCacheAge,
             limit = 15,
             sessionId = sessionId
         )

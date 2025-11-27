@@ -9,5 +9,5 @@ interface ISearchOrchestrator {
      * Execute a search query and return the session ID.
      * The session contains all the search results and can be retrieved via QuerySessionService.
      */
-    suspend fun execute(searchQuery: SearchQuery, cacheExpiryMs: Long? = null, apiKeyId: ApiKeyId): QuerySessionId
+    suspend fun execute(searchQuery: SearchQuery, maxCacheAge: Long? = null, apiKeyId: ApiKeyId): QuerySessionId
 }

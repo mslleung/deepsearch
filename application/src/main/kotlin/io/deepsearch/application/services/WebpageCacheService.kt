@@ -26,10 +26,10 @@ interface IWebpageCacheService {
     /**
      * Get cached markdown for a URL, checking TTL expiration.
      * @param url The normalized URL to look up
-     * @param cacheExpiryMs Cache expiration time in milliseconds (null means no expiry check)
+     * @param maxCacheAge Cache expiration time in milliseconds (null means no expiry check)
      * @return CachedWebpageResult indicating hit, miss, or expired entry
      */
-    suspend fun getCachedMarkdown(url: String, cacheExpiryMs: Long?): CachedWebpageResult
+    suspend fun getCachedMarkdown(url: String, maxCacheAge: Long?): CachedWebpageResult
 
     /**
      * Cache webpage markdown and metadata.
@@ -62,12 +62,12 @@ interface IWebpageCacheService {
      *
      * Only searches within webpages that:
      * - Have the specified URL prefix (to limit search to a specific domain/path)
-     * - Were updated within the cache expiry window (if cacheExpiryMs is non-null)
+     * - Were updated within the cache expiry window (if maxCacheAge is non-null)
      * - Have non-null embeddings and markdown content
      *
      * @param query The search query text (used for both keyword search and embedding generation)
      * @param baseUrl The base URL to filter by (will be normalized, e.g., "https://example.com")
-     * @param cacheExpiryMs Cache expiration time in milliseconds (null means no expiry filtering)
+     * @param maxCacheAge Cache expiration time in milliseconds (null means no expiry filtering)
      * @param limit Maximum number of results to return
      * @param sessionId Session ID for token tracking
      * @return List of WebpageMarkdown objects, ordered by RRF combined score (most relevant first)
@@ -75,7 +75,7 @@ interface IWebpageCacheService {
     suspend fun searchHybrid(
         query: String,
         baseUrl: String,
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         limit: Int,
         sessionId: SessionId
     ): List<WebpageMarkdown>
@@ -92,14 +92,14 @@ class WebpageCacheService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun getCachedMarkdown(url: String, cacheExpiryMs: Long?): CachedWebpageResult {
+    override suspend fun getCachedMarkdown(url: String, maxCacheAge: Long?): CachedWebpageResult {
         val cached = webpageMarkdownRepository.findByUrl(url)
             ?: return CachedWebpageResult.Miss.also {
                 logger.debug("Cache miss for URL: {}", url)
             }
 
         // If no expiry time is specified, always return Hit
-        if (cacheExpiryMs == null) {
+        if (maxCacheAge == null) {
             logger.debug("Cache hit for URL: {} (no expiry check)", url)
             return CachedWebpageResult.Hit(cached)
         }
@@ -107,12 +107,12 @@ class WebpageCacheService(
         val currentTime = Clock.System.now()
         val age = currentTime - cached.updatedAt
 
-        return if (age.inWholeMilliseconds < cacheExpiryMs) {
+        return if (age.inWholeMilliseconds < maxCacheAge) {
             logger.debug(
                 "Cache hit for URL: {} (age: {} ms, expiry: {} ms)",
                 url,
                 age.inWholeMilliseconds,
-                cacheExpiryMs
+                maxCacheAge
             )
             CachedWebpageResult.Hit(cached)
         } else {
@@ -120,7 +120,7 @@ class WebpageCacheService(
                 "Cache expired for URL: {} (age: {} ms, expiry: {} ms)",
                 url,
                 age.inWholeMilliseconds,
-                cacheExpiryMs
+                maxCacheAge
             )
             CachedWebpageResult.Expired(cached)
         }
@@ -252,7 +252,7 @@ class WebpageCacheService(
     override suspend fun searchHybrid(
         query: String,
         baseUrl: String,
-        cacheExpiryMs: Long?,
+        maxCacheAge: Long?,
         limit: Int,
         sessionId: SessionId
     ): List<WebpageMarkdown> {
@@ -280,13 +280,13 @@ class WebpageCacheService(
             )
 
             // Calculate minimum updated timestamp for cache expiry (null if no expiry filtering)
-            val minUpdatedAtEpochMs = if (cacheExpiryMs != null) {
+            val minUpdatedAtEpochMs = if (maxCacheAge != null) {
                 val currentTime = Clock.System.now()
-                val timestamp = currentTime.toEpochMilliseconds() - cacheExpiryMs
+                val timestamp = currentTime.toEpochMilliseconds() - maxCacheAge
                 logger.debug("Hybrid search: Min timestamp = {}", timestamp)
                 timestamp
             } else {
-                logger.debug("Hybrid search: No timestamp filtering (cacheExpiryMs is null)")
+                logger.debug("Hybrid search: No timestamp filtering (maxCacheAge is null)")
                 null
             }
 
