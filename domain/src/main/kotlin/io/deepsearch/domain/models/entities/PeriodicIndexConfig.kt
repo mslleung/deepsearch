@@ -36,6 +36,7 @@ class PeriodicIndexConfig(
     var url: String,
     var sitemapUrl: String? = null,
     periodDays: Int? = null, // null means one-off
+    maxUrlCount: Int = DEFAULT_MAX_URL_COUNT,
     var enabled: Boolean = true,
     val createdAt: Long = Clock.System.now().toEpochMilliseconds(),
     var updatedAt: Long = Clock.System.now().toEpochMilliseconds(),
@@ -45,8 +46,20 @@ class PeriodicIndexConfig(
     var periodDays: Int? = periodDays
         private set
 
+    var maxUrlCount: Int = maxUrlCount
+        private set
+
     init {
         PeriodicIndexPeriod.requireValidPeriodDays(periodDays)
+        require(maxUrlCount in MIN_MAX_URL_COUNT..MAX_MAX_URL_COUNT) {
+            "maxUrlCount must be between $MIN_MAX_URL_COUNT and $MAX_MAX_URL_COUNT"
+        }
+    }
+
+    companion object {
+        const val DEFAULT_MAX_URL_COUNT = 100
+        const val MIN_MAX_URL_COUNT = 1
+        const val MAX_MAX_URL_COUNT = 1000
     }
     /**
      * Calculates the next run time based on lastRunAt and periodDays.
@@ -79,11 +92,15 @@ class PeriodicIndexConfig(
         return next <= currentTimeMs
     }
 
-    fun updateConfig(newUrl: String, newSitemapUrl: String?, newPeriodDays: Int?) {
+    fun updateConfig(newUrl: String, newSitemapUrl: String?, newPeriodDays: Int?, newMaxUrlCount: Int = maxUrlCount) {
         PeriodicIndexPeriod.requireValidPeriodDays(newPeriodDays)
+        require(newMaxUrlCount in MIN_MAX_URL_COUNT..MAX_MAX_URL_COUNT) {
+            "maxUrlCount must be between $MIN_MAX_URL_COUNT and $MAX_MAX_URL_COUNT"
+        }
         url = newUrl
         sitemapUrl = newSitemapUrl
         periodDays = newPeriodDays
+        maxUrlCount = newMaxUrlCount
         updatedAt = Clock.System.now().toEpochMilliseconds()
     }
 

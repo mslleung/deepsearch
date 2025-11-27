@@ -2,6 +2,7 @@ package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IPeriodicIndexService
 import io.deepsearch.domain.config.JwtConfig
+import io.deepsearch.domain.models.entities.PeriodicIndexConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexPeriod
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.presentation.dto.*
@@ -65,7 +66,15 @@ class PeriodicIndexController(
             return
         }
 
-        val config = periodicIndexService.createOrUpdateConfig(userId, request.url, request.sitemapUrl, request.periodDays)
+        if (request.maxUrlCount !in PeriodicIndexConfig.MIN_MAX_URL_COUNT..PeriodicIndexConfig.MAX_MAX_URL_COUNT) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to "Max URL count must be between ${PeriodicIndexConfig.MIN_MAX_URL_COUNT} and ${PeriodicIndexConfig.MAX_MAX_URL_COUNT}")
+            )
+            return
+        }
+
+        val config = periodicIndexService.createOrUpdateConfig(userId, request.url, request.sitemapUrl, request.periodDays, request.maxUrlCount)
         call.respond(HttpStatusCode.OK, config.toResponse())
     }
 

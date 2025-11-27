@@ -8,6 +8,7 @@ class PeriodicIndexConfigTable : Table("periodic_index_configs") {
     val url = varchar("url", length = 2048)
     val sitemapUrl = varchar("sitemap_url", length = 2048).nullable()
     val periodDays = integer("period_days").nullable()
+    val maxUrlCount = integer("max_url_count").default(100)
     val enabled = bool("enabled").default(true)
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")

@@ -10,7 +10,7 @@ import kotlin.time.ExperimentalTime
 
 interface IPeriodicIndexService {
     suspend fun getConfig(userId: UserId): PeriodicIndexConfig?
-    suspend fun createOrUpdateConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?): PeriodicIndexConfig
+    suspend fun createOrUpdateConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int): PeriodicIndexConfig
     suspend fun deleteConfig(userId: UserId)
     suspend fun triggerNow(userId: UserId): PeriodicIndexJob
     suspend fun listJobHistory(userId: UserId, page: Int, pageSize: Int): Pair<List<PeriodicIndexJob>, Int>
@@ -30,10 +30,10 @@ class PeriodicIndexService(
         return periodicIndexConfigRepository.findByUserId(userId)
     }
 
-    override suspend fun createOrUpdateConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?): PeriodicIndexConfig {
+    override suspend fun createOrUpdateConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int): PeriodicIndexConfig {
         val existing = periodicIndexConfigRepository.findByUserId(userId)
         return if (existing != null) {
-            existing.updateConfig(url, sitemapUrl, periodDays)
+            existing.updateConfig(url, sitemapUrl, periodDays, maxUrlCount)
             if (!existing.enabled) {
                 existing.enable() // Re-enable if it was disabled
             }
@@ -43,7 +43,8 @@ class PeriodicIndexService(
                 userId = userId,
                 url = url,
                 sitemapUrl = sitemapUrl,
-                periodDays = periodDays
+                periodDays = periodDays,
+                maxUrlCount = maxUrlCount
             )
             periodicIndexConfigRepository.create(newConfig)
         }
@@ -61,7 +62,7 @@ class PeriodicIndexService(
         // Start the job with the sitemap URL from config
         val job = periodicIndexJobService.start(
             baseUrl = config.url,
-            maxUrlCount = 100, // Default limit for periodic jobs
+            maxUrlCount = config.maxUrlCount,
             sitemapUrl = config.sitemapUrl,
             userId = userId
         )
@@ -90,7 +91,7 @@ class PeriodicIndexService(
                 // Start job with sitemap URL from config
                 periodicIndexJobService.start(
                     baseUrl = config.url,
-                    maxUrlCount = 100,
+                    maxUrlCount = config.maxUrlCount,
                     sitemapUrl = config.sitemapUrl,
                     userId = config.userId
                 )

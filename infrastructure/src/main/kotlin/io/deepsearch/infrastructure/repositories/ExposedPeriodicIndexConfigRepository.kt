@@ -26,6 +26,7 @@ class ExposedPeriodicIndexConfigRepository(
             it[url] = config.url
             it[sitemapUrl] = config.sitemapUrl
             it[periodDays] = config.periodDays
+            it[maxUrlCount] = config.maxUrlCount
             it[enabled] = config.enabled
             it[createdAt] = config.createdAt
             it[updatedAt] = config.updatedAt
@@ -39,6 +40,7 @@ class ExposedPeriodicIndexConfigRepository(
             url = config.url,
             sitemapUrl = config.sitemapUrl,
             periodDays = config.periodDays,
+            maxUrlCount = config.maxUrlCount,
             enabled = config.enabled,
             createdAt = config.createdAt,
             updatedAt = config.updatedAt,
@@ -54,6 +56,7 @@ class ExposedPeriodicIndexConfigRepository(
             it[url] = config.url
             it[sitemapUrl] = config.sitemapUrl
             it[periodDays] = config.periodDays
+            it[maxUrlCount] = config.maxUrlCount
             it[enabled] = config.enabled
             it[updatedAt] = config.updatedAt
             it[lastRunAt] = config.lastRunAt
@@ -93,6 +96,7 @@ class ExposedPeriodicIndexConfigRepository(
             url = row[periodicIndexConfigTable.url],
             sitemapUrl = row[periodicIndexConfigTable.sitemapUrl],
             periodDays = row[periodicIndexConfigTable.periodDays],
+            maxUrlCount = row[periodicIndexConfigTable.maxUrlCount],
             enabled = row[periodicIndexConfigTable.enabled],
             createdAt = row[periodicIndexConfigTable.createdAt],
             updatedAt = row[periodicIndexConfigTable.updatedAt],
