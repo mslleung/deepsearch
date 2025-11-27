@@ -26,8 +26,8 @@ import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.valueobjects.WebpageLink
-import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.exceptions.MarkdownConversionException
+import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.ext.chunkedWithTimeout
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import kotlin.time.Clock
@@ -342,7 +342,7 @@ class AgenticBrowserSearchOrchestrator(
                                         url = e.url,
                                         timestamp = Clock.System.now(),
                                         exceptionType = e::class.simpleName!!,
-                                        message = e.message!!
+                                        message = e.reason
                                     )
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
 
@@ -351,7 +351,7 @@ class AgenticBrowserSearchOrchestrator(
                                         flowName,
                                         sessionId.value,
                                         e.url,
-                                        e.message,
+                                        e.reason,
                                         e::class.simpleName
                                     )
                                 }
@@ -518,7 +518,7 @@ class AgenticBrowserSearchOrchestrator(
                                         url = e.url,
                                         timestamp = Clock.System.now(),
                                         exceptionType = e::class.simpleName!!,
-                                        message = e.message!!
+                                        message = e.reason
                                     )
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
                                     inFlightLinkDiscoveryProcessing.remove(e.url)
@@ -534,7 +534,7 @@ class AgenticBrowserSearchOrchestrator(
                                         "processRecursiveDiscoveredLinksFlow [{}] Failed to process discovered link {}: {} (type: {})",
                                         sessionId.value,
                                         e.url,
-                                        e.message,
+                                        e.reason,
                                         e::class.simpleName
                                     )
                                 }

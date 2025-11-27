@@ -4,14 +4,14 @@ package io.deepsearch.domain.exceptions
  * Base sealed class for all URL processing exceptions.
  * Each subclass represents a specific failure mode with type safety.
  * 
- * Exception message is used to store the reason/details of the failure.
+ * The [reason] property stores a user-friendly description of the failure.
  * The exception type itself (class name) is used to categorize the failure.
  */
 sealed class UrlProcessingException(
     val url: String,
-    message: String,
+    val reason: String,
     cause: Throwable? = null
-) : Exception("$url: $message", cause)
+) : Exception(reason, cause)
 
 // Network/connection exceptions (out of our control) - fail discovered links gracefully
 
@@ -21,9 +21,9 @@ sealed class UrlProcessingException(
  */
 sealed class NetworkConnectionException(
     url: String,
-    message: String,
+    reason: String,
     cause: Throwable? = null
-) : UrlProcessingException(url, message, cause)
+) : UrlProcessingException(url, reason, cause)
 
 /**
  * Network timeout while attempting to reach the URL.
@@ -73,7 +73,19 @@ class HttpClientErrorException(
     val statusCode: Int,
     val reasonPhrase: String,
     cause: Throwable? = null
-) : NetworkConnectionException(url, "HTTP $statusCode: $reasonPhrase", cause)
+) : NetworkConnectionException(url, formatHttpClientError(statusCode, reasonPhrase), cause)
+
+private fun formatHttpClientError(statusCode: Int, reasonPhrase: String): String = when (statusCode) {
+    400 -> "Bad request"
+    401 -> "Authentication required"
+    403 -> "Access forbidden"
+    404 -> "Page not found"
+    405 -> "Method not allowed"
+    408 -> "Request timeout"
+    410 -> "Page no longer available"
+    429 -> "Too many requests"
+    else -> reasonPhrase.ifBlank { "Client error ($statusCode)" }
+}
 
 /**
  * HTTP 5xx server error.
@@ -83,7 +95,15 @@ class HttpServerErrorException(
     val statusCode: Int,
     val reasonPhrase: String,
     cause: Throwable? = null
-) : NetworkConnectionException(url, "HTTP $statusCode: $reasonPhrase", cause)
+) : NetworkConnectionException(url, formatHttpServerError(statusCode, reasonPhrase), cause)
+
+private fun formatHttpServerError(statusCode: Int, reasonPhrase: String): String = when (statusCode) {
+    500 -> "Server error"
+    502 -> "Bad gateway"
+    503 -> "Service unavailable"
+    504 -> "Gateway timeout"
+    else -> reasonPhrase.ifBlank { "Server error ($statusCode)" }
+}
 
 /**
  * Content type not supported (e.g., video, audio).
@@ -120,9 +140,9 @@ class BrowserNavigationException(
  */
 sealed class MarkdownConversionException(
     url: String,
-    message: String,
+    reason: String,
     cause: Throwable
-) : UrlProcessingException(url, message, cause)
+) : UrlProcessingException(url, reason, cause)
 
 /**
  * Markdown extraction from page failed.
