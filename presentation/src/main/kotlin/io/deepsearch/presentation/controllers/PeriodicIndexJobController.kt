@@ -18,10 +18,10 @@ class PeriodicIndexJobController(private val periodicIndexJobService: IPeriodicI
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     suspend fun stream(call: ApplicationCall, sse: ServerSSESession) {
-        val jobId = call.request.queryParameters["jobId"]?.toLongOrNull()
+        val jobId = call.parameters["id"]?.toLongOrNull()
 
         if (jobId == null) {
-            call.respond(HttpStatusCode.BadRequest, "Missing 'jobId' parameter")
+            call.respond(HttpStatusCode.BadRequest, "Missing 'id' parameter")
             return
         }
 
