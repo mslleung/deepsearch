@@ -5,6 +5,7 @@ import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.infrastructure.database.ApiKeyTable
@@ -34,7 +35,7 @@ class ExposedQuerySessionRepository(
 
     override suspend fun save(session: QuerySession): QuerySession = transactionService.withTransaction {
         querySessionTable.insert {
-            it[id] = session.id
+            it[id] = session.id.value
             it[query] = session.query
             it[url] = session.url
             it[apiKeyId] = session.apiKeyId.value
@@ -51,16 +52,16 @@ class ExposedQuerySessionRepository(
         session
     }
 
-    override suspend fun findById(id: String): QuerySession? = transactionService.withTransaction {
+    override suspend fun findById(id: QuerySessionId): QuerySession? = transactionService.withTransaction {
         querySessionTable.selectAll()
-            .where { querySessionTable.id eq id }
+            .where { querySessionTable.id eq id.value }
             .map { mapRowToQuerySession(it) }
             .singleOrNull()
     }
 
     override suspend fun update(session: QuerySession): QuerySession = transactionService.withTransaction {
         val affectedRows = querySessionTable.update({ 
-            (querySessionTable.id eq session.id) and (querySessionTable.version eq session.version) 
+            (querySessionTable.id eq session.id.value) and (querySessionTable.version eq session.version) 
         }) {
             it[query] = session.query
             it[url] = session.url
@@ -75,7 +76,7 @@ class ExposedQuerySessionRepository(
         }
         
         if (affectedRows == 0) {
-            throw OptimisticLockException("QuerySession", session.id, session.version)
+            throw OptimisticLockException("QuerySession", session.id.value, session.version)
         }
         
         session.version += 1
@@ -141,7 +142,7 @@ class ExposedQuerySessionRepository(
 
     private fun mapRowToQuerySession(row: ResultRow): QuerySession {
         return QuerySession(
-            id = row[querySessionTable.id],
+            id = QuerySessionId(row[querySessionTable.id]),
             query = row[querySessionTable.query],
             url = row[querySessionTable.url],
             apiKeyId = ApiKeyId(row[querySessionTable.apiKeyId]),

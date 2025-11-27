@@ -2,6 +2,7 @@ package io.deepsearch.presentation.admin.controllers
 
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.presentation.admin.dto.toAdminDetailDto
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -14,11 +15,12 @@ class AdminQuerySessionController(
 
     suspend fun getQuerySessionById(call: ApplicationCall) {
         try {
-            val sessionId = call.parameters["id"]
-            if (sessionId == null) {
+            val sessionIdParam = call.parameters["id"]
+            if (sessionIdParam == null) {
                 call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Session ID required"))
                 return
             }
+            val sessionId = QuerySessionId(sessionIdParam)
 
             val session = try {
                 querySessionService.getSession(sessionId)

@@ -31,7 +31,7 @@ fun QuerySession.toAdminDto(urlAccesses: List<io.deepsearch.domain.models.valueo
     val failedCount = urlAccesses.filterIsInstance<FailedUrlAccess>().size
     
     return AdminQuerySessionDto(
-        id = this.id,
+        id = this.id.value,
         query = this.query,
         url = this.url,
         finishReason = this.finishReason?.name,
@@ -69,7 +69,7 @@ data class AdminQuerySessionDetailDto(
 @OptIn(ExperimentalTime::class)
 fun QuerySession.toAdminDetailDto(urlAccesses: List<io.deepsearch.domain.models.valueobjects.UrlAccess>): AdminQuerySessionDetailDto {
     return AdminQuerySessionDetailDto(
-        id = this.id,
+        id = this.id.value,
         query = this.query,
         url = this.url,
         finishReason = this.finishReason?.name,

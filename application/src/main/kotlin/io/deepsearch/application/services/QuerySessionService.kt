@@ -4,6 +4,7 @@ import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.entities.FinishReason
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.UrlAccess
 import io.deepsearch.domain.models.valueobjects.UserId
@@ -36,7 +37,7 @@ interface IQuerySessionService {
      * This sets the answer, finish reason, and transitions to FINISHED state.
      */
     suspend fun completeSessionAnswerComplete(
-        sessionId: String,
+        sessionId: QuerySessionId,
         answer: String
     )
 
@@ -44,13 +45,13 @@ interface IQuerySessionService {
      * Check if the search budget has been exceeded.
      * Returns true if budget was exceeded, false otherwise.
      */
-    suspend fun isBudgetExceeded(sessionId: String, budget: SearchBudget): Boolean
+    suspend fun isBudgetExceeded(sessionId: QuerySessionId, budget: SearchBudget): Boolean
 
     /**
      * Mark the session as having exceeded budget with appropriate finish reason.
      */
     suspend fun completeSessionBudgetExceeded(
-        sessionId: String,
+        sessionId: QuerySessionId,
         answer: String,
         budget: SearchBudget
     )
@@ -59,14 +60,14 @@ interface IQuerySessionService {
      * Complete the session when all links have been exhausted without completing the answer.
      */
     suspend fun completeSessionLinksExhausted(
-        sessionId: String,
+        sessionId: QuerySessionId,
         answer: String
     )
 
-    suspend fun hardTimeout(sessionId: String, error: String)
+    suspend fun hardTimeout(sessionId: QuerySessionId, error: String)
 
     /** Get complete session. */
-    suspend fun getSession(sessionId: String): QuerySession
+    suspend fun getSession(sessionId: QuerySessionId): QuerySession
 
     /**
      * Get paginated query sessions for a user.
@@ -92,7 +93,7 @@ interface IQuerySessionService {
      * @throws IllegalArgumentException if session not found
      * @throws IllegalAccessException if user doesn't have access to the session
      */
-    suspend fun getSessionDetail(sessionId: String, userId: UserId): QuerySessionDetail
+    suspend fun getSessionDetail(sessionId: QuerySessionId, userId: UserId): QuerySessionDetail
 }
 
 /**
@@ -108,12 +109,12 @@ class QuerySessionService(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId): QuerySession {
-        val sessionId = UUID.randomUUID().toString()
+        val sessionId = QuerySessionId(UUID.randomUUID().toString())
         val session = QuerySession(sessionId, query, url, apiKeyId)
         val saved = querySessionRepository.save(session)
         logger.info(
             "[{}] Session created: query='{}', url='{}', apiKeyId={}",
-            sessionId,
+            sessionId.value,
             query,
             url,
             apiKeyId.value
@@ -122,7 +123,7 @@ class QuerySessionService(
     }
 
     override suspend fun completeSessionAnswerComplete(
-        sessionId: String,
+        sessionId: QuerySessionId,
         answer: String
     ) {
         val session = getSessionOrThrow(sessionId)
@@ -130,12 +131,12 @@ class QuerySessionService(
         querySessionRepository.update(session)
         logger.info(
             "[{}] Session completed: {} chars, answer complete",
-            sessionId,
+            sessionId.value,
             answer.length
         )
     }
 
-    override suspend fun isBudgetExceeded(sessionId: String, budget: SearchBudget): Boolean {
+    override suspend fun isBudgetExceeded(sessionId: QuerySessionId, budget: SearchBudget): Boolean {
         val session = getSessionOrThrow(sessionId)
 
         // Check time budget in domain entity
@@ -146,7 +147,7 @@ class QuerySessionService(
     }
 
     override suspend fun completeSessionBudgetExceeded(
-        sessionId: String, 
+        sessionId: QuerySessionId, 
         answer: String, 
         budget: SearchBudget
     ) {
@@ -162,7 +163,7 @@ class QuerySessionService(
             querySessionRepository.update(session)
             logger.info(
                 "[{}] Session completed: {} chars, time budget exceeded",
-                sessionId,
+                sessionId.value,
                 answer.length
             )
         } else if (isMaxLinksBudgetExceeded) {
@@ -171,14 +172,14 @@ class QuerySessionService(
             querySessionRepository.update(session)
             logger.info(
                 "[{}] Session completed: {} chars, max links budget exceeded",
-                sessionId,
+                sessionId.value,
                 answer.length
             )
         }
     }
 
     override suspend fun completeSessionLinksExhausted(
-        sessionId: String, 
+        sessionId: QuerySessionId, 
         answer: String
     ) {
         val session = getSessionOrThrow(sessionId)
@@ -186,19 +187,19 @@ class QuerySessionService(
         querySessionRepository.update(session)
         logger.info(
             "[{}] Session completed: {} chars, links exhausted",
-            sessionId,
+            sessionId.value,
             answer.length
         )
     }
 
-    override suspend fun hardTimeout(sessionId: String, error: String) {
+    override suspend fun hardTimeout(sessionId: QuerySessionId, error: String) {
         val session = getSessionOrThrow(sessionId)
         session.finish(FinishReason.EXECUTION_TIME_EXCEEDED)
         querySessionRepository.update(session)
-        logger.error("[{}] Session time out: {} ", sessionId, error)
+        logger.error("[{}] Session time out: {} ", sessionId.value, error)
     }
 
-    override suspend fun getSession(sessionId: String): QuerySession {
+    override suspend fun getSession(sessionId: QuerySessionId): QuerySession {
         return getSessionOrThrow(sessionId)
     }
 
@@ -210,7 +211,7 @@ class QuerySessionService(
         return querySessionRepository.countByUserId(userId)
     }
 
-    override suspend fun getSessionDetail(sessionId: String, userId: UserId): QuerySessionDetail {
+    override suspend fun getSessionDetail(sessionId: QuerySessionId, userId: UserId): QuerySessionDetail {
         // Get the session
         val session = getSessionOrThrow(sessionId)
 
@@ -236,9 +237,9 @@ class QuerySessionService(
         )
     }
 
-    private suspend fun getSessionOrThrow(sessionId: String): QuerySession {
+    private suspend fun getSessionOrThrow(sessionId: QuerySessionId): QuerySession {
         return querySessionRepository.findById(sessionId)
-            ?: throw IllegalArgumentException("Session not found: $sessionId")
+            ?: throw IllegalArgumentException("Session not found: ${sessionId.value}")
     }
 }
 

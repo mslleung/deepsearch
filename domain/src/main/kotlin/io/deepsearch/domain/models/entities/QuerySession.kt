@@ -1,6 +1,7 @@
 package io.deepsearch.domain.models.entities
 
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -16,7 +17,7 @@ import kotlin.time.Instant
  */
 @OptIn(ExperimentalTime::class)
 class QuerySession(
-    val id: String,
+    val id: QuerySessionId,
     val query: String,
     val url: String,
     val apiKeyId: ApiKeyId,
@@ -29,7 +30,7 @@ class QuerySession(
     var version: Long = 0
 ) {
 
-    constructor(id: String, query: String, url: String, apiKeyId: ApiKeyId) : this(
+    constructor(id: QuerySessionId, query: String, url: String, apiKeyId: ApiKeyId) : this(
         id = id,
         query = query,
         url = url,

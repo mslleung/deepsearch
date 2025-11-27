@@ -66,7 +66,7 @@ fun QuerySession.toSummaryDto(urlCount: Int): QuerySessionSummaryDto {
     val status = finishReason?.name ?: "IN_PROGRESS"
     
     return QuerySessionSummaryDto(
-        id = id,
+        id = id.value,
         query = query,
         url = url,
         status = status,
@@ -112,7 +112,7 @@ fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>, cachedWebpages: List<
         .map { it.url }
     
     return QuerySessionDetailDto(
-        id = id,
+        id = id.value,
         query = query,
         url = url,
         status = status,

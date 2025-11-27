@@ -1,6 +1,7 @@
 package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.LlmTokenUsage
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.repositories.ILlmTokenUsageRepository
 import io.deepsearch.domain.repositories.TokenUsageSummary
 import io.deepsearch.infrastructure.database.LlmTokenUsageTable
@@ -26,7 +27,7 @@ class ExposedLlmTokenUsageRepository(
     override suspend fun save(usage: LlmTokenUsage): LlmTokenUsage = transactionService.withTransaction {
         llmTokenUsageTable.insert {
             it[id] = usage.id
-            it[querySessionId] = usage.querySessionId
+            it[querySessionId] = usage.querySessionId?.value
             it[agentName] = usage.agentName
             it[modelName] = usage.modelName
             it[promptTokens] = usage.promptTokens
@@ -38,16 +39,16 @@ class ExposedLlmTokenUsageRepository(
         usage
     }
 
-    override suspend fun findBySessionId(sessionId: String): List<LlmTokenUsage> = transactionService.withTransaction {
+    override suspend fun findBySessionId(sessionId: QuerySessionId): List<LlmTokenUsage> = transactionService.withTransaction {
         llmTokenUsageTable.selectAll()
-            .where { llmTokenUsageTable.querySessionId eq sessionId }
+            .where { llmTokenUsageTable.querySessionId eq sessionId.value }
             .map { mapRowToLlmTokenUsage(it) }
             .toList()
     }
 
-    override suspend fun getTotalTokensBySessionId(sessionId: String): TokenUsageSummary = transactionService.withTransaction {
+    override suspend fun getTotalTokensBySessionId(sessionId: QuerySessionId): TokenUsageSummary = transactionService.withTransaction {
         val records = llmTokenUsageTable.selectAll()
-            .where { llmTokenUsageTable.querySessionId eq sessionId }
+            .where { llmTokenUsageTable.querySessionId eq sessionId.value }
             .map { it }
             .toList()
         
@@ -67,7 +68,7 @@ class ExposedLlmTokenUsageRepository(
     private fun mapRowToLlmTokenUsage(row: ResultRow): LlmTokenUsage {
         return LlmTokenUsage(
             id = row[llmTokenUsageTable.id],
-            querySessionId = row[llmTokenUsageTable.querySessionId],
+            querySessionId = row[llmTokenUsageTable.querySessionId]?.let { QuerySessionId(it) },
             agentName = row[llmTokenUsageTable.agentName],
             modelName = row[llmTokenUsageTable.modelName],
             promptTokens = row[llmTokenUsageTable.promptTokens],

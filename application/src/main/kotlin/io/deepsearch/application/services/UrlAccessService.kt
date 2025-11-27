@@ -11,31 +11,31 @@ import org.slf4j.LoggerFactory
  */
 interface IUrlAccessService {
     /** Record a URL access for a query session. */
-    suspend fun recordUrlAccess(querySessionId: String, urlAccess: UrlAccess)
+    suspend fun recordUrlAccess(querySessionId: QuerySessionId, urlAccess: UrlAccess)
 
     /** Check if a URL has been visited in a query session. */
-    suspend fun hasVisitedUrl(querySessionId: String, url: String): Boolean
+    suspend fun hasVisitedUrl(querySessionId: QuerySessionId, url: String): Boolean
 
     /** Get all URL accesses for a query session. */
-    suspend fun getUrlAccessesBySession(querySessionId: String): List<UrlAccess>
+    suspend fun getUrlAccessesBySession(querySessionId: QuerySessionId): List<UrlAccess>
 
     /** Count total URL accesses for a query session. */
-    suspend fun countUrlAccessesBySession(querySessionId: String): Int
+    suspend fun countUrlAccessesBySession(querySessionId: QuerySessionId): Int
 
     /** Get all cached URL accesses for a query session. */
-    suspend fun getCachedUrls(querySessionId: String): List<CachedUrlAccess>
+    suspend fun getCachedUrls(querySessionId: QuerySessionId): List<CachedUrlAccess>
 
     /** Get all uncached URL accesses for a query session. */
-    suspend fun getUncachedUrls(querySessionId: String): List<UncachedUrlAccess>
+    suspend fun getUncachedUrls(querySessionId: QuerySessionId): List<UncachedUrlAccess>
 
     /** Get all failed URL accesses for a query session. */
-    suspend fun getFailedUrls(querySessionId: String): List<FailedUrlAccess>
+    suspend fun getFailedUrls(querySessionId: QuerySessionId): List<FailedUrlAccess>
 
     /** Check if the maximum link budget has been exceeded for a query session. */
-    suspend fun checkMaxLinkBudget(querySessionId: String, maxLinks: Int): Boolean
+    suspend fun checkMaxLinkBudget(querySessionId: QuerySessionId, maxLinks: Int): Boolean
     
     /** Mark URLs as used in answer for a query session. */
-    suspend fun markUrlsAsUsedInAnswer(querySessionId: String, urls: List<String>): Int
+    suspend fun markUrlsAsUsedInAnswer(querySessionId: QuerySessionId, urls: List<String>): Int
 }
 
 /**
@@ -48,47 +48,47 @@ class UrlAccessService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun recordUrlAccess(querySessionId: String, urlAccess: UrlAccess) {
+    override suspend fun recordUrlAccess(querySessionId: QuerySessionId, urlAccess: UrlAccess) {
         urlAccessRepository.save(urlAccess, querySessionId)
         logger.debug(
             "[{}] Recorded URL access: {} (type: {})",
-            querySessionId,
+            querySessionId.value,
             urlAccess.url,
             urlAccess::class.simpleName
         )
     }
 
-    override suspend fun hasVisitedUrl(querySessionId: String, url: String): Boolean {
+    override suspend fun hasVisitedUrl(querySessionId: QuerySessionId, url: String): Boolean {
         return urlAccessRepository.existsByQuerySessionIdAndUrl(querySessionId, url)
     }
 
-    override suspend fun getUrlAccessesBySession(querySessionId: String): List<UrlAccess> {
+    override suspend fun getUrlAccessesBySession(querySessionId: QuerySessionId): List<UrlAccess> {
         return urlAccessRepository.findByQuerySessionId(querySessionId)
     }
 
-    override suspend fun countUrlAccessesBySession(querySessionId: String): Int {
+    override suspend fun countUrlAccessesBySession(querySessionId: QuerySessionId): Int {
         return urlAccessRepository.countByQuerySessionId(querySessionId)
     }
 
-    override suspend fun getCachedUrls(querySessionId: String): List<CachedUrlAccess> {
+    override suspend fun getCachedUrls(querySessionId: QuerySessionId): List<CachedUrlAccess> {
         return urlAccessRepository.findCachedByQuerySessionId(querySessionId)
     }
 
-    override suspend fun getUncachedUrls(querySessionId: String): List<UncachedUrlAccess> {
+    override suspend fun getUncachedUrls(querySessionId: QuerySessionId): List<UncachedUrlAccess> {
         return urlAccessRepository.findUncachedByQuerySessionId(querySessionId)
     }
 
-    override suspend fun getFailedUrls(querySessionId: String): List<FailedUrlAccess> {
+    override suspend fun getFailedUrls(querySessionId: QuerySessionId): List<FailedUrlAccess> {
         return urlAccessRepository.findFailedByQuerySessionId(querySessionId)
     }
 
-    override suspend fun checkMaxLinkBudget(querySessionId: String, maxLinks: Int): Boolean {
+    override suspend fun checkMaxLinkBudget(querySessionId: QuerySessionId, maxLinks: Int): Boolean {
         val urlAccessCount = countUrlAccessesBySession(querySessionId)
         return urlAccessCount >= maxLinks
     }
     
-    override suspend fun markUrlsAsUsedInAnswer(querySessionId: String, urls: List<String>): Int {
-        logger.debug("[{}] Marking {} URLs as used in answer", querySessionId, urls.size)
+    override suspend fun markUrlsAsUsedInAnswer(querySessionId: QuerySessionId, urls: List<String>): Int {
+        logger.debug("[{}] Marking {} URLs as used in answer", querySessionId.value, urls.size)
         return urlAccessRepository.markUrlsAsUsedInAnswer(querySessionId, urls)
     }
 }

@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.UserId
 import org.slf4j.Logger
@@ -34,7 +35,7 @@ class SearchService(
         userId: UserId
     ): QuerySessionDetail {
         val searchQuery = SearchQuery(query, url)
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, cacheExpiryMs, apiKeyId)
+        val sessionId: QuerySessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, cacheExpiryMs, apiKeyId)
         return querySessionService.getSessionDetail(sessionId, userId)
     }
 }

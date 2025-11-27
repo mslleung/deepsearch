@@ -1,6 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.LlmTokenUsage
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.repositories.ILlmTokenUsageRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -22,7 +23,7 @@ interface ILlmTokenUsageService {
      * @param totalTokens Total tokens used
      */
     suspend fun recordTokenUsage(
-        sessionId: String?,
+        sessionId: QuerySessionId?,
         agentName: String,
         modelName: String,
         promptTokens: Int,
@@ -43,7 +44,7 @@ class LlmTokenUsageService(
 
     @OptIn(ExperimentalTime::class)
     override suspend fun recordTokenUsage(
-        sessionId: String?,
+        sessionId: QuerySessionId?,
         agentName: String,
         modelName: String,
         promptTokens: Int,
@@ -55,7 +56,7 @@ class LlmTokenUsageService(
             "LLM Token Usage - Agent: {}, Model: {}, Session: {}, Prompt: {}, Output: {}, Total: {}",
             agentName,
             modelName,
-            sessionId ?: "N/A",
+            sessionId?.value ?: "N/A",
             promptTokens,
             outputTokens,
             totalTokens
@@ -74,9 +75,9 @@ class LlmTokenUsageService(
                     totalTokens = totalTokens
                 )
                 repository.save(usage)
-                logger.debug("Persisted token usage record for session: {}", sessionId)
+                logger.debug("Persisted token usage record for session: {}", sessionId.value)
             } catch (e: Exception) {
-                logger.error("Failed to persist token usage for session {}: {}", sessionId, e.message, e)
+                logger.error("Failed to persist token usage for session {}: {}", sessionId.value, e.message, e)
                 // Don't throw - token tracking should not break the main flow
             }
         } else {

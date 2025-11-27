@@ -1,6 +1,7 @@
 package io.deepsearch.domain.repositories
 
 import io.deepsearch.domain.models.entities.LlmTokenUsage
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 
 /**
  * Repository for persisting and retrieving LLM token usage records.
@@ -14,12 +15,12 @@ interface ILlmTokenUsageRepository {
     /**
      * Find all token usage records for a given query session.
      */
-    suspend fun findBySessionId(sessionId: String): List<LlmTokenUsage>
+    suspend fun findBySessionId(sessionId: QuerySessionId): List<LlmTokenUsage>
     
     /**
      * Get total token usage statistics for a query session.
      */
-    suspend fun getTotalTokensBySessionId(sessionId: String): TokenUsageSummary
+    suspend fun getTotalTokensBySessionId(sessionId: QuerySessionId): TokenUsageSummary
 }
 
 /**

@@ -2,6 +2,7 @@ package io.deepsearch.domain.repositories
 
 import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.UserId
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -19,7 +20,7 @@ interface IQuerySessionRepository {
     /**
      * Find a query session by ID.
      */
-    suspend fun findById(id: String): QuerySession?
+    suspend fun findById(id: QuerySessionId): QuerySession?
     
     /**
      * Update an existing query session.

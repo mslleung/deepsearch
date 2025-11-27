@@ -3,6 +3,7 @@ package io.deepsearch.presentation.controllers
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.domain.config.JwtConfig
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.presentation.dto.QuerySessionListResponse
 import io.deepsearch.presentation.dto.toDetailDto
@@ -69,11 +70,12 @@ class QuerySessionController(
                 return
             }
 
-            val sessionId = call.parameters["id"]
-            if (sessionId == null) {
+            val sessionIdParam = call.parameters["id"]
+            if (sessionIdParam == null) {
                 call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Session ID required"))
                 return
             }
+            val sessionId = QuerySessionId(sessionIdParam)
 
             val sessionDetail = try {
                 querySessionService.getSessionDetail(sessionId, userId)

@@ -19,6 +19,7 @@ import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
@@ -78,9 +79,9 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         cacheExpiryMs: Long?,
         apiKeyId: ApiKeyId
-    ): String =
+    ): QuerySessionId =
         withContext(dispatchers.io) {
-            val sessionId: String
+            val sessionId: QuerySessionId
             val executionTime = measureTimeMillis {
                 sessionId = executeSearchForQuery(searchQuery, cacheExpiryMs, apiKeyId)
             }
@@ -99,7 +100,7 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         cacheExpiryMs: Long?,
         apiKeyId: ApiKeyId
-    ): String {
+    ): QuerySessionId {
         val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
         val sessionId = session.id
         try {
@@ -107,7 +108,7 @@ class AgenticBrowserSearchOrchestrator(
                 timeLimitMs = 300 * 1000L,
                 maxLinks = 100
             )
-            logger.debug("[{}] Executing search for query: {}", sessionId, searchQuery.query)
+            logger.debug("[{}] Executing search for query: {}", sessionId.value, searchQuery.query)
 
             // Use CompletableDeferred to capture completion immediately without waiting for flow cancellation
             val completionDeferred = CompletableDeferred<Unit>()
@@ -193,7 +194,7 @@ class AgenticBrowserSearchOrchestrator(
                         }
                         .single()
                 } catch (e: CancellationException) {
-                    logger.debug("[{}] Flow cancelled after result obtained", sessionId)
+                    logger.debug("[{}] Flow cancelled after result obtained", sessionId.value)
                 } catch (e: Exception) {
                     if (!completionDeferred.isCompleted) {
                         completionDeferred.completeExceptionally(e)
@@ -211,7 +212,7 @@ class AgenticBrowserSearchOrchestrator(
 
             return sessionId
         } catch (e: Exception) {
-            logger.error("[{}] Error in executeSearchForQuery: {}", sessionId, e.message, e)
+            logger.error("[{}] Error in executeSearchForQuery: {}", sessionId.value, e.message, e)
             querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
             throw e
         }
@@ -223,7 +224,7 @@ class AgenticBrowserSearchOrchestrator(
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun processInitialLinkFlow(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
@@ -233,14 +234,14 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
 
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, cacheExpiryMs, sessionId.value)
                     .filter { event ->
                         val normalizedUrl = normalizeUrlService.normalize(event.url) ?: event.url
 
                         if (seenUrls.contains(normalizedUrl)) {
                             logger.debug(
                                 "processInitialLinkFlow [{}] Skipping already seen URL: {}",
-                                sessionId,
+                                sessionId.value,
                                 normalizedUrl
                             )
                             false
@@ -254,7 +255,7 @@ class AgenticBrowserSearchOrchestrator(
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                 logger.debug(
                                     "[{}] Initial URL discovered {} links",
-                                    sessionId,
+                                    sessionId.value,
                                     event.discoveredLinks.size
                                 )
                                 event.discoveredLinks.forEach { link ->
@@ -273,7 +274,7 @@ class AgenticBrowserSearchOrchestrator(
 
                                 logger.debug(
                                     "[{}] Initial URL markdown extracted: {} chars (cached: {})",
-                                    sessionId,
+                                    sessionId.value,
                                     event.markdown.length,
                                     event.wasCached
                                 )
@@ -283,7 +284,7 @@ class AgenticBrowserSearchOrchestrator(
                     .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
                     .map { event -> MarkdownSource(event.url, event.title, event.description, event.markdown) }
                     .onCompletion {
-                        logger.info("[{}] Initial link processing complete", sessionId)
+                        logger.info("[{}] Initial link processing complete", sessionId.value)
                         initialDiscoveredLinksChannel.close()
                     }
             }
@@ -295,7 +296,7 @@ class AgenticBrowserSearchOrchestrator(
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun processDiscoveredLinksFlow(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
@@ -312,7 +313,7 @@ class AgenticBrowserSearchOrchestrator(
                     logger.debug(
                         "{} [{}] Skipping already seen URL: {}",
                         flowName,
-                        sessionId,
+                        sessionId.value,
                         normalizedUrl
                     )
                     false
@@ -328,7 +329,7 @@ class AgenticBrowserSearchOrchestrator(
                         normalizedUrl,
                         searchQuery.query,
                         cacheExpiryMs,
-                        sessionId
+                        sessionId.value
                     )
                         .catch { e ->
                             when (e) {
@@ -348,7 +349,7 @@ class AgenticBrowserSearchOrchestrator(
                                     logger.warn(
                                         "{} [{}] Failed to process discovered link {}: {} (type: {})",
                                         flowName,
-                                        sessionId,
+                                        sessionId.value,
                                         e.url,
                                         e.message,
                                         e::class.simpleName
@@ -359,7 +360,7 @@ class AgenticBrowserSearchOrchestrator(
                                     logger.error(
                                         "{} [{}] Unexpected error processing discovered link {}: {}",
                                         flowName,
-                                        sessionId,
+                                        sessionId.value,
                                         normalizedUrl,
                                         e.message,
                                         e
@@ -374,7 +375,7 @@ class AgenticBrowserSearchOrchestrator(
                                     logger.debug(
                                         "{} [{}] Links discovered for {}: {} links",
                                         flowName,
-                                        sessionId,
+                                        sessionId.value,
                                         event.url,
                                         event.discoveredLinks.size
                                     )
@@ -394,7 +395,7 @@ class AgenticBrowserSearchOrchestrator(
                                     logger.debug(
                                         "{} [{}] Markdown extracted for {}: {} chars (cached: {})",
                                         flowName,
-                                        sessionId,
+                                        sessionId.value,
                                         event.url,
                                         event.markdown.length,
                                         event.wasCached
@@ -412,11 +413,11 @@ class AgenticBrowserSearchOrchestrator(
                     logger.info(
                         "{} [{}] Discovered link processing cancelled: {}",
                         flowName,
-                        sessionId,
+                        sessionId.value,
                         cause.message
                     )
                 } else {
-                    logger.info("{} [{}] Discovered link processing complete", flowName, sessionId)
+                    logger.info("{} [{}] Discovered link processing complete", flowName, sessionId.value)
                 }
                 discoveredLinksChannel.close()
             }
@@ -428,7 +429,7 @@ class AgenticBrowserSearchOrchestrator(
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun processSerperSearchLinksFlow(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
@@ -449,7 +450,7 @@ class AgenticBrowserSearchOrchestrator(
 
     @OptIn(DelicateCoroutinesApi::class)
     private fun processRecursiveDiscoveredLinksFlow(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
@@ -487,7 +488,7 @@ class AgenticBrowserSearchOrchestrator(
                 if (seenUrls.contains(normalizedUrl)) {
                     logger.debug(
                         "processRecursiveDiscoveredLinksFlow [{}] Skipping already seen URL: {}",
-                        sessionId,
+                        sessionId.value,
                         normalizedUrl
                     )
                     false
@@ -504,7 +505,7 @@ class AgenticBrowserSearchOrchestrator(
                         normalizedUrl,
                         searchQuery.query,
                         cacheExpiryMs,
-                        sessionId
+                        sessionId.value
                     )
                         .catch { e ->
                             when (e) {
@@ -531,7 +532,7 @@ class AgenticBrowserSearchOrchestrator(
 
                                     logger.warn(
                                         "processRecursiveDiscoveredLinksFlow [{}] Failed to process discovered link {}: {} (type: {})",
-                                        sessionId,
+                                        sessionId.value,
                                         e.url,
                                         e.message,
                                         e::class.simpleName
@@ -541,7 +542,7 @@ class AgenticBrowserSearchOrchestrator(
                                 else -> {
                                     logger.error(
                                         "processRecursiveDiscoveredLinksFlow [{}] Unexpected error processing discovered link {}: {}",
-                                        sessionId,
+                                        sessionId.value,
                                         normalizedUrl,
                                         e.message,
                                         e
@@ -555,7 +556,7 @@ class AgenticBrowserSearchOrchestrator(
                                 is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                     logger.debug(
                                         "processRecursiveDiscoveredLinksFlow [{}] Links discovered for {}: {} links",
-                                        sessionId,
+                                        sessionId.value,
                                         event.url,
                                         event.discoveredLinks.size
                                     )
@@ -595,7 +596,7 @@ class AgenticBrowserSearchOrchestrator(
 
                                     logger.debug(
                                         "processRecursiveDiscoveredLinksFlow [{}] Markdown extracted for {}: {} chars (cached: {})",
-                                        sessionId,
+                                        sessionId.value,
                                         event.url,
                                         event.markdown.length,
                                         event.wasCached
@@ -612,13 +613,13 @@ class AgenticBrowserSearchOrchestrator(
                 if (cause != null) {
                     logger.info(
                         "processRecursiveDiscoveredLinksFlow [{}] Discovered link processing cancelled: {}",
-                        sessionId,
+                        sessionId.value,
                         cause.message
                     )
                 } else {
                     logger.info(
                         "processRecursiveDiscoveredLinksFlow [{}] Discovered link processing complete",
-                        sessionId
+                        sessionId.value
                     )
                 }
             }
@@ -640,7 +641,7 @@ class AgenticBrowserSearchOrchestrator(
      * Uses two-stage approach: first curates shortlist, then synthesizes answer when ready.
      */
     private suspend fun aggregateMarkdownResultIntoAnswer(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         state: AnswerAccumulator,
         markdownSources: List<MarkdownSource>,
@@ -649,7 +650,7 @@ class AgenticBrowserSearchOrchestrator(
 
         logger.debug(
             "[{}] Processing batch of {} markdowns (total: {})",
-            sessionId,
+            sessionId.value,
             markdownSources.size,
             newMarkdownSources.size
         )
@@ -675,7 +676,7 @@ class AgenticBrowserSearchOrchestrator(
 
         logger.debug(
             "[{}] Shortlist updated: {} sources, isGoodEnough: {}, reason: {}",
-            sessionId,
+            sessionId.value,
             shortlistOutput.updatedShortlist.size,
             shortlistOutput.isGoodEnough,
             shortlistOutput.reason
@@ -689,7 +690,7 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     private suspend fun finishQuerySession(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         finalAnswerAccumulator: AnswerAccumulator,
         budget: SearchBudget,
@@ -697,7 +698,7 @@ class AgenticBrowserSearchOrchestrator(
     ) {
         logger.info(
             "[{}] Flow ending, synthesizing from {} shortlisted sources",
-            sessionId,
+            sessionId.value,
             finalAnswerAccumulator.currentShortlist.size
         )
 
@@ -745,15 +746,15 @@ class AgenticBrowserSearchOrchestrator(
      * Flow A: Google search link discovery
      */
     private fun createGoogleSearchLinkDiscoveryFlow(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {
         try {
-            val googleLinks = webpageLinkDiscoveryService.discoverRelevantLinksByGoogleSearch(searchQuery, sessionId)
-            logger.debug("[{}] Google search discovered {} links", sessionId, googleLinks.size)
+            val googleLinks = webpageLinkDiscoveryService.discoverRelevantLinksByGoogleSearch(searchQuery, sessionId.value)
+            logger.debug("[{}] Google search discovered {} links", sessionId.value, googleLinks.size)
             googleLinks.forEach { emit(it) }
         } catch (e: Exception) {
-            logger.error("[{}] Failed Google search: {}", sessionId, e.message, e)
+            logger.error("[{}] Failed Google search: {}", sessionId.value, e.message, e)
         }
     }
 
@@ -761,15 +762,15 @@ class AgenticBrowserSearchOrchestrator(
      * SERP search link discovery flow
      */
     private fun createSerperSearchLinkDiscoveryFlow(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {
         try {
             val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery)
-            logger.debug("[{}] SERP search discovered {} links", sessionId, serperLinks.size)
+            logger.debug("[{}] SERP search discovered {} links", sessionId.value, serperLinks.size)
             serperLinks.forEach { emit(it) }
         } catch (e: Exception) {
-            logger.error("[{}] Failed SERP search: {}", sessionId, e.message, e)
+            logger.error("[{}] Failed SERP search: {}", sessionId.value, e.message, e)
         }
     }
 
@@ -779,7 +780,7 @@ class AgenticBrowserSearchOrchestrator(
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun processHybridSearchFlow(
-        sessionId: String,
+        sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         cacheExpiryMs: Long?,
@@ -791,15 +792,15 @@ class AgenticBrowserSearchOrchestrator(
             baseUrl = searchQuery.url,
             cacheExpiryMs = cacheExpiryMs,
             limit = 15,
-            sessionId = sessionId
+            sessionId = sessionId.value
         )
-        logger.debug("[{}] Hybrid search: Found {} similar webpages", sessionId, similarWebpages.size)
+        logger.debug("[{}] Hybrid search: Found {} similar webpages", sessionId.value, similarWebpages.size)
 
         // Filter to keep only valid webpages with markdown and html
         val validWebpages = similarWebpages.filter { webpage ->
             !webpage.markdown.isNullOrBlank() && !webpage.html.isNullOrBlank()
         }
-        logger.debug("[{}] Hybrid search: {} valid webpages after filtering", sessionId, validWebpages.size)
+        logger.debug("[{}] Hybrid search: {} valid webpages after filtering", sessionId.value, validWebpages.size)
 
         seenUrls.addAll(validWebpages.map { it.url })
 
@@ -822,11 +823,11 @@ class AgenticBrowserSearchOrchestrator(
                             query = searchQuery.query,
                             html = webpage.html!!,
                             url = webpage.url,
-                            sessionId = sessionId
+                            sessionId = sessionId.value
                         )
                         logger.debug(
                             "[{}] Hybrid search: Discovered {} links from cached page {}",
-                            sessionId,
+                            sessionId.value,
                             discoveredLinks.size,
                             webpage.url
                         )
@@ -838,7 +839,7 @@ class AgenticBrowserSearchOrchestrator(
                     } catch (e: Exception) {
                         logger.warn(
                             "[{}] Hybrid search: Failed to process cached webpage {}: {}",
-                            sessionId,
+                            sessionId.value,
                             webpage.url,
                             e.message,
                             e
@@ -850,11 +851,11 @@ class AgenticBrowserSearchOrchestrator(
                 if (cause != null) {
                     logger.info(
                         "[{}] Hybrid search processing cancelled: {}",
-                        sessionId,
+                        sessionId.value,
                         cause.message
                     )
                 } else {
-                    logger.info("[{}] Hybrid search processing complete", sessionId)
+                    logger.info("[{}] Hybrid search processing complete", sessionId.value)
                 }
                 hybridSearchDiscoveredLinksChannel.close()
             }
