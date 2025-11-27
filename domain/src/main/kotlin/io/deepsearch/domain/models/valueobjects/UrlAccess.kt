@@ -5,7 +5,7 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 /**
- * Represents an access to a URL during a query session.
+ * Represents an access to a URL during a session (query or periodic index).
  * Sealed class hierarchy provides type safety and encapsulates access-specific behavior.
  * 
  * Following DDD principles, the type itself indicates the cache status,

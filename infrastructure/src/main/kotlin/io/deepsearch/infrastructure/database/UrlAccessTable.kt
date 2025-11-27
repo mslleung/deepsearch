@@ -4,19 +4,21 @@ import org.jetbrains.exposed.v1.core.Table
 
 /**
  * Database table for storing URL access records.
- * Each row represents a single URL access attempt during a query session.
+ * Each row represents a single URL access attempt during a session (query or periodic index).
  * 
  * The status column discriminates between cached, uncached, and failed accesses,
  * enabling proper object-relational mapping to the UrlAccess sealed class hierarchy.
  * 
  * For failed accesses, exceptionType stores the exception class name and
  * exceptionMessage stores the detailed error message.
+ * 
+ * The sessionId column stores either:
+ * - A QuerySessionId value (e.g., "abc123")
+ * - A PeriodicIndexSessionId value (e.g., "periodic-index-job-42")
  */
-class UrlAccessTable(
-    private val querySessionTable: QuerySessionTable
-) : Table("url_accesses") {
+class UrlAccessTable : Table("url_accesses") {
     val id = long("id").autoIncrement()
-    val querySessionId = varchar("query_session_id", 255).references(querySessionTable.id)
+    val sessionId = varchar("session_id", 255)  // Stores SessionId.value (supports both query and periodic index sessions)
     val url = varchar("url", 2048)
     val timestampEpochMs = long("timestamp_epoch_ms")
     val status = varchar("status", 20)  // "CACHED", "UNCACHED", "FAILED"
@@ -28,7 +30,7 @@ class UrlAccessTable(
     
     init {
         // Index for querying all URL accesses by session
-        index(isUnique = false, querySessionId)
+        index(isUnique = false, sessionId)
         
         // Index for querying by status (e.g., all failed URLs)
         index(isUnique = false, status)

@@ -1,10 +1,14 @@
 package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IPeriodicIndexService
+import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexPeriod
+import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
+import io.deepsearch.domain.models.valueobjects.UrlAccess
 import io.deepsearch.domain.models.valueobjects.UserId
+import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.presentation.dto.*
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -16,7 +20,9 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 class PeriodicIndexController(
-    private val periodicIndexService: IPeriodicIndexService
+    private val periodicIndexService: IPeriodicIndexService,
+    private val urlAccessService: IUrlAccessService,
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository
 ) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -123,6 +129,93 @@ class PeriodicIndexController(
             jobs = jobs.map { it.toResponse() },
             totalCount = total
         ))
+    }
+
+    suspend fun getJobUrls(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call)
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized)
+            return
+        }
+
+        val jobIdParam = call.parameters["jobId"]
+        if (jobIdParam == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Job ID required"))
+            return
+        }
+
+        val jobId = jobIdParam.toLongOrNull()
+        if (jobId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid job ID"))
+            return
+        }
+
+        val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
+        val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 50
+
+        // Create session ID for the periodic index job
+        val sessionId = PeriodicIndexSessionId(jobId)
+
+        val (urls, total) = urlAccessService.getUrlAccessesBySession(sessionId, page, pageSize)
+        
+        // Build the response by looking up page titles from WebpageMarkdown
+        val urlsWithTitles = buildUrlResponsesWithTitles(urls, page, pageSize)
+
+        call.respond(HttpStatusCode.OK, PeriodicIndexJobUrlListResponse(
+            urls = urlsWithTitles,
+            totalCount = total
+        ))
+    }
+
+    suspend fun getIndexedUrlsByBaseUrl(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call)
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized)
+            return
+        }
+
+        val baseUrl = call.request.queryParameters["baseUrl"]
+        if (baseUrl.isNullOrBlank()) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Base URL required"))
+            return
+        }
+
+        val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
+        val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 50
+
+        val (urls, total) = urlAccessService.getUrlAccessesByBaseUrl(baseUrl, page, pageSize)
+        
+        // Build the response by looking up page titles from WebpageMarkdown
+        val urlsWithTitles = buildUrlResponsesWithTitles(urls, page, pageSize)
+
+        call.respond(HttpStatusCode.OK, PeriodicIndexJobUrlListResponse(
+            urls = urlsWithTitles,
+            totalCount = total
+        ))
+    }
+
+    /**
+     * Build URL responses with page titles fetched from WebpageMarkdown.
+     * Similar pattern to QuerySessionService.getSessionDetail.
+     */
+    private suspend fun buildUrlResponsesWithTitles(
+        urls: List<UrlAccess>,
+        page: Int,
+        pageSize: Int
+    ): List<PeriodicIndexJobUrlResponse> {
+        // Fetch page titles from WebpageMarkdown for each URL
+        val urlToTitle: Map<String, String?> = urls.associate { urlAccess ->
+            val webpage = webpageMarkdownRepository.findByUrl(urlAccess.url)
+            urlAccess.url to webpage?.title
+        }
+
+        return urls.mapIndexed { index, urlAccess ->
+            val pageTitle = urlToTitle[urlAccess.url]
+            urlAccess.toPeriodicIndexJobUrlResponse(
+                id = (page - 1) * pageSize + index + 1L,
+                pageTitle = pageTitle
+            )
+        }
     }
 
     private fun getUserIdFromJwt(call: ApplicationCall): UserId? {

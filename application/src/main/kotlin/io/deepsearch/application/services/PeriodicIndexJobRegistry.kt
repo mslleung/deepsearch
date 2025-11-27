@@ -5,11 +5,16 @@ import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
+import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
+import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.domain.exceptions.UrlProcessingException
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -41,6 +46,7 @@ interface IPeriodicIndexJobRegistry {
     suspend fun stop(jobId: Long)
 }
 
+@OptIn(ExperimentalTime::class)
 class PeriodicIndexJobRegistry(
     private val browserRuntimePool: IBrowserRuntimePool,
     private val normalizeUrlService: INormalizeUrlService,
@@ -48,6 +54,7 @@ class PeriodicIndexJobRegistry(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val periodicIndexJobRepository: IPeriodicIndexJobRepository,
+    private val urlAccessService: IUrlAccessService,
     private val dispatchers: IDispatcherProvider,
     private val applicationScope: IApplicationCoroutineScope
 ) : IPeriodicIndexJobRegistry {
@@ -252,11 +259,19 @@ class PeriodicIndexJobRegistry(
                         return@flow
                     }
 
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, PeriodicIndexSessionId(jobId))
+                    val sessionId = PeriodicIndexSessionId(jobId)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, sessionId)
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
                                 logger.warn("[{}] Failed to process initial URL {}: {}", jobId, normalizedUrl, e.message)
+                                val failedAccess = FailedUrlAccess(
+                                    url = normalizedUrl,
+                                    timestamp = Clock.System.now(),
+                                    exceptionType = e::class.simpleName!!,
+                                    message = e.message ?: "Unknown error"
+                                )
+                                urlAccessService.recordUrlAccess(sessionId, failedAccess)
                             } else {
                                 logger.error("[{}] Unexpected error processing initial URL {}: {}", jobId, normalizedUrl, e.message, e)
                                 throw e
@@ -273,7 +288,13 @@ class PeriodicIndexJobRegistry(
                                 }
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     logger.debug("[{}] Initial URL markdown extracted: {} chars", jobId, event.markdown.length)
-                                    emit(PeriodicIndexStepResult(url = normalizedUrl, cachedHit = event.wasCached))
+                                    val urlAccess = if (event.wasCached) {
+                                        CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    } else {
+                                        UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    }
+                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }
                         }
@@ -310,11 +331,19 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, PeriodicIndexSessionId(jobId))
+                    val sessionId = PeriodicIndexSessionId(jobId)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, sessionId)
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
                                 logger.warn("[{}] Failed to process Serper link {}: {}", jobId, normalizedUrl, e.message)
+                                val failedAccess = FailedUrlAccess(
+                                    url = normalizedUrl,
+                                    timestamp = Clock.System.now(),
+                                    exceptionType = e::class.simpleName!!,
+                                    message = e.message ?: "Unknown error"
+                                )
+                                urlAccessService.recordUrlAccess(sessionId, failedAccess)
                             } else {
                                 logger.error("[{}] Unexpected error processing Serper link {}: {}", jobId, normalizedUrl, e.message, e)
                                 throw e
@@ -330,7 +359,13 @@ class PeriodicIndexJobRegistry(
                                 }
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     logger.debug("[{}] Serper link markdown extracted: {} chars", jobId, event.markdown.length)
-                                    emit(PeriodicIndexStepResult(url = normalizedUrl, cachedHit = event.wasCached))
+                                    val urlAccess = if (event.wasCached) {
+                                        CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    } else {
+                                        UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    }
+                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }
                         }
@@ -367,11 +402,19 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, PeriodicIndexSessionId(jobId))
+                    val sessionId = PeriodicIndexSessionId(jobId)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, sessionId)
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
                                 logger.warn("[{}] Failed to process sitemap link {}: {}", jobId, normalizedUrl, e.message)
+                                val failedAccess = FailedUrlAccess(
+                                    url = normalizedUrl,
+                                    timestamp = Clock.System.now(),
+                                    exceptionType = e::class.simpleName!!,
+                                    message = e.message ?: "Unknown error"
+                                )
+                                urlAccessService.recordUrlAccess(sessionId, failedAccess)
                             } else {
                                 logger.error("[{}] Unexpected error processing sitemap link {}: {}", jobId, normalizedUrl, e.message, e)
                                 throw e
@@ -387,7 +430,13 @@ class PeriodicIndexJobRegistry(
                                 }
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     logger.debug("[{}] Sitemap link markdown extracted: {} chars", jobId, event.markdown.length)
-                                    emit(PeriodicIndexStepResult(url = normalizedUrl, cachedHit = event.wasCached))
+                                    val urlAccess = if (event.wasCached) {
+                                        CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    } else {
+                                        UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    }
+                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }
                         }
@@ -445,14 +494,22 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
+                    val sessionId = PeriodicIndexSessionId(jobId)
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
 
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, PeriodicIndexSessionId(jobId))
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, sessionId)
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> throw e
                                 is UrlProcessingException -> {
                                     logger.warn("[{}] Failed to process recursive link {}: {}", jobId, normalizedUrl, e.message)
+                                    val failedAccess = FailedUrlAccess(
+                                        url = normalizedUrl,
+                                        timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!,
+                                        message = e.message ?: "Unknown error"
+                                    )
+                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
                                     inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
                                     checkAndCloseRecursiveChannel(
                                         initialDiscoveredLinksChannel,
@@ -496,7 +553,13 @@ class PeriodicIndexJobRegistry(
                                 }
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     logger.debug("[{}] Recursive link markdown extracted: {} chars", jobId, event.markdown.length)
-                                    emit(PeriodicIndexStepResult(url = normalizedUrl, cachedHit = event.wasCached))
+                                    val urlAccess = if (event.wasCached) {
+                                        CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    } else {
+                                        UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    }
+                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }
                         }
@@ -567,6 +630,7 @@ class PeriodicIndexJobRegistry(
 
     private data class PeriodicIndexStepResult(
         val url: String,
+        val title: String?,
         val cachedHit: Boolean
     )
 }

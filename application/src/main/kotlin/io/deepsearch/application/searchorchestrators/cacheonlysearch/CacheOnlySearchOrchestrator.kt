@@ -116,7 +116,7 @@ class CacheOnlySearchOrchestrator(
 
             // Record URL accesses for cached pages
             validWebpages.forEach { webpage ->
-                val cachedAccess = CachedUrlAccess(webpage.url, Clock.System.now())
+                val cachedAccess = CachedUrlAccess(url = webpage.url, timestamp = Clock.System.now())
                 urlAccessService.recordUrlAccess(sessionId, cachedAccess)
             }
 

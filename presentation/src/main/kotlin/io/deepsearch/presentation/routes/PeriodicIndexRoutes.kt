@@ -30,6 +30,14 @@ fun Application.configurePeriodicIndexRoutes() {
                     val controller = call.scope.get<PeriodicIndexController>()
                     controller.getJobHistory(call)
                 }
+                get("/history/{jobId}/urls") {
+                    val controller = call.scope.get<PeriodicIndexController>()
+                    controller.getJobUrls(call)
+                }
+                get("/indexed-urls") {
+                    val controller = call.scope.get<PeriodicIndexController>()
+                    controller.getIndexedUrlsByBaseUrl(call)
+                }
             }
         }
     }

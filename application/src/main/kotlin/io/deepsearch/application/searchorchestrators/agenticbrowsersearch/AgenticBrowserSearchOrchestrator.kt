@@ -267,9 +267,9 @@ class AgenticBrowserSearchOrchestrator(
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                 val urlAccess = if (event.wasCached) {
-                                    CachedUrlAccess(event.url, Clock.System.now())
+                                    CachedUrlAccess(url = event.url, timestamp = Clock.System.now())
                                 } else {
-                                    UncachedUrlAccess(event.url, Clock.System.now())
+                                    UncachedUrlAccess(url = event.url, timestamp = Clock.System.now())
                                 }
                                 urlAccessService.recordUrlAccess(sessionId, urlAccess)
 
@@ -387,9 +387,9 @@ class AgenticBrowserSearchOrchestrator(
 
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(event.url, Clock.System.now())
+                                        CachedUrlAccess(url = event.url, timestamp = Clock.System.now())
                                     } else {
-                                        UncachedUrlAccess(event.url, Clock.System.now())
+                                        UncachedUrlAccess(url = event.url, timestamp = Clock.System.now())
                                     }
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
 
@@ -589,9 +589,9 @@ class AgenticBrowserSearchOrchestrator(
 
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(event.url, Clock.System.now())
+                                        CachedUrlAccess(url = event.url, timestamp = Clock.System.now())
                                     } else {
-                                        UncachedUrlAccess(event.url, Clock.System.now())
+                                        UncachedUrlAccess(url = event.url, timestamp = Clock.System.now())
                                     }
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
 
@@ -791,7 +791,7 @@ class AgenticBrowserSearchOrchestrator(
 
         // Record URL access for cached entries
         validWebpages.forEach { webpage ->
-            val cachedAccess = CachedUrlAccess(webpage.url, Clock.System.now())
+            val cachedAccess = CachedUrlAccess(url = webpage.url, timestamp = Clock.System.now())
             urlAccessService.recordUrlAccess(sessionId, cachedAccess)
         }
 

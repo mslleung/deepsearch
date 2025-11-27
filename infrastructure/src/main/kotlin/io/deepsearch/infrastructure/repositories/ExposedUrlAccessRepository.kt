@@ -7,9 +7,11 @@ import io.deepsearch.infrastructure.services.ITransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.update
@@ -18,6 +20,7 @@ import kotlin.time.ExperimentalTime
 /**
  * Exposed-based implementation of IUrlAccessRepository.
  * Manages persistence of UrlAccess aggregate roots.
+ * Supports both query sessions (QuerySessionId) and periodic index sessions (PeriodicIndexSessionId).
  */
 @OptIn(ExperimentalTime::class)
 class ExposedUrlAccessRepository(
@@ -31,9 +34,9 @@ class ExposedUrlAccessRepository(
         FAILED
     }
 
-    override suspend fun save(urlAccess: UrlAccess, querySessionId: QuerySessionId): UrlAccess = transactionService.withTransaction {
+    override suspend fun save(urlAccess: UrlAccess, sessionId: SessionId): UrlAccess = transactionService.withTransaction {
         urlAccessTable.insert {
-            it[urlAccessTable.querySessionId] = querySessionId.value
+            it[urlAccessTable.sessionId] = sessionId.value
             it[url] = urlAccess.url
             it[timestampEpochMs] = urlAccess.timestamp.toEpochMilliseconds()
             it[isUsedInAnswer] = urlAccess.isUsedInAnswer
@@ -59,68 +62,99 @@ class ExposedUrlAccessRepository(
         urlAccess
     }
 
-    override suspend fun findByQuerySessionId(querySessionId: QuerySessionId): List<UrlAccess> = transactionService.withTransaction {
+    override suspend fun findBySessionId(sessionId: SessionId): List<UrlAccess> = transactionService.withTransaction {
         urlAccessTable.selectAll()
-            .where { urlAccessTable.querySessionId eq querySessionId.value }
+            .where { urlAccessTable.sessionId eq sessionId.value }
+            .orderBy(urlAccessTable.timestampEpochMs, SortOrder.DESC)
             .map { mapRowToUrlAccess(it) }
             .toList()
     }
 
-    override suspend fun findCachedByQuerySessionId(querySessionId: QuerySessionId): List<CachedUrlAccess> = transactionService.withTransaction {
+    override suspend fun findBySessionId(sessionId: SessionId, offset: Int, limit: Int): List<UrlAccess> = transactionService.withTransaction {
+        urlAccessTable.selectAll()
+            .where { urlAccessTable.sessionId eq sessionId.value }
+            .orderBy(urlAccessTable.timestampEpochMs, SortOrder.DESC)
+            .limit(limit)
+            .offset(offset.toLong())
+            .map { mapRowToUrlAccess(it) }
+            .toList()
+    }
+
+    override suspend fun findCachedBySessionId(sessionId: SessionId): List<CachedUrlAccess> = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { 
-                (urlAccessTable.querySessionId eq querySessionId.value) and 
+                (urlAccessTable.sessionId eq sessionId.value) and 
                 (urlAccessTable.status eq UrlAccessStatus.CACHED.name) 
             }
+            .orderBy(urlAccessTable.timestampEpochMs, SortOrder.DESC)
             .map { mapRowToUrlAccess(it) as CachedUrlAccess }
             .toList()
     }
 
-    override suspend fun findUncachedByQuerySessionId(querySessionId: QuerySessionId): List<UncachedUrlAccess> = transactionService.withTransaction {
+    override suspend fun findUncachedBySessionId(sessionId: SessionId): List<UncachedUrlAccess> = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { 
-                (urlAccessTable.querySessionId eq querySessionId.value) and 
+                (urlAccessTable.sessionId eq sessionId.value) and 
                 (urlAccessTable.status eq UrlAccessStatus.UNCACHED.name) 
             }
+            .orderBy(urlAccessTable.timestampEpochMs, SortOrder.DESC)
             .map { mapRowToUrlAccess(it) as UncachedUrlAccess }
             .toList()
     }
 
-    override suspend fun findFailedByQuerySessionId(querySessionId: QuerySessionId): List<FailedUrlAccess> = transactionService.withTransaction {
+    override suspend fun findFailedBySessionId(sessionId: SessionId): List<FailedUrlAccess> = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { 
-                (urlAccessTable.querySessionId eq querySessionId.value) and 
+                (urlAccessTable.sessionId eq sessionId.value) and 
                 (urlAccessTable.status eq UrlAccessStatus.FAILED.name) 
             }
+            .orderBy(urlAccessTable.timestampEpochMs, SortOrder.DESC)
             .map { mapRowToUrlAccess(it) as FailedUrlAccess }
             .toList()
     }
 
-    override suspend fun countByQuerySessionId(querySessionId: QuerySessionId): Int = transactionService.withTransaction {
+    override suspend fun countBySessionId(sessionId: SessionId): Int = transactionService.withTransaction {
         urlAccessTable.selectAll()
-            .where { urlAccessTable.querySessionId eq querySessionId.value }
+            .where { urlAccessTable.sessionId eq sessionId.value }
             .count()
             .toInt()
     }
 
-    override suspend fun existsByQuerySessionIdAndUrl(querySessionId: QuerySessionId, url: String): Boolean = transactionService.withTransaction {
+    override suspend fun existsBySessionIdAndUrl(sessionId: SessionId, url: String): Boolean = transactionService.withTransaction {
         urlAccessTable.selectAll()
             .where { 
-                (urlAccessTable.querySessionId eq querySessionId.value) and 
+                (urlAccessTable.sessionId eq sessionId.value) and 
                 (urlAccessTable.url eq url) 
             }
             .count() > 0
     }
 
-    override suspend fun markUrlsAsUsedInAnswer(querySessionId: QuerySessionId, urls: List<String>): Int = transactionService.withTransaction {
+    override suspend fun markUrlsAsUsedInAnswer(sessionId: SessionId, urls: List<String>): Int = transactionService.withTransaction {
         if (urls.isEmpty()) return@withTransaction 0
         
         urlAccessTable.update({
-            (urlAccessTable.querySessionId eq querySessionId.value) and 
+            (urlAccessTable.sessionId eq sessionId.value) and 
             (urlAccessTable.url inList urls)
         }) {
             it[isUsedInAnswer] = true
         }
+    }
+
+    override suspend fun findByUrlPrefix(urlPrefix: String, offset: Int, limit: Int): List<UrlAccess> = transactionService.withTransaction {
+        urlAccessTable.selectAll()
+            .where { urlAccessTable.url like "$urlPrefix%" }
+            .orderBy(urlAccessTable.timestampEpochMs, SortOrder.DESC)
+            .limit(limit)
+            .offset(offset.toLong())
+            .map { mapRowToUrlAccess(it) }
+            .toList()
+    }
+
+    override suspend fun countByUrlPrefix(urlPrefix: String): Int = transactionService.withTransaction {
+        urlAccessTable.selectAll()
+            .where { urlAccessTable.url like "$urlPrefix%" }
+            .count()
+            .toInt()
     }
 
     /**
