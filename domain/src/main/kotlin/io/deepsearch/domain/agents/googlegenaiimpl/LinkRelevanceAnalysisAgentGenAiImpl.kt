@@ -45,6 +45,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     .build()
             )
         )
+        .required(listOf("url", "reason"))
         .build()
 
     private val outputSchema: Schema = Schema.builder()
@@ -57,6 +58,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     .build()
             )
         )
+        .required(listOf("links"))
         .build()
 
     @Serializable
@@ -71,9 +73,13 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     )
 
     private val systemInstruction = """
-        You are a link relevance analysis agent. Your task is to:
+        You are a link relevance analysis agent.
+        
+        Given an input of extracted text from a webpage with <a> links.
+         
+        Your task is to:
         1. Identify all <a href> links in the provided text
-        2. Using the surrounding context, analyze which links are most relevant to the user's query
+        2. Using the surrounding context, analyze which links are relevant to the user's query
         3. Return all relevant links with reasons why they are relevant
         4. The links must be unique and exactly the same as given in the source
         
