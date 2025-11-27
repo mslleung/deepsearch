@@ -98,6 +98,15 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         val (cleanedHtml, extractedLinks) = cleanHtml(input.html, input.url)
         logger.debug("Extracted {} unique links from cleaned HTML", extractedLinks.size)
 
+        if (extractedLinks.isEmpty()) {
+            logger.debug("No link found in cleaned HTML")
+
+            return LinkRelevanceAnalysisOutput(
+                links = emptyList(),
+                tokenUsage = TokenUsageMetrics.empty()
+            )
+        }
+
         val userPrompt = buildString {
             appendLine("Query: ${input.query}")
             appendLine()
@@ -191,7 +200,8 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     "head, title, base"
         ).remove()
 
-        // Step 2: Filter anchor tags to only include those from the same host
+        // Step 2: Filter anchor tags to only include valid HTTP/HTTPS URLs from the same host
+        val validSchemes = setOf("http", "https")
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href").trim()
             if (href.isBlank()) {
@@ -201,10 +211,14 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
             try {
                 val resolvedUri = baseUri.resolve(href)
+                val scheme = resolvedUri.scheme?.lowercase()
                 val resolvedHost = resolvedUri.host
 
-                // Keep only links with same host (null host means same-page reference like #fragment)
-                if (resolvedHost != null && !resolvedHost.equals(baseHost, ignoreCase = true)) {
+                // Keep only HTTP/HTTPS links with same host
+                if (scheme !in validSchemes) {
+                    logger.debug("Removing anchor with non-HTTP scheme '{}': {}", scheme, href)
+                    anchor.remove()
+                } else if (resolvedHost != null && !resolvedHost.equals(baseHost, ignoreCase = true)) {
                     anchor.remove()
                 }
             } catch (e: Exception) {
@@ -302,8 +316,11 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
             val href = anchor.attr("href").trim()
             if (href.isNotBlank()) {
                 try {
-                    val absoluteUrl = baseUri.resolve(href).toString()
-                    normalizedLinks.add(absoluteUrl)
+                    val resolvedUri = baseUri.resolve(href)
+                    // Double-check scheme is valid (should already be filtered, but be safe)
+                    if (resolvedUri.scheme?.lowercase() in validSchemes) {
+                        normalizedLinks.add(resolvedUri.toString())
+                    }
                 } catch (e: Exception) {
                     logger.debug("Failed to normalize link '{}': {}", href, e.message)
                 }
