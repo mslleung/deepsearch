@@ -54,6 +54,7 @@ val infrastructureModule = module {
     singleOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
     singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
     singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
+    singleOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {
@@ -61,6 +62,5 @@ val infrastructureModule = module {
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class
         scopedOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
-        scopedOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
     }
 }

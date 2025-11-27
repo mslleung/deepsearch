@@ -27,6 +27,7 @@ val applicationModule = module {
     singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
 
     // Singleton services needed by PeriodicIndexScheduler/PeriodicIndexJobRegistry
+    singleOf(::UrlAccessService) bind IUrlAccessService::class
     singleOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
     singleOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
@@ -57,7 +58,6 @@ val applicationModule = module {
         scopedOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
         scopedOf(::UserService) bind IUserService::class
         scopedOf(::SearchService) bind ISearchService::class
-        scopedOf(::UrlAccessService) bind IUrlAccessService::class
         scopedOf(::QuerySessionService) bind IQuerySessionService::class
     }
 }
