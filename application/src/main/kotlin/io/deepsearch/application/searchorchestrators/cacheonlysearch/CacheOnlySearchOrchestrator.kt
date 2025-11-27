@@ -14,6 +14,7 @@ import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import kotlinx.coroutines.withContext
@@ -74,7 +75,7 @@ class CacheOnlySearchOrchestrator(
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId
     ): QuerySessionId {
-        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
+        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId, SearchMode.CACHE_ONLY)
         val sessionId = session.id
 
         try {

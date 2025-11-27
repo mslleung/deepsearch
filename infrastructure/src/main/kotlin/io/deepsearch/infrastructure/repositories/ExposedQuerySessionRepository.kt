@@ -7,6 +7,7 @@ import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
+import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.infrastructure.database.ApiKeyTable
 import io.deepsearch.infrastructure.database.QuerySessionTable
@@ -39,6 +40,7 @@ class ExposedQuerySessionRepository(
             it[query] = session.query
             it[url] = session.url
             it[apiKeyId] = session.apiKeyId.value
+            it[searchMode] = session.searchMode.name
             it[finishReason] = session.finishReason?.name
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
@@ -66,6 +68,7 @@ class ExposedQuerySessionRepository(
             it[query] = session.query
             it[url] = session.url
             it[apiKeyId] = session.apiKeyId.value
+            it[searchMode] = session.searchMode.name
             it[finishReason] = session.finishReason?.name
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
@@ -146,6 +149,7 @@ class ExposedQuerySessionRepository(
             query = row[querySessionTable.query],
             url = row[querySessionTable.url],
             apiKeyId = ApiKeyId(row[querySessionTable.apiKeyId]),
+            searchMode = SearchMode.valueOf(row[querySessionTable.searchMode]),
             searchBudget = SearchBudget(
                 timeLimitMs = row[querySessionTable.budgetTimeLimitMs],
                 maxLinks = row[querySessionTable.budgetMaxLinks]

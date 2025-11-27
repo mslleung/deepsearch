@@ -6,6 +6,7 @@ import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
+import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.UrlAccess
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IQuerySessionRepository
@@ -29,8 +30,8 @@ data class QuerySessionDetail(
  * Business rules live inside the `QuerySession` entity.
  */
 interface IQuerySessionService {
-    /** Create a new query session in LINK_TRAVERSAL state. */
-    suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId): QuerySession
+    /** Create a new query session with the specified search mode. */
+    suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId, searchMode: SearchMode): QuerySession
 
     /**
      * Complete the session with a final answer.
@@ -108,16 +109,17 @@ class QuerySessionService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId): QuerySession {
+    override suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId, searchMode: SearchMode): QuerySession {
         val sessionId = QuerySessionId(UUID.randomUUID().toString())
-        val session = QuerySession(sessionId, query, url, apiKeyId)
+        val session = QuerySession(sessionId, query, url, apiKeyId, searchMode)
         val saved = querySessionRepository.save(session)
         logger.info(
-            "[{}] Session created: query='{}', url='{}', apiKeyId={}",
+            "[{}] Session created: query='{}', url='{}', apiKeyId={}, mode={}",
             sessionId.value,
             query,
             url,
-            apiKeyId.value
+            apiKeyId.value,
+            searchMode.name
         )
         return saved
     }

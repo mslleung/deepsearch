@@ -11,6 +11,7 @@ class QuerySessionTable(
     val query = text("query")
     val url = varchar("url", 2048)
     val apiKeyId = integer("api_key_id").references(apiKeyTable.id)
+    val searchMode = varchar("search_mode", 50).default("LIVE_CRAWLING")
     val finishReason = varchar("finish_reason", 50).nullable()
     val budgetTimeLimitMs = long("budget_time_limit_ms")
     val budgetMaxLinks = integer("budget_max_links")

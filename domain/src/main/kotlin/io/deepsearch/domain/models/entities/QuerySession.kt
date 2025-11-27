@@ -3,6 +3,7 @@ package io.deepsearch.domain.models.entities
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
+import io.deepsearch.domain.models.valueobjects.SearchMode
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.ExperimentalTime
@@ -21,6 +22,7 @@ class QuerySession(
     val query: String,
     val url: String,
     val apiKeyId: ApiKeyId,
+    val searchMode: SearchMode,
     var searchBudget: SearchBudget,
     var finishReason: FinishReason?,
     var answer: String?,
@@ -30,11 +32,12 @@ class QuerySession(
     var version: Long = 0
 ) {
 
-    constructor(id: QuerySessionId, query: String, url: String, apiKeyId: ApiKeyId) : this(
+    constructor(id: QuerySessionId, query: String, url: String, apiKeyId: ApiKeyId, searchMode: SearchMode) : this(
         id = id,
         query = query,
         url = url,
         apiKeyId = apiKeyId,
+        searchMode = searchMode,
         searchBudget = SearchBudget(),
         finishReason = null,
         answer = null,

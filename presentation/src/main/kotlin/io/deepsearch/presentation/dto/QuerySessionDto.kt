@@ -3,6 +3,7 @@ package io.deepsearch.presentation.dto
 import io.deepsearch.domain.models.entities.QuerySession
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
+import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.UrlAccess
 import kotlinx.serialization.Serializable
@@ -21,6 +22,7 @@ data class QuerySessionSummaryDto(
     val id: String,
     val query: String,
     val url: String,
+    val mode: String, // "live-crawling" or "cache-only"
     val status: String, // finishReason or "IN_PROGRESS"
     val createdAt: Long,
     val updatedAt: Long,
@@ -41,6 +43,7 @@ data class QuerySessionDetailDto(
     val id: String,
     val query: String,
     val url: String,
+    val mode: String, // "live-crawling" or "cache-only"
     val status: String,
     val answer: String?,
     val contentSources: List<ContentSourceDto>,
@@ -64,11 +67,16 @@ data class UrlAccessDto(
 @OptIn(ExperimentalTime::class)
 fun QuerySession.toSummaryDto(urlCount: Int): QuerySessionSummaryDto {
     val status = finishReason?.name ?: "IN_PROGRESS"
+    val modeString = when (searchMode) {
+        SearchMode.LIVE_CRAWLING -> "live-crawling"
+        SearchMode.CACHE_ONLY -> "cache-only"
+    }
     
     return QuerySessionSummaryDto(
         id = id.value,
         query = query,
         url = url,
+        mode = modeString,
         status = status,
         createdAt = createdAt.toEpochMilliseconds(),
         updatedAt = updatedAt.toEpochMilliseconds(),
@@ -80,6 +88,10 @@ fun QuerySession.toSummaryDto(urlCount: Int): QuerySessionSummaryDto {
 @OptIn(ExperimentalTime::class)
 fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>, cachedWebpages: List<io.deepsearch.domain.models.entities.WebpageMarkdown> = emptyList()): QuerySessionDetailDto {
     val status = finishReason?.name ?: "IN_PROGRESS"
+    val modeString = when (searchMode) {
+        SearchMode.LIVE_CRAWLING -> "live-crawling"
+        SearchMode.CACHE_ONLY -> "cache-only"
+    }
     
     // Build a map of URL to cached webpage for efficient lookup
     val urlToWebpage = cachedWebpages.associateBy { it.url }
@@ -115,6 +127,7 @@ fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>, cachedWebpages: List<
         id = id.value,
         query = query,
         url = url,
+        mode = modeString,
         status = status,
         answer = answer,
         contentSources = contentSources,

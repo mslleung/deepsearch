@@ -8,6 +8,7 @@ import io.deepsearch.domain.agents.GoogleTextSearchInput
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SearchMode
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -35,7 +36,7 @@ class GoogleSearchOrchestrator(
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
         
         // Create query session to get sessionId
-        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
+        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId, SearchMode.LIVE_CRAWLING)
         val sessionId = session.id
 
         // 1) Run text search to discover candidate sources

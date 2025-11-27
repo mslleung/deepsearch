@@ -30,6 +30,7 @@ import io.deepsearch.domain.exceptions.MarkdownConversionException
 import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.ext.chunkedWithTimeout
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
+import io.deepsearch.domain.models.valueobjects.SearchMode
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -101,7 +102,7 @@ class AgenticBrowserSearchOrchestrator(
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId
     ): QuerySessionId {
-        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId)
+        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId, SearchMode.LIVE_CRAWLING)
         val sessionId = session.id
         try {
             val budget = SearchBudget(
