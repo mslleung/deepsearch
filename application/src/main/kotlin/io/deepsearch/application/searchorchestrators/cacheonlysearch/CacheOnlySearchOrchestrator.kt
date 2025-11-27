@@ -109,7 +109,7 @@ class CacheOnlySearchOrchestrator(
                 logger.info("[{}] No cached content found for query", sessionId.value)
                 querySessionService.completeSessionLinksExhausted(
                     sessionId,
-                    "No cached content found for this website. Try using 'live-crawling' mode to index the website first."
+                    "No relevant webpages found in cache."
                 )
                 return sessionId
             }
