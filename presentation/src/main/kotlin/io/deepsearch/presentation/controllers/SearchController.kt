@@ -87,11 +87,23 @@ class SearchController(
                 }
             }
             
+            // Parse and validate mode
+            val searchMode = try {
+                request.toSearchMode()
+            } catch (e: IllegalArgumentException) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf("error" to e.message)
+                )
+                return
+            }
+            
             // Execute search and get session detail
             val sessionDetail = searchService.searchWebsite(
                 request.query, 
                 request.url, 
                 request.maxCacheAge,
+                searchMode,
                 apiKey.id!!,
                 apiKey.userId
             )

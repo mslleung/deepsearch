@@ -2,6 +2,8 @@ package io.deepsearch.application.config
 
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.AgenticBrowserSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.cacheonlysearch.CacheOnlySearchOrchestrator
+import io.deepsearch.application.searchorchestrators.cacheonlysearch.ICacheOnlySearchOrchestrator
 import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.application.services.ApiKeyService
@@ -100,6 +102,7 @@ private val applicationCommonTestModule = module {
     singleOf(::UserSubscriptionService) bind IUserSubscriptionService::class
     singleOf(::UsageService) bind IUsageService::class
     singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
+    singleOf(::CacheOnlySearchOrchestrator) bind ICacheOnlySearchOrchestrator::class
     singleOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
     singleOf(::UserService) bind IUserService::class
     singleOf(::SearchService) bind ISearchService::class
