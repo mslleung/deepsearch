@@ -137,4 +137,31 @@ class LinkRelevanceAnalysisAgentTest : KoinTest {
                 }
             }
         }
+
+    @Test
+    fun `finds relevant links on Sleekflow homepage with direct query`() =
+        runTest(testCoroutineDispatcher) {
+            browserRuntimePool.acquireRuntime { runtime ->
+                // Given
+                val url = "https://sleekflow.io/"
+                val query = "pricing information"
+
+                val browser = runtime.createBrowser()
+                val context = browser.createContext()
+                val page = context.newPage()
+
+                page.navigate(url)
+                val html = page.getFullHtml()
+
+                // When
+                val output = agent.generate(LinkRelevanceAnalysisInput(html, query, url))
+
+                // Then
+                output.links.forEach { link ->
+                    assertEquals(LinkSource.LINK_RELEVANCE, link.source)
+                    assertTrue(link.url.isNotBlank(), "URL should not be blank")
+                    assertTrue(link.reason.isNotBlank(), "Reason should not be blank")
+                }
+            }
+        }
 }

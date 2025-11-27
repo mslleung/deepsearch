@@ -34,11 +34,11 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
     private val relevantLinkSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("A relevant link with URL and reasoning")
+        .description("A relevant link with path and reasoning")
         .properties(
             mapOf(
                 "url" to Schema.builder().type("STRING")
-                    .description("The absolute URL of the relevant link")
+                    .description("The relative path of the relevant link (exactly as shown in the source)")
                     .build(),
                 "reason" to Schema.builder().type("STRING")
                     .description("Brief explanation of why this link is relevant to the query")
@@ -75,21 +75,25 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     private val systemInstruction = """
         You are a link relevance analysis agent.
         
-        Given an input of extracted text from a webpage with <a> links.
+        Given an input of extracted text from a webpage with <a> links (using relative paths).
          
         Your task is to:
         1. Identify all <a href> links in the provided text
         2. Using the surrounding context, analyze which links are relevant to the user's query
         3. Return all relevant links with reasons why they are relevant
-        4. The links must be unique and exactly the same as given in the source
+        4. The links must be unique and exactly the same as given in the source (use the relative path exactly as shown)
         
         Focus on links that would help answer the user's query or provide more detailed information.
         
-        Return your response in JSON format:
+        Return your response in JSON format, example:
         {
           "links": [
             {
-              "url": "https://example.com/page",
+              "url": "/",
+              "reason": "The home page of the website..."
+            },
+            {
+              "url": "/docs/page",
               "reason": "This page contains information about..."
             }
           ]
@@ -101,10 +105,10 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     override suspend fun generate(input: LinkRelevanceAnalysisInput): LinkRelevanceAnalysisOutput {
         logger.debug("Analyzing link relevance for query: '{}'", input.query)
 
-        val (cleanedHtml, extractedLinks) = cleanHtml(input.html, input.url)
-        logger.debug("Extracted {} unique links from cleaned HTML", extractedLinks.size)
+        val (cleanedHtml, validRelativePaths) = cleanHtml(input.html, input.url)
+        logger.debug("Extracted {} unique links from cleaned HTML", validRelativePaths.size)
 
-        if (extractedLinks.isEmpty()) {
+        if (validRelativePaths.isEmpty()) {
             logger.debug("No link found in cleaned HTML")
 
             return LinkRelevanceAnalysisOutput(
@@ -156,11 +160,14 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                 result.text() ?: throw RuntimeException("No text response from model")
             }
 
-            // Validate that all returned links exist in the extracted links to prevent hallucinations
+            // Validate and resolve LLM-returned relative paths to absolute URLs
+            val baseUri = input.url.toSafeUri()
             val validatedLinks = response.links.distinctBy { it.url }.mapNotNull { linkJson ->
-                if (linkJson.url in extractedLinks) {
+                if (linkJson.url in validRelativePaths) {
+                    // Reconstruct absolute URL from relative path + base
+                    val absoluteUrl = baseUri.resolve(linkJson.url).toString()
                     WebpageLink(
-                        url = linkJson.url,
+                        url = absoluteUrl,
                         source = LinkSource.LINK_RELEVANCE,
                         reason = linkJson.reason
                     )
@@ -193,7 +200,8 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
      * Cleans HTML by removing non-content elements that don't contribute to link analysis.
      * Preserves anchor tags and their surrounding context for better link relevance analysis.
      * Filters anchor tags to only include those from the same host as the url parameter.
-     * @return A Pair of (cleaned HTML text, set of extracted normalized links)
+     * Converts hrefs to relative paths to save tokens.
+     * @return A Pair of (cleaned HTML text, set of valid relative paths)
      */
     private fun cleanHtml(rawHtml: String, url: String): Pair<String, Set<String>> {
         val doc: Document = Jsoup.parse(rawHtml)
@@ -206,11 +214,16 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     "head, title, base"
         ).remove()
 
-        // Step 2: Filter anchor tags to only include valid HTTP/HTTPS URLs from the same host
+        // Step 2: Filter anchor tags and convert to relative paths
         val validSchemes = setOf("http", "https")
+        val validRelativePaths = mutableSetOf<String>()
+        
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href").trim()
-            if (href.isBlank()) {
+            
+            // Remove anchors with blank href, fragment-only links (e.g., "#section"), 
+            // or no meaningful text content
+            if (href.isBlank() || href.startsWith("#")) {
                 anchor.remove()
                 return@forEach
             }
@@ -226,6 +239,16 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     anchor.remove()
                 } else if (resolvedHost != null && !resolvedHost.equals(baseHost, ignoreCase = true)) {
                     anchor.remove()
+                } else {
+                    // Convert to relative path (path + query, stripping fragment)
+                    val relativePath = buildString {
+                        append(resolvedUri.rawPath ?: "/")
+                        resolvedUri.rawQuery?.let { append("?").append(it) }
+                    }
+                    
+                    // Update href to use relative path
+                    anchor.attr("href", relativePath)
+                    validRelativePaths.add(relativePath)
                 }
             } catch (e: Exception) {
                 // Invalid href, remove it
@@ -235,22 +258,22 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         }
         logger.debug("Filtered anchor tags to host: {}", baseHost)
 
-        // Step 3: Remove duplicate links (keep only first occurrence of each unique href)
-        val seenHrefs = mutableSetOf<String>()
+        // Step 3: Remove duplicate links (keep only first occurrence of each unique relative path)
+        val seenPaths = mutableSetOf<String>()
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href")
             if (href.isNotBlank()) {
-                if (href in seenHrefs) {
+                if (href in seenPaths) {
                     anchor.remove()
                 } else {
-                    seenHrefs.add(href)
+                    seenPaths.add(href)
                 }
             }
         }
-        logger.debug("Removed duplicate links, kept {} unique hrefs", seenHrefs.size)
+        logger.debug("Removed duplicate links, kept {} unique paths", seenPaths.size)
 
         // Step 4: Remove form elements (not part of navigational content)
-        doc.select("form, input, button, select, textarea").remove()
+        doc.select("form, input, select, textarea").remove()
 
         // Step 5: Remove comments and processing instructions
         doc.select("*").forEach { element ->
@@ -316,27 +339,10 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
             }
         }
 
-        // Step 9: Extract and normalize all links before converting to text
-        val normalizedLinks = mutableSetOf<String>()
-        doc.select("a[href]").forEach { anchor ->
-            val href = anchor.attr("href").trim()
-            if (href.isNotBlank()) {
-                try {
-                    val resolvedUri = baseUri.resolve(href)
-                    // Double-check scheme is valid (should already be filtered, but be safe)
-                    if (resolvedUri.scheme?.lowercase() in validSchemes) {
-                        normalizedLinks.add(resolvedUri.toString())
-                    }
-                } catch (e: Exception) {
-                    logger.debug("Failed to normalize link '{}': {}", href, e.message)
-                }
-            }
-        }
-
-        // Step 10: Extract text content while preserving <a> tags
+        // Step 9: Extract text content while preserving <a> tags with relative paths
         val cleanedHtml = extractTextWithLinks(doc.body())
         logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
-        return Pair(cleanedHtml, normalizedLinks)
+        return Pair(cleanedHtml, validRelativePaths)
     }
 
     /**
