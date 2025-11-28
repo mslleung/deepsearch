@@ -2,9 +2,15 @@ package io.deepsearch.application.searchorchestrators.googlesearch
 
 import io.deepsearch.application.config.applicationTestModule
 import io.deepsearch.application.services.IQuerySessionService
+import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -27,6 +33,22 @@ class GoogleSearchOrchestratorTest : KoinTest {
     private val googleSearchOrchestrator by inject<IGoogleSearchOrchestrator>()
     private val querySessionService by inject<IQuerySessionService>()
 
+    /**
+     * Helper to collect the flow until completion and return the session ID.
+     */
+    private suspend fun Flow<SearchEvent>.collectUntilComplete(): QuerySessionId {
+        var sessionId: QuerySessionId? = null
+        this
+            .onEach { event ->
+                if (event is SearchEvent.SessionCreated) {
+                    sessionId = QuerySessionId(event.sessionId)
+                }
+            }
+            .filterIsInstance<SearchEvent.SessionCompleted>()
+            .first()
+        return sessionId!!
+    }
+
     @Test
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
         // Given
@@ -36,7 +58,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -55,7 +77,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -74,7 +96,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -93,7 +115,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -112,7 +134,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -131,7 +153,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = googleSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -140,6 +162,3 @@ class GoogleSearchOrchestratorTest : KoinTest {
         assertTrue(session.answer?.isNotBlank() == true, "Search result content should not be blank for non-English query")
     }
 }
-
-
-

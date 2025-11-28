@@ -2,9 +2,15 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.config.applicationTestModule
 import io.deepsearch.application.services.IQuerySessionService
+import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -27,6 +33,22 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
     private val agenticBrowserSearchOrchestrator by inject<IAgenticBrowserSearchOrchestrator>()
     private val querySessionService by inject<IQuerySessionService>()
 
+    /**
+     * Helper to collect the flow until completion and return the session ID.
+     */
+    private suspend fun Flow<SearchEvent>.collectUntilComplete(): QuerySessionId {
+        var sessionId: QuerySessionId? = null
+        this
+            .onEach { event ->
+                if (event is SearchEvent.SessionCreated) {
+                    sessionId = QuerySessionId(event.sessionId)
+                }
+            }
+            .filterIsInstance<SearchEvent.SessionCompleted>()
+            .first()
+        return sessionId!!
+    }
+
     @Test
     fun `test simple sample query on OT&P`() = runTest(testCoroutineDispatcher) {
         // Given
@@ -36,7 +58,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -54,7 +76,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -72,7 +94,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -91,7 +113,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -110,7 +132,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -129,7 +151,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -148,7 +170,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -167,7 +189,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         )
 
         // When
-        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId)
+        val sessionId = agenticBrowserSearchOrchestrator.execute(searchQuery, apiKeyId = apiKeyId).collectUntilComplete()
         val session = querySessionService.getSession(sessionId)
 
         // Then
@@ -176,6 +198,3 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         assertTrue(session.answer?.isNotBlank() == true, "Search result content should not be blank for non-English query")
     }
 }
-
-
-

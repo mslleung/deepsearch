@@ -1,59 +1,74 @@
 package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
-import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
+import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
+import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
-import io.deepsearch.domain.agents.AnswerSynthesisInput
-import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
+import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
 import io.deepsearch.domain.agents.StreamingSourceShortlistInput
-import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
-import io.deepsearch.domain.models.valueobjects.ApiKeyId
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
-import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.models.valueobjects.SearchBudget
-import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
-import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
-import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
-import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.MarkdownConversionException
 import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.ext.chunkedWithTimeout
+import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
+import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.SearchMode
-import kotlin.time.Clock
-import kotlin.time.ExperimentalTime
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.CompletableDeferred
+import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.ShortlistedSource
+import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
+import io.deepsearch.domain.models.valueobjects.WebpageLink
+import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.cancellable
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.flatMapMerge
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.runningFold
+import kotlinx.coroutines.flow.single
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import kotlin.coroutines.cancellation.CancellationException
-import kotlin.system.measureTimeMillis
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator
 
 /**
  * Orchestrates agentic search using a reactive flow-based approach.
- * Discovers links via Google search and on-page analysis, then processes them
- * concurrently using flatMapMerge for maximum throughput. Markdowns are batched
- * and fed to answer generation, which terminates early when complete.
+ * Returns a Flow<SearchEvent> that emits events as the search progresses.
  */
 @OptIn(ExperimentalCoroutinesApi::class, ExperimentalTime::class)
 class AgenticBrowserSearchOrchestrator(
@@ -76,160 +91,134 @@ class AgenticBrowserSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(
+    override fun execute(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId
-    ): QuerySessionId =
-        withContext(dispatchers.io) {
-            val sessionId: QuerySessionId
-            val executionTime = measureTimeMillis {
-                sessionId = executeSearchForQuery(searchQuery, maxCacheAge, apiKeyId)
-            }
-
-            logger.info("Execute completed in {} ms for query: {}", executionTime, searchQuery.query)
-            sessionId
-        }
-
-    /**
-     * Execute the full search workflow for a single query using reactive flow composition.
-     * Markdowns are extracted as links are discovered, batched, and fed to answer generation.
-     * Flow cancellation propagates upstream when answer is complete or budget exceeded.
-     * Returns the session ID for the completed search.
-     */
-    private suspend fun executeSearchForQuery(
-        searchQuery: SearchQuery,
-        maxCacheAge: Long?,
-        apiKeyId: ApiKeyId
-    ): QuerySessionId {
-        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId, SearchMode.LIVE_CRAWLING)
+    ): Flow<SearchEvent> = channelFlow {
+        val session = querySessionService.createSession(
+            searchQuery.query,
+            searchQuery.url,
+            apiKeyId,
+            SearchMode.LIVE_CRAWLING
+        )
         val sessionId = session.id
-        try {
-            val budget = SearchBudget(
-                timeLimitMs = 300 * 1000L,
-                maxLinks = 100
+
+        // Emit session created
+        send(
+            SearchEvent.SessionCreated(
+                sessionId = sessionId.value,
+                query = searchQuery.query,
+                url = searchQuery.url,
+                mode = "live-crawling"
             )
+        )
+
+        try {
+            val budget = SearchBudget(timeLimitMs = 300 * 1000L, maxLinks = 100)
             logger.debug("[{}] Executing search for query: {}", sessionId.value, searchQuery.query)
 
-            // Use CompletableDeferred to capture completion immediately without waiting for flow cancellation
-            val completionDeferred = CompletableDeferred<Unit>()
-
-            // for deduping links
             val seenUrls = ConcurrentHashMap.newKeySet<String>()
 
-            // Channel for discovered links
+            // Channels for discovered links
             val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val serperSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val hybridSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
-            // Launch flow processing in background
-            val flowJob = applicationScope.scope.launch {
-                try {
-                    var answerAccumulator = AnswerAccumulator()
+            // Channel for events to emit
+            val eventChannel = Channel<SearchEvent>(Channel.UNLIMITED)
 
+            // Launch flow processing
+            val flowJob = applicationScope.scope.launch {
+                var answerAccumulator = AnswerAccumulator()
+                try {
                     merge(
-                        processInitialLinkFlow(
-                            sessionId,
-                            searchQuery,
-                            seenUrls,
-                            initialDiscoveredLinksChannel,
-                            maxCacheAge
-                        ),
-                        processSerperSearchLinksFlow(
-                            sessionId,
-                            searchQuery,
-                            seenUrls,
-                            budget,
-                            serperSearchDiscoveredLinksChannel,
-                            maxCacheAge
-                        ),
-                        processHybridSearchFlow(
-                            sessionId,
-                            searchQuery,
-                            seenUrls,
-                            maxCacheAge,
-                            hybridSearchDiscoveredLinksChannel
-                        ),
+                        processInitialLinkFlow(sessionId, searchQuery, seenUrls, initialDiscoveredLinksChannel, maxCacheAge, eventChannel),
+                        processSerperSearchLinksFlow(sessionId, searchQuery, seenUrls, budget, serperSearchDiscoveredLinksChannel, maxCacheAge, eventChannel),
+                        processHybridSearchFlow(sessionId, searchQuery, seenUrls, maxCacheAge, hybridSearchDiscoveredLinksChannel, eventChannel),
                         processRecursiveDiscoveredLinksFlow(
-                            sessionId,
-                            searchQuery,
-                            seenUrls,
-                            budget,
-                            initialDiscoveredLinksChannel,
-                            serperSearchDiscoveredLinksChannel,
-                            hybridSearchDiscoveredLinksChannel,
-                            recursiveDiscoveredLinksChannel,
-                            maxCacheAge
+                            sessionId, searchQuery, seenUrls, budget,
+                            initialDiscoveredLinksChannel, serperSearchDiscoveredLinksChannel,
+                            hybridSearchDiscoveredLinksChannel, recursiveDiscoveredLinksChannel,
+                            maxCacheAge, eventChannel
                         )
                     )
                         .cancellable()
                         .filter { it.markdown.isNotBlank() }
                         .chunkedWithTimeout(chunkSize = 5, timeoutMs = 1000)
                         .runningFold(AnswerAccumulator()) { state, markdownResults ->
-                            aggregateMarkdownResultIntoAnswer(
-                                sessionId,
-                                searchQuery,
-                                state,
-                                markdownResults
-                            )
+                            aggregateMarkdownResultIntoAnswer(sessionId, searchQuery, state, markdownResults, eventChannel)
                         }
                         .onEach { answerAccumulator = it }
                         .filter { answerAccumulator -> answerAccumulator.isComplete }
                         .take(1)
                         .onEach { completedAnswerAccumulator -> // should only be one emission
-                            finishQuerySession(
+                            val completionEvent = finishQuerySession(
                                 sessionId,
                                 searchQuery,
                                 completedAnswerAccumulator,
                                 budget,
-                                completionDeferred
                             )
+                            eventChannel.send(completionEvent)
                         }
                         .onCompletion { // answer did not complete, but the upstream flow completed, return our incomplete answer
                             if (answerAccumulator.isComplete) {
                                 // already called the early exit in the onEach above
                                 return@onCompletion
                             }
-                            finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, completionDeferred)
+                            val completionEvent = finishQuerySession(sessionId, searchQuery, answerAccumulator, budget)
+                            eventChannel.send(completionEvent)
                         }
                         .single()
                 } catch (e: CancellationException) {
-                    logger.debug("[{}] Flow cancelled after result obtained", sessionId.value)
+                    logger.debug("[{}] Flow cancelled", sessionId.value)
                 } catch (e: Exception) {
-                    if (!completionDeferred.isCompleted) {
-                        completionDeferred.completeExceptionally(e)
-                    }
+                    logger.error("[{}] Flow error: {}", sessionId.value, e.message, e)
+                    eventChannel.send(
+                        SearchEvent.SessionError(
+                            sessionId = sessionId.value,
+                            errorType = e::class.simpleName ?: "Unknown",
+                            errorMessage = e.message ?: "Unknown error"
+                        )
+                    )
+                } finally {
+                    eventChannel.close()
                 }
             }
 
-            // Wait for completion with timeout
+            // Forward events until channel closes
             withTimeout(budget.timeLimitMs + 60000) {
-                completionDeferred.await()
+                for (event in eventChannel) {
+                    send(event)
+                }
             }
 
-            // Cancel the flow job asynchronously
             flowJob.cancel()
 
-            return sessionId
         } catch (e: Exception) {
-            logger.error("[{}] Error in executeSearchForQuery: {}", sessionId.value, e.message, e)
+            logger.error("[{}] Error in execute: {}", sessionId.value, e.message, e)
             querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
-            throw e
+            send(
+                SearchEvent.SessionError(
+                    sessionId = sessionId.value,
+                    errorType = e::class.simpleName ?: "Unknown",
+                    errorMessage = e.message ?: "Unknown error"
+                )
+            )
         }
     }
 
     /**
      * Process the initial user-provided URL.
-     * Network and markdown conversion errors are NOT caught - they fail the entire search.
      */
-    @OptIn(ExperimentalCoroutinesApi::class)
     private fun processInitialLinkFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        maxCacheAge: Long?
+        maxCacheAge: Long?,
+        eventChannel: Channel<SearchEvent>
     ): Flow<MarkdownSource> {
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
@@ -237,65 +226,62 @@ class AgenticBrowserSearchOrchestrator(
 
                 urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId)
                     .filter { event ->
-                        val normalizedUrl = normalizeUrlService.normalize(event.url) ?: event.url
-
-                        if (seenUrls.contains(normalizedUrl)) {
-                            logger.debug(
-                                "processInitialLinkFlow [{}] Skipping already seen URL: {}",
-                                sessionId.value,
-                                normalizedUrl
-                            )
-                            false
-                        } else {
-                            seenUrls.add(normalizedUrl)
-                            true
-                        }
+                        val eventUrl = normalizeUrlService.normalize(event.url) ?: event.url
+                        if (seenUrls.contains(eventUrl)) false
+                        else { seenUrls.add(eventUrl); true }
                     }
                     .onEach { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                logger.debug(
-                                    "[{}] Initial URL discovered {} links",
-                                    sessionId.value,
-                                    event.discoveredLinks.size
-                                )
-                                event.discoveredLinks.forEach { link ->
-                                    initialDiscoveredLinksChannel.send(link)
-                                }
+                                event.discoveredLinks.forEach { initialDiscoveredLinksChannel.send(it) }
                                 initialDiscoveredLinksChannel.close()
                             }
-
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                val urlAccess = if (event.wasCached) {
-                                    CachedUrlAccess(url = event.url, timestamp = Clock.System.now())
-                                } else {
-                                    UncachedUrlAccess(url = event.url, timestamp = Clock.System.now())
-                                }
+                                val urlAccess = if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now())
+                                else UncachedUrlAccess(event.url, Clock.System.now())
                                 urlAccessService.recordUrlAccess(sessionId, urlAccess)
 
-                                logger.debug(
-                                    "[{}] Initial URL markdown extracted: {} chars (cached: {})",
-                                    sessionId.value,
-                                    event.markdown.length,
-                                    event.wasCached
+                                eventChannel.send(
+                                    SearchEvent.UrlProcessed(
+                                        sessionId = sessionId.value,
+                                        url = event.url,
+                                        accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                        title = event.title,
+                                        description = event.description,
+                                        markdownLength = event.markdown.length
+                                    )
                                 )
                             }
                         }
                     }
                     .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                    .map { event -> MarkdownSource(event.url, event.title, event.description, event.markdown) }
-                    .onCompletion {
-                        logger.info("[{}] Initial link processing complete", sessionId.value)
-                        initialDiscoveredLinksChannel.close()
-                    }
+                    .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
+                    .onCompletion { initialDiscoveredLinksChannel.close() }
             }
     }
 
     /**
-     * Common processing logic for discovered links with budget checking and error handling.
-     * Network and markdown conversion errors are caught and recorded, allowing other links to continue.
+     * Process discovered links from SERP search.
      */
-    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun processSerperSearchLinksFlow(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        budget: SearchBudget,
+        discoveredLinksChannel: Channel<WebpageLink>,
+        maxCacheAge: Long?,
+        eventChannel: Channel<SearchEvent>
+    ): Flow<MarkdownSource> {
+        return processDiscoveredLinksFlow(
+            sessionId, searchQuery, seenUrls, budget,
+            createSerperSearchLinkDiscoveryFlow(sessionId, searchQuery),
+            discoveredLinksChannel, "processSerperSearchLinksFlow", maxCacheAge, eventChannel
+        )
+    }
+
+    /**
+     * Common processing logic for discovered links.
+     */
     private fun processDiscoveredLinksFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
@@ -304,149 +290,60 @@ class AgenticBrowserSearchOrchestrator(
         linkSource: Flow<WebpageLink>,
         discoveredLinksChannel: Channel<WebpageLink>,
         flowName: String,
-        maxCacheAge: Long?
+        maxCacheAge: Long?,
+        eventChannel: Channel<SearchEvent>
     ): Flow<MarkdownSource> {
         return linkSource
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-
-                if (seenUrls.contains(normalizedUrl)) {
-                    logger.debug(
-                        "{} [{}] Skipping already seen URL: {}",
-                        flowName,
-                        sessionId.value,
-                        normalizedUrl
-                    )
-                    false
-                } else {
-                    seenUrls.add(normalizedUrl)
-                    true
-                }
+                if (seenUrls.contains(normalizedUrl)) false
+                else { seenUrls.add(normalizedUrl); true }
             }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                    urlContentProcessingService.processUrlAsFlow(
-                        normalizedUrl,
-                        searchQuery.query,
-                        maxCacheAge,
-                        sessionId
-                    )
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId)
                         .catch { e ->
                             when (e) {
-                                is CancellationException -> {
-                                    throw e
-                                }
-
+                                is CancellationException -> throw e
                                 is NetworkConnectionException, is MarkdownConversionException -> {
-                                    val failedAccess = FailedUrlAccess(
-                                        url = e.url,
-                                        timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!,
-                                        message = e.reason
-                                    )
-                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
-
-                                    logger.warn(
-                                        "{} [{}] Failed to process discovered link {}: {} (type: {})",
-                                        flowName,
-                                        sessionId.value,
-                                        e.url,
-                                        e.reason,
-                                        e::class.simpleName
-                                    )
+                                    urlAccessService.recordUrlAccess(sessionId, FailedUrlAccess(
+                                        url = e.url, timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!, message = e.reason
+                                    ))
+                                    eventChannel.send(SearchEvent.UrlProcessed(sessionId.value, e.url, "FAILED", errorMessage = e.reason))
                                 }
-
-                                else -> {
-                                    logger.error(
-                                        "{} [{}] Unexpected error processing discovered link {}: {}",
-                                        flowName,
-                                        sessionId.value,
-                                        normalizedUrl,
-                                        e.message,
-                                        e
-                                    )
-                                    throw e
-                                }
+                                else -> throw e
                             }
                         }
                         .onEach { event ->
                             when (event) {
                                 is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    logger.debug(
-                                        "{} [{}] Links discovered for {}: {} links",
-                                        flowName,
-                                        sessionId.value,
-                                        event.url,
-                                        event.discoveredLinks.size
-                                    )
-                                    event.discoveredLinks.forEach { discoveredLink ->
-                                        discoveredLinksChannel.send(discoveredLink)
-                                    }
+                                    event.discoveredLinks.forEach { discoveredLinksChannel.send(it) }
                                 }
-
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(url = event.url, timestamp = Clock.System.now())
-                                    } else {
-                                        UncachedUrlAccess(url = event.url, timestamp = Clock.System.now())
-                                    }
+                                    val urlAccess = if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now())
+                                    else UncachedUrlAccess(event.url, Clock.System.now())
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
-
-                                    logger.debug(
-                                        "{} [{}] Markdown extracted for {}: {} chars (cached: {})",
-                                        flowName,
-                                        sessionId.value,
-                                        event.url,
-                                        event.markdown.length,
-                                        event.wasCached
+                                    eventChannel.send(
+                                        SearchEvent.UrlProcessed(
+                                            sessionId = sessionId.value,
+                                            url = event.url,
+                                            accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                            title = event.title,
+                                            description = event.description,
+                                            markdownLength = event.markdown.length
+                                        )
                                     )
                                 }
                             }
                         }
                         .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                        .map { event -> MarkdownSource(event.url, event.title, event.description, event.markdown) }
+                        .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
                         .collect { emit(it) }
                 }
             }
-            .onCompletion { cause ->
-                if (cause != null) {
-                    logger.info(
-                        "{} [{}] Discovered link processing cancelled: {}",
-                        flowName,
-                        sessionId.value,
-                        cause.message
-                    )
-                } else {
-                    logger.info("{} [{}] Discovered link processing complete", flowName, sessionId.value)
-                }
-                discoveredLinksChannel.close()
-            }
-    }
-
-    /**
-     * Process discovered links from SERP search.
-     * Network and markdown conversion errors are caught and recorded, allowing other links to continue.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun processSerperSearchLinksFlow(
-        sessionId: QuerySessionId,
-        searchQuery: SearchQuery,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        budget: SearchBudget,
-        serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
-        maxCacheAge: Long?
-    ): Flow<MarkdownSource> {
-        return processDiscoveredLinksFlow(
-            sessionId = sessionId,
-            searchQuery = searchQuery,
-            seenUrls = seenUrls,
-            budget = budget,
-            linkSource = createSerperSearchLinkDiscoveryFlow(sessionId, searchQuery),
-            discoveredLinksChannel = serperSearchDiscoveredLinksChannel,
-            flowName = "processSerperSearchLinksFlow",
-            maxCacheAge = maxCacheAge
-        )
+            .onCompletion { discoveredLinksChannel.close() }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -455,395 +352,207 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         budget: SearchBudget,
-        initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        serperSearchDiscoveredLinksChannel: Channel<WebpageLink>,
-        hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>,
-        recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
-        maxCacheAge: Long?
+        initialChannel: Channel<WebpageLink>,
+        serperChannel: Channel<WebpageLink>,
+        hybridChannel: Channel<WebpageLink>,
+        recursiveChannel: Channel<WebpageLink>,
+        maxCacheAge: Long?,
+        eventChannel: Channel<SearchEvent>
     ): Flow<MarkdownSource> {
-        val inFlightLinkDiscoveryProcessing = ConcurrentHashMap.newKeySet<String>()
+        val inFlight = ConcurrentHashMap.newKeySet<String>()
 
         return merge(
-            merge(
-                initialDiscoveredLinksChannel.receiveAsFlow(),
-                serperSearchDiscoveredLinksChannel.receiveAsFlow(),
-                hybridSearchDiscoveredLinksChannel.receiveAsFlow(),
-            )
-                .onCompletion {
-                    // in case none of them emit any discovered links, we will do a check to close the recursive channel properly
-                    if (inFlightLinkDiscoveryProcessing.isEmpty()) {
-                        recursiveDiscoveredLinksChannel.close()
-                    }
-                },
-            recursiveDiscoveredLinksChannel.receiveAsFlow()
+            merge(initialChannel.receiveAsFlow(), serperChannel.receiveAsFlow(), hybridChannel.receiveAsFlow())
+                .onCompletion { if (inFlight.isEmpty()) recursiveChannel.close() },
+            recursiveChannel.receiveAsFlow()
         )
-            .takeWhile {
-                !querySessionService.isBudgetExceeded(
-                    sessionId,
-                    budget
-                )
-            }
+            .takeWhile { !querySessionService.isBudgetExceeded(sessionId, budget) }
             .filter { link ->
-                val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-
-                if (seenUrls.contains(normalizedUrl)) {
-                    logger.debug(
-                        "processRecursiveDiscoveredLinksFlow [{}] Skipping already seen URL: {}",
-                        sessionId.value,
-                        normalizedUrl
-                    )
-                    false
-                } else {
-                    seenUrls.add(normalizedUrl)
-                    true
-                }
+                val url = normalizeUrlService.normalize(link.url) ?: link.url
+                if (seenUrls.contains(url)) false else { seenUrls.add(url); true }
             }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
-                    val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                    inFlightLinkDiscoveryProcessing.add(normalizedUrl)
-                    urlContentProcessingService.processUrlAsFlow(
-                        normalizedUrl,
-                        searchQuery.query,
-                        maxCacheAge,
-                        sessionId
-                    )
+                    val url = normalizeUrlService.normalize(link.url) ?: link.url
+                    inFlight.add(url)
+                    urlContentProcessingService.processUrlAsFlow(url, searchQuery.query, maxCacheAge, sessionId)
                         .catch { e ->
                             when (e) {
-                                is CancellationException -> {
-                                    throw e
-                                }
-
+                                is CancellationException -> throw e
                                 is NetworkConnectionException, is MarkdownConversionException -> {
-                                    val failedAccess = FailedUrlAccess(
-                                        url = e.url,
-                                        timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!,
-                                        message = e.reason
-                                    )
-                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                    inFlightLinkDiscoveryProcessing.remove(e.url)
-                                    if (initialDiscoveredLinksChannel.isClosedForSend &&
-                                        serperSearchDiscoveredLinksChannel.isClosedForSend &&
-                                        hybridSearchDiscoveredLinksChannel.isClosedForSend &&
-                                        inFlightLinkDiscoveryProcessing.isEmpty()
-                                    ) {
-                                        recursiveDiscoveredLinksChannel.close()
+                                    urlAccessService.recordUrlAccess(sessionId, FailedUrlAccess(
+                                        url = e.url, timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!, message = e.reason
+                                    ))
+                                    inFlight.remove(e.url)
+                                    eventChannel.send(SearchEvent.UrlProcessed(sessionId.value, e.url, "FAILED", errorMessage = e.reason))
+                                    if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && inFlight.isEmpty()) {
+                                        recursiveChannel.close()
                                     }
-
-                                    logger.warn(
-                                        "processRecursiveDiscoveredLinksFlow [{}] Failed to process discovered link {}: {} (type: {})",
-                                        sessionId.value,
-                                        e.url,
-                                        e.reason,
-                                        e::class.simpleName
-                                    )
                                 }
-
-                                else -> {
-                                    logger.error(
-                                        "processRecursiveDiscoveredLinksFlow [{}] Unexpected error processing discovered link {}: {}",
-                                        sessionId.value,
-                                        normalizedUrl,
-                                        e.message,
-                                        e
-                                    )
-                                    throw e
-                                }
+                                else -> throw e
                             }
                         }
                         .onEach { event ->
                             when (event) {
                                 is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    logger.debug(
-                                        "processRecursiveDiscoveredLinksFlow [{}] Links discovered for {}: {} links",
-                                        sessionId.value,
-                                        event.url,
-                                        event.discoveredLinks.size
-                                    )
-                                    inFlightLinkDiscoveryProcessing.remove(event.url)
-
-                                    val newDiscoveredLinks = event.discoveredLinks.filter {
-                                        val normalizedDiscoveredLink = normalizeUrlService.normalize(it.url) ?: it.url
-                                        !seenUrls.contains(normalizedDiscoveredLink)
-                                    }
-                                    newDiscoveredLinks.forEach { discoveredLink ->
-                                        recursiveDiscoveredLinksChannel.send(discoveredLink)
-                                    }
-                                    logger.debug(
-                                        "processRecursiveDiscoveredLinksFlow in-flight links count: {}",
-                                        inFlightLinkDiscoveryProcessing.count()
-                                    )
-                                    if (initialDiscoveredLinksChannel.isClosedForSend &&
-                                        serperSearchDiscoveredLinksChannel.isClosedForSend &&
-                                        hybridSearchDiscoveredLinksChannel.isClosedForSend &&
-                                        // if there are no in-flight links being processed (where we may discover more links)
-                                        // and we are not emitting any new links
-                                        // we can be sure that the recursive flow has stalled, so we can close it
-                                        inFlightLinkDiscoveryProcessing.isEmpty() &&
-                                        newDiscoveredLinks.isEmpty()
-                                    ) {
-                                        recursiveDiscoveredLinksChannel.close()
+                                    inFlight.remove(event.url)
+                                    val newLinks = event.discoveredLinks.filter { !seenUrls.contains(normalizeUrlService.normalize(it.url) ?: it.url) }
+                                    newLinks.forEach { recursiveChannel.send(it) }
+                                    if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && inFlight.isEmpty() && newLinks.isEmpty()) {
+                                        recursiveChannel.close()
                                     }
                                 }
-
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(url = event.url, timestamp = Clock.System.now())
-                                    } else {
-                                        UncachedUrlAccess(url = event.url, timestamp = Clock.System.now())
-                                    }
-                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
-
-                                    logger.debug(
-                                        "processRecursiveDiscoveredLinksFlow [{}] Markdown extracted for {}: {} chars (cached: {})",
-                                        sessionId.value,
-                                        event.url,
-                                        event.markdown.length,
-                                        event.wasCached
+                                    val access = if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now()) else UncachedUrlAccess(event.url, Clock.System.now())
+                                    urlAccessService.recordUrlAccess(sessionId, access)
+                                    eventChannel.send(
+                                        SearchEvent.UrlProcessed(
+                                            sessionId = sessionId.value,
+                                            url = event.url,
+                                            accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                            title = event.title,
+                                            description = event.description,
+                                            markdownLength = event.markdown.length
+                                        )
                                     )
                                 }
                             }
                         }
                         .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                        .map { event -> MarkdownSource(event.url, event.title, event.description, event.markdown) }
+                        .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
                         .collect { emit(it) }
                 }
             }
-            .onCompletion { cause ->
-                if (cause != null) {
-                    logger.info(
-                        "processRecursiveDiscoveredLinksFlow [{}] Discovered link processing cancelled: {}",
-                        sessionId.value,
-                        cause.message
-                    )
-                } else {
-                    logger.info(
-                        "processRecursiveDiscoveredLinksFlow [{}] Discovered link processing complete",
-                        sessionId.value
-                    )
-                }
-            }
     }
 
-    /**
-     * State accumulated during answer generation from markdown batches.
-     */
-    private data class AnswerAccumulator(
-        val currentShortlist: List<ShortlistedSource>,
-        val allMarkdownSources: List<MarkdownSource>,
-        val isComplete: Boolean
-    ) {
-        constructor() : this(emptyList(), emptyList(), false)
-    }
-
-    /**
-     * Flow operator that aggregates markdown batches into a complete answer.
-     * Uses two-stage approach: first curates shortlist, then synthesizes answer when ready.
-     */
-    private suspend fun aggregateMarkdownResultIntoAnswer(
-        sessionId: QuerySessionId,
-        searchQuery: SearchQuery,
-        state: AnswerAccumulator,
-        markdownSources: List<MarkdownSource>,
-    ): AnswerAccumulator {
-        val newMarkdownSources = state.allMarkdownSources + markdownSources
-
-        logger.debug(
-            "[{}] Processing batch of {} markdowns (total: {})",
-            sessionId.value,
-            markdownSources.size,
-            newMarkdownSources.size
-        )
-
-        // Update source shortlist
-        val shortlistOutput = streamingSourceShortlistAgent.generate(
-            StreamingSourceShortlistInput(
-                query = searchQuery.query,
-                currentShortlist = state.currentShortlist,
-                newMarkdownBatch = markdownSources
-            )
-        )
-
-        // Record token usage for shortlist agent
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "StreamingSourceShortlistAgent",
-            modelName = shortlistOutput.tokenUsage.modelName,
-            promptTokens = shortlistOutput.tokenUsage.promptTokens,
-            outputTokens = shortlistOutput.tokenUsage.outputTokens,
-            totalTokens = shortlistOutput.tokenUsage.totalTokens
-        )
-
-        logger.debug(
-            "[{}] Shortlist updated: {} sources, isGoodEnough: {}, reason: {}",
-            sessionId.value,
-            shortlistOutput.updatedShortlist.size,
-            shortlistOutput.isGoodEnough,
-            shortlistOutput.reason
-        )
-
-        return AnswerAccumulator(
-            currentShortlist = shortlistOutput.updatedShortlist,
-            allMarkdownSources = newMarkdownSources,
-            isComplete = shortlistOutput.isGoodEnough
-        )
-    }
-
-    private suspend fun finishQuerySession(
-        sessionId: QuerySessionId,
-        searchQuery: SearchQuery,
-        finalAnswerAccumulator: AnswerAccumulator,
-        budget: SearchBudget,
-        completionDeferred: CompletableDeferred<Unit>,
-    ) {
-        logger.info(
-            "[{}] Flow ending, synthesizing from {} shortlisted sources",
-            sessionId.value,
-            finalAnswerAccumulator.currentShortlist.size
-        )
-
-        val synthesisOutput = answerSynthesisAgent.generate(
-            AnswerSynthesisInput(
-                query = searchQuery.query,
-                shortlistedSources = finalAnswerAccumulator.currentShortlist
-            )
-        )
-
-        // Record token usage for synthesis agent
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "AnswerSynthesisAgent",
-            modelName = synthesisOutput.tokenUsage.modelName,
-            promptTokens = synthesisOutput.tokenUsage.promptTokens,
-            outputTokens = synthesisOutput.tokenUsage.outputTokens,
-            totalTokens = synthesisOutput.tokenUsage.totalTokens
-        )
-
-        val finalAnswerText = synthesisOutput.answer
-
-        // Extract answer sources from shortlist
-        val answerSources = finalAnswerAccumulator.currentShortlist.map { it.url }
-
-        // Mark answer sources as used in answer
-        if (answerSources.isNotEmpty()) {
-            urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
-        }
-
-        // Complete session with appropriate finish reason
-        if (finalAnswerAccumulator.isComplete) {
-            querySessionService.completeSessionAnswerComplete(sessionId, finalAnswerText)
-        } else if (querySessionService.isBudgetExceeded(sessionId, budget)) {
-            querySessionService.completeSessionBudgetExceeded(sessionId, finalAnswerText, budget)
-        } else {
-            // Flow completed naturally - all links exhausted
-            querySessionService.completeSessionLinksExhausted(sessionId, finalAnswerText)
-        }
-
-        completionDeferred.complete(Unit)
-    }
-
-    /**
-     * SERP search link discovery flow
-     */
-    private fun createSerperSearchLinkDiscoveryFlow(
-        sessionId: QuerySessionId,
-        searchQuery: SearchQuery
-    ): Flow<WebpageLink> = flow {
-        try {
-            val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery)
-            logger.debug("[{}] SERP search discovered {} links", sessionId.value, serperLinks.size)
-            serperLinks.forEach { emit(it) }
-        } catch (e: Exception) {
-            logger.error("[{}] Failed SERP search: {}", sessionId.value, e.message, e)
-        }
-    }
-
-    /**
-     * Process hybrid search over cached markdowns.
-     * Performs hybrid search to find relevant cached pages and processes them.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
     private fun processHybridSearchFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         maxCacheAge: Long?,
-        hybridSearchDiscoveredLinksChannel: Channel<WebpageLink>
+        hybridChannel: Channel<WebpageLink>,
+        eventChannel: Channel<SearchEvent>
     ): Flow<MarkdownSource> = flow {
-        // Search using hybrid search (RRF combining keyword + semantic search)
-        val similarWebpages = webpageCacheService.searchHybrid(
-            query = searchQuery.query,
-            baseUrl = searchQuery.url,
-            maxCacheAge = maxCacheAge,
-            limit = 15,
-            sessionId = sessionId
-        )
-        logger.debug("[{}] Hybrid search: Found {} similar webpages", sessionId.value, similarWebpages.size)
+        val webpages = webpageCacheService.searchHybrid(searchQuery.query, searchQuery.url, maxCacheAge, 15, sessionId)
+            .filter { !it.markdown.isNullOrBlank() && !it.html.isNullOrBlank() }
 
-        // Filter to keep only valid webpages with markdown and html
-        val validWebpages = similarWebpages.filter { webpage ->
-            !webpage.markdown.isNullOrBlank() && !webpage.html.isNullOrBlank()
-        }
-        logger.debug("[{}] Hybrid search: {} valid webpages after filtering", sessionId.value, validWebpages.size)
+        seenUrls.addAll(webpages.map { it.url })
 
-        seenUrls.addAll(validWebpages.map { it.url })
-
-        // Record URL access for cached entries
-        validWebpages.forEach { webpage ->
-            val cachedAccess = CachedUrlAccess(url = webpage.url, timestamp = Clock.System.now())
-            urlAccessService.recordUrlAccess(sessionId, cachedAccess)
+        webpages.forEach { webpage ->
+            urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
+            eventChannel.send(
+                SearchEvent.UrlProcessed(
+                    sessionId = sessionId.value,
+                    url = webpage.url,
+                    accessType = "CACHED",
+                    title = webpage.title,
+                    description = webpage.description,
+                    markdownLength = webpage.markdown?.length
+                )
+            )
+            emit(MarkdownSource(webpage.url, webpage.title, webpage.description, webpage.markdown!!))
         }
 
-        // immediately emit the valid webpages found from hybrid search
-        validWebpages.forEach { emit(MarkdownSource(it.url, it.title, it.description, it.markdown!!)) }
-
-        // Process similar webpages through the standard flow
-        validWebpages.asFlow()
+        webpages.asFlow()
             .flatMapMerge(concurrency = 15) { webpage ->
-                flow<MarkdownSource> {
+                flow<Unit> {
                     try {
-                        // Discover relevant links from this cached webpage
-                        val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
-                            query = searchQuery.query,
-                            html = webpage.html!!,
-                            url = webpage.url,
-                            sessionId = sessionId
-                        )
-                        logger.debug(
-                            "[{}] Hybrid search: Discovered {} links from cached page {}",
-                            sessionId.value,
-                            discoveredLinks.size,
-                            webpage.url
-                        )
-
-                        // Emit discovered links to the channel
-                        discoveredLinks.forEach { link ->
-                            hybridSearchDiscoveredLinksChannel.send(link)
-                        }
+                        val links = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(searchQuery.query, webpage.html!!, webpage.url, sessionId)
+                        links.forEach { hybridChannel.send(it) }
                     } catch (e: Exception) {
-                        logger.warn(
-                            "[{}] Hybrid search: Failed to process cached webpage {}: {}",
-                            sessionId.value,
-                            webpage.url,
-                            e.message,
-                            e
-                        )
+                        logger.warn("[{}] Hybrid search failed for {}: {}", sessionId.value, webpage.url, e.message)
                     }
                 }
             }
-            .onCompletion { cause ->
-                if (cause != null) {
-                    logger.info(
-                        "[{}] Hybrid search processing cancelled: {}",
-                        sessionId.value,
-                        cause.message
-                    )
-                } else {
-                    logger.info("[{}] Hybrid search processing complete", sessionId.value)
-                }
-                hybridSearchDiscoveredLinksChannel.close()
-            }
-            .collect {}
+            .onCompletion { hybridChannel.close() }
+            .collect()
+    }
+
+    private fun createSerperSearchLinkDiscoveryFlow(sessionId: QuerySessionId, searchQuery: SearchQuery): Flow<WebpageLink> = flow {
+        try {
+            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery).forEach { emit(it) }
+        } catch (e: Exception) {
+            logger.error("[{}] SERP search failed: {}", sessionId.value, e.message)
+        }
+    }
+
+    private data class AnswerAccumulator(
+        val currentShortlist: List<ShortlistedSource> = emptyList(),
+        val allMarkdownSources: List<MarkdownSource> = emptyList(),
+        val isComplete: Boolean = false
+    )
+
+    private suspend fun aggregateMarkdownResultIntoAnswer(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery,
+        state: AnswerAccumulator,
+        markdownSources: List<MarkdownSource>,
+        eventChannel: Channel<SearchEvent>
+    ): AnswerAccumulator {
+        val newSources = state.allMarkdownSources + markdownSources
+
+        val output = streamingSourceShortlistAgent.generate(
+            StreamingSourceShortlistInput(searchQuery.query, state.currentShortlist, markdownSources)
+        )
+
+        tokenUsageService.recordTokenUsage(
+            sessionId, "StreamingSourceShortlistAgent",
+            output.tokenUsage.modelName, output.tokenUsage.promptTokens,
+            output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
+        )
+
+        eventChannel.send(
+            SearchEvent.ShortlistUpdated(
+                sessionId = sessionId.value,
+                processedUrlCount = newSources.size,
+                shortlistedCount = output.updatedShortlist.size,
+                isGoodEnough = output.isGoodEnough,
+                reason = output.reason
+            )
+        )
+
+        return AnswerAccumulator(output.updatedShortlist, newSources, output.isGoodEnough)
+    }
+
+    private suspend fun finishQuerySession(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery,
+        accumulator: AnswerAccumulator,
+        budget: SearchBudget
+    ): SearchEvent.SessionCompleted {
+        val output = answerSynthesisAgent.generate(AnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist))
+
+        tokenUsageService.recordTokenUsage(
+            sessionId, "AnswerSynthesisAgent",
+            output.tokenUsage.modelName, output.tokenUsage.promptTokens,
+            output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
+        )
+
+        val answerSources = accumulator.currentShortlist.map { it.url }
+        if (answerSources.isNotEmpty()) {
+            urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
+        }
+
+        val finishReason = when {
+            accumulator.isComplete -> "ANSWER_COMPLETE"
+            querySessionService.isBudgetExceeded(sessionId, budget) -> "BUDGET_EXCEEDED"
+            else -> "LINKS_EXHAUSTED"
+        }
+
+        when (finishReason) {
+            "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, output.answer)
+            "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(sessionId, output.answer, budget)
+            else -> querySessionService.completeSessionLinksExhausted(sessionId, output.answer)
+        }
+
+        val session = querySessionService.getSession(sessionId)
+        return SearchEvent.SessionCompleted(
+            sessionId = sessionId.value,
+            answer = output.answer,
+            finishReason = finishReason,
+            durationMs = session.durationMs,
+            answerSourceCount = answerSources.size
+        )
     }
 }

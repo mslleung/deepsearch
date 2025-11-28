@@ -1,14 +1,16 @@
 package io.deepsearch.application.searchorchestrators.googlesearch
 
-import io.deepsearch.domain.agents.IGoogleTextSearchAgent
-import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
-import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
+import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.domain.agents.GoogleTextSearchInput
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
+import io.deepsearch.domain.agents.IGoogleTextSearchAgent
+import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchMode
+import io.deepsearch.domain.models.valueobjects.SearchQuery
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -16,11 +18,7 @@ interface IGoogleSearchOrchestrator : ISearchOrchestrator
 
 /**
  * Orchestrates Google search + URL Context, powered by Google Gemini.
- *
- * This is currently the best and most powerful offering from Google.
- *
- * Google has a long history of being the best search engine in the world, so we will leverage it.
- * Use this as a benchmark.
+ * Returns a Flow<SearchEvent> that emits session start and completion events.
  */
 class GoogleSearchOrchestrator(
     private val googleTextSearchAgent: IGoogleTextSearchAgent,
@@ -31,73 +29,98 @@ class GoogleSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun execute(searchQuery: SearchQuery, maxCacheAge: Long?, apiKeyId: ApiKeyId): QuerySessionId {
-        // Note: This orchestrator uses Google's search API and doesn't support custom cache expiry parameters
+    override fun execute(
+        searchQuery: SearchQuery,
+        maxCacheAge: Long?,
+        apiKeyId: ApiKeyId
+    ): Flow<SearchEvent> = flow {
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
-        
-        // Create query session to get sessionId
-        val session = querySessionService.createSession(searchQuery.query, searchQuery.url, apiKeyId, SearchMode.LIVE_CRAWLING)
+
+        // Create query session
+        val session = querySessionService.createSession(
+            searchQuery.query,
+            searchQuery.url,
+            apiKeyId,
+            SearchMode.LIVE_CRAWLING
+        )
         val sessionId = session.id
 
-        // 1) Run text search to discover candidate sources
-        val googleTextSearchOutput = googleTextSearchAgent.generate(
-            GoogleTextSearchInput(searchQuery)
-        )
-        
-        // Record token usage for text search
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "GoogleTextSearchAgent",
-            modelName = googleTextSearchOutput.tokenUsage.modelName,
-            promptTokens = googleTextSearchOutput.tokenUsage.promptTokens,
-            outputTokens = googleTextSearchOutput.tokenUsage.outputTokens,
-            totalTokens = googleTextSearchOutput.tokenUsage.totalTokens
-        )
-        
-        val textSources = googleTextSearchOutput.answerSources
-        logger.debug("Text search found {} sources; first: {}", textSources.size, textSources.firstOrNull())
-
-        val baseUrl = searchQuery.url
-        val candidateSources = googleTextSearchOutput.answerSources
-            .filter { it.startsWith(baseUrl) }
-
-        logger.debug("Filtered to {} candidate sources starting with '{}'", candidateSources.size, baseUrl)
-
-        // 2) Select up to the first 20 matching sources, or fall back to the base URL
-        val selectedUrls: List<String> = when {
-            candidateSources.isNotEmpty() -> candidateSources.take(20)
-            else -> listOf(baseUrl)
-        }
-
-        logger.debug("Selected {} URL(s) for URL-context", selectedUrls.size)
-
-        // 3) Run URL-context agent against the selected URL(s)
-        val urlContextOutput = googleUrlContextSearchAgent.generate(
-            GoogleUrlContextSearchInput(
+        // Emit session created
+        emit(
+            SearchEvent.SessionCreated(
+                sessionId = sessionId.value,
                 query = searchQuery.query,
-                urls = selectedUrls
+                url = searchQuery.url,
+                mode = "google-search"
             )
         )
-        
-        // Record token usage for URL context search
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "GoogleUrlContextSearchAgent",
-            modelName = urlContextOutput.tokenUsage.modelName,
-            promptTokens = urlContextOutput.tokenUsage.promptTokens,
-            outputTokens = urlContextOutput.tokenUsage.outputTokens,
-            totalTokens = urlContextOutput.tokenUsage.totalTokens
-        )
-        
-        logger.debug(
-            "URL-context content length: {}, sources: {}",
-            urlContextOutput.content.length,
-            urlContextOutput.sources.size
-        )
 
-        // 4) Complete the session with the answer from URL context
-        querySessionService.completeSessionAnswerComplete(sessionId, urlContextOutput.content)
+        try {
+            // 1) Run text search to discover candidate sources
+            val googleTextSearchOutput = googleTextSearchAgent.generate(GoogleTextSearchInput(searchQuery))
 
-        return sessionId
+            tokenUsageService.recordTokenUsage(
+                sessionId, "GoogleTextSearchAgent",
+                googleTextSearchOutput.tokenUsage.modelName,
+                googleTextSearchOutput.tokenUsage.promptTokens,
+                googleTextSearchOutput.tokenUsage.outputTokens,
+                googleTextSearchOutput.tokenUsage.totalTokens
+            )
+
+            val baseUrl = searchQuery.url
+            val candidateSources = googleTextSearchOutput.answerSources.filter { it.startsWith(baseUrl) }
+
+            // 2) Select up to 20 matching sources, or fall back to base URL
+            val selectedUrls = if (candidateSources.isNotEmpty()) candidateSources.take(20) else listOf(baseUrl)
+
+            // Emit URL processed events
+            selectedUrls.forEach { url ->
+                emit(
+                    SearchEvent.UrlProcessed(
+                        sessionId = sessionId.value,
+                        url = url,
+                        accessType = "UNCACHED"
+                    )
+                )
+            }
+
+            // 3) Run URL-context agent
+            val urlContextOutput = googleUrlContextSearchAgent.generate(
+                GoogleUrlContextSearchInput(searchQuery.query, selectedUrls)
+            )
+
+            tokenUsageService.recordTokenUsage(
+                sessionId, "GoogleUrlContextSearchAgent",
+                urlContextOutput.tokenUsage.modelName,
+                urlContextOutput.tokenUsage.promptTokens,
+                urlContextOutput.tokenUsage.outputTokens,
+                urlContextOutput.tokenUsage.totalTokens
+            )
+
+            // 4) Complete session
+            querySessionService.completeSessionAnswerComplete(sessionId, urlContextOutput.content)
+
+            val completedSession = querySessionService.getSession(sessionId)
+            emit(
+                SearchEvent.SessionCompleted(
+                    sessionId = sessionId.value,
+                    answer = urlContextOutput.content,
+                    finishReason = "ANSWER_COMPLETE",
+                    durationMs = completedSession.durationMs,
+                    answerSourceCount = urlContextOutput.sources.size
+                )
+            )
+
+        } catch (e: Exception) {
+            logger.error("[{}] Error in Google search: {}", sessionId.value, e.message, e)
+            querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
+            emit(
+                SearchEvent.SessionError(
+                    sessionId = sessionId.value,
+                    errorType = e::class.simpleName ?: "Unknown",
+                    errorMessage = e.message ?: "Unknown error"
+                )
+            )
+        }
     }
 }
