@@ -9,8 +9,10 @@ import io.deepsearch.domain.exceptions.AiInterpretationException
 import io.deepsearch.domain.exceptions.InvalidUrlException
 import io.deepsearch.domain.exceptions.WebScrapeException
 import io.deepsearch.domain.exceptions.WebScrapeTimeoutException
+import io.deepsearch.presentation.dto.SearchEventDto
 import io.deepsearch.presentation.dto.SearchRequest
 import io.deepsearch.presentation.dto.toDetailDto
+import io.deepsearch.presentation.dto.toDto
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -35,12 +37,12 @@ class SearchController(
             // Get API key from bearer token
             val principal = call.principal<UserIdPrincipal>()
             val rawApiKey = principal?.name
-            
+
             if (rawApiKey == null) {
                 call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "API key required"))
                 return
             }
-            
+
             // Validate API key
             val isApikeyOk = apiKeyService.validateApiKey(rawApiKey)
             if (!isApikeyOk) {
@@ -63,7 +65,7 @@ class SearchController(
                 )
                 return
             }
-            
+
             // Check usage limit (subscription quota)
             val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
             if (!hasUsageRemaining) {
@@ -78,9 +80,9 @@ class SearchController(
             }
 
             apiKeyService.incrementApiKeyUsage(rawApiKey)
-            
+
             val request = call.receive<SearchRequest>()
-            
+
             // Validate cache expiry parameter
             request.maxCacheAge?.let { maxCacheAge ->
                 if (maxCacheAge <= 0) {
@@ -91,7 +93,7 @@ class SearchController(
                     return
                 }
             }
-            
+
             // Parse and validate mode
             val searchMode = try {
                 request.toSearchMode()
@@ -102,20 +104,20 @@ class SearchController(
                 )
                 return
             }
-            
+
             // Execute search and get session detail
             val sessionDetail = searchService.searchWebsite(
-                request.query, 
-                request.url, 
+                request.query,
+                request.url,
                 request.maxCacheAge,
                 searchMode,
                 apiKey.id!!,
                 apiKey.userId
             )
-            
+
             // Consume usage after successful search
             subscriptionPlanService.consumeUsage(apiKey.userId)
-            
+
             // Convert to DTO and respond
             val responseDto = sessionDetail.session.toDetailDto(
                 sessionDetail.urlAccesses,
@@ -153,15 +155,37 @@ class SearchController(
             // Validate API key from query param (EventSource cannot set headers)
             val rawApiKey = call.request.queryParameters["apiKey"]
             if (rawApiKey == null) {
-                sse.send(ServerSentEvent(Json.encodeToString(SearchEvent.serializer(), 
-                    SearchEvent.SessionError("", "Unauthorized", "Missing apiKey parameter"))))
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "Unauthorized",
+                                "Missing apiKey parameter",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
                 return
             }
 
             val isApikeyOk = apiKeyService.validateApiKey(rawApiKey)
             if (!isApikeyOk) {
-                sse.send(ServerSentEvent(Json.encodeToString(SearchEvent.serializer(), 
-                    SearchEvent.SessionError("", "Unauthorized", "Invalid API key"))))
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "Unauthorized",
+                                "Invalid API key",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
                 return
             }
 
@@ -170,18 +194,38 @@ class SearchController(
             // Check rate limit
             val allowed = rateLimitService.checkRateLimit(apiKey.id!!, apiKey.rateLimitPerMinute)
             if (!allowed) {
-                sse.send(ServerSentEvent(Json.encodeToString(SearchEvent.serializer(), 
-                    SearchEvent.SessionError("", "RateLimitExceeded", 
-                        "You have exceeded ${apiKey.rateLimitPerMinute} requests per minute"))))
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "RateLimitExceeded",
+                                "You have exceeded ${apiKey.rateLimitPerMinute} requests per minute",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
                 return
             }
 
             // Check usage limit
             val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
             if (!hasUsageRemaining) {
-                sse.send(ServerSentEvent(Json.encodeToString(SearchEvent.serializer(), 
-                    SearchEvent.SessionError("", "UsageLimitExceeded", 
-                        "You have reached your plan's search limit. Please upgrade your plan."))))
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "UsageLimitExceeded",
+                                "You have reached your plan's search limit. Please upgrade your plan.",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
                 return
             }
 
@@ -192,15 +236,37 @@ class SearchController(
             val modeParam = call.request.queryParameters["mode"]
 
             if (query.isNullOrBlank() || url.isNullOrBlank()) {
-                sse.send(ServerSentEvent(Json.encodeToString(SearchEvent.serializer(), 
-                    SearchEvent.SessionError("", "BadRequest", "Missing query or url parameter"))))
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "BadRequest",
+                                "Missing query or url parameter",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
                 return
             }
 
             // Validate cache expiry
             if (maxCacheAge != null && maxCacheAge <= 0) {
-                sse.send(ServerSentEvent(Json.encodeToString(SearchEvent.serializer(), 
-                    SearchEvent.SessionError("", "BadRequest", "maxCacheAge must be positive"))))
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "BadRequest",
+                                "maxCacheAge must be positive",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
                 return
             }
 
@@ -208,8 +274,19 @@ class SearchController(
             val searchMode = try {
                 SearchRequest(query, url, maxCacheAge, modeParam).toSearchMode()
             } catch (e: IllegalArgumentException) {
-                sse.send(ServerSentEvent(Json.encodeToString(SearchEvent.serializer(), 
-                    SearchEvent.SessionError("", "BadRequest", e.message ?: "Invalid mode"))))
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "BadRequest",
+                                e.message ?: "Invalid mode",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
                 return
             }
 
@@ -226,15 +303,28 @@ class SearchController(
             )
 
             eventFlow.collect { event ->
-                val payload = Json.encodeToString(SearchEvent.serializer(), event)
+                // Map application-layer SearchEvent to presentation-layer SearchEventDto
+                val eventDto = event.toDto()
+                val payload = Json.encodeToString(SearchEventDto.serializer(), eventDto)
                 sse.send(ServerSentEvent(payload))
             }
 
         } catch (e: Exception) {
             logger.error("Error in streaming search: {}", e.message, e)
             try {
-                sse.send(ServerSentEvent(Json.encodeToString(SearchEvent.serializer(), 
-                    SearchEvent.SessionError("", e::class.simpleName ?: "Unknown", e.message ?: "Unknown error"))))
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                e::class.simpleName ?: "Unknown",
+                                e.message ?: "Unknown error",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
             } catch (sendError: Exception) {
                 logger.warn("Failed to send error event: {}", sendError.message)
             }

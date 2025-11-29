@@ -109,7 +109,7 @@ class AgenticBrowserSearchOrchestrator(
             // Emit session created
             send(
                 SearchEvent.SessionCreated(
-                    sessionId = sessionId.value,
+                    sessionId = sessionId,
                     query = searchQuery.query,
                     url = searchQuery.url,
                     mode = "live-crawling"
@@ -195,7 +195,7 @@ class AgenticBrowserSearchOrchestrator(
             querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
             send(
                 SearchEvent.SessionError(
-                    sessionId = sessionId.value,
+                    sessionId = sessionId,
                     errorType = e::class.simpleName ?: "Unknown",
                     errorMessage = e.message ?: "Unknown error"
                 )
@@ -240,7 +240,7 @@ class AgenticBrowserSearchOrchestrator(
 
                                 eventChannel.send(
                                     SearchEvent.UrlProcessed(
-                                        sessionId = sessionId.value,
+                                        sessionId = sessionId,
                                         url = event.url,
                                         accessType = if (event.wasCached) "CACHED" else "UNCACHED",
                                         title = event.title,
@@ -316,7 +316,7 @@ class AgenticBrowserSearchOrchestrator(
                                     )
                                     eventChannel.send(
                                         SearchEvent.UrlProcessed(
-                                            sessionId.value,
+                                            sessionId,
                                             e.url,
                                             "FAILED",
                                             errorMessage = e.reason
@@ -339,7 +339,7 @@ class AgenticBrowserSearchOrchestrator(
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
                                     eventChannel.send(
                                         SearchEvent.UrlProcessed(
-                                            sessionId = sessionId.value,
+                                            sessionId = sessionId,
                                             url = event.url,
                                             accessType = if (event.wasCached) "CACHED" else "UNCACHED",
                                             title = event.title,
@@ -403,7 +403,7 @@ class AgenticBrowserSearchOrchestrator(
                                     inFlight.remove(e.url)
                                     eventChannel.send(
                                         SearchEvent.UrlProcessed(
-                                            sessionId.value,
+                                            sessionId,
                                             e.url,
                                             "FAILED",
                                             errorMessage = e.reason
@@ -440,7 +440,7 @@ class AgenticBrowserSearchOrchestrator(
                                     urlAccessService.recordUrlAccess(sessionId, access)
                                     eventChannel.send(
                                         SearchEvent.UrlProcessed(
-                                            sessionId = sessionId.value,
+                                            sessionId = sessionId,
                                             url = event.url,
                                             accessType = if (event.wasCached) "CACHED" else "UNCACHED",
                                             title = event.title,
@@ -475,7 +475,7 @@ class AgenticBrowserSearchOrchestrator(
             urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
             eventChannel.send(
                 SearchEvent.UrlProcessed(
-                    sessionId = sessionId.value,
+                    sessionId = sessionId,
                     url = webpage.url,
                     accessType = "CACHED",
                     title = webpage.title,
@@ -544,7 +544,7 @@ class AgenticBrowserSearchOrchestrator(
 
         eventChannel.send(
             SearchEvent.ShortlistUpdated(
-                sessionId = sessionId.value,
+                sessionId = sessionId,
                 processedUrlCount = newSources.size,
                 shortlistedCount = output.updatedShortlist.size,
                 isGoodEnough = output.isGoodEnough,
@@ -587,13 +587,13 @@ class AgenticBrowserSearchOrchestrator(
             else -> querySessionService.completeSessionLinksExhausted(sessionId, output.answer)
         }
 
-        val session = querySessionService.getSession(sessionId)
+        // Fetch full session detail for the completed event
+        val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
+        
         return SearchEvent.SessionCompleted(
-            sessionId = sessionId.value,
-            answer = output.answer,
+            sessionId = sessionId,
             finishReason = finishReason,
-            durationMs = session.durationMs,
-            answerSourceCount = answerSources.size
+            sessionDetail = sessionDetail
         )
     }
 }

@@ -48,7 +48,7 @@ class GoogleSearchOrchestrator(
         // Emit session created
         emit(
             SearchEvent.SessionCreated(
-                sessionId = sessionId.value,
+                sessionId = sessionId,
                 query = searchQuery.query,
                 url = searchQuery.url,
                 mode = "google-search"
@@ -77,7 +77,7 @@ class GoogleSearchOrchestrator(
             selectedUrls.forEach { url ->
                 emit(
                     SearchEvent.UrlProcessed(
-                        sessionId = sessionId.value,
+                        sessionId = sessionId,
                         url = url,
                         accessType = "UNCACHED"
                     )
@@ -100,14 +100,12 @@ class GoogleSearchOrchestrator(
             // 4) Complete session
             querySessionService.completeSessionAnswerComplete(sessionId, urlContextOutput.content)
 
-            val completedSession = querySessionService.getSession(sessionId)
+            val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
             emit(
                 SearchEvent.SessionCompleted(
-                    sessionId = sessionId.value,
-                    answer = urlContextOutput.content,
+                    sessionId = sessionId,
                     finishReason = "ANSWER_COMPLETE",
-                    durationMs = completedSession.durationMs,
-                    answerSourceCount = urlContextOutput.sources.size
+                    sessionDetail = sessionDetail
                 )
             )
 
@@ -116,7 +114,7 @@ class GoogleSearchOrchestrator(
             querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
             emit(
                 SearchEvent.SessionError(
-                    sessionId = sessionId.value,
+                    sessionId = sessionId,
                     errorType = e::class.simpleName ?: "Unknown",
                     errorMessage = e.message ?: "Unknown error"
                 )

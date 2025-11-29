@@ -79,7 +79,9 @@ private fun Application.configureCORS() {
         
         allowHeader(HttpHeaders.Authorization)
         allowHeader(HttpHeaders.ContentType)
-        
+        allowHeader(HttpHeaders.CacheControl)
+        allowHeader("X-Requested-With")
+
         allowMethod(HttpMethod.Get)
         allowMethod(HttpMethod.Post)
         allowMethod(HttpMethod.Put)
@@ -88,8 +90,6 @@ private fun Application.configureCORS() {
         allowMethod(HttpMethod.Patch)
         
         allowCredentials = true
-        
-        allowHeader("X-Requested-With")
     }
 }
 

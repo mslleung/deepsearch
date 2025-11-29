@@ -1,24 +1,22 @@
 package io.deepsearch.application.services
 
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 
 /**
  * Events emitted during search execution to provide real-time progress updates.
- * Follows the same pattern as PeriodicIndexEvent for SSE streaming.
+ * 
+ * These events are application-layer domain concepts using proper value objects.
+ * They are mapped to SearchEventDto in the presentation layer for serialization over SSE.
  */
-@Serializable
 sealed class SearchEvent {
-    abstract val sessionId: String
+    abstract val sessionId: QuerySessionId
     abstract val timestampMs: Long
 
     /**
      * Emitted when a search session is created and search begins.
      */
-    @Serializable
-    @SerialName("session_created")
     data class SessionCreated(
-        override val sessionId: String,
+        override val sessionId: QuerySessionId,
         val query: String,
         val url: String,
         val mode: String,
@@ -28,10 +26,8 @@ sealed class SearchEvent {
     /**
      * Emitted when a URL is processed (cached hit, fresh crawl, or failure).
      */
-    @Serializable
-    @SerialName("url_processed")
     data class UrlProcessed(
-        override val sessionId: String,
+        override val sessionId: QuerySessionId,
         val url: String,
         val accessType: String,  // "CACHED", "UNCACHED", "FAILED"
         val title: String? = null,
@@ -44,10 +40,8 @@ sealed class SearchEvent {
     /**
      * Emitted when the source shortlist is updated after processing a batch of URLs.
      */
-    @Serializable
-    @SerialName("shortlist_updated")
     data class ShortlistUpdated(
-        override val sessionId: String,
+        override val sessionId: QuerySessionId,
         val processedUrlCount: Int,
         val shortlistedCount: Int,
         val isGoodEnough: Boolean,
@@ -57,25 +51,25 @@ sealed class SearchEvent {
 
     /**
      * Emitted when the search session completes successfully with an answer.
+     * Contains the full session detail for the presentation layer to serialize.
      */
-    @Serializable
-    @SerialName("session_completed")
     data class SessionCompleted(
-        override val sessionId: String,
-        val answer: String?,
+        override val sessionId: QuerySessionId,
         val finishReason: String,
-        val durationMs: Long?,
-        val answerSourceCount: Int,
-        override val timestampMs: Long = System.currentTimeMillis()
+        override val timestampMs: Long = System.currentTimeMillis(),
+        /**
+         * The full session detail including URL accesses and cached webpages.
+         * The presentation layer maps this to DTOs for serialization.
+         */
+        val sessionDetail: QuerySessionDetail
     ) : SearchEvent()
 
     /**
      * Emitted when an error occurs during search execution.
+     * Note: For pre-session errors, use QuerySessionId.empty()
      */
-    @Serializable
-    @SerialName("session_error")
     data class SessionError(
-        override val sessionId: String,
+        override val sessionId: QuerySessionId,
         val errorType: String,
         val errorMessage: String,
         override val timestampMs: Long = System.currentTimeMillis()

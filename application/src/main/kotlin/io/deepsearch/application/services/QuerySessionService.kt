@@ -95,6 +95,15 @@ interface IQuerySessionService {
      * @throws IllegalAccessException if user doesn't have access to the session
      */
     suspend fun getSessionDetail(sessionId: QuerySessionId, userId: UserId): QuerySessionDetail
+
+    /**
+     * Get query session detail with URL accesses and cached webpages.
+     * Internal use only - no user authorization check.
+     * @param sessionId The session ID
+     * @return QuerySessionDetail containing session, URL accesses, and cached webpages
+     * @throws IllegalArgumentException if session not found
+     */
+    suspend fun getSessionDetailInternal(sessionId: QuerySessionId): QuerySessionDetail
 }
 
 /**
@@ -214,14 +223,18 @@ class QuerySessionService(
     }
 
     override suspend fun getSessionDetail(sessionId: QuerySessionId, userId: UserId): QuerySessionDetail {
-        // Get the session
-        val session = getSessionOrThrow(sessionId)
-
         // Verify the session belongs to the user
         val userSessions = querySessionRepository.findByUserIdPaginated(userId, 0, Int.MAX_VALUE)
         if (!userSessions.any { it.id == sessionId }) {
             throw IllegalAccessException("User $userId does not have access to session $sessionId")
         }
+
+        return getSessionDetailInternal(sessionId)
+    }
+
+    override suspend fun getSessionDetailInternal(sessionId: QuerySessionId): QuerySessionDetail {
+        // Get the session
+        val session = getSessionOrThrow(sessionId)
 
         // Get URL accesses for the session
         val urlAccesses = urlAccessService.getUrlAccessesBySession(sessionId)

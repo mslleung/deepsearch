@@ -87,7 +87,7 @@ class SearchService(
         val completionEvent = completionDeferred.await()
         job.cancel()
         
-        return querySessionService.getSessionDetail(QuerySessionId(completionEvent.sessionId), userId)
+        return querySessionService.getSessionDetail(completionEvent.sessionId, userId)
     }
 
     override fun executeStreaming(

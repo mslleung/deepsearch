@@ -56,7 +56,7 @@ class CacheOnlySearchOrchestrator(
         // Emit session created
         emit(
             SearchEvent.SessionCreated(
-                sessionId = sessionId.value,
+                sessionId = sessionId,
                 query = searchQuery.query,
                 url = searchQuery.url,
                 mode = "cache-only"
@@ -84,14 +84,12 @@ class CacheOnlySearchOrchestrator(
                 logger.info("[{}] No cached content found for query", sessionId.value)
                 querySessionService.completeSessionLinksExhausted(sessionId, "No relevant webpages found in cache.")
 
-                val completedSession = querySessionService.getSession(sessionId)
+                val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
                 emit(
                     SearchEvent.SessionCompleted(
-                        sessionId = sessionId.value,
-                        answer = "No relevant webpages found in cache.",
+                        sessionId = sessionId,
                         finishReason = "LINKS_EXHAUSTED",
-                        durationMs = completedSession.durationMs,
-                        answerSourceCount = 0
+                        sessionDetail = sessionDetail
                     )
                 )
                 return@flow
@@ -102,7 +100,7 @@ class CacheOnlySearchOrchestrator(
                 urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
                 emit(
                     SearchEvent.UrlProcessed(
-                        sessionId = sessionId.value,
+                        sessionId = sessionId,
                         url = webpage.url,
                         accessType = "CACHED",
                         title = webpage.title,
@@ -132,7 +130,7 @@ class CacheOnlySearchOrchestrator(
 
             emit(
                 SearchEvent.ShortlistUpdated(
-                    sessionId = sessionId.value,
+                    sessionId = sessionId,
                     processedUrlCount = markdownSources.size,
                     shortlistedCount = shortlistOutput.updatedShortlist.size,
                     isGoodEnough = shortlistOutput.isGoodEnough,
@@ -162,14 +160,12 @@ class CacheOnlySearchOrchestrator(
             // Step 4: Complete session
             querySessionService.completeSessionAnswerComplete(sessionId, synthesisOutput.answer)
 
-            val completedSession = querySessionService.getSession(sessionId)
+            val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
             emit(
                 SearchEvent.SessionCompleted(
-                    sessionId = sessionId.value,
-                    answer = synthesisOutput.answer,
+                    sessionId = sessionId,
                     finishReason = "ANSWER_COMPLETE",
-                    durationMs = completedSession.durationMs,
-                    answerSourceCount = answerSources.size
+                    sessionDetail = sessionDetail
                 )
             )
 
@@ -178,7 +174,7 @@ class CacheOnlySearchOrchestrator(
             querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
             emit(
                 SearchEvent.SessionError(
-                    sessionId = sessionId.value,
+                    sessionId = sessionId,
                     errorType = e::class.simpleName ?: "Unknown",
                     errorMessage = e.message ?: "Unknown error"
                 )
