@@ -111,7 +111,7 @@ class DatabaseConfigurationService(
                     CREATE OR REPLACE FUNCTION webpage_markdowns_markdown_search_vector_update() 
                     RETURNS trigger AS $$
                     BEGIN
-                      NEW.markdown_search_vector := to_tsvector('english', COALESCE(NEW.markdown_sanitized, ''));
+                      NEW.markdown_search_vector := to_tsvector('simple', COALESCE(NEW.markdown_sanitized, ''));
                       RETURN NEW;
                     END;
                     $$ LANGUAGE plpgsql;
