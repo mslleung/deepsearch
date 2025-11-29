@@ -104,23 +104,24 @@ class DatabaseConfigurationService(
                     USING gin (markdown_search_vector)
                 """.trimIndent())
                 
-                // Create trigger function to auto-update tsvector when markdown changes
+                // Create trigger function to auto-update tsvector when sanitized markdown changes
+                // Uses markdown_sanitized (not markdown) to avoid R2DBC issues with emoji/special chars in tsvector
                 exec(
                     """
                     CREATE OR REPLACE FUNCTION webpage_markdowns_markdown_search_vector_update() 
                     RETURNS trigger AS $$
                     BEGIN
-                      NEW.markdown_search_vector := to_tsvector('english', COALESCE(NEW.markdown, ''));
+                      NEW.markdown_search_vector := to_tsvector('english', COALESCE(NEW.markdown_sanitized, ''));
                       RETURN NEW;
                     END;
                     $$ LANGUAGE plpgsql;
                 """.trimIndent())
                 
-                // Create trigger to automatically update tsvector on INSERT or UPDATE
+                // Create trigger to automatically update tsvector on INSERT or UPDATE of sanitized markdown
                 exec("""
                     DROP TRIGGER IF EXISTS webpage_markdowns_markdown_search_vector_trigger ON webpage_markdowns;
                     CREATE TRIGGER webpage_markdowns_markdown_search_vector_trigger
-                    BEFORE INSERT OR UPDATE OF markdown ON webpage_markdowns
+                    BEFORE INSERT OR UPDATE OF markdown_sanitized ON webpage_markdowns
                     FOR EACH ROW EXECUTE FUNCTION webpage_markdowns_markdown_search_vector_update();
                 """.trimIndent())
             }

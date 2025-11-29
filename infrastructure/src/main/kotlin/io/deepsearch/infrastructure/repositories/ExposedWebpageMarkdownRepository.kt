@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.*
+import org.jetbrains.exposed.v1.r2dbc.select
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import org.slf4j.Logger
@@ -27,9 +28,30 @@ class ExposedWebpageMarkdownRepository(
 
     private val logger: Logger = LoggerFactory.getLogger(ExposedWebpageMarkdownRepository::class.java)
 
+    /**
+     * Columns to select when mapping to WebpageMarkdown.
+     * Excludes markdownSearchVector to avoid R2DBC decoding issues with tsvector.
+     * Excludes markdownSanitized as it's only used internally for full-text search.
+     */
+    private val webpageMarkdownColumns: List<Column<*>>
+        get() = listOf(
+            webpageMarkdownTable.url,
+            webpageMarkdownTable.title,
+            webpageMarkdownTable.description,
+            webpageMarkdownTable.markdown,
+            webpageMarkdownTable.html,
+            webpageMarkdownTable.httpStatus,
+            webpageMarkdownTable.httpReason,
+            webpageMarkdownTable.mimeType,
+            webpageMarkdownTable.embedding,
+            webpageMarkdownTable.createdAtEpochMs,
+            webpageMarkdownTable.updatedAtEpochMs,
+            webpageMarkdownTable.version
+        )
+
     override suspend fun findByUrl(url: String): WebpageMarkdown? = transactionService.withTransaction {
         webpageMarkdownTable
-            .selectAll()
+            .select(webpageMarkdownColumns)
             .where { webpageMarkdownTable.url eq url }
             .map { mapRowToWebpageMarkdown(it) }
             .singleOrNull()
@@ -38,7 +60,7 @@ class ExposedWebpageMarkdownRepository(
     override suspend fun upsert(webpage: WebpageMarkdown): Unit = transactionService.withTransaction {
         // Check for existing version to implement optimistic locking
         val existingVersion = webpageMarkdownTable
-            .selectAll()
+            .select(webpageMarkdownTable.version)
             .where { webpageMarkdownTable.url eq webpage.url }
             .map { it[webpageMarkdownTable.version] }
             .singleOrNull()
@@ -51,6 +73,10 @@ class ExposedWebpageMarkdownRepository(
         // Calculate new version (increment from existing, or use provided version for new records)
         val newVersion = if (existingVersion != null) existingVersion + 1 else webpage.version
         
+        // Sanitize markdown for full-text search (removes problematic Unicode that breaks R2DBC tsvector decoding)
+        // Stored separately so original markdown with emoji/special chars is preserved
+        val sanitizedMarkdown = webpage.markdown?.let { sanitizeForFullTextSearch(it) }
+        
         // Upsert webpage markdown record with incremented version
         webpageMarkdownTable.upsert(
             keys = arrayOf(webpageMarkdownTable.url)
@@ -58,7 +84,8 @@ class ExposedWebpageMarkdownRepository(
             it[url] = webpage.url
             it[title] = webpage.title
             it[description] = webpage.description
-            it[markdown] = webpage.markdown
+            it[markdown] = webpage.markdown  // Original markdown preserved
+            it[markdownSanitized] = sanitizedMarkdown  // Sanitized version for tsvector trigger
             it[html] = webpage.html
             it[httpStatus] = webpage.httpStatus
             it[httpReason] = webpage.httpReason
@@ -77,7 +104,7 @@ class ExposedWebpageMarkdownRepository(
 
     override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
         webpageMarkdownTable
-            .selectAll()
+            .select(webpageMarkdownColumns)
             .where { webpageMarkdownTable.url like ("$prefix%") }
             .limit(limit)
             .offset(offset.toLong())
@@ -94,7 +121,7 @@ class ExposedWebpageMarkdownRepository(
     override suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
         val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
         webpageMarkdownTable
-            .selectAll()
+            .select(webpageMarkdownColumns)
             .where { webpageMarkdownTable.url like pattern }
             .limit(limit)
             .offset(offset.toLong())
@@ -213,7 +240,8 @@ class ExposedWebpageMarkdownRepository(
         }
         
         // Build query with WHERE conditions - filter for documents matching the full-text search query
-        webpageMarkdownTable.selectAll()
+        // Use select() with specific columns to avoid R2DBC issues with tsvector decoding
+        webpageMarkdownTable.select(webpageMarkdownColumns)
             .where {
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
                 val markdownCondition = webpageMarkdownTable.markdown.isNotNull()
@@ -256,8 +284,9 @@ class ExposedWebpageMarkdownRepository(
         }
         
         // Build query filtering for documents with embeddings
+        // Use select() with specific columns to avoid R2DBC issues with tsvector decoding
         webpageMarkdownTable
-            .selectAll()
+            .select(webpageMarkdownColumns)
             .where {
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
                 val markdownCondition = webpageMarkdownTable.markdown.isNotNull()
@@ -290,5 +319,22 @@ class ExposedWebpageMarkdownRepository(
             updatedAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.updatedAtEpochMs]),
             version = row[webpageMarkdownTable.version]
         )
+    }
+
+    companion object {
+        /**
+         * Sanitizes text for PostgreSQL full-text search (tsvector).
+         * Removes Unicode characters that can cause R2DBC decoding issues:
+         * - Emoji and pictographs (Symbol, Other category)
+         * - Modifier symbols (skin tones, etc.)
+         * - Format characters (zero-width joiners, etc.)
+         */
+        fun sanitizeForFullTextSearch(text: String): String {
+            return text
+                .replace(Regex("[\\p{So}\\p{Sk}]"), " ")  // Symbol Other & Symbol Modifier (emoji, pictographs)
+                .replace(Regex("\\p{Cf}"), "")             // Format characters (zero-width joiners, etc.)
+                .replace(Regex("\\s+"), " ")              // Collapse multiple whitespace
+                .trim()
+        }
     }
 }

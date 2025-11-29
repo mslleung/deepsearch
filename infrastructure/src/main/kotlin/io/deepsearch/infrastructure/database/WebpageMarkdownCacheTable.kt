@@ -12,6 +12,7 @@ class WebpageMarkdownCacheTable(
     val title = text("title").nullable()
     val description = text("description").nullable()
     val markdown = text("markdown").nullable()
+    val markdownSanitized = text("markdown_sanitized").nullable() // Sanitized markdown for full-text search (no emoji/special chars)
     val html = text("html").nullable()
     val httpStatus = integer("http_status").nullable()
     val httpReason = text("http_reason").nullable()
