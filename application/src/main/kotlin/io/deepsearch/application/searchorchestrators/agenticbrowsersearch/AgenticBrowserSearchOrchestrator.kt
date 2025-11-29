@@ -35,6 +35,7 @@ import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.cancellable
@@ -104,17 +105,17 @@ class AgenticBrowserSearchOrchestrator(
         )
         val sessionId = session.id
 
-        // Emit session created
-        send(
-            SearchEvent.SessionCreated(
-                sessionId = sessionId.value,
-                query = searchQuery.query,
-                url = searchQuery.url,
-                mode = "live-crawling"
-            )
-        )
-
         try {
+            // Emit session created
+            send(
+                SearchEvent.SessionCreated(
+                    sessionId = sessionId.value,
+                    query = searchQuery.query,
+                    url = searchQuery.url,
+                    mode = "live-crawling"
+                )
+            )
+
             val budget = SearchBudget(timeLimitMs = 300 * 1000L, maxLinks = 100)
             logger.debug("[{}] Executing search for query: {}", sessionId.value, searchQuery.query)
 
@@ -126,76 +127,69 @@ class AgenticBrowserSearchOrchestrator(
             val hybridSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
-            // Channel for events to emit
-            val eventChannel = Channel<SearchEvent>(Channel.UNLIMITED)
-
             // Launch flow processing
-            val flowJob = applicationScope.scope.launch {
-                var answerAccumulator = AnswerAccumulator()
-                try {
-                    merge(
-                        processInitialLinkFlow(sessionId, searchQuery, seenUrls, initialDiscoveredLinksChannel, maxCacheAge, eventChannel),
-                        processSerperSearchLinksFlow(sessionId, searchQuery, seenUrls, budget, serperSearchDiscoveredLinksChannel, maxCacheAge, eventChannel),
-                        processHybridSearchFlow(sessionId, searchQuery, seenUrls, maxCacheAge, hybridSearchDiscoveredLinksChannel, eventChannel),
-                        processRecursiveDiscoveredLinksFlow(
-                            sessionId, searchQuery, seenUrls, budget,
-                            initialDiscoveredLinksChannel, serperSearchDiscoveredLinksChannel,
-                            hybridSearchDiscoveredLinksChannel, recursiveDiscoveredLinksChannel,
-                            maxCacheAge, eventChannel
-                        )
-                    )
-                        .cancellable()
-                        .filter { it.markdown.isNotBlank() }
-                        .chunkedWithTimeout(chunkSize = 5, timeoutMs = 1000)
-                        .runningFold(AnswerAccumulator()) { state, markdownResults ->
-                            aggregateMarkdownResultIntoAnswer(sessionId, searchQuery, state, markdownResults, eventChannel)
-                        }
-                        .onEach { answerAccumulator = it }
-                        .filter { answerAccumulator -> answerAccumulator.isComplete }
-                        .take(1)
-                        .onEach { completedAnswerAccumulator -> // should only be one emission
-                            val completionEvent = finishQuerySession(
-                                sessionId,
-                                searchQuery,
-                                completedAnswerAccumulator,
-                                budget,
-                            )
-                            eventChannel.send(completionEvent)
-                        }
-                        .onCompletion { // answer did not complete, but the upstream flow completed, return our incomplete answer
-                            if (answerAccumulator.isComplete) {
-                                // already called the early exit in the onEach above
-                                return@onCompletion
-                            }
-                            val completionEvent = finishQuerySession(sessionId, searchQuery, answerAccumulator, budget)
-                            eventChannel.send(completionEvent)
-                        }
-                        .single()
-                } catch (e: CancellationException) {
-                    logger.debug("[{}] Flow cancelled", sessionId.value)
-                } catch (e: Exception) {
-                    logger.error("[{}] Flow error: {}", sessionId.value, e.message, e)
-                    eventChannel.send(
-                        SearchEvent.SessionError(
-                            sessionId = sessionId.value,
-                            errorType = e::class.simpleName ?: "Unknown",
-                            errorMessage = e.message ?: "Unknown error"
-                        )
-                    )
-                } finally {
-                    eventChannel.close()
+            var answerAccumulator = AnswerAccumulator()
+            merge(
+                processInitialLinkFlow(
+                    sessionId,
+                    searchQuery,
+                    seenUrls,
+                    initialDiscoveredLinksChannel,
+                    maxCacheAge,
+                    channel
+                ),
+                processSerperSearchLinksFlow(
+                    sessionId,
+                    searchQuery,
+                    seenUrls,
+                    serperSearchDiscoveredLinksChannel,
+                    maxCacheAge,
+                    channel
+                ),
+                processHybridSearchFlow(
+                    sessionId,
+                    searchQuery,
+                    seenUrls,
+                    maxCacheAge,
+                    hybridSearchDiscoveredLinksChannel,
+                    channel
+                ),
+                processRecursiveDiscoveredLinksFlow(
+                    sessionId, searchQuery, seenUrls, budget,
+                    initialDiscoveredLinksChannel, serperSearchDiscoveredLinksChannel,
+                    hybridSearchDiscoveredLinksChannel, recursiveDiscoveredLinksChannel,
+                    maxCacheAge, channel
+                )
+            )
+                .cancellable()
+                .filter { it.markdown.isNotBlank() }
+                .chunkedWithTimeout(chunkSize = 5, timeoutMs = 1000)
+                .runningFold(AnswerAccumulator()) { state, markdownResults ->
+                    aggregateMarkdownResultIntoAnswer(sessionId, searchQuery, state, markdownResults, channel)
                 }
-            }
-
-            // Forward events until channel closes
-            withTimeout(budget.timeLimitMs + 60000) {
-                for (event in eventChannel) {
-                    send(event)
+                .onEach { answerAccumulator = it }
+                .filter { answerAccumulator -> answerAccumulator.isComplete }
+                .take(1)
+                .onEach { completedAnswerAccumulator -> // should only be one emission
+                    val completionEvent = finishQuerySession(
+                        sessionId,
+                        searchQuery,
+                        completedAnswerAccumulator,
+                        budget,
+                    )
+                    send(completionEvent)
                 }
-            }
-
-            flowJob.cancel()
-
+                .onCompletion { // answer did not complete, but the upstream flow completed, return our incomplete answer
+                    if (answerAccumulator.isComplete) {
+                        // already called the early exit in the onEach above
+                        return@onCompletion
+                    }
+                    val completionEvent = finishQuerySession(sessionId, searchQuery, answerAccumulator, budget)
+                    send(completionEvent)
+                }
+                .single()
+        } catch (e: CancellationException) {
+            logger.debug("[{}] Flow cancelled", sessionId.value)
         } catch (e: Exception) {
             logger.error("[{}] Error in execute: {}", sessionId.value, e.message, e)
             querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
@@ -218,7 +212,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
         maxCacheAge: Long?,
-        eventChannel: Channel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>
     ): Flow<MarkdownSource> {
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
@@ -228,7 +222,9 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { event ->
                         val eventUrl = normalizeUrlService.normalize(event.url) ?: event.url
                         if (seenUrls.contains(eventUrl)) false
-                        else { seenUrls.add(eventUrl); true }
+                        else {
+                            seenUrls.add(eventUrl); true
+                        }
                     }
                     .onEach { event ->
                         when (event) {
@@ -236,6 +232,7 @@ class AgenticBrowserSearchOrchestrator(
                                 event.discoveredLinks.forEach { initialDiscoveredLinksChannel.send(it) }
                                 initialDiscoveredLinksChannel.close()
                             }
+
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                 val urlAccess = if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now())
                                 else UncachedUrlAccess(event.url, Clock.System.now())
@@ -267,15 +264,14 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        budget: SearchBudget,
         discoveredLinksChannel: Channel<WebpageLink>,
         maxCacheAge: Long?,
-        eventChannel: Channel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>
     ): Flow<MarkdownSource> {
         return processDiscoveredLinksFlow(
-            sessionId, searchQuery, seenUrls, budget,
+            sessionId, searchQuery, seenUrls,
             createSerperSearchLinkDiscoveryFlow(sessionId, searchQuery),
-            discoveredLinksChannel, "processSerperSearchLinksFlow", maxCacheAge, eventChannel
+            discoveredLinksChannel, maxCacheAge, eventChannel
         )
     }
 
@@ -286,33 +282,48 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        budget: SearchBudget,
         linkSource: Flow<WebpageLink>,
         discoveredLinksChannel: Channel<WebpageLink>,
-        flowName: String,
         maxCacheAge: Long?,
-        eventChannel: Channel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>
     ): Flow<MarkdownSource> {
         return linkSource
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
                 if (seenUrls.contains(normalizedUrl)) false
-                else { seenUrls.add(normalizedUrl); true }
+                else {
+                    seenUrls.add(normalizedUrl); true
+                }
             }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId)
+                    urlContentProcessingService.processUrlAsFlow(
+                        normalizedUrl,
+                        searchQuery.query,
+                        maxCacheAge,
+                        sessionId
+                    )
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> throw e
                                 is NetworkConnectionException, is MarkdownConversionException -> {
-                                    urlAccessService.recordUrlAccess(sessionId, FailedUrlAccess(
-                                        url = e.url, timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!, message = e.reason
-                                    ))
-                                    eventChannel.send(SearchEvent.UrlProcessed(sessionId.value, e.url, "FAILED", errorMessage = e.reason))
+                                    urlAccessService.recordUrlAccess(
+                                        sessionId, FailedUrlAccess(
+                                            url = e.url, timestamp = Clock.System.now(),
+                                            exceptionType = e::class.simpleName!!, message = e.reason
+                                        )
+                                    )
+                                    eventChannel.send(
+                                        SearchEvent.UrlProcessed(
+                                            sessionId.value,
+                                            e.url,
+                                            "FAILED",
+                                            errorMessage = e.reason
+                                        )
+                                    )
                                 }
+
                                 else -> throw e
                             }
                         }
@@ -321,6 +332,7 @@ class AgenticBrowserSearchOrchestrator(
                                 is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                     event.discoveredLinks.forEach { discoveredLinksChannel.send(it) }
                                 }
+
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     val urlAccess = if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now())
                                     else UncachedUrlAccess(event.url, Clock.System.now())
@@ -357,7 +369,7 @@ class AgenticBrowserSearchOrchestrator(
         hybridChannel: Channel<WebpageLink>,
         recursiveChannel: Channel<WebpageLink>,
         maxCacheAge: Long?,
-        eventChannel: Channel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>
     ): Flow<MarkdownSource> {
         val inFlight = ConcurrentHashMap.newKeySet<String>()
 
@@ -369,7 +381,9 @@ class AgenticBrowserSearchOrchestrator(
             .takeWhile { !querySessionService.isBudgetExceeded(sessionId, budget) }
             .filter { link ->
                 val url = normalizeUrlService.normalize(link.url) ?: link.url
-                if (seenUrls.contains(url)) false else { seenUrls.add(url); true }
+                if (seenUrls.contains(url)) false else {
+                    seenUrls.add(url); true
+                }
             }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
@@ -380,16 +394,26 @@ class AgenticBrowserSearchOrchestrator(
                             when (e) {
                                 is CancellationException -> throw e
                                 is NetworkConnectionException, is MarkdownConversionException -> {
-                                    urlAccessService.recordUrlAccess(sessionId, FailedUrlAccess(
-                                        url = e.url, timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!, message = e.reason
-                                    ))
+                                    urlAccessService.recordUrlAccess(
+                                        sessionId, FailedUrlAccess(
+                                            url = e.url, timestamp = Clock.System.now(),
+                                            exceptionType = e::class.simpleName!!, message = e.reason
+                                        )
+                                    )
                                     inFlight.remove(e.url)
-                                    eventChannel.send(SearchEvent.UrlProcessed(sessionId.value, e.url, "FAILED", errorMessage = e.reason))
+                                    eventChannel.send(
+                                        SearchEvent.UrlProcessed(
+                                            sessionId.value,
+                                            e.url,
+                                            "FAILED",
+                                            errorMessage = e.reason
+                                        )
+                                    )
                                     if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && inFlight.isEmpty()) {
                                         recursiveChannel.close()
                                     }
                                 }
+
                                 else -> throw e
                             }
                         }
@@ -397,14 +421,22 @@ class AgenticBrowserSearchOrchestrator(
                             when (event) {
                                 is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                     inFlight.remove(event.url)
-                                    val newLinks = event.discoveredLinks.filter { !seenUrls.contains(normalizeUrlService.normalize(it.url) ?: it.url) }
+                                    val newLinks = event.discoveredLinks.filter {
+                                        !seenUrls.contains(
+                                            normalizeUrlService.normalize(it.url) ?: it.url
+                                        )
+                                    }
                                     newLinks.forEach { recursiveChannel.send(it) }
                                     if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && inFlight.isEmpty() && newLinks.isEmpty()) {
                                         recursiveChannel.close()
                                     }
                                 }
+
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    val access = if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now()) else UncachedUrlAccess(event.url, Clock.System.now())
+                                    val access = if (event.wasCached) CachedUrlAccess(
+                                        event.url,
+                                        Clock.System.now()
+                                    ) else UncachedUrlAccess(event.url, Clock.System.now())
                                     urlAccessService.recordUrlAccess(sessionId, access)
                                     eventChannel.send(
                                         SearchEvent.UrlProcessed(
@@ -432,7 +464,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         maxCacheAge: Long?,
         hybridChannel: Channel<WebpageLink>,
-        eventChannel: Channel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>
     ): Flow<MarkdownSource> = flow {
         val webpages = webpageCacheService.searchHybrid(searchQuery.query, searchQuery.url, maxCacheAge, 15, sessionId)
             .filter { !it.markdown.isNullOrBlank() && !it.html.isNullOrBlank() }
@@ -458,7 +490,12 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge(concurrency = 15) { webpage ->
                 flow<Unit> {
                     try {
-                        val links = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(searchQuery.query, webpage.html!!, webpage.url, sessionId)
+                        val links = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
+                            searchQuery.query,
+                            webpage.html!!,
+                            webpage.url,
+                            sessionId
+                        )
                         links.forEach { hybridChannel.send(it) }
                     } catch (e: Exception) {
                         logger.warn("[{}] Hybrid search failed for {}: {}", sessionId.value, webpage.url, e.message)
@@ -469,7 +506,10 @@ class AgenticBrowserSearchOrchestrator(
             .collect()
     }
 
-    private fun createSerperSearchLinkDiscoveryFlow(sessionId: QuerySessionId, searchQuery: SearchQuery): Flow<WebpageLink> = flow {
+    private fun createSerperSearchLinkDiscoveryFlow(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery
+    ): Flow<WebpageLink> = flow {
         try {
             webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery).forEach { emit(it) }
         } catch (e: Exception) {
@@ -488,7 +528,7 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         state: AnswerAccumulator,
         markdownSources: List<MarkdownSource>,
-        eventChannel: Channel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>
     ): AnswerAccumulator {
         val newSources = state.allMarkdownSources + markdownSources
 
@@ -521,7 +561,8 @@ class AgenticBrowserSearchOrchestrator(
         accumulator: AnswerAccumulator,
         budget: SearchBudget
     ): SearchEvent.SessionCompleted {
-        val output = answerSynthesisAgent.generate(AnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist))
+        val output =
+            answerSynthesisAgent.generate(AnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist))
 
         tokenUsageService.recordTokenUsage(
             sessionId, "AnswerSynthesisAgent",

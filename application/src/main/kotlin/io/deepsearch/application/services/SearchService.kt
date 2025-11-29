@@ -2,15 +2,18 @@ package io.deepsearch.application.services
 
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.cacheonlysearch.ICacheOnlySearchOrchestrator
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.UserId
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -45,6 +48,7 @@ interface ISearchService {
 }
 
 class SearchService(
+    private val applicationScope: IApplicationCoroutineScope,
     private val agenticBrowserSearchOrchestrator: IAgenticBrowserSearchOrchestrator,
     private val cacheOnlySearchOrchestrator: ICacheOnlySearchOrchestrator,
     private val querySessionService: IQuerySessionService
@@ -69,19 +73,21 @@ class SearchService(
         }
         
         // Collect the flow until we get a terminal event
-        var sessionId: QuerySessionId? = null
-        
-        orchestrator.execute(searchQuery, maxCacheAge, apiKeyId)
-            .onEach { event ->
-                // Capture session ID from the first event
-                if (sessionId == null && event is SearchEvent.SessionCreated) {
-                    sessionId = QuerySessionId(event.sessionId)
+        val completionDeferred = CompletableDeferred<SearchEvent.SessionCompleted>()
+
+        val job = applicationScope.scope.launch {
+            orchestrator.execute(searchQuery, maxCacheAge, apiKeyId)
+                .filterIsInstance<SearchEvent.SessionCompleted>()
+                .onEach {
+                    completionDeferred.complete(it)
                 }
-            }
-            .filterIsInstance<SearchEvent.SessionCompleted>()
-            .first()
+                .first()
+        }
+
+        val completionEvent = completionDeferred.await()
+        job.cancel()
         
-        return querySessionService.getSessionDetail(sessionId!!, userId)
+        return querySessionService.getSessionDetail(QuerySessionId(completionEvent.sessionId), userId)
     }
 
     override fun executeStreaming(
