@@ -182,11 +182,15 @@ class AnswerSynthesisAgentGenAiImpl(
         for (response in responseStream) {
             val chunkText = response.text() ?: continue
             accumulatedJson += chunkText
+            logger.trace("Accumulated JSON so far ({} chars): {}", accumulatedJson.length, 
+                accumulatedJson.take(200).replace("\n", "\\n"))
 
             // Extract answer delta from accumulated JSON: {"answer": "..."}
             val answerDelta = extractAnswerDelta(accumulatedJson, lastAnswerLength)
             if (answerDelta.isNotEmpty()) {
                 lastAnswerLength += answerDelta.length
+                logger.trace("Emitting answer chunk ({} chars): {}", answerDelta.length, 
+                    answerDelta.take(100).replace("\n", "\\n"))
                 emit(AnswerStreamItem.Chunk(answerDelta))
             }
 
@@ -213,25 +217,38 @@ class AnswerSynthesisAgentGenAiImpl(
 
     /**
      * Extract the new portion of the answer from accumulated JSON.
-     * The JSON format is: {"answer": "...text..."}
+     * The JSON format is: {"answer": "...text..."} or {"answer":"...text..."}
      */
     private fun extractAnswerDelta(accumulatedJson: String, previousLength: Int): String {
-        // Find the start of the answer value
-        val prefix = "\"answer\":\""
-        val startIdx = accumulatedJson.indexOf(prefix)
+        // Find the start of the answer value - handle both with and without space after colon
+        val prefixNoSpace = "\"answer\":\""
+        val prefixWithSpace = "\"answer\": \""
+        
+        var startIdx = accumulatedJson.indexOf(prefixNoSpace)
+        var prefixLength = prefixNoSpace.length
+        
+        if (startIdx == -1) {
+            startIdx = accumulatedJson.indexOf(prefixWithSpace)
+            prefixLength = prefixWithSpace.length
+        }
+        
         if (startIdx == -1) return ""
 
-        val contentStart = startIdx + prefix.length
+        val contentStart = startIdx + prefixLength
         if (contentStart >= accumulatedJson.length) return ""
 
         // Get the content after the prefix, handling potential incomplete JSON
         var content = accumulatedJson.substring(contentStart)
 
         // Remove trailing incomplete JSON (closing quotes/braces if present)
-        if (content.endsWith("\"}")) {
-            content = content.dropLast(2)
-        } else if (content.endsWith("\"")) {
-            content = content.dropLast(1)
+        // Handle various possible endings: "}, ", "} , "\n}, etc.
+        val closingIdx = content.lastIndexOf("\"")
+        if (closingIdx > 0) {
+            // Check if this quote is followed by } (end of JSON object)
+            val afterQuote = content.substring(closingIdx + 1).trim()
+            if (afterQuote.isEmpty() || afterQuote.startsWith("}")) {
+                content = content.substring(0, closingIdx)
+            }
         }
 
         // Unescape JSON string escape sequences for the new content
