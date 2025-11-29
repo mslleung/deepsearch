@@ -41,7 +41,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         this
             .onEach { event ->
                 if (event is SearchEvent.SessionCreated) {
-                    sessionId = QuerySessionId(event.sessionId)
+                    sessionId = event.sessionId
                 }
             }
             .filterIsInstance<SearchEvent.SessionCompleted>()
