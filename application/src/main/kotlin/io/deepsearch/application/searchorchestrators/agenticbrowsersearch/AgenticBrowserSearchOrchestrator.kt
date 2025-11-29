@@ -219,6 +219,7 @@ class AgenticBrowserSearchOrchestrator(
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
+                eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
 
                 urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId)
                     .filter { event ->
@@ -300,6 +301,7 @@ class AgenticBrowserSearchOrchestrator(
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                    eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
                     urlContentProcessingService.processUrlAsFlow(
                         normalizedUrl,
                         searchQuery.query,
@@ -391,6 +393,7 @@ class AgenticBrowserSearchOrchestrator(
                 flow {
                     val url = normalizeUrlService.normalize(link.url) ?: link.url
                     inFlight.add(url)
+                    eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, url))
                     urlContentProcessingService.processUrlAsFlow(url, searchQuery.query, maxCacheAge, sessionId)
                         .catch { e ->
                             when (e) {
@@ -474,6 +477,7 @@ class AgenticBrowserSearchOrchestrator(
         seenUrls.addAll(webpages.map { it.url })
 
         webpages.forEach { webpage ->
+            eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, webpage.url))
             urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
             eventChannel.send(
                 SearchEvent.UrlProcessed(

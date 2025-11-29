@@ -28,6 +28,14 @@ sealed class SearchEventDto {
     ) : SearchEventDto()
 
     @Serializable
+    @SerialName("url_processing_started")
+    data class UrlProcessingStartedDto(
+        override val sessionId: String,
+        val url: String,
+        override val timestampMs: Long
+    ) : SearchEventDto()
+
+    @Serializable
     @SerialName("url_processed")
     data class UrlProcessedDto(
         override val sessionId: String,
@@ -103,6 +111,12 @@ fun SearchEvent.toDto(): SearchEventDto {
             query = query,
             url = url,
             mode = mode,
+            timestampMs = timestampMs
+        )
+
+        is SearchEvent.UrlProcessingStarted -> SearchEventDto.UrlProcessingStartedDto(
+            sessionId = sessionId.value,
+            url = url,
             timestampMs = timestampMs
         )
 

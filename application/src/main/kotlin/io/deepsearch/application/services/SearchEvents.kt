@@ -24,6 +24,15 @@ sealed class SearchEvent {
     ) : SearchEvent()
 
     /**
+     * Emitted when a URL starts being processed (before crawl/cache lookup).
+     */
+    data class UrlProcessingStarted(
+        override val sessionId: QuerySessionId,
+        val url: String,
+        override val timestampMs: Long = System.currentTimeMillis()
+    ) : SearchEvent()
+
+    /**
      * Emitted when a URL is processed (cached hit, fresh crawl, or failure).
      */
     data class UrlProcessed(
