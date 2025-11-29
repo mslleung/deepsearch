@@ -12,8 +12,9 @@ import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
-import io.deepsearch.domain.agents.IQueryExpansionAgent
+import io.deepsearch.domain.agents.ISerpQueryOptimizationAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
+import io.deepsearch.domain.agents.SerpQueryOptimizationInput
 import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
 import io.deepsearch.domain.agents.StreamingSourceShortlistInput
 import io.deepsearch.domain.config.IApplicationCoroutineScope
@@ -77,7 +78,7 @@ class AgenticBrowserSearchOrchestrator(
     private val applicationScope: IApplicationCoroutineScope,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
-    private val queryExpansionAgent: IQueryExpansionAgent,
+    private val serpQueryOptimizationAgent: ISerpQueryOptimizationAgent,
     private val queryBreakdownAgent: IQueryBreakdownAgent,
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
@@ -517,10 +518,46 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {
         try {
-            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery).forEach { emit(it) }
+            val effectiveQuery = optimizeQueryForSerp(sessionId, searchQuery)
+            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(effectiveQuery).forEach { emit(it) }
         } catch (e: Exception) {
             logger.error("[{}] SERP search failed: {}", sessionId.value, e.message)
         }
+    }
+
+    /**
+     * Optimizes the query for SERP search if it's long (> 10 words).
+     * Short queries are already well-suited for Google, while longer natural language
+     * queries benefit from optimization to extract key terms.
+     */
+    private suspend fun optimizeQueryForSerp(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery
+    ): SearchQuery {
+        val wordCount = searchQuery.query.trim().split("\\s+".toRegex()).size
+        if (wordCount <= 10) {
+            logger.debug("[{}] Query has {} words, skipping SERP optimization", sessionId.value, wordCount)
+            return searchQuery
+        }
+
+        logger.debug("[{}] Query has {} words, optimizing for SERP", sessionId.value, wordCount)
+
+        val output = serpQueryOptimizationAgent.generate(
+            SerpQueryOptimizationInput(
+                query = searchQuery.query,
+                targetUrl = searchQuery.url
+            )
+        )
+
+        tokenUsageService.recordTokenUsage(
+            sessionId, "SerpQueryOptimizationAgent",
+            output.tokenUsage.modelName, output.tokenUsage.promptTokens,
+            output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
+        )
+
+        logger.debug("[{}] Optimized query: '{}' -> '{}'", sessionId.value, searchQuery.query, output.optimizedQuery)
+
+        return SearchQuery(output.optimizedQuery, searchQuery.url)
     }
 
     private data class AnswerAccumulator(

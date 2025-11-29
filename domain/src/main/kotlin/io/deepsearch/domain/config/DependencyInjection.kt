@@ -67,6 +67,7 @@ val domainModule = module {
         scopedOf(::MarkdownConversionAgentGenAiImpl) bind IMarkdownConversionAgent::class
         scopedOf(::QueryBreakdownAgentGenAiImpl) bind IQueryBreakdownAgent::class
         scopedOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
+        scopedOf(::SerpQueryOptimizationAgentGenAiImpl) bind ISerpQueryOptimizationAgent::class
         scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
         scopedOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
 
