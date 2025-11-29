@@ -7,6 +7,7 @@ import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
+import io.deepsearch.domain.agents.AnswerStreamItem
 import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
@@ -176,6 +177,7 @@ class AgenticBrowserSearchOrchestrator(
                         searchQuery,
                         completedAnswerAccumulator,
                         budget,
+                        channel
                     )
                     send(completionEvent)
                 }
@@ -184,7 +186,7 @@ class AgenticBrowserSearchOrchestrator(
                         // already called the early exit in the onEach above
                         return@onCompletion
                     }
-                    val completionEvent = finishQuerySession(sessionId, searchQuery, answerAccumulator, budget)
+                    val completionEvent = finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
                     send(completionEvent)
                 }
                 .single()
@@ -559,16 +561,30 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         accumulator: AnswerAccumulator,
-        budget: SearchBudget
+        budget: SearchBudget,
+        eventChannel: SendChannel<SearchEvent>
     ): SearchEvent.SessionCompleted {
-        val output =
-            answerSynthesisAgent.generate(AnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist))
+        // Stream the answer and emit chunks
+        var fullAnswer = ""
+        answerSynthesisAgent.generateStream(
+            AnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist)
+        ).collect { item ->
+            when (item) {
+                is AnswerStreamItem.Chunk -> {
+                    fullAnswer += item.text
+                    eventChannel.send(SearchEvent.AnswerChunk(sessionId, item.text))
+                }
 
-        tokenUsageService.recordTokenUsage(
-            sessionId, "AnswerSynthesisAgent",
-            output.tokenUsage.modelName, output.tokenUsage.promptTokens,
-            output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
-        )
+                is AnswerStreamItem.Complete -> {
+                    // Record token usage from the final streaming chunk
+                    tokenUsageService.recordTokenUsage(
+                        sessionId, "AnswerSynthesisAgent",
+                        item.tokenUsage.modelName, item.tokenUsage.promptTokens,
+                        item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
+                    )
+                }
+            }
+        }
 
         val answerSources = accumulator.currentShortlist.map { it.url }
         if (answerSources.isNotEmpty()) {
@@ -582,14 +598,14 @@ class AgenticBrowserSearchOrchestrator(
         }
 
         when (finishReason) {
-            "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, output.answer)
-            "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(sessionId, output.answer, budget)
-            else -> querySessionService.completeSessionLinksExhausted(sessionId, output.answer)
+            "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer)
+            "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(sessionId, fullAnswer, budget)
+            else -> querySessionService.completeSessionLinksExhausted(sessionId, fullAnswer)
         }
 
         // Fetch full session detail for the completed event
         val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
-        
+
         return SearchEvent.SessionCompleted(
             sessionId = sessionId,
             finishReason = finishReason,

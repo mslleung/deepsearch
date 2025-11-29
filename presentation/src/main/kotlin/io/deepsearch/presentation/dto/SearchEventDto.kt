@@ -52,6 +52,18 @@ sealed class SearchEventDto {
     ) : SearchEventDto()
 
     /**
+     * Answer chunk event for streaming answer generation.
+     * Multiple chunks are emitted as the answer is progressively generated.
+     */
+    @Serializable
+    @SerialName("answer_chunk")
+    data class AnswerChunkDto(
+        override val sessionId: String,
+        val chunk: String,
+        override val timestampMs: Long
+    ) : SearchEventDto()
+
+    /**
      * Session completed event with full session detail for the frontend.
      * Includes contentSources, answerSources, and traversedUrls.
      */
@@ -111,6 +123,12 @@ fun SearchEvent.toDto(): SearchEventDto {
             shortlistedCount = shortlistedCount,
             isGoodEnough = isGoodEnough,
             reason = reason,
+            timestampMs = timestampMs
+        )
+
+        is SearchEvent.AnswerChunk -> SearchEventDto.AnswerChunkDto(
+            sessionId = sessionId.value,
+            chunk = chunk,
             timestampMs = timestampMs
         )
 

@@ -6,6 +6,7 @@ import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
+import io.deepsearch.domain.agents.AnswerStreamItem
 import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
 import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
@@ -16,6 +17,7 @@ import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -138,18 +140,26 @@ class CacheOnlySearchOrchestrator(
                 )
             )
 
-            // Step 3: Synthesize answer
-            val synthesisOutput = answerSynthesisAgent.generate(
+            // Step 3: Synthesize answer with streaming
+            var fullAnswer = ""
+            answerSynthesisAgent.generateStream(
                 AnswerSynthesisInput(searchQuery.query, shortlistOutput.updatedShortlist)
-            )
-
-            tokenUsageService.recordTokenUsage(
-                sessionId, "AnswerSynthesisAgent",
-                synthesisOutput.tokenUsage.modelName,
-                synthesisOutput.tokenUsage.promptTokens,
-                synthesisOutput.tokenUsage.outputTokens,
-                synthesisOutput.tokenUsage.totalTokens
-            )
+            ).collect { item ->
+                when (item) {
+                    is AnswerStreamItem.Chunk -> {
+                        fullAnswer += item.text
+                        emit(SearchEvent.AnswerChunk(sessionId, item.text))
+                    }
+                    is AnswerStreamItem.Complete -> {
+                        // Record token usage from the final streaming chunk
+                        tokenUsageService.recordTokenUsage(
+                            sessionId, "AnswerSynthesisAgent",
+                            item.tokenUsage.modelName, item.tokenUsage.promptTokens,
+                            item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
+                        )
+                    }
+                }
+            }
 
             // Mark answer sources
             val answerSources = shortlistOutput.updatedShortlist.map { it.url }
@@ -158,7 +168,7 @@ class CacheOnlySearchOrchestrator(
             }
 
             // Step 4: Complete session
-            querySessionService.completeSessionAnswerComplete(sessionId, synthesisOutput.answer)
+            querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer)
 
             val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
             emit(

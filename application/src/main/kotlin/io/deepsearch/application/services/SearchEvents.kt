@@ -50,6 +50,16 @@ sealed class SearchEvent {
     ) : SearchEvent()
 
     /**
+     * Emitted when an answer chunk is generated during streaming answer synthesis.
+     * Multiple chunks are emitted as the answer is progressively generated.
+     */
+    data class AnswerChunk(
+        override val sessionId: QuerySessionId,
+        val chunk: String,
+        override val timestampMs: Long = System.currentTimeMillis()
+    ) : SearchEvent()
+
+    /**
      * Emitted when the search session completes successfully with an answer.
      * Contains the full session detail for the presentation layer to serialize.
      */
