@@ -10,25 +10,44 @@ fun Application.configurePeriodicIndexRoutes() {
     routing {
         authenticate("auth-jwt") {
             route("/api/periodic-index") {
-                get("/config") {
-                    val controller = call.scope.get<PeriodicIndexController>()
-                    controller.getConfig(call)
+                // Config management
+                route("/configs") {
+                    get {
+                        val controller = call.scope.get<PeriodicIndexController>()
+                        controller.listConfigs(call)
+                    }
+                    post {
+                        val controller = call.scope.get<PeriodicIndexController>()
+                        controller.createConfig(call)
+                    }
+                    route("/{id}") {
+                        get {
+                            val controller = call.scope.get<PeriodicIndexController>()
+                            controller.getConfigById(call)
+                        }
+                        put {
+                            val controller = call.scope.get<PeriodicIndexController>()
+                            controller.updateConfig(call)
+                        }
+                        delete {
+                            val controller = call.scope.get<PeriodicIndexController>()
+                            controller.deleteConfig(call)
+                        }
+                        post("/trigger") {
+                            val controller = call.scope.get<PeriodicIndexController>()
+                            controller.triggerConfig(call)
+                        }
+                        get("/history") {
+                            val controller = call.scope.get<PeriodicIndexController>()
+                            controller.getConfigJobHistory(call)
+                        }
+                    }
                 }
-                post("/config") {
-                    val controller = call.scope.get<PeriodicIndexController>()
-                    controller.saveConfig(call)
-                }
-                delete("/config") {
-                    val controller = call.scope.get<PeriodicIndexController>()
-                    controller.deleteConfig(call)
-                }
-                post("/trigger") {
-                    val controller = call.scope.get<PeriodicIndexController>()
-                    controller.triggerNow(call)
-                }
+                
+                // Global history (all configs)
                 get("/history") {
                     val controller = call.scope.get<PeriodicIndexController>()
-                    controller.getJobHistory(call)
+                    controller.getGlobalJobHistory(call)
                 }
                 get("/history/{jobId}/urls") {
                     val controller = call.scope.get<PeriodicIndexController>()
@@ -42,4 +61,3 @@ fun Application.configurePeriodicIndexRoutes() {
         }
     }
 }
-

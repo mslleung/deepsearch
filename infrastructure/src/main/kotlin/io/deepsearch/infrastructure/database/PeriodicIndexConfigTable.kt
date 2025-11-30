@@ -18,6 +18,7 @@ class PeriodicIndexConfigTable : Table("periodic_index_configs") {
     override val primaryKey = PrimaryKey(id)
     
     init {
-        uniqueIndex(userId)
+        // Non-unique index on userId for query performance (users can have multiple configs)
+        index(isUnique = false, userId)
     }
 }

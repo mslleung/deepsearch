@@ -17,6 +17,7 @@ data class PeriodicIndexConfigRequest(
 
 @Serializable
 data class PeriodicIndexConfigResponse(
+    val id: Long,
     val url: String,
     val sitemapUrl: String?,
     val periodDays: Int?,
@@ -24,6 +25,13 @@ data class PeriodicIndexConfigResponse(
     val enabled: Boolean,
     val lastRunAt: Long?,
     val nextRunAt: Long?
+)
+
+@Serializable
+data class PeriodicIndexConfigListResponse(
+    val configs: List<PeriodicIndexConfigResponse>,
+    val totalCount: Int,
+    val maxAllowed: Int
 )
 
 @Serializable
@@ -50,6 +58,7 @@ data class PeriodicIndexJobUrlListResponse(
 
 fun PeriodicIndexConfig.toResponse(): PeriodicIndexConfigResponse {
     return PeriodicIndexConfigResponse(
+        id = id ?: throw IllegalArgumentException("Config must have an ID"),
         url = url,
         sitemapUrl = sitemapUrl,
         periodDays = periodDays,

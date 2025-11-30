@@ -79,13 +79,6 @@ class TableInterpretationAgentGenAiImpl(
         *   **Pro AI** includes "Free Onboarding Support".
         *   **Premium AI** includes "Free Onboarding Support" and is marked as "Most Popular".
         *   **Enterprise AI** includes "🌟 AI Solution Engineer Support".
-    
-        **The response should be placed in a json structured output.**
-    
-        Expected output shape:
-        {
-            "markdown": "string",
-        }
     """.trimIndent()
 
     @Serializable
@@ -123,8 +116,8 @@ class TableInterpretationAgentGenAiImpl(
                 userPrompt,
                 GenerateContentConfig.builder()
                     .temperature(0F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
+//                    .responseSchema(outputSchema)
+//                    .responseMimeType("application/json")
                     .thinkingConfig(
                         ThinkingConfig.builder()
                             .thinkingBudget(0)

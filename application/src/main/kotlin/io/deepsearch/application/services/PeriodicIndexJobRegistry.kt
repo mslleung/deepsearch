@@ -162,6 +162,50 @@ class PeriodicIndexJobRegistry(
     }
 
     /**
+     * Tracks URL processing state for SSE events.
+     */
+    private class UrlTracker {
+        private val processedUrls = java.util.concurrent.ConcurrentLinkedDeque<IPeriodicIndexJobService.ProcessedUrlInfo>()
+        private val processingUrls = ConcurrentHashMap.newKeySet<String>()
+        private val failedUrls = java.util.concurrent.ConcurrentLinkedDeque<IPeriodicIndexJobService.FailedUrlInfo>()
+
+        fun startProcessing(url: String) {
+            processingUrls.add(url)
+        }
+
+        fun finishProcessing(url: String, title: String?, cachedHit: Boolean) {
+            processingUrls.remove(url)
+            processedUrls.addFirst(IPeriodicIndexJobService.ProcessedUrlInfo(
+                url = url,
+                title = title,
+                cachedHit = cachedHit,
+                processedAtMs = System.currentTimeMillis()
+            ))
+            // Keep only last 50 processed URLs to avoid memory bloat
+            while (processedUrls.size > 50) {
+                processedUrls.removeLast()
+            }
+        }
+
+        fun failProcessing(url: String, errorMessage: String) {
+            processingUrls.remove(url)
+            failedUrls.addFirst(IPeriodicIndexJobService.FailedUrlInfo(
+                url = url,
+                errorMessage = errorMessage,
+                failedAtMs = System.currentTimeMillis()
+            ))
+            // Keep only last 50 failed URLs
+            while (failedUrls.size > 50) {
+                failedUrls.removeLast()
+            }
+        }
+
+        fun getProcessedUrls(): List<IPeriodicIndexJobService.ProcessedUrlInfo> = processedUrls.toList()
+        fun getProcessingUrls(): List<String> = processingUrls.toList()
+        fun getFailedUrls(): List<IPeriodicIndexJobService.FailedUrlInfo> = failedUrls.toList()
+    }
+
+    /**
      * Reactive flow orchestration for periodic indexing links.
      * Uses channel-based architecture similar to AgenticBrowserSearchOrchestrator.
      * Link sources: initial URL, Serper search, sitemap, and recursive discovered links.
@@ -174,6 +218,7 @@ class PeriodicIndexJobRegistry(
     ) {
         val seenUrls = ConcurrentHashMap.newKeySet<String>()
         val processedCount = AtomicInteger(job.processedCount)
+        val urlTracker = UrlTracker()
 
         // Channels for discovered links from different sources
         val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
@@ -187,19 +232,22 @@ class PeriodicIndexJobRegistry(
                 jobId = jobId,
                 job = job,
                 seenUrls = seenUrls,
-                initialDiscoveredLinksChannel = initialDiscoveredLinksChannel
+                initialDiscoveredLinksChannel = initialDiscoveredLinksChannel,
+                urlTracker = urlTracker
             ),
             processSerperSearchLinksFlow(
                 jobId = jobId,
                 job = job,
                 seenUrls = seenUrls,
-                serperDiscoveredLinksChannel = serperDiscoveredLinksChannel
+                serperDiscoveredLinksChannel = serperDiscoveredLinksChannel,
+                urlTracker = urlTracker
             ),
             processSitemapLinksFlow(
                 jobId = jobId,
                 job = job,
                 seenUrls = seenUrls,
-                sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel
+                sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel,
+                urlTracker = urlTracker
             ),
             processRecursiveDiscoveredLinksFlow(
                 jobId = jobId,
@@ -208,7 +256,8 @@ class PeriodicIndexJobRegistry(
                 initialDiscoveredLinksChannel = initialDiscoveredLinksChannel,
                 serperDiscoveredLinksChannel = serperDiscoveredLinksChannel,
                 sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel,
-                recursiveDiscoveredLinksChannel = recursiveDiscoveredLinksChannel
+                recursiveDiscoveredLinksChannel = recursiveDiscoveredLinksChannel,
+                urlTracker = urlTracker
             )
         )
             .takeWhile { processedCount.get() < job.maxUrlCount }
@@ -217,7 +266,7 @@ class PeriodicIndexJobRegistry(
                 job.incrementProcessed()
                 periodicIndexJobRepository.update(job)
 
-                // Emit progress event
+                // Emit progress event with URL tracking
                 eventFlow.emit(
                     IPeriodicIndexJobService.PeriodicIndexEvent(
                         jobId = jobId,
@@ -227,12 +276,15 @@ class PeriodicIndexJobRegistry(
                         maxUrlCount = job.maxUrlCount,
                         cachedHit = result.cachedHit,
                         totalQueued = 0,
-                        state = job.state
+                        state = job.state,
+                        processedUrls = urlTracker.getProcessedUrls(),
+                        processingUrls = urlTracker.getProcessingUrls(),
+                        failedUrls = urlTracker.getFailedUrls()
                     )
                 )
             }
-            .catch {
-                // TODO
+            .catch { e ->
+                logger.error("[{}] Error during periodic index: {}", jobId, e.message, e)
             }
             .onCompletion {
                 logger.info("[{}] Periodic index complete: {} pages processed", jobId, processedCount.get())
@@ -249,7 +301,8 @@ class PeriodicIndexJobRegistry(
         jobId: Long,
         job: PeriodicIndexJob,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        initialDiscoveredLinksChannel: Channel<WebpageLink>
+        initialDiscoveredLinksChannel: Channel<WebpageLink>,
+        urlTracker: UrlTracker
     ): Flow<PeriodicIndexStepResult> {
         return flowOf(job.baseUrl)
             .flatMapMerge { url ->
@@ -262,6 +315,7 @@ class PeriodicIndexJobRegistry(
                         return@flow
                     }
 
+                    urlTracker.startProcessing(normalizedUrl)
                     val sessionId = PeriodicIndexSessionId(jobId)
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
                         .catch { e ->
@@ -275,8 +329,10 @@ class PeriodicIndexJobRegistry(
                                     message = e.message ?: "Unknown error"
                                 )
                                 urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                             } else {
                                 logger.error("[{}] Unexpected error processing initial URL {}: {}", jobId, normalizedUrl, e.message, e)
+                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                                 throw e
                             }
                         }
@@ -297,6 +353,7 @@ class PeriodicIndexJobRegistry(
                                         UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
                                     }
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                     emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }
@@ -318,7 +375,8 @@ class PeriodicIndexJobRegistry(
         jobId: Long,
         job: PeriodicIndexJob,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        serperDiscoveredLinksChannel: Channel<WebpageLink>
+        serperDiscoveredLinksChannel: Channel<WebpageLink>,
+        urlTracker: UrlTracker
     ): Flow<PeriodicIndexStepResult> {
         return createSerperSearchLinkFlow(jobId, job)
             .filter { link ->
@@ -333,6 +391,7 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
+                    urlTracker.startProcessing(normalizedUrl)
                     val sessionId = PeriodicIndexSessionId(jobId)
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
                         .catch { e ->
@@ -346,8 +405,10 @@ class PeriodicIndexJobRegistry(
                                     message = e.message ?: "Unknown error"
                                 )
                                 urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                             } else {
                                 logger.error("[{}] Unexpected error processing Serper link {}: {}", jobId, normalizedUrl, e.message, e)
+                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                                 throw e
                             }
                         }
@@ -367,6 +428,7 @@ class PeriodicIndexJobRegistry(
                                         UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
                                     }
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                     emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }
@@ -388,7 +450,8 @@ class PeriodicIndexJobRegistry(
         jobId: Long,
         job: PeriodicIndexJob,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        sitemapDiscoveredLinksChannel: Channel<WebpageLink>
+        sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
+        urlTracker: UrlTracker
     ): Flow<PeriodicIndexStepResult> {
         return createSitemapLinkFlow(jobId, job)
             .filter { link ->
@@ -403,6 +466,7 @@ class PeriodicIndexJobRegistry(
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
+                    urlTracker.startProcessing(normalizedUrl)
                     val sessionId = PeriodicIndexSessionId(jobId)
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
                         .catch { e ->
@@ -416,8 +480,10 @@ class PeriodicIndexJobRegistry(
                                     message = e.message ?: "Unknown error"
                                 )
                                 urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                             } else {
                                 logger.error("[{}] Unexpected error processing sitemap link {}: {}", jobId, normalizedUrl, e.message, e)
+                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                                 throw e
                             }
                         }
@@ -437,6 +503,7 @@ class PeriodicIndexJobRegistry(
                                         UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
                                     }
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                     emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }
@@ -462,7 +529,8 @@ class PeriodicIndexJobRegistry(
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
         serperDiscoveredLinksChannel: Channel<WebpageLink>,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
-        recursiveDiscoveredLinksChannel: Channel<WebpageLink>
+        recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
+        urlTracker: UrlTracker
     ): Flow<PeriodicIndexStepResult> {
         val inFlightLinkDiscoveryProcessing = ConcurrentHashMap.newKeySet<String>()
 
@@ -498,6 +566,7 @@ class PeriodicIndexJobRegistry(
                     val normalizedUrl = normalize(link.url)
                     val sessionId = PeriodicIndexSessionId(jobId)
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
+                    urlTracker.startProcessing(normalizedUrl)
 
                     urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
                         .catch { e ->
@@ -512,6 +581,7 @@ class PeriodicIndexJobRegistry(
                                         message = e.message ?: "Unknown error"
                                     )
                                     urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                                     inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
                                     checkAndCloseRecursiveChannel(
                                         initialDiscoveredLinksChannel,
@@ -523,6 +593,7 @@ class PeriodicIndexJobRegistry(
                                 }
                                 else -> {
                                     logger.error("[{}] Unexpected error processing recursive link {}: {}", jobId, normalizedUrl, e.message, e)
+                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                                     throw e
                                 }
                             }
@@ -561,6 +632,7 @@ class PeriodicIndexJobRegistry(
                                         UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
                                     }
                                     urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                    urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                     emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }

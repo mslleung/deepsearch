@@ -69,11 +69,25 @@ class ExposedPeriodicIndexConfigRepository(
         }
     }
 
-    override suspend fun findByUserId(userId: UserId): PeriodicIndexConfig? = transactionService.withTransaction {
+    override suspend fun findById(id: Long): PeriodicIndexConfig? = transactionService.withTransaction {
+        periodicIndexConfigTable.selectAll()
+            .where { periodicIndexConfigTable.id eq id }
+            .map { toDomain(it) }
+            .singleOrNull()
+    }
+
+    override suspend fun findAllByUserId(userId: UserId): List<PeriodicIndexConfig> = transactionService.withTransaction {
         periodicIndexConfigTable.selectAll()
             .where { periodicIndexConfigTable.userId eq userId.value }
             .map { toDomain(it) }
-            .singleOrNull()
+            .toList()
+    }
+
+    override suspend fun countByUserId(userId: UserId): Int = transactionService.withTransaction {
+        periodicIndexConfigTable.selectAll()
+            .where { periodicIndexConfigTable.userId eq userId.value }
+            .count()
+            .toInt()
     }
 
     override suspend fun findEnabledConfigs(): List<PeriodicIndexConfig> = transactionService.withTransaction {

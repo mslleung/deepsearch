@@ -115,6 +115,49 @@ class ExposedPeriodicIndexJobRepository(
         query.count()
     }
 
+    override suspend fun listByUserIdAndBaseUrl(userId: UserId, baseUrl: String, state: PeriodicIndexJobState?, offset: Int, limit: Int): List<PeriodicIndexJob> = transactionService.withTransaction {
+        val query = if (state != null) {
+            periodicIndexJobTable.selectAll()
+                .where { 
+                    (periodicIndexJobTable.userId eq userId.value) and 
+                    (periodicIndexJobTable.baseUrl eq baseUrl) and 
+                    (periodicIndexJobTable.state eq state.name) 
+                }
+        } else {
+            periodicIndexJobTable.selectAll()
+                .where { 
+                    (periodicIndexJobTable.userId eq userId.value) and 
+                    (periodicIndexJobTable.baseUrl eq baseUrl) 
+                }
+        }
+        
+        query
+            .orderBy(periodicIndexJobTable.createdAtMs, SortOrder.DESC)
+            .limit(limit)
+            .offset(offset.toLong())
+            .map { mapRow(it) }
+            .toList()
+    }
+
+    override suspend fun countByUserIdAndBaseUrl(userId: UserId, baseUrl: String, state: PeriodicIndexJobState?): Long = transactionService.withTransaction {
+        val query = if (state != null) {
+            periodicIndexJobTable.selectAll()
+                .where { 
+                    (periodicIndexJobTable.userId eq userId.value) and 
+                    (periodicIndexJobTable.baseUrl eq baseUrl) and 
+                    (periodicIndexJobTable.state eq state.name) 
+                }
+        } else {
+            periodicIndexJobTable.selectAll()
+                .where { 
+                    (periodicIndexJobTable.userId eq userId.value) and 
+                    (periodicIndexJobTable.baseUrl eq baseUrl) 
+                }
+        }
+        
+        query.count()
+    }
+
     private fun mapRow(row: ResultRow): PeriodicIndexJob = PeriodicIndexJob(
         id = row[periodicIndexJobTable.id],
         userId = UserId(row[periodicIndexJobTable.userId]),

@@ -2,9 +2,12 @@ package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IPeriodicIndexService
 import io.deepsearch.application.services.IUrlAccessService
+import io.deepsearch.application.services.IUserSubscriptionService
+import io.deepsearch.application.services.PeriodicIndexLimitExceededException
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexPeriod
+import io.deepsearch.domain.models.entities.SubscriptionPlan
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.UrlAccess
 import io.deepsearch.domain.models.valueobjects.UserId
@@ -22,103 +25,205 @@ import org.slf4j.LoggerFactory
 class PeriodicIndexController(
     private val periodicIndexService: IPeriodicIndexService,
     private val urlAccessService: IUrlAccessService,
-    private val webpageMarkdownRepository: IWebpageMarkdownRepository
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository,
+    private val userSubscriptionService: IUserSubscriptionService
 ) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    suspend fun getConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call)
-        if (userId == null) {
-            call.respond(HttpStatusCode.Unauthorized)
+    /**
+     * GET /api/periodic-index/configs
+     * List all periodic index configs for the user
+     */
+    suspend fun listConfigs(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val configs = periodicIndexService.listConfigs(userId)
+        val maxAllowed = getMaxAllowedConfigs(userId)
+        
+        call.respond(HttpStatusCode.OK, PeriodicIndexConfigListResponse(
+            configs = configs.map { it.toResponse() },
+            totalCount = configs.size,
+            maxAllowed = maxAllowed
+        ))
+    }
+
+    /**
+     * GET /api/periodic-index/configs/{id}
+     * Get a specific periodic index config
+     */
+    suspend fun getConfigById(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val configId = call.parameters["id"]?.toLongOrNull()
+        if (configId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid config ID"))
             return
         }
 
-        val config = periodicIndexService.getConfig(userId)
-        if (config == null) {
-            // Return empty/default response or 404? Let's return 404 or null content.
-            // Better to return 204 No Content or 404. 
-            // For frontend simplicity, let's return 204.
-            call.respond(HttpStatusCode.NoContent)
-        } else {
-            call.respond(HttpStatusCode.OK, config.toResponse())
+        val config = periodicIndexService.getConfig(configId)
+        if (config == null || config.userId != userId) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Config not found"))
+            return
+        }
+
+        call.respond(HttpStatusCode.OK, config.toResponse())
+    }
+
+    /**
+     * POST /api/periodic-index/configs
+     * Create a new periodic index config
+     */
+    suspend fun createConfig(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val request = try {
+            call.receive<PeriodicIndexConfigRequest>()
+        } catch (e: Exception) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request body"))
+            return
+        }
+
+        val validationError = validateConfigRequest(request)
+        if (validationError != null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to validationError))
+            return
+        }
+
+        val maxAllowed = getMaxAllowedConfigs(userId)
+        
+        try {
+            val config = periodicIndexService.createConfig(
+                userId = userId,
+                url = request.url,
+                sitemapUrl = request.sitemapUrl,
+                periodDays = request.periodDays,
+                maxUrlCount = request.maxUrlCount,
+                maxAllowedConfigs = maxAllowed
+            )
+            call.respond(HttpStatusCode.Created, config.toResponse())
+        } catch (e: PeriodicIndexLimitExceededException) {
+            call.respond(HttpStatusCode.Forbidden, mapOf(
+                "error" to "You have reached your limit of ${e.maxAllowed} periodic index configurations. Please upgrade your plan for more.",
+                "currentCount" to e.currentCount,
+                "maxAllowed" to e.maxAllowed
+            ))
+        } catch (e: Exception) {
+            logger.error("Failed to create periodic index config for user $userId", e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to create config"))
         }
     }
 
-    suspend fun saveConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call)
-        if (userId == null) {
-            call.respond(HttpStatusCode.Unauthorized)
+    /**
+     * PUT /api/periodic-index/configs/{id}
+     * Update an existing periodic index config
+     */
+    suspend fun updateConfig(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val configId = call.parameters["id"]?.toLongOrNull()
+        if (configId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid config ID"))
+            return
+        }
+
+        // Verify ownership
+        val existingConfig = periodicIndexService.getConfig(configId)
+        if (existingConfig == null || existingConfig.userId != userId) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Config not found"))
             return
         }
 
         val request = try {
             call.receive<PeriodicIndexConfigRequest>()
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.BadRequest, "Invalid request body")
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request body"))
             return
         }
 
-        if (request.url.isBlank()) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "URL is required"))
-            return
-        }
-
-        if (!PeriodicIndexPeriod.isValidPeriodDays(request.periodDays)) {
-            val allowedValues = PeriodicIndexPeriod.ALLOWED_DAYS.filterNotNull().sorted().joinToString(", ")
-            call.respond(
-                HttpStatusCode.BadRequest,
-                mapOf("error" to "Invalid indexing period. Allowed values are: $allowedValues days (or null for one-off)")
-            )
-            return
-        }
-
-        if (request.maxUrlCount !in PeriodicIndexConfig.MIN_MAX_URL_COUNT..PeriodicIndexConfig.MAX_MAX_URL_COUNT) {
-            call.respond(
-                HttpStatusCode.BadRequest,
-                mapOf("error" to "Max URL count must be between ${PeriodicIndexConfig.MIN_MAX_URL_COUNT} and ${PeriodicIndexConfig.MAX_MAX_URL_COUNT}")
-            )
-            return
-        }
-
-        val config = periodicIndexService.createOrUpdateConfig(userId, request.url, request.sitemapUrl, request.periodDays, request.maxUrlCount)
-        call.respond(HttpStatusCode.OK, config.toResponse())
-    }
-
-    suspend fun deleteConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call)
-        if (userId == null) {
-            call.respond(HttpStatusCode.Unauthorized)
-            return
-        }
-
-        periodicIndexService.deleteConfig(userId)
-        call.respond(HttpStatusCode.NoContent)
-    }
-
-    suspend fun triggerNow(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call)
-        if (userId == null) {
-            call.respond(HttpStatusCode.Unauthorized)
+        val validationError = validateConfigRequest(request)
+        if (validationError != null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to validationError))
             return
         }
 
         try {
-            val job = periodicIndexService.triggerNow(userId)
-            call.respond(HttpStatusCode.OK, job.toResponse())
+            val config = periodicIndexService.updateConfig(
+                configId = configId,
+                url = request.url,
+                sitemapUrl = request.sitemapUrl,
+                periodDays = request.periodDays,
+                maxUrlCount = request.maxUrlCount
+            )
+            call.respond(HttpStatusCode.OK, config.toResponse())
         } catch (e: IllegalArgumentException) {
-            call.respond(HttpStatusCode.BadRequest, e.message ?: "Invalid request")
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to e.message))
         } catch (e: Exception) {
-            logger.error("Failed to trigger periodic index for user $userId", e)
-            call.respond(HttpStatusCode.InternalServerError, "Failed to trigger index")
+            logger.error("Failed to update periodic index config $configId", e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to update config"))
         }
     }
 
-    suspend fun getJobHistory(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call)
-        if (userId == null) {
-            call.respond(HttpStatusCode.Unauthorized)
+    /**
+     * DELETE /api/periodic-index/configs/{id}
+     * Delete a periodic index config
+     */
+    suspend fun deleteConfig(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val configId = call.parameters["id"]?.toLongOrNull()
+        if (configId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid config ID"))
             return
         }
+
+        // Verify ownership
+        val existingConfig = periodicIndexService.getConfig(configId)
+        if (existingConfig == null || existingConfig.userId != userId) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Config not found"))
+            return
+        }
+
+        periodicIndexService.deleteConfig(configId)
+        call.respond(HttpStatusCode.NoContent)
+    }
+
+    /**
+     * POST /api/periodic-index/configs/{id}/trigger
+     * Trigger a periodic index job for a specific config
+     */
+    suspend fun triggerConfig(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val configId = call.parameters["id"]?.toLongOrNull()
+        if (configId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid config ID"))
+            return
+        }
+
+        // Verify ownership
+        val existingConfig = periodicIndexService.getConfig(configId)
+        if (existingConfig == null || existingConfig.userId != userId) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Config not found"))
+            return
+        }
+
+        try {
+            val job = periodicIndexService.triggerNow(configId)
+            call.respond(HttpStatusCode.OK, job.toResponse())
+        } catch (e: IllegalArgumentException) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Invalid request")))
+        } catch (e: Exception) {
+            logger.error("Failed to trigger periodic index for config $configId", e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to trigger index"))
+        }
+    }
+
+    /**
+     * GET /api/periodic-index/history
+     * Get global job history for all configs
+     */
+    suspend fun getGlobalJobHistory(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
         val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 10
@@ -131,12 +236,43 @@ class PeriodicIndexController(
         ))
     }
 
-    suspend fun getJobUrls(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call)
-        if (userId == null) {
-            call.respond(HttpStatusCode.Unauthorized)
+    /**
+     * GET /api/periodic-index/configs/{id}/history
+     * Get job history for a specific config
+     */
+    suspend fun getConfigJobHistory(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val configId = call.parameters["id"]?.toLongOrNull()
+        if (configId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid config ID"))
             return
         }
+
+        // Verify ownership and get config to use its URL
+        val config = periodicIndexService.getConfig(configId)
+        if (config == null || config.userId != userId) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Config not found"))
+            return
+        }
+
+        val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
+        val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 10
+
+        val (jobs, total) = periodicIndexService.listJobHistoryForConfig(userId, config.url, page, pageSize)
+        
+        call.respond(HttpStatusCode.OK, PeriodicIndexJobHistoryResponse(
+            jobs = jobs.map { it.toResponse() },
+            totalCount = total
+        ))
+    }
+
+    /**
+     * GET /api/periodic-index/history/{jobId}/urls
+     * Get URLs processed in a specific job
+     */
+    suspend fun getJobUrls(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val jobIdParam = call.parameters["jobId"]
         if (jobIdParam == null) {
@@ -167,12 +303,12 @@ class PeriodicIndexController(
         ))
     }
 
+    /**
+     * GET /api/periodic-index/indexed-urls
+     * Get indexed URLs by base URL
+     */
     suspend fun getIndexedUrlsByBaseUrl(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call)
-        if (userId == null) {
-            call.respond(HttpStatusCode.Unauthorized)
-            return
-        }
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val baseUrl = call.request.queryParameters["baseUrl"]
         if (baseUrl.isNullOrBlank()) {
@@ -194,16 +330,34 @@ class PeriodicIndexController(
         ))
     }
 
-    /**
-     * Build URL responses with page titles fetched from WebpageMarkdown.
-     * Similar pattern to QuerySessionService.getSessionDetail.
-     */
+    private fun validateConfigRequest(request: PeriodicIndexConfigRequest): String? {
+        if (request.url.isBlank()) {
+            return "URL is required"
+        }
+
+        if (!PeriodicIndexPeriod.isValidPeriodDays(request.periodDays)) {
+            val allowedValues = PeriodicIndexPeriod.ALLOWED_DAYS.filterNotNull().sorted().joinToString(", ")
+            return "Invalid indexing period. Allowed values are: $allowedValues days (or null for one-off)"
+        }
+
+        if (request.maxUrlCount !in PeriodicIndexConfig.MIN_MAX_URL_COUNT..PeriodicIndexConfig.MAX_MAX_URL_COUNT) {
+            return "Max URL count must be between ${PeriodicIndexConfig.MIN_MAX_URL_COUNT} and ${PeriodicIndexConfig.MAX_MAX_URL_COUNT}"
+        }
+
+        return null
+    }
+
+    private suspend fun getMaxAllowedConfigs(userId: UserId): Int {
+        val subscription = userSubscriptionService.getUsableUserSubscription(userId)
+        val plan = subscription?.let { SubscriptionPlan.fromName(it.planName) } ?: SubscriptionPlan.FREE
+        return plan.maxPeriodicIndexConfigs
+    }
+
     private suspend fun buildUrlResponsesWithTitles(
         urls: List<UrlAccess>,
         page: Int,
         pageSize: Int
     ): List<PeriodicIndexJobUrlResponse> {
-        // Fetch page titles from WebpageMarkdown for each URL
         val urlToTitle: Map<String, String?> = urls.associate { urlAccess ->
             val webpage = webpageMarkdownRepository.findByUrl(urlAccess.url)
             urlAccess.url to webpage?.title
@@ -224,4 +378,3 @@ class PeriodicIndexController(
         return userIdClaim?.let { UserId(it) }
     }
 }
-

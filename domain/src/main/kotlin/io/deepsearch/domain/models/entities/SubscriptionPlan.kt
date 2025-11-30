@@ -9,11 +9,12 @@ enum class SubscriptionPlan(
     val planName: String,
     val tier: PlanTier,
     val maxSearches: Int,
+    val maxPeriodicIndexConfigs: Int,
     val priceUsd: Double
 ) {
-    FREE("Free", PlanTier.FREE, 20, 0.0),
-    HOBBY("Hobby", PlanTier.PAID, 200, 20.0),
-    PRO("Pro", PlanTier.PAID, 1000, 80.0);
+    FREE("Free", PlanTier.FREE, 20, 1, 0.0),
+    HOBBY("Hobby", PlanTier.PAID, 200, 5, 20.0),
+    PRO("Pro", PlanTier.PAID, 1000, 30, 80.0);
 
     companion object {
         fun fromName(name: String): SubscriptionPlan? {

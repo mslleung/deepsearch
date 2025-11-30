@@ -14,6 +14,21 @@ import kotlin.time.ExperimentalTime
 
 interface IPeriodicIndexJobService {
     @Serializable
+    data class ProcessedUrlInfo(
+        val url: String,
+        val title: String?,
+        val cachedHit: Boolean,
+        val processedAtMs: Long
+    )
+
+    @Serializable
+    data class FailedUrlInfo(
+        val url: String,
+        val errorMessage: String,
+        val failedAtMs: Long
+    )
+
+    @Serializable
     data class PeriodicIndexEvent(
         val jobId: Long,
         val baseUrl: String,
@@ -24,7 +39,11 @@ interface IPeriodicIndexJobService {
         val totalQueued: Int,
         val state: PeriodicIndexJobState,
         val message: String? = null,
-        val timestampMs: Long = System.currentTimeMillis()
+        val timestampMs: Long = System.currentTimeMillis(),
+        // Enhanced URL tracking
+        val processedUrls: List<ProcessedUrlInfo> = emptyList(),
+        val processingUrls: List<String> = emptyList(),
+        val failedUrls: List<FailedUrlInfo> = emptyList()
     )
 
     suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, userId: UserId): PeriodicIndexJob
