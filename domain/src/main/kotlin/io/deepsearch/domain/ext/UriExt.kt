@@ -168,6 +168,8 @@ private fun encodeUrlComponent(component: String): String {
     // Simple approach: replace spaces and let other characters be handled by URI constructor
     // More sophisticated approach would be to selectively encode only illegal characters
     return component.replace(" ", "%20")
+        .replace("\n", "%0A")
+        .replace("\r", "%0D")
         .replace("<", "%3C")
         .replace(">", "%3E")
         .replace("\"", "%22")
@@ -184,8 +186,8 @@ private fun encodeUrlComponent(component: String): String {
  */
 private fun containsIllegalUriCharacters(s: String): Boolean {
     return s.any { c ->
-        c == ' ' || c == '<' || c == '>' || c == '"' || c == '{' || c == '}' || 
-        c == '|' || c == '\\' || c == '^' || c == '`'
+        c == ' ' || c == '\n' || c == '\r' || c == '<' || c == '>' || c == '"' || 
+        c == '{' || c == '}' || c == '|' || c == '\\' || c == '^' || c == '`'
     }
 }
 
