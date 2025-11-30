@@ -25,6 +25,7 @@ dependencies {
     implementation(libs.exposed.core)
     implementation(libs.exposed.r2dbc)
     implementation(libs.r2dbc.h2)
+    implementation(libs.r2dbc.pool)
     implementation(libs.r2dbc.postgresql)
     
     // pgvector support

@@ -3,6 +3,10 @@ package io.deepsearch.infrastructure.services
 import io.deepsearch.domain.config.EnvironmentConfig
 import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.infrastructure.database.*
+import io.r2dbc.pool.ConnectionPool
+import io.r2dbc.pool.ConnectionPoolConfiguration
+import io.r2dbc.postgresql.PostgresqlConnectionConfiguration
+import io.r2dbc.postgresql.PostgresqlConnectionFactory
 import io.r2dbc.spi.IsolationLevel
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
@@ -12,6 +16,7 @@ import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
 import java.io.File
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 
 interface IDatabaseConfigurationService {
 
@@ -155,14 +160,30 @@ class DatabaseConfigurationService(
 
     /**
      * Configures PostgreSQL database for production.
-     * Uses R2DBC with configuration loaded from application.yaml.
+     * Uses R2DBC with connection pooling. Pool settings are loaded from PostgresConfig.
      */
     private fun configurePostgreSqlDatabase(): R2dbcDatabase {
-        val url = "r2dbc:postgresql://${postgresConfig.host}:${postgresConfig.port}/${postgresConfig.database}"
+        val connectionFactory = PostgresqlConnectionFactory(
+            PostgresqlConnectionConfiguration.builder()
+                .host(postgresConfig.host)
+                .port(postgresConfig.port)
+                .database(postgresConfig.database)
+                .username(postgresConfig.username)
+                .password(postgresConfig.password)
+                .build()
+        )
+
+        val poolConfiguration = ConnectionPoolConfiguration.builder(connectionFactory)
+            .maxSize(postgresConfig.poolMaxSize)
+            .initialSize(postgresConfig.poolInitialSize)
+            .maxIdleTime(Duration.ofMinutes(postgresConfig.poolMaxIdleTimeMinutes))
+            .maxLifeTime(Duration.ofHours(1))
+            .build()
+
+        val pool = ConnectionPool(poolConfiguration)
+
         return R2dbcDatabase.connect(
-            url = url,
-            user = postgresConfig.username,
-            password = postgresConfig.password,
+            connectionFactory = pool,
             databaseConfig = R2dbcDatabaseConfig {
                 defaultMaxAttempts = 1
                 defaultR2dbcIsolationLevel = IsolationLevel.READ_COMMITTED
