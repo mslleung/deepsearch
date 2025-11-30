@@ -156,10 +156,10 @@ class WebpageLinkDiscoveryService(
             return emptyList()
         }
 
-        val doc = Jsoup.parse(html)
+        val doc = Jsoup.parse(html, url)  // Pass base URL for resolution
         val anchors = doc.select("a[href]")
         val links = anchors.mapNotNull { a ->
-            val href = a.attr("href").trim()
+            val href = a.absUrl("href").trim()  // Use absUrl instead of attr
             if (href.isBlank()) null else WebpageLink(
                 url = href,
                 source = LinkSource.ALL_LINKS,
