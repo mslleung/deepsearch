@@ -33,6 +33,14 @@ fun Application.configurePeriodicIndexRoutes() {
                             val controller = call.scope.get<PeriodicIndexController>()
                             controller.deleteConfig(call)
                         }
+                        put("/enable") {
+                            val controller = call.scope.get<PeriodicIndexController>()
+                            controller.enableConfig(call)
+                        }
+                        put("/disable") {
+                            val controller = call.scope.get<PeriodicIndexController>()
+                            controller.disableConfig(call)
+                        }
                         post("/trigger") {
                             val controller = call.scope.get<PeriodicIndexController>()
                             controller.triggerConfig(call)

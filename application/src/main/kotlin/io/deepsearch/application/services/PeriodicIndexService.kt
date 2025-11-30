@@ -21,6 +21,8 @@ interface IPeriodicIndexService {
     suspend fun createConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int, maxAllowedConfigs: Int): PeriodicIndexConfig
     suspend fun updateConfig(configId: Long, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int): PeriodicIndexConfig
     suspend fun deleteConfig(configId: Long)
+    suspend fun enableConfig(configId: Long): PeriodicIndexConfig
+    suspend fun disableConfig(configId: Long): PeriodicIndexConfig
     
     // Job triggering
     suspend fun triggerNow(configId: Long): PeriodicIndexJob
@@ -95,7 +97,30 @@ class PeriodicIndexService(
 
     override suspend fun deleteConfig(configId: Long) {
         val config = periodicIndexConfigRepository.findById(configId) ?: return
+        
+        // Stop any active job for this config's URL before deleting
+        val activeJob = periodicIndexJobRepository.findActiveByBaseUrl(config.url)
+        if (activeJob != null && activeJob.id != null) {
+            periodicIndexJobService.stop(activeJob.id!!)
+        }
+        
         periodicIndexConfigRepository.delete(config)
+    }
+
+    override suspend fun enableConfig(configId: Long): PeriodicIndexConfig {
+        val config = periodicIndexConfigRepository.findById(configId)
+            ?: throw IllegalArgumentException("Config not found: $configId")
+        
+        config.enable()
+        return periodicIndexConfigRepository.update(config)
+    }
+
+    override suspend fun disableConfig(configId: Long): PeriodicIndexConfig {
+        val config = periodicIndexConfigRepository.findById(configId)
+            ?: throw IllegalArgumentException("Config not found: $configId")
+        
+        config.disable()
+        return periodicIndexConfigRepository.update(config)
     }
 
     override suspend fun triggerNow(configId: Long): PeriodicIndexJob {

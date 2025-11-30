@@ -188,6 +188,68 @@ class PeriodicIndexController(
     }
 
     /**
+     * PUT /api/periodic-index/configs/{id}/enable
+     * Enable a periodic index config
+     */
+    suspend fun enableConfig(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val configId = call.parameters["id"]?.toLongOrNull()
+        if (configId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid config ID"))
+            return
+        }
+
+        // Verify ownership
+        val existingConfig = periodicIndexService.getConfig(configId)
+        if (existingConfig == null || existingConfig.userId != userId) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Config not found"))
+            return
+        }
+
+        try {
+            val config = periodicIndexService.enableConfig(configId)
+            call.respond(HttpStatusCode.OK, config.toResponse())
+        } catch (e: IllegalArgumentException) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to e.message))
+        } catch (e: Exception) {
+            logger.error("Failed to enable periodic index config $configId", e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to enable config"))
+        }
+    }
+
+    /**
+     * PUT /api/periodic-index/configs/{id}/disable
+     * Disable a periodic index config
+     */
+    suspend fun disableConfig(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+
+        val configId = call.parameters["id"]?.toLongOrNull()
+        if (configId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid config ID"))
+            return
+        }
+
+        // Verify ownership
+        val existingConfig = periodicIndexService.getConfig(configId)
+        if (existingConfig == null || existingConfig.userId != userId) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Config not found"))
+            return
+        }
+
+        try {
+            val config = periodicIndexService.disableConfig(configId)
+            call.respond(HttpStatusCode.OK, config.toResponse())
+        } catch (e: IllegalArgumentException) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to e.message))
+        } catch (e: Exception) {
+            logger.error("Failed to disable periodic index config $configId", e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to disable config"))
+        }
+    }
+
+    /**
      * POST /api/periodic-index/configs/{id}/trigger
      * Trigger a periodic index job for a specific config
      */
