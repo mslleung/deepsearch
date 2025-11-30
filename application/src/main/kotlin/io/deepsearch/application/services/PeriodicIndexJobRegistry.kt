@@ -231,6 +231,9 @@ class PeriodicIndexJobRegistry(
                     )
                 )
             }
+            .catch {
+                // TODO
+            }
             .onCompletion {
                 logger.info("[{}] Periodic index complete: {} pages processed", jobId, processedCount.get())
             }
@@ -320,13 +323,12 @@ class PeriodicIndexJobRegistry(
         return createSerperSearchLinkFlow(jobId, job)
             .filter { link ->
                 val normalizedUrl = normalize(link.url)
-                if (seenUrls.contains(normalizedUrl)) {
+                // Use atomic add() which returns true only if element was NOT already present
+                val isNew = seenUrls.add(normalizedUrl)
+                if (!isNew) {
                     logger.debug("[{}] Serper link already seen: {}", jobId, normalizedUrl)
-                    false
-                } else {
-                    seenUrls.add(normalizedUrl)
-                    true
                 }
+                isNew
             }
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
@@ -391,13 +393,12 @@ class PeriodicIndexJobRegistry(
         return createSitemapLinkFlow(jobId, job)
             .filter { link ->
                 val normalizedUrl = normalize(link.url)
-                if (seenUrls.contains(normalizedUrl)) {
+                // Use atomic add() which returns true only if element was NOT already present
+                val isNew = seenUrls.add(normalizedUrl)
+                if (!isNew) {
                     logger.debug("[{}] Sitemap link already seen: {}", jobId, normalizedUrl)
-                    false
-                } else {
-                    seenUrls.add(normalizedUrl)
-                    true
                 }
+                isNew
             }
             .flatMapMerge(concurrency = 10) { link ->
                 flow {
@@ -483,12 +484,13 @@ class PeriodicIndexJobRegistry(
                 val normalizedUrl = normalize(link.url)
                 if (!normalizedUrl.startsWith(job.baseUrl)) {
                     false
-                } else if (seenUrls.contains(normalizedUrl)) {
-                    logger.debug("[{}] Recursive link already seen: {}", jobId, normalizedUrl)
-                    false
                 } else {
-                    seenUrls.add(normalizedUrl)
-                    true
+                    // Use atomic add() which returns true only if element was NOT already present
+                    val isNew = seenUrls.add(normalizedUrl)
+                    if (!isNew) {
+                        logger.debug("[{}] Recursive link already seen: {}", jobId, normalizedUrl)
+                    }
+                    isNew
                 }
             }
             .flatMapMerge(concurrency = 10) { link ->

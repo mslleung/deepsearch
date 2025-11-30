@@ -89,7 +89,7 @@ class PlaywrightBrowserPage(
             page.screenshot(
                 Page.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
-                    timeout = 30000.0
+                    timeout = 5000.0
                 })
         }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
@@ -102,7 +102,7 @@ class PlaywrightBrowserPage(
                 Page.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
                     fullPage = true
-                    timeout = 30000.0
+                    timeout = 5000.0
                 })
         }
         return IBrowserPage.Screenshot(bytes = bytes, mimeType = ImageMimeType.JPEG)
@@ -121,7 +121,7 @@ class PlaywrightBrowserPage(
             target.screenshot(
                 Locator.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
-                    timeout = 3000.0
+                    timeout = 500.0
                 }
             )
         }
@@ -137,7 +137,7 @@ class PlaywrightBrowserPage(
             target.screenshot(
                 Locator.ScreenshotOptions().apply {
                     type = ScreenshotType.JPEG
-                    timeout = 3000.0
+                    timeout = 500.0
                 }
             )
         }

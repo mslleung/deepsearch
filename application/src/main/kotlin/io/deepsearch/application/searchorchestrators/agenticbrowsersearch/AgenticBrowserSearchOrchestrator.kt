@@ -225,10 +225,8 @@ class AgenticBrowserSearchOrchestrator(
                 urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId)
                     .filter { event ->
                         val eventUrl = normalizeUrlService.normalize(event.url) ?: event.url
-                        if (seenUrls.contains(eventUrl)) false
-                        else {
-                            seenUrls.add(eventUrl); true
-                        }
+                        // Use atomic add() which returns true only if element was NOT already present
+                        seenUrls.add(eventUrl)
                     }
                     .onEach { event ->
                         when (event) {
@@ -294,10 +292,8 @@ class AgenticBrowserSearchOrchestrator(
         return linkSource
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                if (seenUrls.contains(normalizedUrl)) false
-                else {
-                    seenUrls.add(normalizedUrl); true
-                }
+                // Use atomic add() which returns true only if element was NOT already present
+                seenUrls.add(normalizedUrl)
             }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
@@ -386,9 +382,8 @@ class AgenticBrowserSearchOrchestrator(
             .takeWhile { !querySessionService.isBudgetExceeded(sessionId, budget) }
             .filter { link ->
                 val url = normalizeUrlService.normalize(link.url) ?: link.url
-                if (seenUrls.contains(url)) false else {
-                    seenUrls.add(url); true
-                }
+                // Use atomic add() which returns true only if element was NOT already present
+                seenUrls.add(url)
             }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
