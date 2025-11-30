@@ -153,7 +153,8 @@ class WebpageCacheService(
                 mimeType = mimeType,
                 embedding = null, // Will be updated asynchronously
                 createdAt = existing?.createdAt ?: currentTime,
-                updatedAt = currentTime
+                updatedAt = currentTime,
+                version = existing?.version ?: 0 // Preserve version for optimistic locking
             )
         )
 
