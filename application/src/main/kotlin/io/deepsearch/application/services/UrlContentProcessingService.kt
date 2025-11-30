@@ -57,7 +57,6 @@ interface IUrlContentProcessingService {
      */
     fun processUrlAsFlow(
         url: String,
-        maxCacheAge: Long? = null,
         sessionId: PeriodicIndexSessionId
     ): Flow<UrlProcessingEvent>
 }
@@ -88,10 +87,10 @@ class UrlContentProcessingService(
 
     override fun processUrlAsFlow(
         url: String,
-        maxCacheAge: Long?,
         sessionId: PeriodicIndexSessionId
     ): Flow<UrlProcessingEvent> {
-        return processInternalAsFlow(url, maxCacheAge, sessionId) { html ->
+        // max cache age is set to 0 so the cache will always expire, this is because periodic index should forcefully refresh everything
+        return processInternalAsFlow(url, 0, sessionId) { html ->
             webpageLinkDiscoveryService.discoverAllLinks(html, url)
         }
     }

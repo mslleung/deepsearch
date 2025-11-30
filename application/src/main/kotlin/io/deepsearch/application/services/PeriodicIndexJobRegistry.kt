@@ -260,7 +260,7 @@ class PeriodicIndexJobRegistry(
                     }
 
                     val sessionId = PeriodicIndexSessionId(jobId)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, sessionId)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -332,7 +332,7 @@ class PeriodicIndexJobRegistry(
                 flow {
                     val normalizedUrl = normalize(link.url)
                     val sessionId = PeriodicIndexSessionId(jobId)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, sessionId)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -403,7 +403,7 @@ class PeriodicIndexJobRegistry(
                 flow {
                     val normalizedUrl = normalize(link.url)
                     val sessionId = PeriodicIndexSessionId(jobId)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, sessionId)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
@@ -497,7 +497,7 @@ class PeriodicIndexJobRegistry(
                     val sessionId = PeriodicIndexSessionId(jobId)
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
 
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, maxCacheAge = null, sessionId)
+                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
                         .catch { e ->
                             when (e) {
                                 is CancellationException -> throw e
