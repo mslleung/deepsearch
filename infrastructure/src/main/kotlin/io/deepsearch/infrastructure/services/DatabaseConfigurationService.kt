@@ -9,6 +9,7 @@ import io.r2dbc.postgresql.PostgresqlConnectionConfiguration
 import io.r2dbc.postgresql.PostgresqlConnectionFactory
 import io.r2dbc.spi.IsolationLevel
 import kotlinx.coroutines.runBlocking
+import org.jetbrains.exposed.v1.core.vendors.PostgreSQLDialect
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabaseConfig
 import org.jetbrains.exposed.v1.r2dbc.SchemaUtils
@@ -187,6 +188,7 @@ class DatabaseConfigurationService(
             databaseConfig = R2dbcDatabaseConfig {
                 defaultMaxAttempts = 1
                 defaultR2dbcIsolationLevel = IsolationLevel.READ_COMMITTED
+                explicitDialect = PostgreSQLDialect()
             }
         )
     }
