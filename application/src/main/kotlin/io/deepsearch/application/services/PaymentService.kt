@@ -9,6 +9,7 @@ import com.stripe.model.checkout.Session
 import com.stripe.net.Webhook
 import com.stripe.param.CustomerCreateParams
 import com.stripe.param.SubscriptionCreateParams
+import com.stripe.param.SubscriptionRetrieveParams
 import com.stripe.param.billingportal.SessionCreateParams as PortalSessionCreateParams
 import com.stripe.param.checkout.SessionCreateParams
 import io.deepsearch.domain.config.StripeConfig
@@ -184,16 +185,23 @@ class PaymentService(
             )
             // Create subscription but don't activate until payment succeeds
             .setPaymentBehavior(SubscriptionCreateParams.PaymentBehavior.DEFAULT_INCOMPLETE)
-            // Save the payment method for future invoices
+            // Configure payment settings for embedded payment collection (Stripe Elements)
             .setPaymentSettings(
                 SubscriptionCreateParams.PaymentSettings.builder()
+                    // Save the payment method for future invoices
                     .setSaveDefaultPaymentMethod(
                         SubscriptionCreateParams.PaymentSettings.SaveDefaultPaymentMethod.ON_SUBSCRIPTION
+                    )
+                    // Specify payment method types to force PaymentIntent creation
+                    .addPaymentMethodType(
+                        SubscriptionCreateParams.PaymentSettings.PaymentMethodType.CARD
                     )
                     .build()
             )
             // Expand the latest invoice to get the payment intent client secret
             .addExpand("latest_invoice.payment_intent")
+            // Expand pending_setup_intent for trial, $0 invoice, or setup-first flows
+            .addExpand("pending_setup_intent")
             // Add metadata for webhook handlers
             .putMetadata("user_id", userId.value.toString())
             .putMetadata("plan_name", plan.planName)
@@ -203,8 +211,41 @@ class PaymentService(
         val subscription = Subscription.create(params)
 
         // Extract the client secret from the expanded payment intent via raw JSON
-        val clientSecret = extractClientSecretFromSubscription(subscription)
-            ?: throw IllegalStateException("Could not extract client secret from subscription")
+        var clientSecret = extractClientSecretFromSubscription(subscription)
+
+        if (clientSecret == null) {
+            // Retry logic to handle race conditions where PaymentIntent is created asynchronously
+            // This can happen if the invoice is finalized but the PaymentIntent creation lags behind
+            val maxRetries = 5
+            for (i in 1..maxRetries) {
+                logger.warn("Client secret not found, retrying attempt $i/$maxRetries in 2s...")
+                kotlinx.coroutines.delay(2000)
+
+                try {
+                    // Refresh subscription to get latest state
+                    val refreshedSubscription = Subscription.retrieve(
+                        subscription.id,
+                        SubscriptionRetrieveParams.builder()
+                            .addExpand("latest_invoice.payment_intent")
+                            .addExpand("pending_setup_intent")
+                            .build(),
+                        null
+                    )
+
+                    clientSecret = extractClientSecretFromSubscription(refreshedSubscription)
+                    if (clientSecret != null) {
+                        logger.info("Found client secret after retry $i")
+                        break
+                    }
+                } catch (e: Exception) {
+                    logger.error("Error while retrying subscription retrieval: ${e.message}")
+                }
+            }
+        }
+
+        if (clientSecret == null) {
+            throw IllegalStateException("Could not extract client secret from subscription")
+        }
 
         logger.info(
             "Created subscription intent {} for user {} plan {}",
@@ -418,10 +459,19 @@ class PaymentService(
         val stripeSubscription = event.dataObjectDeserializer.`object`.orElse(null) as? Subscription
             ?: return logger.error("Could not deserialize subscription from event")
 
-        val subscription = userSubscriptionRepository.findByStripeSubscriptionId(stripeSubscription.id)
+        var subscription = userSubscriptionRepository.findByStripeSubscriptionId(stripeSubscription.id)
+        
+        // If subscription doesn't exist in our database, create it
+        // This happens when using Stripe Elements flow - the subscription is created in Stripe
+        // but only saved to our DB when payment succeeds
         if (subscription == null) {
-            logger.warn("Subscription not found for Stripe subscription ID: {}", stripeSubscription.id)
-            return
+            logger.info("Subscription not found in DB for {}, creating from Stripe data", stripeSubscription.id)
+            createSubscriptionFromStripe(stripeSubscription.id)
+            subscription = userSubscriptionRepository.findByStripeSubscriptionId(stripeSubscription.id)
+            if (subscription == null) {
+                logger.error("Failed to create subscription for Stripe subscription ID: {}", stripeSubscription.id)
+                return
+            }
         }
 
         val newStatus = StripeSubscriptionStatus.fromStripeStatus(stripeSubscription.status)
@@ -453,13 +503,52 @@ class PaymentService(
     /**
      * Extracts subscription ID from an Invoice using the raw JSON object.
      * This approach is needed because Stripe SDK v31+ uses different accessor patterns.
+     * Checks both 'subscription' field and 'parent.subscription' field.
      */
     private fun extractSubscriptionId(invoice: Invoice): String? {
+        val rawJson = invoice.rawJsonObject ?: return null
+        
         return try {
-            invoice.rawJsonObject
-                ?.get("subscription")
-                ?.takeIf { !it.isJsonNull }
-                ?.asString
+            // Try direct 'subscription' field first
+            val subscription = rawJson.get("subscription")
+            if (subscription != null && !subscription.isJsonNull) {
+                val subId = if (subscription.isJsonPrimitive) {
+                    subscription.asString
+                } else if (subscription.isJsonObject) {
+                    subscription.asJsonObject.get("id")?.takeIf { !it.isJsonNull }?.asString
+                } else null
+                
+                if (subId != null) {
+                    logger.debug("Extracted subscription ID from 'subscription' field: {}", subId)
+                    return subId
+                }
+            }
+            
+            // Try 'parent' field (newer Stripe API versions)
+            val parent = rawJson.get("parent")
+            if (parent != null && !parent.isJsonNull && parent.isJsonObject) {
+                val parentObj = parent.asJsonObject
+                val parentSubscription = parentObj.get("subscription_details")?.asJsonObject
+                    ?.get("subscription")
+                if (parentSubscription != null && !parentSubscription.isJsonNull) {
+                    val subId = if (parentSubscription.isJsonPrimitive) {
+                        parentSubscription.asString
+                    } else if (parentSubscription.isJsonObject) {
+                        parentSubscription.asJsonObject.get("id")?.takeIf { !it.isJsonNull }?.asString
+                    } else null
+                    
+                    if (subId != null) {
+                        logger.debug("Extracted subscription ID from 'parent.subscription_details' field: {}", subId)
+                        return subId
+                    }
+                }
+            }
+            
+            // Log available fields for debugging
+            val keys = rawJson.keySet()
+            logger.debug("Invoice {} has no subscription field. Available keys: {}", 
+                rawJson.get("id")?.asString ?: "unknown", keys)
+            null
         } catch (e: Exception) {
             logger.debug("Could not extract subscription ID from invoice: {}", e.message)
             null
@@ -467,20 +556,366 @@ class PaymentService(
     }
 
     /**
-     * Extracts the client secret from a subscription with expanded latest_invoice.payment_intent.
-     * The subscription must be created with the expansion: "latest_invoice.payment_intent"
+     * Extracts the client secret from a subscription with expanded latest_invoice.payment_intent
+     * or pending_setup_intent.
+     * 
+     * The subscription must be created with expansions:
+     * - "latest_invoice.payment_intent" (for immediate payment flow)
+     * - "pending_setup_intent" (for trial, $0 invoice, or setup-first flows)
      */
     private fun extractClientSecretFromSubscription(subscription: Subscription): String? {
+        val rawJson = subscription.rawJsonObject
+        if (rawJson == null) {
+            logger.error("Subscription rawJsonObject is null")
+            return null
+        }
+
+        // Log detailed invoice structure for debugging
+        val latestInvoice = rawJson.get("latest_invoice")
+        logInvoiceStructure(latestInvoice, logger)
+
+        val result = extractClientSecretFromJson(rawJson)
+        if (result.clientSecret != null) {
+            if (result.source == ClientSecretSource.PENDING_SETUP_INTENT) {
+                logger.info("Using client_secret from pending_setup_intent")
+            }
+            return result.clientSecret
+        }
+
+        logger.error(
+            "Could not find client_secret. latest_invoice={}, pending_setup_intent={}, {}",
+            result.latestInvoiceType,
+            result.pendingSetupIntentType,
+            result.paymentIntentDiagnostic ?: "no_payment_intent_diagnostic"
+        )
+        
+        // If payment_intent wasn't expanded but we have its ID, fetch it explicitly
+        val paymentIntentId = extractPaymentIntentId(rawJson)
+        if (paymentIntentId != null) {
+            logger.info("Attempting to fetch payment_intent {} directly", paymentIntentId)
+            return fetchClientSecretFromPaymentIntent(paymentIntentId)
+        }
+        
+        // Last resort: If latest_invoice is an object with an ID, try to retrieve and get payment_intent
+        val invoiceId = extractInvoiceId(rawJson)
+        if (invoiceId != null) {
+            logger.info("Attempting to retrieve invoice {} and its payment_intent directly", invoiceId)
+            // Try to wait a bit before fetching, as it might be async
+            return fetchClientSecretFromInvoice(invoiceId)
+        }
+        
+        return null
+    }
+    
+    /**
+     * Extracts the invoice ID from the subscription JSON.
+     */
+    private fun extractInvoiceId(rawJson: com.google.gson.JsonObject): String? {
+        val latestInvoice = rawJson.get("latest_invoice")
+        if (latestInvoice == null || latestInvoice.isJsonNull) return null
+        
+        // If it's a string, it's the ID directly
+        if (latestInvoice.isJsonPrimitive) {
+            return latestInvoice.asString
+        }
+        
+        // If it's an object, get the id field
+        if (latestInvoice.isJsonObject) {
+            return latestInvoice.asJsonObject.get("id")?.takeIf { !it.isJsonNull }?.asString
+        }
+        
+        return null
+    }
+    
+    /**
+     * Fetches the client_secret by retrieving the invoice and then its payment_intent.
+     * If the invoice doesn't have a payment_intent, tries to find one by listing recent PaymentIntents.
+     */
+    private fun fetchClientSecretFromInvoice(invoiceId: String): String? {
         return try {
-            subscription.rawJsonObject
-                ?.getAsJsonObject("latest_invoice")
-                ?.getAsJsonObject("payment_intent")
-                ?.get("client_secret")
-                ?.takeIf { !it.isJsonNull }
-                ?.asString
-        } catch (e: Exception) {
-            logger.error("Could not extract client secret from subscription: {}", e.message)
+            // Retrieve the invoice with payment_intent expanded
+            val params = com.stripe.param.InvoiceRetrieveParams.builder()
+                .addExpand("payment_intent")
+                .build()
+            val invoice = Invoice.retrieve(invoiceId, params, null)
+            
+            // Log invoice debug info
+            logger.info("Retrieved invoice {}: status={}, collection_method={}, auto_advance={}", 
+                invoice.id, invoice.status, invoice.collectionMethod, invoice.autoAdvance)
+            
+            // Use rawJsonObject to extract the payment_intent
+            val rawJson = invoice.rawJsonObject
+            if (rawJson != null) {
+                val paymentIntent = rawJson.get("payment_intent")
+                if (paymentIntent != null && !paymentIntent.isJsonNull) {
+                    if (paymentIntent.isJsonObject) {
+                        val clientSecret = paymentIntent.asJsonObject.get("client_secret")
+                        if (clientSecret != null && !clientSecret.isJsonNull) {
+                            logger.info("Successfully fetched client_secret from invoice {} payment_intent", invoiceId)
+                            return clientSecret.asString
+                        }
+                        val status = paymentIntent.asJsonObject.get("status")?.takeIf { !it.isJsonNull }?.asString
+                        logger.error("Invoice {} payment_intent has no client_secret (status={})", invoiceId, status)
+                    } else if (paymentIntent.isJsonPrimitive) {
+                        // payment_intent is a string ID - fetch it directly
+                        val piId = paymentIntent.asString
+                        logger.info("Fetching payment_intent {} from invoice {}", piId, invoiceId)
+                        return fetchClientSecretFromPaymentIntent(piId)
+                    }
+                } else {
+                    logger.warn("Invoice {} has no payment_intent field, searching by metadata", invoiceId)
+                    // Try to find PaymentIntent by searching with invoice metadata
+                    val customerId = rawJson.get("customer")?.takeIf { !it.isJsonNull }?.asString
+                    if (customerId != null) {
+                        return findPaymentIntentForInvoice(invoiceId, customerId)
+                    }
+                }
+            }
+            
             null
+        } catch (e: Exception) {
+            logger.error("Failed to retrieve invoice {}: {}", invoiceId, e.message)
+            null
+        }
+    }
+    
+    /**
+     * Finds a PaymentIntent associated with an invoice by searching recent PaymentIntents for the customer.
+     * Falls back to finding the most recent requires_payment_method PaymentIntent if no exact match.
+     */
+    private fun findPaymentIntentForInvoice(invoiceId: String, customerId: String): String? {
+        return try {
+            logger.info("Searching for PaymentIntent for invoice {} customer {}", invoiceId, customerId)
+            
+            val params = com.stripe.param.PaymentIntentListParams.builder()
+                .setCustomer(customerId)
+                .setLimit(10)
+                .build()
+            
+            val paymentIntents = com.stripe.model.PaymentIntent.list(params)
+            
+            // First, try to find exact match by invoice ID
+            for (pi in paymentIntents.data) {
+                val piRawJson = pi.rawJsonObject
+                val piInvoice = piRawJson?.get("invoice")?.takeIf { !it.isJsonNull }
+                val piInvoiceId = when {
+                    piInvoice == null -> null
+                    piInvoice.isJsonPrimitive -> piInvoice.asString
+                    piInvoice.isJsonObject -> piInvoice.asJsonObject.get("id")?.takeIf { !it.isJsonNull }?.asString
+                    else -> null
+                }
+                
+                if (piInvoiceId == invoiceId) {
+                    val clientSecret = pi.clientSecret
+                    if (!clientSecret.isNullOrBlank()) {
+                        logger.info("Found PaymentIntent {} for invoice {}", pi.id, invoiceId)
+                        return clientSecret
+                    }
+                }
+            }
+            
+            // Fallback: Find the most recent PaymentIntent with status 'requires_payment_method'
+            // This handles cases where Stripe doesn't link the PI to the invoice
+            logger.info("No exact invoice match, looking for recent requires_payment_method PaymentIntent")
+            for (pi in paymentIntents.data) {
+                val status = pi.status
+                val clientSecret = pi.clientSecret
+                logger.debug("PaymentIntent {}: status={}, has_client_secret={}", 
+                    pi.id, status, !clientSecret.isNullOrBlank())
+                
+                if (status == "requires_payment_method" && !clientSecret.isNullOrBlank()) {
+                    logger.info("Using most recent requires_payment_method PaymentIntent {} for customer {}", 
+                        pi.id, customerId)
+                    return clientSecret
+                }
+            }
+            
+            logger.error("Could not find suitable PaymentIntent for invoice {} among {} recent PaymentIntents", 
+                invoiceId, paymentIntents.data.size)
+            null
+        } catch (e: Exception) {
+            logger.error("Failed to search PaymentIntents for invoice {}: {}", invoiceId, e.message)
+            null
+        }
+    }
+    
+    /**
+     * Extracts the payment_intent ID from the subscription JSON.
+     * Returns null if not found or if it's already expanded (object).
+     */
+    private fun extractPaymentIntentId(rawJson: com.google.gson.JsonObject): String? {
+        val latestInvoice = rawJson.get("latest_invoice")
+        if (latestInvoice == null || latestInvoice.isJsonNull || !latestInvoice.isJsonObject) {
+            return null
+        }
+        
+        val paymentIntent = latestInvoice.asJsonObject.get("payment_intent")
+        // If payment_intent is a string, it's the ID (not expanded)
+        return if (paymentIntent != null && paymentIntent.isJsonPrimitive) {
+            paymentIntent.asString
+        } else {
+            null
+        }
+    }
+    
+    /**
+     * Fetches the client_secret directly from a PaymentIntent by ID.
+     */
+    private fun fetchClientSecretFromPaymentIntent(paymentIntentId: String): String? {
+        return try {
+            val paymentIntent = com.stripe.model.PaymentIntent.retrieve(paymentIntentId)
+            val clientSecret = paymentIntent.clientSecret
+            if (!clientSecret.isNullOrBlank()) {
+                logger.info("Successfully fetched client_secret from payment_intent {}", paymentIntentId)
+                clientSecret
+            } else {
+                logger.error("PaymentIntent {} has no client_secret (status={})", paymentIntentId, paymentIntent.status)
+                null
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to fetch payment_intent {}: {}", paymentIntentId, e.message)
+            null
+        }
+    }
+
+    companion object {
+        /**
+         * Result of extracting client secret from subscription JSON.
+         */
+        data class ClientSecretExtractionResult(
+            val clientSecret: String?,
+            val source: ClientSecretSource?,
+            val latestInvoiceType: String,
+            val pendingSetupIntentType: String,
+            val paymentIntentDiagnostic: String? = null
+        )
+
+        enum class ClientSecretSource {
+            LATEST_INVOICE_PAYMENT_INTENT,
+            PENDING_SETUP_INTENT
+        }
+
+        /**
+         * Extracts the client secret from subscription JSON.
+         * This method is internal for testing purposes.
+         * 
+         * @param rawJson The raw JSON object from a Stripe Subscription
+         * @return Extraction result with client secret (if found) and diagnostic info
+         */
+        internal fun extractClientSecretFromJson(rawJson: com.google.gson.JsonObject): ClientSecretExtractionResult {
+            var paymentIntentDiagnostic: String? = null
+            
+            // Try payment_intent from latest_invoice first (standard payment flow)
+            val latestInvoice = rawJson.get("latest_invoice")
+            if (latestInvoice != null && !latestInvoice.isJsonNull && latestInvoice.isJsonObject) {
+                val invoiceObj = latestInvoice.asJsonObject
+                val paymentIntent = invoiceObj.get("payment_intent")
+                
+                // Build detailed diagnostic for payment_intent
+                paymentIntentDiagnostic = buildPaymentIntentDiagnostic(paymentIntent)
+                
+                if (paymentIntent != null && !paymentIntent.isJsonNull && paymentIntent.isJsonObject) {
+                    val clientSecret = paymentIntent.asJsonObject.get("client_secret")
+                    if (clientSecret != null && !clientSecret.isJsonNull) {
+                        return ClientSecretExtractionResult(
+                            clientSecret = clientSecret.asString,
+                            source = ClientSecretSource.LATEST_INVOICE_PAYMENT_INTENT,
+                            latestInvoiceType = "object",
+                            pendingSetupIntentType = describeJsonElement(rawJson.get("pending_setup_intent")),
+                            paymentIntentDiagnostic = paymentIntentDiagnostic
+                        )
+                    }
+                }
+            }
+
+            // Fall back to pending_setup_intent (trial, $0 invoice, or setup-first flows)
+            val pendingSetupIntent = rawJson.get("pending_setup_intent")
+            if (pendingSetupIntent != null && !pendingSetupIntent.isJsonNull && pendingSetupIntent.isJsonObject) {
+                val clientSecret = pendingSetupIntent.asJsonObject.get("client_secret")
+                if (clientSecret != null && !clientSecret.isJsonNull) {
+                    return ClientSecretExtractionResult(
+                        clientSecret = clientSecret.asString,
+                        source = ClientSecretSource.PENDING_SETUP_INTENT,
+                        latestInvoiceType = describeJsonElement(latestInvoice),
+                        pendingSetupIntentType = "object",
+                        paymentIntentDiagnostic = paymentIntentDiagnostic
+                    )
+                }
+            }
+
+            return ClientSecretExtractionResult(
+                clientSecret = null,
+                source = null,
+                latestInvoiceType = describeJsonElement(latestInvoice),
+                pendingSetupIntentType = describeJsonElement(pendingSetupIntent),
+                paymentIntentDiagnostic = paymentIntentDiagnostic
+            )
+        }
+
+        /**
+         * Describes a JSON element for diagnostic purposes.
+         */
+        private fun describeJsonElement(element: com.google.gson.JsonElement?): String {
+            return element?.let {
+                when {
+                    it.isJsonNull -> "null"
+                    it.isJsonObject -> "object"
+                    it.isJsonPrimitive -> "string(${it.asString})"
+                    it.isJsonArray -> "array"
+                    else -> "unknown"
+                }
+            } ?: "absent"
+        }
+
+        /**
+         * Builds a diagnostic string for the payment_intent field.
+         */
+        private fun buildPaymentIntentDiagnostic(paymentIntent: com.google.gson.JsonElement?): String {
+            if (paymentIntent == null) return "payment_intent=absent"
+            if (paymentIntent.isJsonNull) return "payment_intent=null"
+            if (paymentIntent.isJsonPrimitive) {
+                // payment_intent is a string ID - means it wasn't expanded
+                return "payment_intent=string(${paymentIntent.asString}) [NOT EXPANDED]"
+            }
+            if (!paymentIntent.isJsonObject) return "payment_intent=unknown_type"
+            
+            // It's an object - check what's inside
+            val piObj = paymentIntent.asJsonObject
+            val id = piObj.get("id")?.takeIf { !it.isJsonNull }?.asString ?: "no_id"
+            val status = piObj.get("status")?.takeIf { !it.isJsonNull }?.asString ?: "no_status"
+            val clientSecret = piObj.get("client_secret")
+            val clientSecretDesc = when {
+                clientSecret == null -> "absent"
+                clientSecret.isJsonNull -> "null"
+                clientSecret.isJsonPrimitive -> "present(${clientSecret.asString.take(20)}...)"
+                else -> "unexpected_type"
+            }
+            return "payment_intent=object(id=$id, status=$status, client_secret=$clientSecretDesc)"
+        }
+
+        /**
+         * Logs the structure of the latest_invoice for debugging.
+         */
+        internal fun logInvoiceStructure(latestInvoice: com.google.gson.JsonElement?, logger: org.slf4j.Logger) {
+            if (latestInvoice == null || latestInvoice.isJsonNull || !latestInvoice.isJsonObject) {
+                logger.debug("latest_invoice is not an object: {}", describeJsonElement(latestInvoice))
+                return
+            }
+            
+            val invoiceObj = latestInvoice.asJsonObject
+            val keys = invoiceObj.keySet().sorted()
+            logger.debug("latest_invoice keys: {}", keys.joinToString(", "))
+            
+            // Log specific important fields
+            val id = invoiceObj.get("id")?.takeIf { !it.isJsonNull }?.asString
+            val status = invoiceObj.get("status")?.takeIf { !it.isJsonNull }?.asString
+            val paymentIntent = invoiceObj.get("payment_intent")
+            val amountDue = invoiceObj.get("amount_due")?.takeIf { !it.isJsonNull }
+            
+            logger.debug(
+                "latest_invoice details: id={}, status={}, amount_due={}, payment_intent={}",
+                id, status, amountDue, describeJsonElement(paymentIntent)
+            )
         }
     }
 }
