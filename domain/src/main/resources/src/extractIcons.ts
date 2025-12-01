@@ -279,21 +279,79 @@
       deduplicationMap: {} // maps number of selectors to count of icons with that many selectors
     };
     
-    // Query for multiple icon types:
-    // 1. <i> tags (Font Awesome, Bootstrap Icons, etc.)
-    // 2. <svg> tags (inline SVG icons)
-    // 3. Elements with common icon class patterns
-    // 4. <span> with icon fonts or classes
+    // Query for multiple icon types with targeted selectors to avoid capturing non-icon elements
+    // Previously used broad 'i' selector which captured all italic text
     const selectors = [
-      'i',
+      // SVG icons (keep all SVGs - most modern icon libraries use inline SVGs)
       'svg',
-      'svg[class*="icon"]',
-      'svg[class*="Icon"]',
-      '[class*="icon-"]',
-      '[class*="Icon-"]',
-      'span[class*="icon"]',
-      'span[class*="Icon"]',
-      '[role="img"]'
+      
+      // Font Awesome (all variants: solid, regular, light, duotone, brands, etc.)
+      'i.fa', 'i.fas', 'i.far', 'i.fab', 'i.fal', 'i.fad', 'i.fass', 'i.fasr', 'i.fasl',
+      'i[class^="fa-"]', 'i[class*=" fa-"]',
+      
+      // Bootstrap Icons
+      'i.bi', 'i[class^="bi-"]', 'i[class*=" bi-"]',
+      
+      // Material Design Icons (community)
+      'i.mdi', 'i[class^="mdi-"]', 'i[class*=" mdi-"]',
+      
+      // Google Material Icons & Symbols
+      '.material-icons', '.material-icons-outlined', '.material-icons-round', 
+      '.material-icons-sharp', '.material-icons-two-tone',
+      '.material-symbols-outlined', '.material-symbols-rounded', '.material-symbols-sharp',
+      
+      // Ionicons
+      'ion-icon', 'i[class^="ion-"]', 'i[class*=" ion-"]',
+      
+      // Glyphicons (Bootstrap 3)
+      '.glyphicon',
+      
+      // Phosphor Icons
+      'i.ph', 'i[class^="ph-"]', 'i[class*=" ph-"]',
+      
+      // Remix Icons
+      'i[class^="ri-"]', 'i[class*=" ri-"]',
+      
+      // Line Awesome
+      'i.la', 'i[class^="la-"]', 'i[class*=" la-"]',
+      
+      // Unicons
+      'i.uil', 'i.uis', 'i.uim', 'i.uib',
+      
+      // Boxicons
+      'i.bx', 'i[class^="bx-"]', 'i[class^="bxs-"]', 'i[class^="bxl-"]',
+      
+      // Octicons (GitHub)
+      '.octicon',
+      
+      // Feather Icons (data attribute)
+      '[data-feather]',
+      
+      // Lucide Icons (data attribute)
+      '[data-lucide]',
+      
+      // css.gg
+      'i[class^="gg-"]', 'i[class*=" gg-"]',
+      
+      // Tabler Icons
+      'i.ti', 'i[class^="ti-"]', 'i[class*=" ti-"]',
+      
+      // Heroicons (usually SVG, but some implementations use classes)
+      '[class*="heroicon"]',
+      
+      // Generic icon patterns (fallback for custom icon fonts like IcoMoon, Fontello)
+      'i[class*="icon"]', 'i[class*="Icon"]',
+      'span[class*="icon"]', 'span[class*="Icon"]',
+      '[class*="icon-"]', '[class*="Icon-"]',
+      '[class*="-icon"]', '[class*="-Icon"]',
+      '[class*="ico-"]', '[class*="glyph"]',
+      
+      // Data attributes commonly used for icons
+      '[data-icon]',
+      
+      // ARIA/accessibility patterns for icons
+      'i[aria-hidden="true"]',
+      '[role="img"]:not(img)',
     ];
     
     // Count elements by individual selector for better debugging
