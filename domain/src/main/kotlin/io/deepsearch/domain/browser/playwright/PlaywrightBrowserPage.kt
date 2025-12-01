@@ -494,13 +494,16 @@ class PlaywrightBrowserPage(
     @Serializable
     private data class MediaIconDebugStats(
         val totalElementsFound: Int,
+        val elementsBySelector: Map<String, Int>,
         val elementsProcessed: Int,
         val skippedNoGlyph: Int,
         val skippedSvgZeroSize: Int,
         val renderingErrors: Int,
         val successfullyRendered: Int,
         val uniqueIcons: Int,
-        val totalSnippets: Int
+        val totalSnippets: Int,
+        val skippedDetails: List<SkippedDetail>,
+        val deduplicationMap: Map<Int, Int>
     )
 
     @Serializable

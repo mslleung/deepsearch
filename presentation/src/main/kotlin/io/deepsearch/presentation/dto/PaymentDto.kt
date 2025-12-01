@@ -9,9 +9,7 @@ data class PaymentConfigResponse(
 
 @Serializable
 data class CreateCheckoutSessionRequest(
-    val planName: String,
-    val successUrl: String,
-    val cancelUrl: String
+    val planName: String
 )
 
 @Serializable
@@ -28,4 +26,15 @@ data class CreatePortalSessionRequest(
 @Serializable
 data class CreatePortalSessionResponse(
     val url: String
+)
+
+@Serializable
+data class CreateSubscriptionIntentRequest(
+    val planName: String
+)
+
+@Serializable
+data class CreateSubscriptionIntentResponse(
+    val subscriptionId: String,
+    val clientSecret: String
 )

@@ -8,6 +8,7 @@ import com.stripe.model.Subscription
 import com.stripe.model.checkout.Session
 import com.stripe.net.Webhook
 import com.stripe.param.CustomerCreateParams
+import com.stripe.param.SubscriptionCreateParams
 import com.stripe.param.billingportal.SessionCreateParams as PortalSessionCreateParams
 import com.stripe.param.checkout.SessionCreateParams
 import io.deepsearch.domain.config.StripeConfig
@@ -37,6 +38,15 @@ interface IPaymentService {
     )
 
     /**
+     * Result of creating a subscription intent for Stripe Elements.
+     * Contains the client secret needed to confirm payment on the frontend.
+     */
+    data class SubscriptionIntentResult(
+        val subscriptionId: String,
+        val clientSecret: String
+    )
+
+    /**
      * Result of creating a customer portal session.
      */
     data class CustomerPortalResult(
@@ -48,16 +58,26 @@ interface IPaymentService {
      *
      * @param userId The user who is subscribing
      * @param plan The subscription plan to subscribe to
-     * @param successUrl URL to redirect to on successful payment
-     * @param cancelUrl URL to redirect to if payment is canceled
      * @return The checkout session result containing the session ID and URL
      */
     suspend fun createCheckoutSession(
         userId: UserId,
-        plan: SubscriptionPlan,
-        successUrl: String,
-        cancelUrl: String
+        plan: SubscriptionPlan
     ): CheckoutSessionResult
+
+    /**
+     * Creates a subscription with an incomplete payment intent for Stripe Elements.
+     * The frontend uses the returned client secret to render the Payment Element
+     * and confirm the payment.
+     *
+     * @param userId The user who is subscribing
+     * @param plan The subscription plan to subscribe to
+     * @return The subscription intent result containing the subscription ID and client secret
+     */
+    suspend fun createSubscriptionIntent(
+        userId: UserId,
+        plan: SubscriptionPlan
+    ): SubscriptionIntentResult
 
     /**
      * Handles a Stripe webhook event.
@@ -98,9 +118,7 @@ class PaymentService(
 
     override suspend fun createCheckoutSession(
         userId: UserId,
-        plan: SubscriptionPlan,
-        successUrl: String,
-        cancelUrl: String
+        plan: SubscriptionPlan
     ): IPaymentService.CheckoutSessionResult {
         val user = userRepository.findById(userId)
             ?: throw IllegalArgumentException("User not found: $userId")
@@ -111,11 +129,16 @@ class PaymentService(
         // Get the Stripe Price ID for this plan
         val priceId = stripePlanSyncService.getStripePriceId(plan)
 
+        // Generate redirect URLs from configured frontend URL
+        val frontendBaseUrl = stripeConfig.frontendUrl.trimEnd('/')
+        val successUrl = "$frontendBaseUrl/dashboard/usage?payment=success&session_id={CHECKOUT_SESSION_ID}"
+        val cancelUrl = "$frontendBaseUrl/dashboard/usage?payment=cancelled"
+
         // Create checkout session
         val params = SessionCreateParams.builder()
             .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
             .setCustomer(stripeCustomerId)
-            .setSuccessUrl("$successUrl?session_id={CHECKOUT_SESSION_ID}")
+            .setSuccessUrl(successUrl)
             .setCancelUrl(cancelUrl)
             .addLineItem(
                 SessionCreateParams.LineItem.builder()
@@ -135,6 +158,62 @@ class PaymentService(
         return IPaymentService.CheckoutSessionResult(
             sessionId = session.id,
             checkoutUrl = session.url
+        )
+    }
+
+    override suspend fun createSubscriptionIntent(
+        userId: UserId,
+        plan: SubscriptionPlan
+    ): IPaymentService.SubscriptionIntentResult {
+        val user = userRepository.findById(userId)
+            ?: throw IllegalArgumentException("User not found: $userId")
+
+        // Create or retrieve Stripe customer
+        val stripeCustomerId = getOrCreateStripeCustomer(user)
+
+        // Get the Stripe Price ID for this plan
+        val priceId = stripePlanSyncService.getStripePriceId(plan)
+
+        // Create subscription with incomplete payment for Stripe Elements
+        val params = SubscriptionCreateParams.builder()
+            .setCustomer(stripeCustomerId)
+            .addItem(
+                SubscriptionCreateParams.Item.builder()
+                    .setPrice(priceId)
+                    .build()
+            )
+            // Create subscription but don't activate until payment succeeds
+            .setPaymentBehavior(SubscriptionCreateParams.PaymentBehavior.DEFAULT_INCOMPLETE)
+            // Save the payment method for future invoices
+            .setPaymentSettings(
+                SubscriptionCreateParams.PaymentSettings.builder()
+                    .setSaveDefaultPaymentMethod(
+                        SubscriptionCreateParams.PaymentSettings.SaveDefaultPaymentMethod.ON_SUBSCRIPTION
+                    )
+                    .build()
+            )
+            // Expand the latest invoice to get the payment intent client secret
+            .addExpand("latest_invoice.payment_intent")
+            // Add metadata for webhook handlers
+            .putMetadata("user_id", userId.value.toString())
+            .putMetadata("plan_name", plan.planName)
+            .putMetadata("price_version", plan.priceVersion.toString())
+            .build()
+
+        val subscription = Subscription.create(params)
+
+        // Extract the client secret from the expanded payment intent via raw JSON
+        val clientSecret = extractClientSecretFromSubscription(subscription)
+            ?: throw IllegalStateException("Could not extract client secret from subscription")
+
+        logger.info(
+            "Created subscription intent {} for user {} plan {}",
+            subscription.id, userId, plan.planName
+        )
+
+        return IPaymentService.SubscriptionIntentResult(
+            subscriptionId = subscription.id,
+            clientSecret = clientSecret
         )
     }
 
@@ -249,19 +328,70 @@ class PaymentService(
             ?: return logger.debug("Invoice without subscription, skipping")
 
         // Find the subscription in our database
-        val subscription = userSubscriptionRepository.findByStripeSubscriptionId(stripeSubscriptionId)
-        if (subscription == null) {
-            logger.warn("Subscription not found for Stripe subscription ID: {}", stripeSubscriptionId)
+        val existingSubscription = userSubscriptionRepository.findByStripeSubscriptionId(stripeSubscriptionId)
+
+        if (existingSubscription != null) {
+            // Update status to active (in case it was past_due)
+            if (existingSubscription.stripeStatus != StripeSubscriptionStatus.ACTIVE) {
+                existingSubscription.stripeStatus = StripeSubscriptionStatus.ACTIVE
+                existingSubscription.updatedAt = Clock.System.now()
+                userSubscriptionRepository.update(existingSubscription)
+                logger.info("Updated subscription {} to ACTIVE after invoice paid", existingSubscription.id)
+            }
+        } else {
+            // Subscription doesn't exist - this happens when using Stripe Elements flow
+            // (no checkout.session.completed event). Create the subscription now.
+            createSubscriptionFromStripe(stripeSubscriptionId)
+        }
+    }
+
+    /**
+     * Creates a subscription record in our database from a Stripe subscription.
+     * Used when subscription is created via Stripe Elements (no checkout session).
+     */
+    private suspend fun createSubscriptionFromStripe(stripeSubscriptionId: String) {
+        // Fetch the full subscription from Stripe to get metadata
+        val stripeSubscription = Subscription.retrieve(stripeSubscriptionId)
+
+        val userId = stripeSubscription.metadata["user_id"]?.toIntOrNull()
+        if (userId == null) {
+            logger.warn("Cannot create subscription: missing user_id in metadata for {}", stripeSubscriptionId)
             return
         }
 
-        // Update status to active (in case it was past_due)
-        if (subscription.stripeStatus != StripeSubscriptionStatus.ACTIVE) {
-            subscription.stripeStatus = StripeSubscriptionStatus.ACTIVE
-            subscription.updatedAt = Clock.System.now()
-            userSubscriptionRepository.update(subscription)
-            logger.info("Updated subscription {} to ACTIVE after invoice paid", subscription.id)
+        val planName = stripeSubscription.metadata["plan_name"]
+        if (planName == null) {
+            logger.warn("Cannot create subscription: missing plan_name in metadata for {}", stripeSubscriptionId)
+            return
         }
+
+        val plan = SubscriptionPlan.fromName(planName)
+        if (plan == null) {
+            logger.error("Unknown plan name in subscription metadata: {}", planName)
+            return
+        }
+
+        // Check if subscription already exists (race condition protection)
+        if (userSubscriptionRepository.findByStripeSubscriptionId(stripeSubscriptionId) != null) {
+            logger.debug("Subscription already exists for {}", stripeSubscriptionId)
+            return
+        }
+
+        val now = Clock.System.now()
+        val expiryDate = if (plan.tier == PlanTier.FREE) null else now + 30.days
+
+        val subscription = UserSubscription.fromPlan(
+            userId = UserId(userId),
+            plan = plan,
+            startDate = now,
+            expiryDate = expiryDate,
+            stripeSubscriptionId = stripeSubscriptionId,
+            stripePriceId = stripeSubscription.metadata["stripe_price_id"],
+            stripeStatus = StripeSubscriptionStatus.ACTIVE
+        )
+
+        userSubscriptionRepository.save(subscription)
+        logger.info("Created subscription for user {} plan {} via Elements flow", userId, planName)
     }
 
     private suspend fun handleInvoicePaymentFailed(event: Event) {
@@ -332,6 +462,24 @@ class PaymentService(
                 ?.asString
         } catch (e: Exception) {
             logger.debug("Could not extract subscription ID from invoice: {}", e.message)
+            null
+        }
+    }
+
+    /**
+     * Extracts the client secret from a subscription with expanded latest_invoice.payment_intent.
+     * The subscription must be created with the expansion: "latest_invoice.payment_intent"
+     */
+    private fun extractClientSecretFromSubscription(subscription: Subscription): String? {
+        return try {
+            subscription.rawJsonObject
+                ?.getAsJsonObject("latest_invoice")
+                ?.getAsJsonObject("payment_intent")
+                ?.get("client_secret")
+                ?.takeIf { !it.isJsonNull }
+                ?.asString
+        } catch (e: Exception) {
+            logger.error("Could not extract client secret from subscription: {}", e.message)
             null
         }
     }

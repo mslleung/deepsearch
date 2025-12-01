@@ -168,7 +168,8 @@ private fun Application.configureDependencyInjection() {
                     StripeConfig(
                         secretKey = environment.config.property("stripe.secretKey").getString(),
                         publishableKey = environment.config.property("stripe.publishableKey").getString(),
-                        webhookSecret = environment.config.property("stripe.webhookSecret").getString()
+                        webhookSecret = environment.config.property("stripe.webhookSecret").getString(),
+                        frontendUrl = environment.config.property("stripe.frontendUrl").getString()
                     )
                 }
                 single {

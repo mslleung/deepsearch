@@ -53,9 +53,7 @@ data class ApiKeyUsageStatsResponse(
 
 @Serializable
 data class UpgradePlanRequest(
-    val planName: String,
-    val successUrl: String,
-    val cancelUrl: String
+    val planName: String
 )
 
 @Serializable

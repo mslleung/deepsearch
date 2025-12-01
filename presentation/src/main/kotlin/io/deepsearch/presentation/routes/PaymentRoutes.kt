@@ -24,6 +24,11 @@ fun Application.configurePaymentRoutes() {
                     controller.createCheckoutSession(call)
                 }
 
+                post("/create-subscription-intent") {
+                    val controller = call.scope.get<PaymentController>()
+                    controller.createSubscriptionIntent(call)
+                }
+
                 post("/portal") {
                     val controller = call.scope.get<PaymentController>()
                     controller.createPortalSession(call)

@@ -160,9 +160,7 @@ class UsageController(
             // Create Stripe checkout session for paid plans
             val checkoutResult = paymentService.createCheckoutSession(
                 userId = userId,
-                plan = plan,
-                successUrl = request.successUrl,
-                cancelUrl = request.cancelUrl
+                plan = plan
             )
 
             val response = UpgradePlanResponse(

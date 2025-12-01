@@ -8,6 +8,8 @@ import io.deepsearch.presentation.dto.CreateCheckoutSessionRequest
 import io.deepsearch.presentation.dto.CreateCheckoutSessionResponse
 import io.deepsearch.presentation.dto.CreatePortalSessionRequest
 import io.deepsearch.presentation.dto.CreatePortalSessionResponse
+import io.deepsearch.presentation.dto.CreateSubscriptionIntentRequest
+import io.deepsearch.presentation.dto.CreateSubscriptionIntentResponse
 import io.deepsearch.presentation.dto.PaymentConfigResponse
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -59,9 +61,7 @@ class PaymentController(
 
             val result = paymentService.createCheckoutSession(
                 userId = userId,
-                plan = plan,
-                successUrl = request.successUrl,
-                cancelUrl = request.cancelUrl
+                plan = plan
             )
 
             val response = CreateCheckoutSessionResponse(
@@ -75,6 +75,46 @@ class PaymentController(
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
         } catch (e: Exception) {
             logger.error("Error creating checkout session: {}", e.message, e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        }
+    }
+
+    /**
+     * Creates a subscription intent for Stripe Elements payment flow.
+     * Returns a client secret to be used with the Payment Element on the frontend.
+     */
+    suspend fun createSubscriptionIntent(call: ApplicationCall) {
+        try {
+            val userId = getUserIdFromJwt(call)
+            if (userId == null) {
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
+                return
+            }
+
+            val request = call.receive<CreateSubscriptionIntentRequest>()
+
+            val plan = SubscriptionPlan.fromName(request.planName)
+            if (plan == null || plan == SubscriptionPlan.FREE) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid plan name"))
+                return
+            }
+
+            val result = paymentService.createSubscriptionIntent(
+                userId = userId,
+                plan = plan
+            )
+
+            val response = CreateSubscriptionIntentResponse(
+                subscriptionId = result.subscriptionId,
+                clientSecret = result.clientSecret
+            )
+
+            call.respond(HttpStatusCode.OK, response)
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Bad request in createSubscriptionIntent: {}", e.message, e)
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+        } catch (e: Exception) {
+            logger.error("Error creating subscription intent: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }
