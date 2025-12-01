@@ -11,6 +11,7 @@ import io.deepsearch.domain.config.OAuthConfig
 import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.domain.config.GoogleOAuthConfig
+import io.deepsearch.domain.config.StripeConfig
 import io.deepsearch.presentation.config.presentationModule
 import io.deepsearch.presentation.routes.*
 import io.ktor.client.*
@@ -57,13 +58,17 @@ fun Application.module() {
     configureSSE()
     configureRequestValidation()
 
+    // web app routes (requires jwt auth)
     configureAuthRoutes()
     configureApiKeyRoutes()
+    configureUsageRoutes()
+    configureQuerySessionRoutes()
+    configurePaymentRoutes()
+
+    // API routes (requires api key)
     configureSearchRoutes()
     configurePeriodicIndexJobRoutes()
     configurePeriodicIndexRoutes()
-    configureUsageRoutes()
-    configureQuerySessionRoutes()
 }
 
 private fun Application.configureSerialization() {
@@ -157,6 +162,13 @@ private fun Application.configureDependencyInjection() {
                 single {
                     EnvironmentConfig(
                         isDevelopmentMode = environment.config.property("ktor.development").getString().toBoolean()
+                    )
+                }
+                single {
+                    StripeConfig(
+                        secretKey = environment.config.property("stripe.secretKey").getString(),
+                        publishableKey = environment.config.property("stripe.publishableKey").getString(),
+                        webhookSecret = environment.config.property("stripe.webhookSecret").getString()
                     )
                 }
                 single {

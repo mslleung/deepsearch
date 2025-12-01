@@ -33,3 +33,7 @@ gemini:
 vertexai:
     projectId: ${GOOGLE_CLOUD_PROJECT}
     location: ${GOOGLE_CLOUD_LOCATION}
+stripe:
+    secretKey: ${STRIPE_SECRET_KEY}
+    publishableKey: ${STRIPE_PUBLISHABLE_KEY}
+    webhookSecret: ${STRIPE_WEBHOOK_SECRET}

@@ -35,6 +35,7 @@ class ExposedUserRepository(
             it[passwordHash] = user.passwordHash?.value
             it[oauthProvider] = user.oauthProvider?.name
             it[oauthProviderId] = user.oauthProviderId
+            it[stripeCustomerId] = user.stripeCustomerId
             it[createdAtEpochMs] = user.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
             it[version] = user.version
@@ -65,6 +66,13 @@ class ExposedUserRepository(
             .singleOrNull()
     }
 
+    override suspend fun findByStripeCustomerId(stripeCustomerId: String): User? = transactionService.withTransaction {
+        userTable.selectAll()
+            .where { userTable.stripeCustomerId eq stripeCustomerId }
+            .map { mapRowToUser(it) }
+            .singleOrNull()
+    }
+
     override suspend fun findAll(): List<User> = transactionService.withTransaction {
         userTable.selectAll()
             .map { mapRowToUser(it) }
@@ -79,6 +87,7 @@ class ExposedUserRepository(
             it[passwordHash] = user.passwordHash?.value
             it[oauthProvider] = user.oauthProvider?.name
             it[oauthProviderId] = user.oauthProviderId
+            it[stripeCustomerId] = user.stripeCustomerId
             it[updatedAtEpochMs] = user.updatedAt.toEpochMilliseconds()
             it[version] = user.version + 1
         }
@@ -109,6 +118,7 @@ class ExposedUserRepository(
             passwordHash = row[userTable.passwordHash]?.let { PasswordHash(it) },
             oauthProvider = row[userTable.oauthProvider]?.let { OAuthProvider.fromString(it) },
             oauthProviderId = row[userTable.oauthProviderId],
+            stripeCustomerId = row[userTable.stripeCustomerId],
             createdAt = Instant.fromEpochMilliseconds(row[userTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[userTable.updatedAtEpochMs]),
             version = row[userTable.version]

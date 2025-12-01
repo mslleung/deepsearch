@@ -26,6 +26,9 @@ val applicationModule = module {
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
 
+    // Stripe services
+    singleOf(::StripePlanSyncService) { createdAtStart() }  bind IStripePlanSyncService::class
+
     // Singleton services needed by PeriodicIndexScheduler/PeriodicIndexJobRegistry
     singleOf(::UrlAccessService) bind IUrlAccessService::class
     singleOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
@@ -59,5 +62,6 @@ val applicationModule = module {
         scopedOf(::UserService) bind IUserService::class
         scopedOf(::SearchService) bind ISearchService::class
         scopedOf(::QuerySessionService) bind IQuerySessionService::class
+        scopedOf(::PaymentService) bind IPaymentService::class
     }
 }

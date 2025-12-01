@@ -28,6 +28,7 @@ sqlite-jdbc-version = "3.49.1.0"
 jsoup-version = "1.21.2"
 jbcrypt-version = "0.4"
 jwt-version = "4.4.0"
+stripe-version = "31.0.0"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor-version" }
@@ -80,6 +81,7 @@ ktor-server-auth = { module = "io.ktor:ktor-server-auth", version.ref = "ktor-ve
 ktor-server-auth-jwt = { module = "io.ktor:ktor-server-auth-jwt", version.ref = "ktor-version" }
 ktor-server-sessions = { module = "io.ktor:ktor-server-sessions", version.ref = "ktor-version" }
 ktor-server-cors = { module = "io.ktor:ktor-server-cors", version.ref = "ktor-version" }
+stripe = { module = "com.stripe:stripe-java", version.ref = "stripe-version" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin-version" }

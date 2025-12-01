@@ -53,7 +53,15 @@ data class ApiKeyUsageStatsResponse(
 
 @Serializable
 data class UpgradePlanRequest(
-    val planName: String
+    val planName: String,
+    val successUrl: String,
+    val cancelUrl: String
+)
+
+@Serializable
+data class UpgradePlanResponse(
+    val checkoutUrl: String,
+    val sessionId: String
 )
 
 fun SubscriptionPlan.toDto(): SubscriptionPlanDto {

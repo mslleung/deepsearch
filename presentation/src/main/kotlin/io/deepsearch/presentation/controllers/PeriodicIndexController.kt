@@ -1,10 +1,10 @@
 package io.deepsearch.presentation.controllers
 
+import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IPeriodicIndexService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUserSubscriptionService
 import io.deepsearch.application.services.PeriodicIndexLimitExceededException
-import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexPeriod
 import io.deepsearch.domain.models.entities.SubscriptionPlan
@@ -16,7 +16,6 @@ import io.deepsearch.presentation.dto.*
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
-import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import org.slf4j.Logger
@@ -26,7 +25,8 @@ class PeriodicIndexController(
     private val periodicIndexService: IPeriodicIndexService,
     private val urlAccessService: IUrlAccessService,
     private val webpageMarkdownRepository: IWebpageMarkdownRepository,
-    private val userSubscriptionService: IUserSubscriptionService
+    private val userSubscriptionService: IUserSubscriptionService,
+    private val apiKeyService: IApiKeyService
 ) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -35,7 +35,7 @@ class PeriodicIndexController(
      * List all periodic index configs for the user
      */
     suspend fun listConfigs(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val configs = periodicIndexService.listConfigs(userId)
         val maxAllowed = getMaxAllowedConfigs(userId)
@@ -52,7 +52,7 @@ class PeriodicIndexController(
      * Get a specific periodic index config
      */
     suspend fun getConfigById(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val configId = call.parameters["id"]?.toLongOrNull()
         if (configId == null) {
@@ -74,7 +74,7 @@ class PeriodicIndexController(
      * Create a new periodic index config
      */
     suspend fun createConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val request = try {
             call.receive<PeriodicIndexConfigRequest>()
@@ -118,7 +118,7 @@ class PeriodicIndexController(
      * Update an existing periodic index config
      */
     suspend fun updateConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val configId = call.parameters["id"]?.toLongOrNull()
         if (configId == null) {
@@ -168,7 +168,7 @@ class PeriodicIndexController(
      * Delete a periodic index config
      */
     suspend fun deleteConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val configId = call.parameters["id"]?.toLongOrNull()
         if (configId == null) {
@@ -192,7 +192,7 @@ class PeriodicIndexController(
      * Enable a periodic index config
      */
     suspend fun enableConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val configId = call.parameters["id"]?.toLongOrNull()
         if (configId == null) {
@@ -223,7 +223,7 @@ class PeriodicIndexController(
      * Disable a periodic index config
      */
     suspend fun disableConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val configId = call.parameters["id"]?.toLongOrNull()
         if (configId == null) {
@@ -254,7 +254,7 @@ class PeriodicIndexController(
      * Trigger a periodic index job for a specific config
      */
     suspend fun triggerConfig(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val configId = call.parameters["id"]?.toLongOrNull()
         if (configId == null) {
@@ -285,7 +285,7 @@ class PeriodicIndexController(
      * Get global job history for all configs
      */
     suspend fun getGlobalJobHistory(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
         val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 10
@@ -303,7 +303,7 @@ class PeriodicIndexController(
      * Get job history for a specific config
      */
     suspend fun getConfigJobHistory(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val configId = call.parameters["id"]?.toLongOrNull()
         if (configId == null) {
@@ -334,7 +334,7 @@ class PeriodicIndexController(
      * Get URLs processed in a specific job
      */
     suspend fun getJobUrls(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val jobIdParam = call.parameters["jobId"]
         if (jobIdParam == null) {
@@ -370,7 +370,7 @@ class PeriodicIndexController(
      * Get indexed URLs by base URL
      */
     suspend fun getIndexedUrlsByBaseUrl(call: ApplicationCall) {
-        val userId = getUserIdFromJwt(call) ?: return call.respond(HttpStatusCode.Unauthorized)
+        val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
         val baseUrl = call.request.queryParameters["baseUrl"]
         if (baseUrl.isNullOrBlank()) {
@@ -434,9 +434,20 @@ class PeriodicIndexController(
         }
     }
 
-    private fun getUserIdFromJwt(call: ApplicationCall): UserId? {
-        val principal = call.principal<JWTPrincipal>()
-        val userIdClaim = principal?.payload?.getClaim(JwtConfig.CLAIM_USER_ID)?.asInt()
-        return userIdClaim?.let { UserId(it) }
+    /**
+     * Extract user ID from API key in bearer token.
+     * Returns null if API key is missing or invalid.
+     */
+    private suspend fun getUserIdFromApiKey(call: ApplicationCall): UserId? {
+        val principal = call.principal<UserIdPrincipal>()
+        val rawApiKey = principal?.name ?: return null
+
+        val isValid = apiKeyService.validateApiKey(rawApiKey)
+        if (!isValid) {
+            return null
+        }
+
+        val apiKey = apiKeyService.getApiKeyByRawKey(rawApiKey) ?: return null
+        return apiKey.userId
     }
 }

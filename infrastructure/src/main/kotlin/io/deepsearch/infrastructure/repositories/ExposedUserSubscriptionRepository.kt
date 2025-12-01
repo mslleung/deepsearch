@@ -2,6 +2,7 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.PlanTier
+import io.deepsearch.domain.models.entities.StripeSubscriptionStatus
 import io.deepsearch.domain.models.entities.UserSubscription
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.models.valueobjects.UserSubscriptionId
@@ -42,6 +43,14 @@ class ExposedUserSubscriptionRepository(
             .firstOrNull()
     }
 
+    override suspend fun findByStripeSubscriptionId(stripeSubscriptionId: String): UserSubscription? = transactionService.withTransaction {
+        userSubscriptionTable.selectAll()
+            .where { userSubscriptionTable.stripeSubscriptionId eq stripeSubscriptionId }
+            .map { row -> mapRowToUserSubscription(row) }
+            .toList()
+            .firstOrNull()
+    }
+
     override suspend fun findAll(): List<UserSubscription> = transactionService.withTransaction {
         userSubscriptionTable.selectAll()
             .map { row -> mapRowToUserSubscription(row) }
@@ -58,6 +67,10 @@ class ExposedUserSubscriptionRepository(
             it[usedSearches] = subscription.usedSearches
             it[startDateEpochMs] = subscription.startDate.toEpochMilliseconds()
             it[expiryDateEpochMs] = subscription.expiryDate?.toEpochMilliseconds()
+            it[stripeSubscriptionId] = subscription.stripeSubscriptionId
+            it[stripePriceId] = subscription.stripePriceId
+            it[stripePriceVersion] = subscription.stripePriceVersion
+            it[stripeStatus] = subscription.stripeStatus?.name
             it[createdAtEpochMs] = subscription.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = subscription.updatedAt.toEpochMilliseconds()
             it[version] = subscription.version
@@ -72,6 +85,7 @@ class ExposedUserSubscriptionRepository(
             (userSubscriptionTable.id eq subscription.id!!.value) and (userSubscriptionTable.version eq subscription.version) 
         }) {
             it[usedSearches] = subscription.usedSearches
+            it[stripeStatus] = subscription.stripeStatus?.name
             it[updatedAtEpochMs] = subscription.updatedAt.toEpochMilliseconds()
             it[version] = subscription.version + 1
         }
@@ -99,6 +113,10 @@ class ExposedUserSubscriptionRepository(
             usedSearches = row[userSubscriptionTable.usedSearches],
             startDate = Instant.fromEpochMilliseconds(row[userSubscriptionTable.startDateEpochMs]),
             expiryDate = row[userSubscriptionTable.expiryDateEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
+            stripeSubscriptionId = row[userSubscriptionTable.stripeSubscriptionId],
+            stripePriceId = row[userSubscriptionTable.stripePriceId],
+            stripePriceVersion = row[userSubscriptionTable.stripePriceVersion],
+            stripeStatus = row[userSubscriptionTable.stripeStatus]?.let { StripeSubscriptionStatus.valueOf(it) },
             createdAt = Instant.fromEpochMilliseconds(row[userSubscriptionTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[userSubscriptionTable.updatedAtEpochMs]),
             version = row[userSubscriptionTable.version]

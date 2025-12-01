@@ -11,6 +11,7 @@ class UserTable(
     val passwordHash = varchar("password_hash", length = 255).nullable()
     val oauthProvider = varchar("oauth_provider", length = 50).nullable()
     val oauthProviderId = varchar("oauth_provider_id", length = 255).nullable()
+    val stripeCustomerId = varchar("stripe_customer_id", length = 255).nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

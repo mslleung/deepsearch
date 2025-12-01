@@ -52,6 +52,9 @@ dependencies {
 
     implementation(libs.google.genai)
     
+    // Stripe payment processing
+    implementation(libs.stripe)
+    
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.client.content.negotiation)
     testImplementation(libs.ktor.serialization.kotlinx.json)

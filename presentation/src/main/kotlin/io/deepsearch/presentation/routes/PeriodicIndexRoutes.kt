@@ -8,7 +8,7 @@ import org.koin.ktor.plugin.scope
 
 fun Application.configurePeriodicIndexRoutes() {
     routing {
-        authenticate("auth-jwt") {
+        authenticate("api-key") {
             route("/api/periodic-index") {
                 // Config management
                 route("/configs") {

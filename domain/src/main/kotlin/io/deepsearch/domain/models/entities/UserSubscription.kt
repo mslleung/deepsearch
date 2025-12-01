@@ -17,6 +17,10 @@ class UserSubscription(
     var usedSearches: Int = 0,
     val startDate: Instant = Clock.System.now(),
     val expiryDate: Instant?,
+    val stripeSubscriptionId: String? = null,
+    val stripePriceId: String? = null,
+    val stripePriceVersion: Int? = null,
+    var stripeStatus: StripeSubscriptionStatus? = null,
     val createdAt: Instant = Clock.System.now(),
     var updatedAt: Instant = Clock.System.now(),
     var version: Long = 0
@@ -35,7 +39,15 @@ class UserSubscription(
     }
 
     companion object {
-        fun fromPlan(userId: UserId, plan: SubscriptionPlan, startDate: Instant, expiryDate: Instant?): UserSubscription {
+        fun fromPlan(
+            userId: UserId,
+            plan: SubscriptionPlan,
+            startDate: Instant,
+            expiryDate: Instant?,
+            stripeSubscriptionId: String? = null,
+            stripePriceId: String? = null,
+            stripeStatus: StripeSubscriptionStatus? = null
+        ): UserSubscription {
             return UserSubscription(
                 userId = userId,
                 planName = plan.planName,
@@ -43,7 +55,11 @@ class UserSubscription(
                 maxSearches = plan.maxSearches,
                 priceUsd = plan.priceUsd,
                 startDate = startDate,
-                expiryDate = expiryDate
+                expiryDate = expiryDate,
+                stripeSubscriptionId = stripeSubscriptionId,
+                stripePriceId = stripePriceId,
+                stripePriceVersion = plan.priceVersion,
+                stripeStatus = stripeStatus
             )
         }
     }

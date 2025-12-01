@@ -1,0 +1,44 @@
+package io.deepsearch.presentation.routes
+
+import io.deepsearch.presentation.controllers.PaymentController
+import io.ktor.server.application.*
+import io.ktor.server.auth.*
+import io.ktor.server.routing.*
+import org.koin.ktor.plugin.scope
+
+fun Application.configurePaymentRoutes() {
+    routing {
+        // Public endpoint - returns Stripe publishable key
+        route("/api/payment") {
+            get("/config") {
+                val controller = call.scope.get<PaymentController>()
+                controller.getConfig(call)
+            }
+        }
+
+        // Authenticated endpoints
+        authenticate("auth-jwt") {
+            route("/api/payment") {
+                post("/checkout") {
+                    val controller = call.scope.get<PaymentController>()
+                    controller.createCheckoutSession(call)
+                }
+
+                post("/portal") {
+                    val controller = call.scope.get<PaymentController>()
+                    controller.createPortalSession(call)
+                }
+            }
+        }
+
+        // Stripe webhook - no authentication (Stripe verifies via signature)
+        route("/api/stripe") {
+            post("/webhook") {
+                val controller = call.scope.get<PaymentController>()
+                controller.handleWebhook(call)
+            }
+        }
+    }
+}
+
+

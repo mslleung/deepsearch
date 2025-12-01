@@ -1,6 +1,7 @@
 package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IApiKeyService
+import io.deepsearch.application.services.IPaymentService
 import io.deepsearch.application.services.IUserSubscriptionService
 import io.deepsearch.application.services.IUsageService
 import io.deepsearch.domain.config.JwtConfig
@@ -20,7 +21,8 @@ import org.slf4j.LoggerFactory
 class UsageController(
     private val subscriptionPlanService: IUserSubscriptionService,
     private val usageService: IUsageService,
-    private val apiKeyService: IApiKeyService
+    private val apiKeyService: IApiKeyService,
+    private val paymentService: IPaymentService
 ) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -155,9 +157,19 @@ class UsageController(
                 return
             }
 
-            val newSubscription = subscriptionPlanService.upgradePlan(userId, plan)
-            val subscriptionDto = newSubscription.toDto()
-            call.respond(HttpStatusCode.OK, subscriptionDto)
+            // Create Stripe checkout session for paid plans
+            val checkoutResult = paymentService.createCheckoutSession(
+                userId = userId,
+                plan = plan,
+                successUrl = request.successUrl,
+                cancelUrl = request.cancelUrl
+            )
+
+            val response = UpgradePlanResponse(
+                checkoutUrl = checkoutResult.checkoutUrl,
+                sessionId = checkoutResult.sessionId
+            )
+            call.respond(HttpStatusCode.OK, response)
         } catch (e: IllegalArgumentException) {
             logger.warn("Bad request in upgradePlan: {}", e.message, e)
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
