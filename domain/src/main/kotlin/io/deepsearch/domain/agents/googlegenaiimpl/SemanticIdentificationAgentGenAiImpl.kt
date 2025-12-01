@@ -123,9 +123,9 @@ class SemanticIdentificationAgentGenAiImpl(
     )
 
     override suspend fun generate(input: SemanticIdentificationInput): SemanticIdentificationOutput {
-        // Step 1: Get webpage HTML and bounding boxes
-        val originalHtml = input.webpage.getFullHtml()
-        val boundingBoxes = input.webpage.getBoundingBoxesByCssSelector("body")
+        // Step 1: Get webpage HTML and bounding boxes from snapshot
+        val originalHtml = input.snapshot.html
+        val boundingBoxes = input.snapshot.boundingBoxes
         
         logger.debug("Got {} bounding boxes for semantic identification", boundingBoxes.size)
         

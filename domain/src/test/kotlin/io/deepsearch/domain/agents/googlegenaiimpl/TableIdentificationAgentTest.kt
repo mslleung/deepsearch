@@ -42,9 +42,11 @@ class TableIdentificationAgentTest : KoinTest {
             val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
+            val snapshot = page.captureSnapshot()
 
             val input = TableIdentificationInput(
-                webpage = page
+                webpage = page,
+                snapshot = snapshot
             )
             val output = agent.generate(input)
 

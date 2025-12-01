@@ -36,9 +36,11 @@ class SemanticIdentificationAgentTest : KoinTest {
             val page = context.newPage()
             // Navigate to data URL with the example HTML
             page.navigate("https://www.example.com/")
+            val snapshot = page.captureSnapshot()
             
             val input = SemanticIdentificationInput(
-                webpage = page
+                webpage = page,
+                snapshot = snapshot
             )
             val output = agent.generate(input)
             val hasElements = output.elements.header != null ||
@@ -66,9 +68,11 @@ class SemanticIdentificationAgentTest : KoinTest {
             val context = browser.createContext()
             val page = context.newPage()
             page.navigate(url)
+            val snapshot = page.captureSnapshot()
 
             val input = SemanticIdentificationInput(
-                webpage = page
+                webpage = page,
+                snapshot = snapshot
             )
             val output = agent.generate(input)
 

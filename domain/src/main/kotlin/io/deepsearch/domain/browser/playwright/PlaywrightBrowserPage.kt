@@ -16,6 +16,9 @@ import io.deepsearch.domain.exceptions.NetworkTimeoutException
 import io.deepsearch.domain.exceptions.RedirectLoopException
 import io.deepsearch.domain.exceptions.SslHandshakeException
 import io.deepsearch.domain.exceptions.UrlProcessingException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -219,6 +222,47 @@ class PlaywrightBrowserPage(
         }
 
         logger.debug("Successfully removed {} element(s) at CSS selector: {}", count, cssSelector)
+    }
+
+    override suspend fun removeElementsByCssSelectors(selectors: List<String>) {
+        if (selectors.isEmpty()) {
+            return
+        }
+
+        logger.debug("Batch removing {} CSS selectors", selectors.size)
+
+        val result = apiMutex.withLock {
+            page.evaluate(
+                """
+                (selectors) => {
+                    const results = { removed: 0, notFound: [] };
+                    
+                    for (const selector of selectors) {
+                        const elements = document.querySelectorAll(selector);
+                        
+                        if (elements.length === 0) {
+                            results.notFound.push(selector);
+                            continue;
+                        }
+                        
+                        elements.forEach(element => element.remove());
+                        results.removed += elements.length;
+                    }
+                    
+                    return results;
+                }
+                """, selectors
+            )
+        } as Map<*, *>
+
+        val removed = (result["removed"] as? Number)?.toInt() ?: 0
+        @Suppress("UNCHECKED_CAST")
+        val notFound = (result["notFound"] as? List<String>) ?: emptyList()
+
+        logger.debug("Batch removal: {} elements removed, {} selectors not found", removed, notFound.size)
+        if (notFound.isNotEmpty() && logger.isDebugEnabled) {
+            logger.debug("Selectors not found: {}", notFound)
+        }
     }
 
     override suspend fun elementExists(xpath: String): Boolean {
@@ -446,6 +490,132 @@ class PlaywrightBrowserPage(
         return deduplicatedResults
     }
 
+    // Data classes for combined media extraction parsing
+    @Serializable
+    private data class MediaIconDebugStats(
+        val totalElementsFound: Int,
+        val elementsProcessed: Int,
+        val skippedNoGlyph: Int,
+        val skippedSvgZeroSize: Int,
+        val renderingErrors: Int,
+        val successfullyRendered: Int,
+        val uniqueIcons: Int,
+        val totalSnippets: Int
+    )
+
+    @Serializable
+    private data class MediaIconsResult(
+        val debug: MediaIconDebugStats,
+        val results: List<IconResult>
+    )
+
+    @Serializable
+    private data class MediaImagesResult(
+        val successful: List<ImageResult>,
+        val failed: List<FailedImage>
+    )
+
+    @Serializable
+    private data class MediaExtractionResponse(
+        val icons: MediaIconsResult,
+        val images: MediaImagesResult
+    )
+
+    override suspend fun extractMedia(): IBrowserPage.MediaExtractionResult {
+        logger.debug("Extracting media (icons + images) via single evaluate()")
+
+        val extractMediaJsonRaw = apiMutex.withLock { page.evaluate(loadScript("out/extractMedia.js")) } as String
+        val decoded = Json.decodeFromString<MediaExtractionResponse>(extractMediaJsonRaw)
+
+        // Process icons
+        val icons = decoded.icons.results.mapNotNull { result ->
+            val cleaned = sanitizeBase64(result.base64)
+            try {
+                val bytes = Base64.decode(cleaned)
+                val cssSelectors = result.cssSelectors
+
+                if (cssSelectors.isEmpty()) {
+                    logger.warn("Skipping icon - no CSS selectors provided")
+                    return@mapNotNull null
+                }
+
+                IBrowserPage.Icon(
+                    bytes = bytes,
+                    mimeType = ImageMimeType.WEBP,
+                    cssSelectors = cssSelectors
+                )
+            } catch (e: IllegalArgumentException) {
+                logger.warn("Skipping invalid icon base64 ({} chars): {}", cleaned.length, e.message)
+                null
+            }
+        }
+
+        // Process successful images
+        val images = mutableListOf<IBrowserPage.WebImage>()
+        decoded.images.successful.forEach { result ->
+            val bytes = Base64.decode(result.base64)
+            val cssSelectors = result.cssSelectors
+
+            if (cssSelectors.isEmpty()) {
+                logger.warn("Skipping image - no CSS selectors provided")
+                return@forEach
+            }
+
+            images.add(
+                IBrowserPage.WebImage(
+                    bytes = bytes,
+                    mimeType = ImageMimeType.WEBP,
+                    cssSelectors = cssSelectors
+                )
+            )
+        }
+
+        // Convert failed images info
+        val failedImages = decoded.images.failed.map { failedImage ->
+            IBrowserPage.FailedImageInfo(
+                cssSelector = failedImage.cssSelector,
+                reason = failedImage.reason
+            )
+        }
+
+        logger.debug(
+            "extractMedia produced {} icons, {} images, {} failed images",
+            icons.size, images.size, failedImages.size
+        )
+
+        return IBrowserPage.MediaExtractionResult(
+            icons = icons,
+            images = images,
+            failedImages = failedImages
+        )
+    }
+
+    override suspend fun captureSnapshot(): IBrowserPage.PageSnapshot = coroutineScope {
+        logger.debug("Capturing page snapshot...")
+        
+        lateinit var html: String
+        lateinit var boundingBoxes: Map<String, IBrowserPage.BoundingBox>
+        lateinit var media: IBrowserPage.MediaExtractionResult
+        
+        val duration = measureTimeMillis {
+            // Fetch all data in parallel (still serialized by apiMutex, but requests are queued)
+            val htmlDeferred = async { getFullHtml() }
+            val boundingBoxesDeferred = async { getBoundingBoxesByCssSelector("body") }
+            val mediaDeferred = async { extractMedia() }
+            
+            html = htmlDeferred.await()
+            boundingBoxes = boundingBoxesDeferred.await()
+            media = mediaDeferred.await()
+        }
+        
+        logger.debug("Page snapshot captured in {} ms", duration)
+        
+        IBrowserPage.PageSnapshot(
+            html = html,
+            boundingBoxes = boundingBoxes,
+            mediaExtractionResult = media
+        )
+    }
 
     override suspend fun getTitle(): String {
         logger.debug("Getting title...")

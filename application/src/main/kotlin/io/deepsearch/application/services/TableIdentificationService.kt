@@ -12,7 +12,11 @@ import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
 interface ITableIdentificationService {
-    suspend fun identifyTables(webpage: IBrowserPage, sessionId: SessionId): List<TableIdentification>
+    suspend fun identifyTables(
+        webpage: IBrowserPage, 
+        sessionId: SessionId,
+        snapshot: IBrowserPage.PageSnapshot
+    ): List<TableIdentification>
 }
 
 class TableIdentificationService(
@@ -26,10 +30,13 @@ class TableIdentificationService(
      * Results are cached in the repository to avoid repeated calls with the same HTML.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun identifyTables(webpage: IBrowserPage, sessionId: SessionId): List<TableIdentification> {
-        // Get HTML for caching
-        val html = webpage.getFullHtml()
-        val htmlHash = MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
+    override suspend fun identifyTables(
+        webpage: IBrowserPage, 
+        sessionId: SessionId,
+        snapshot: IBrowserPage.PageSnapshot
+    ): List<TableIdentification> {
+        // Use HTML hash for caching
+        val htmlHash = MessageDigest.getInstance("SHA-256").digest(snapshot.html.toByteArray())
 
         val existing = webpageTableRepository.findByHash(htmlHash)
         if (existing != null) {
@@ -37,7 +44,10 @@ class TableIdentificationService(
         }
 
         val agentOutput = tableIdentificationAgent.generate(
-            TableIdentificationInput(webpage = webpage)
+            TableIdentificationInput(
+                webpage = webpage,
+                snapshot = snapshot
+            )
         )
 
         // Record token usage

@@ -6,13 +6,17 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 
 data class TableIdentificationInput(
-    val webpage: IBrowserPage
+    val webpage: IBrowserPage,
+    /** Pre-captured page snapshot containing HTML, bounding boxes, and media. */
+    val snapshot: IBrowserPage.PageSnapshot
 ) : IAgent.IAgentInput
 
 @Serializable
 data class TableIdentification(
     val cssSelector: String,
-    val auxiliaryInfo: String
+    val auxiliaryInfo: String,
+    /** Whether this table contains media (icons or images) that need interpretation first. */
+    val containsMedia: Boolean = false
 )
 
 data class TableIdentificationOutput(

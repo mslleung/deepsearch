@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
@@ -93,9 +94,9 @@ class TableIdentificationAgentGenAiImpl(
     )
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
-        // Step 1: Get webpage HTML and bounding boxes
-        val originalHtml = input.webpage.getFullHtml()
-        val boundingBoxes = input.webpage.getBoundingBoxesByCssSelector("body")
+        // Step 1: Get webpage HTML and bounding boxes from snapshot
+        val originalHtml = input.snapshot.html
+        val boundingBoxes = input.snapshot.boundingBoxes
 
         logger.debug("Table identification for HTML ({} bytes)", originalHtml.length)
         logger.debug("Got {} bounding boxes for table identification", boundingBoxes.size)
@@ -198,10 +199,57 @@ class TableIdentificationAgentGenAiImpl(
 
         input.webpage.injectAttributeByCssSelector(cssSelector, "data-ds-id", llmResult.id)
 
+        // Detect if this table contains any media (icons or images) that need interpretation first
+        val containsMedia = detectMediaInTable(llmResult.id, htmlWithIds, input.snapshot)
+
         return TableIdentification(
             cssSelector = "[data-ds-id=\"${llmResult.id}\"]",
-            auxiliaryInfo = llmResult.auxiliaryInfo
+            auxiliaryInfo = llmResult.auxiliaryInfo,
+            containsMedia = containsMedia
         )
+    }
+
+    /**
+     * Detect if a table contains any media elements (icons or images).
+     * Extracts CSS selectors from the snapshot's media extraction result.
+     * Tables with media cannot be interpreted early - they must wait for media interpretation.
+     */
+    private fun detectMediaInTable(
+        tableId: String,
+        htmlWithIds: String,
+        snapshot: IBrowserPage.PageSnapshot
+    ): Boolean {
+        // Collect all media CSS selectors from the snapshot
+        val allMediaSelectors = buildSet {
+            snapshot.mediaExtractionResult.icons.flatMap { it.cssSelectors }.forEach { add(it) }
+            snapshot.mediaExtractionResult.images.flatMap { it.cssSelectors }.forEach { add(it) }
+        }
+        
+        if (allMediaSelectors.isEmpty()) {
+            return false
+        }
+
+        // Parse HTML and find the table element
+        val doc = Jsoup.parse(htmlWithIds)
+        val tableElement = doc.select("[data-ds-id=\"$tableId\"]").firstOrNull()
+            ?: return false
+
+        // Check if any media selector matches elements inside this table
+        for (mediaSelector in allMediaSelectors) {
+            // Media selectors are in the form [data-ds-id="ds-icon-X"] or [data-ds-id="ds-image-X"]
+            // We need to check if any element with this selector exists as a descendant
+            val mediaIdMatch = Regex("""data-ds-id="([^"]+)"""").find(mediaSelector)
+            val mediaId = mediaIdMatch?.groupValues?.get(1) ?: continue
+
+            // Check if this media element exists within the table's HTML
+            val mediaInTable = tableElement.select("[data-ds-id=\"$mediaId\"]").isNotEmpty()
+            if (mediaInTable) {
+                logger.debug("Table '{}' contains media '{}'", tableId, mediaId)
+                return true
+            }
+        }
+
+        return false
     }
 
     private fun injectStableIdentifiers(cleanedHtml: String, idPrefix: String): String {

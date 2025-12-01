@@ -81,6 +81,15 @@ interface IBrowserPage {
     suspend fun removeElementByCssSelector(cssSelector: String)
 
     /**
+     * Remove multiple DOM elements matched by the provided CSS selectors in a single batch operation.
+     * More efficient than calling removeElementByCssSelector multiple times.
+     * No-op for selectors that don't match any elements.
+     * 
+     * @param selectors List of CSS selectors to match and remove
+     */
+    suspend fun removeElementsByCssSelectors(selectors: List<String>)
+
+    /**
      * Check if an element matching the provided XPath selector exists in the document.
      * @param xpath XPath expression to match
      * @return true if at least one element matches; false otherwise
@@ -157,6 +166,53 @@ interface IBrowserPage {
      */
     suspend fun extractImages(): List<WebImage>
 
+    /**
+     * Result of combined media extraction containing both icons and images.
+     * Extracting both in a single call is more efficient than calling extractIcons() and extractImages() separately.
+     */
+    data class MediaExtractionResult(
+        val icons: List<Icon>,
+        val images: List<WebImage>,
+        val failedImages: List<FailedImageInfo>
+    )
+
+    /**
+     * Information about an image that failed to be extracted via canvas rendering.
+     * These images can be captured via screenshot fallback.
+     */
+    data class FailedImageInfo(
+        val cssSelector: String,
+        val reason: String
+    )
+
+    /**
+     * Extract both icons and images from the current page in a single browser call.
+     * This is more efficient than calling extractIcons() and extractImages() separately
+     * as it reduces browser round-trips.
+     *
+     * @return MediaExtractionResult containing icons, successfully extracted images, and failed images for fallback
+     */
+    suspend fun extractMedia(): MediaExtractionResult
+
+    /**
+     * Pre-fetched page data for efficient parallel processing.
+     * Captures all data needed by multiple agents in a single coordinated operation,
+     * eliminating duplicate browser calls.
+     */
+    data class PageSnapshot(
+        val html: String,
+        val boundingBoxes: Map<String, BoundingBox>,
+        val mediaExtractionResult: MediaExtractionResult
+    )
+
+    /**
+     * Capture a snapshot of the current page state for parallel agent processing.
+     * This fetches HTML, bounding boxes, icons, and images in one coordinated operation.
+     * More efficient than having each agent fetch data independently.
+     *
+     * @return PageSnapshot containing all pre-fetched data
+     */
+    suspend fun captureSnapshot(): PageSnapshot
 
     /**
      * Image screenshot payload and format information.
