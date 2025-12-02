@@ -65,6 +65,7 @@ class ExposedUserSubscriptionRepository(
             it[maxSearches] = subscription.maxSearches
             it[priceUsd] = subscription.priceUsd
             it[usedSearches] = subscription.usedSearches
+            it[rolloverSearches] = subscription.rolloverSearches
             it[startDateEpochMs] = subscription.startDate.toEpochMilliseconds()
             it[expiryDateEpochMs] = subscription.expiryDate?.toEpochMilliseconds()
             it[stripeSubscriptionId] = subscription.stripeSubscriptionId
@@ -111,6 +112,7 @@ class ExposedUserSubscriptionRepository(
             maxSearches = row[userSubscriptionTable.maxSearches],
             priceUsd = row[userSubscriptionTable.priceUsd],
             usedSearches = row[userSubscriptionTable.usedSearches],
+            rolloverSearches = row[userSubscriptionTable.rolloverSearches],
             startDate = Instant.fromEpochMilliseconds(row[userSubscriptionTable.startDateEpochMs]),
             expiryDate = row[userSubscriptionTable.expiryDateEpochMs]?.let { Instant.fromEpochMilliseconds(it) },
             stripeSubscriptionId = row[userSubscriptionTable.stripeSubscriptionId],

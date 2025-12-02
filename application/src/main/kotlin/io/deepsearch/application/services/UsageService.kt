@@ -45,6 +45,8 @@ data class SubscriptionUsageDetail(
     val planName: String,
     val usedSearches: Int,
     val maxSearches: Int,
+    val rolloverSearches: Int,
+    val totalAvailableSearches: Int,
     val expiryDate: Instant?
 )
 
@@ -97,12 +99,14 @@ class UsageService(
                 planName = subscription.planName,
                 usedSearches = subscription.usedSearches,
                 maxSearches = subscription.maxSearches,
+                rolloverSearches = subscription.rolloverSearches,
+                totalAvailableSearches = subscription.totalAvailableSearches,
                 expiryDate = subscription.expiryDate
             )
         }
 
         val totalUsed = subscriptionDetails.sumOf { it.usedSearches }
-        val totalAvailable = subscriptionDetails.sumOf { it.maxSearches }
+        val totalAvailable = subscriptionDetails.sumOf { it.totalAvailableSearches }
 
         return SubscriptionUsageSummary(
             totalUsed = totalUsed,

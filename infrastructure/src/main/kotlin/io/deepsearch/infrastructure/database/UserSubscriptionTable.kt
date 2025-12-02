@@ -14,6 +14,7 @@ class UserSubscriptionTable(
     val maxSearches = integer("max_searches")
     val priceUsd = double("price_usd")
     val usedSearches = integer("used_searches").default(0)
+    val rolloverSearches = integer("rollover_searches").default(0)
     val startDateEpochMs = long("start_date_epoch_ms")
     val expiryDateEpochMs = long("expiry_date_epoch_ms").nullable()
     val stripeSubscriptionId = varchar("stripe_subscription_id", length = 255).nullable()

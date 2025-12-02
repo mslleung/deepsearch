@@ -11,7 +11,8 @@ import kotlin.time.ExperimentalTime
 
 interface IUserSubscriptionService {
     /**
-     * Returns the subscription that has remaining balance and is closest to expiry.
+     * Returns the best subscription for display purposes (highest tier/maxSearches).
+     * This represents the user's "current plan" in the UI.
      */
     suspend fun getUsableUserSubscription(userId: UserId): UserSubscription?
     suspend fun getUserAllActiveSubscriptions(userId: UserId): List<UserSubscription>
@@ -35,12 +36,11 @@ class UserSubscriptionService(
         val paidPlans = activeSubscriptions.filter { it.tier == PlanTier.PAID }
         val freePlans = activeSubscriptions.filter { it.tier == PlanTier.FREE }
 
-        // If user has paid plans, return the one closest to expiry that has remaining balance
+        // If user has paid plans, return the one with the highest maxSearches (best plan)
+        // This is used for display purposes to show the user's "current plan"
         if (paidPlans.isNotEmpty()) {
             return paidPlans
-                .filter { it.hasRemainingSearches() }
-                .sortedBy { it.expiryDate }
-                .firstOrNull()
+                .filter { it.hasRemainingSearches() }.maxByOrNull { it.maxSearches }
         }
 
         // If no paid plans, return the free plan if it has remaining balance

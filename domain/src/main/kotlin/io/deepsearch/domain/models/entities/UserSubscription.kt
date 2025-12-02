@@ -15,6 +15,7 @@ class UserSubscription(
     val maxSearches: Int,
     val priceUsd: Double,
     var usedSearches: Int = 0,
+    val rolloverSearches: Int = 0,
     val startDate: Instant = Clock.System.now(),
     val expiryDate: Instant?,
     val stripeSubscriptionId: String? = null,
@@ -25,8 +26,14 @@ class UserSubscription(
     var updatedAt: Instant = Clock.System.now(),
     var version: Long = 0
 ) {
+    /**
+     * Total available searches including rollover credits from previous subscriptions.
+     */
+    val totalAvailableSearches: Int
+        get() = maxSearches + rolloverSearches
+
     fun hasRemainingSearches(): Boolean {
-        return usedSearches < maxSearches
+        return usedSearches < totalAvailableSearches
     }
 
     fun consumeSearch() {
@@ -38,6 +45,13 @@ class UserSubscription(
         return expiryDate?.let { Clock.System.now() > it } ?: false
     }
 
+    /**
+     * Calculates the remaining searches that can be rolled over to a new subscription.
+     */
+    fun getRemainingSearches(): Int {
+        return maxOf(0, totalAvailableSearches - usedSearches)
+    }
+
     companion object {
         fun fromPlan(
             userId: UserId,
@@ -46,7 +60,8 @@ class UserSubscription(
             expiryDate: Instant?,
             stripeSubscriptionId: String? = null,
             stripePriceId: String? = null,
-            stripeStatus: StripeSubscriptionStatus? = null
+            stripeStatus: StripeSubscriptionStatus? = null,
+            rolloverSearches: Int = 0
         ): UserSubscription {
             return UserSubscription(
                 userId = userId,
@@ -54,6 +69,7 @@ class UserSubscription(
                 tier = plan.tier,
                 maxSearches = plan.maxSearches,
                 priceUsd = plan.priceUsd,
+                rolloverSearches = rolloverSearches,
                 startDate = startDate,
                 expiryDate = expiryDate,
                 stripeSubscriptionId = stripeSubscriptionId,

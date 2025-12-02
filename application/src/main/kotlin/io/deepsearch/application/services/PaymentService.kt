@@ -251,6 +251,75 @@ class PaymentService(
 
     // ==================== Private Helper Methods ====================
 
+    /**
+     * Cancels a Stripe subscription via the Stripe API.
+     * This is a fire-and-forget operation - if it fails, we log but don't throw.
+     */
+    private fun cancelStripeSubscription(stripeSubscriptionId: String) {
+        try {
+            val subscription = Subscription.retrieve(stripeSubscriptionId)
+            subscription.cancel()
+            logger.info("Cancelled Stripe subscription: {}", stripeSubscriptionId)
+        } catch (e: Exception) {
+            logger.warn("Failed to cancel Stripe subscription {}: {}", stripeSubscriptionId, e.message)
+        }
+    }
+
+    /**
+     * Cancels all active paid subscriptions for a user and calculates the rollover amount.
+     * 
+     * @param userId The user whose old subscriptions should be cancelled
+     * @return The total number of remaining searches to roll over to the new subscription
+     */
+    private suspend fun cancelOldSubscriptionsAndGetRollover(userId: UserId): Int {
+        val allSubscriptions = userSubscriptionRepository.findByUserId(userId)
+        
+        // Find active paid subscriptions (not expired and not already cancelled)
+        val activePaidSubscriptions = allSubscriptions.filter { subscription ->
+            subscription.tier == PlanTier.PAID &&
+            !subscription.isExpired() &&
+            subscription.stripeStatus != StripeSubscriptionStatus.CANCELED
+        }
+        
+        if (activePaidSubscriptions.isEmpty()) {
+            return 0
+        }
+        
+        var totalRollover = 0
+        val now = Clock.System.now()
+        
+        for (subscription in activePaidSubscriptions) {
+            // Calculate remaining searches
+            val remaining = subscription.getRemainingSearches()
+            totalRollover += remaining
+            
+            logger.info(
+                "Subscription {} has {} remaining searches to roll over",
+                subscription.id,
+                remaining
+            )
+            
+            // Cancel in Stripe if it has a Stripe subscription ID
+            subscription.stripeSubscriptionId?.let { stripeSubId ->
+                cancelStripeSubscription(stripeSubId)
+            }
+            
+            // Mark as cancelled in our database
+            subscription.stripeStatus = StripeSubscriptionStatus.CANCELED
+            subscription.updatedAt = now
+            userSubscriptionRepository.update(subscription)
+        }
+        
+        logger.info(
+            "Cancelled {} old subscriptions for user {}, total rollover: {} searches",
+            activePaidSubscriptions.size,
+            userId,
+            totalRollover
+        )
+        
+        return totalRollover
+    }
+
     private suspend fun getOrCreateStripeCustomer(user: io.deepsearch.domain.models.entities.User): String {
         user.stripeCustomerId?.let { return it }
 
@@ -342,22 +411,33 @@ class PaymentService(
         val plan = SubscriptionPlan.fromName(planName)
             ?: return logger.error("Unknown plan name: {}", planName)
 
+        val userIdValue = UserId(userId)
+
+        // Cancel old subscriptions and calculate rollover before creating new one
+        val rolloverSearches = cancelOldSubscriptionsAndGetRollover(userIdValue)
+
         val now = Clock.System.now()
         val expiryDate = if (plan.tier == PlanTier.FREE) null else now + 30.days
 
         val subscription = UserSubscription.fromPlan(
-            userId = UserId(userId),
+            userId = userIdValue,
             plan = plan,
             startDate = now,
             expiryDate = expiryDate,
             stripeSubscriptionId = stripeSubscriptionId,
             stripePriceId = session.metadata["stripe_price_id"],
-            stripeStatus = StripeSubscriptionStatus.ACTIVE
+            stripeStatus = StripeSubscriptionStatus.ACTIVE,
+            rolloverSearches = rolloverSearches
         )
 
         userSubscriptionRepository.save(subscription)
 
-        logger.info("Created subscription for user {} plan {} via checkout", userId, planName)
+        logger.info(
+            "Created subscription for user {} plan {} via checkout with {} rollover searches",
+            userId,
+            planName,
+            rolloverSearches
+        )
     }
 
     private suspend fun handleInvoicePaid(event: Event) {
@@ -441,6 +521,7 @@ class PaymentService(
 
     /**
      * Creates a subscription record in our database from a Stripe subscription.
+     * This also handles rollover by cancelling old subscriptions and carrying forward remaining searches.
      */
     private suspend fun createSubscriptionFromStripe(stripeSubscriptionId: String) {
         val stripeSubscription = Subscription.retrieve(stripeSubscriptionId)
@@ -469,21 +550,32 @@ class PaymentService(
             return
         }
 
+        val userIdValue = UserId(userId)
+
+        // Cancel old subscriptions and calculate rollover before creating new one
+        val rolloverSearches = cancelOldSubscriptionsAndGetRollover(userIdValue)
+
         val now = Clock.System.now()
         val expiryDate = if (plan.tier == PlanTier.FREE) null else now + 30.days
 
         val subscription = UserSubscription.fromPlan(
-            userId = UserId(userId),
+            userId = userIdValue,
             plan = plan,
             startDate = now,
             expiryDate = expiryDate,
             stripeSubscriptionId = stripeSubscriptionId,
             stripePriceId = stripeSubscription.metadata["stripe_price_id"],
-            stripeStatus = StripeSubscriptionStatus.ACTIVE
+            stripeStatus = StripeSubscriptionStatus.ACTIVE,
+            rolloverSearches = rolloverSearches
         )
 
         userSubscriptionRepository.save(subscription)
-        logger.info("Created subscription for user {} plan {} via Elements flow", userId, planName)
+        logger.info(
+            "Created subscription for user {} plan {} via Elements flow with {} rollover searches",
+            userId,
+            planName,
+            rolloverSearches
+        )
     }
 
     /**
