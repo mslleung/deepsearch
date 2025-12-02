@@ -94,7 +94,8 @@ private val applicationCommonTestModule = module {
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
 
-    singleOf(::PeriodicIndexScheduler) { createdAtStart() }
+    // no need for test
+//    singleOf(::PeriodicIndexScheduler) { createdAtStart() }
 
     singleOf(::ApiKeyService) bind IApiKeyService::class
     singleOf(::AuthService) bind IAuthService::class
