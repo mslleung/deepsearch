@@ -21,6 +21,8 @@ import io.ktor.http.*
 import io.ktor.server.sse.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
+import io.ktor.server.plugins.callid.*
+import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.auth.Authentication
 import io.ktor.server.auth.AuthenticationConfig
@@ -39,9 +41,11 @@ import kotlinx.serialization.json.Json
 import org.koin.dsl.module
 import org.koin.ktor.plugin.Koin
 import org.koin.logger.slf4jLogger
+import org.slf4j.event.Level
 import java.security.KeyFactory
 import java.security.interfaces.ECPublicKey
 import java.security.spec.X509EncodedKeySpec
+import java.util.UUID
 import kotlin.io.encoding.Base64
 import kotlin.time.Duration.Companion.seconds
 
@@ -50,6 +54,8 @@ fun main(args: Array<String>) {
 }
 
 fun Application.module() {
+    configureCallId()
+    configureCallLogging()
     configureSerialization()
     configureCORS()
     configureDependencyInjection()
@@ -69,6 +75,21 @@ fun Application.module() {
     configureSearchRoutes()
     configurePeriodicIndexJobRoutes()
     configurePeriodicIndexRoutes()
+}
+
+private fun Application.configureCallId() {
+    install(CallId) {
+        header(HttpHeaders.XRequestId)
+        generate { UUID.randomUUID().toString() }
+        verify { it.isNotEmpty() }
+    }
+}
+
+private fun Application.configureCallLogging() {
+    install(CallLogging) {
+        level = Level.INFO
+        callIdMdc("requestId")
+    }
 }
 
 private fun Application.configureSerialization() {

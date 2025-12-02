@@ -31,6 +31,8 @@ dependencies {
     implementation(libs.ktor.server.auth.jwt)
     implementation(libs.ktor.server.sessions)
     implementation(libs.ktor.server.cors)
+    implementation(libs.ktor.server.call.id)
+    implementation(libs.ktor.server.call.logging)
     
     // Ktor client dependencies (for OAuth)
     implementation(libs.ktor.client.core)
