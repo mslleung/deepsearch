@@ -305,7 +305,7 @@ class PeriodicIndexJobRegistry(
         urlTracker: UrlTracker
     ): Flow<PeriodicIndexStepResult> {
         return flowOf(job.baseUrl)
-            .flatMapMerge { url ->
+            .flatMapMerge(concurrency = 10) { url ->
                 flow {
                     val normalizedUrl = normalize(url)
 
@@ -561,7 +561,7 @@ class PeriodicIndexJobRegistry(
                     isNew
                 }
             }
-            .flatMapMerge(concurrency = 10) { link ->
+            .flatMapMerge(concurrency = 30) { link ->
                 flow {
                     val normalizedUrl = normalize(link.url)
                     val sessionId = PeriodicIndexSessionId(jobId)
