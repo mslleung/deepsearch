@@ -78,9 +78,8 @@ class MultiIconInterpreterAgentGenAiImpl(
         
         Instructions:
         - Interpret each image in order.
-        - If the image is a simple UI icon, output a concise, lowercase label OR an emoji that represents the icon.
-          ex. "search" or "🔍", "settings" or "⚙️", "hamburger menu" or "☰", "close" or "✕", "tick" or "✓", "cross" or "✗"
-        - Prefer emojis when they clearly represent the icon's meaning.
+        - If the image is a simple UI icon, output a concise, lowercase label
+          ex. "search", "download", "settings", "hamburger menu", "close", "play", "pause", "tick", "cross".
         - If the image is not a simple UI icon, output a more detailed label describing the icon.
         - If the image is meaningless or empty or cannot be interpreted, output null for the label.
         - Return labels in the same order as the images were provided.
