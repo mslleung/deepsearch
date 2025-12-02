@@ -25,12 +25,17 @@ class TableInterpretationAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Markdown representation of a tabular element")
+        .description("Markdown representation of a tabular element with optional additional context")
         .properties(
             mapOf(
                 "markdown" to Schema.builder()
                     .type("STRING")
-                    .description("The table expressed in GitHub-flavored Markdown.")
+                    .description("The table expressed in GitHub-flavored Markdown. Contains ONLY the markdown table itself, without any additional commentary or notes.")
+                    .build(),
+                "additionalInfo" to Schema.builder()
+                    .type("STRING")
+                    .nullable(true)
+                    .description("Optional additional context, notes, or clarifications about the table that cannot be represented in the markdown structure (e.g., badges, labels, footnotes, ambiguities).")
                     .build(),
             )
         )
@@ -46,8 +51,11 @@ class TableInterpretationAgentGenAiImpl(
         and can help you understand the spatial layout and relationships between elements.
     
         Note that HTML tables may not be in perfect row/column format due to styling etc. Bounding box is crucial
-        for mapping elements that are out of place. For these elements, you can simply add a paragraph after the markdown table 
-        to describe them under **Additional Information:**.
+        for mapping elements that are out of place.
+        
+        You must output a JSON object with two fields:
+        - "markdown": The table as a GitHub-flavored Markdown table ONLY. Do not include any notes or commentary here.
+        - "additionalInfo": (optional, nullable) Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements). Use null if there is nothing to add.
     
         Rules:
         - Preserve the table's row and column structure and order accurately.
@@ -56,14 +64,14 @@ class TableInterpretationAgentGenAiImpl(
           In that case please adjust the rows and columns while preserving the semantic meaning of the table.
         - Use the bounding box coordinates to better understand the spatial layout when the HTML structure is ambiguous.
         - Do not invent data. Only use what is present in the supplied HTML.
-        - Make sure all table data is captured with no information loss. All text must be represented in the markdown.
+        - Make sure all table data is captured with no information loss. All text must be represented in the markdown output.
         - Make sure the markdown is valid. The resulting markdown should not contain HTML or HTML entities.
         - Prefer to use emojis such as ✅ over HTML entities like &#10004; or &#10008;.
-        - If there is any ambiguity or information conflict, note them clearly inside the table and explain under **Additional Information:**.
+        - If there is any ambiguity or information conflict, note them in the additionalInfo field.
         - Normalize whitespace; remove decorative or layout-only characters.
         - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
     
-        Example markdown output:
+        Example markdown:
         | Feature | Free | Pro AI | Premium AI | Enterprise AI |
         |---|---|---|---|---|
         | **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |
@@ -76,15 +84,23 @@ class TableInterpretationAgentGenAiImpl(
         | | | Unlimited contact storage | Role-based access control | PII masking |
         | | | Team Inbox | Advanced AI Agents with integrations | |
         | | | AI Agent | | |
-        **Additional Information:**
+
+        Example additional information:
         *   **Pro AI** includes "Free Onboarding Support".
         *   **Premium AI** includes "Free Onboarding Support" and is marked as "Most Popular".
         *   **Enterprise AI** includes "🌟 AI Solution Engineer Support".
+
+        Example with no additional info:
+        {
+          "markdown": string,
+          "additionalInfo": string | null
+        }
     """.trimIndent()
 
     @Serializable
     private data class TableInterpretationResponse(
         val markdown: String,
+        val additionalInfo: String? = null,
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
@@ -143,9 +159,12 @@ class TableInterpretationAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
-        logger.debug("Table interpretation complete: {} chars", response.markdown.length)
+        val combinedMarkdown = combineMarkdownWithAdditionalInfo(response.markdown, response.additionalInfo)
+        
+        logger.debug("Table interpretation complete: {} chars markdown, {} chars additionalInfo", 
+            response.markdown.length, response.additionalInfo?.length ?: 0)
         return TableInterpretationOutput(
-            markdown = response.markdown,
+            markdown = combinedMarkdown,
             tokenUsage = tokenUsage
         )
     }
@@ -247,6 +266,14 @@ class TableInterpretationAgentGenAiImpl(
         }
 
         return current
+    }
+
+    private fun combineMarkdownWithAdditionalInfo(markdown: String, additionalInfo: String?): String {
+        return if (additionalInfo.isNullOrBlank()) {
+            markdown
+        } else {
+            "$markdown\n**Additional Information:**\n$additionalInfo\n\n"
+        }
     }
 
     private fun cleanHtml(rawHtml: String): String {
