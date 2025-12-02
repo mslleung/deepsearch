@@ -57,7 +57,8 @@ class TableInterpretationAgentGenAiImpl(
         - Use the bounding box coordinates to better understand the spatial layout when the HTML structure is ambiguous.
         - Do not invent data. Only use what is present in the supplied HTML.
         - Make sure all table data is captured with no information loss. All text must be represented in the markdown.
-        - Make sure the markdown is valid. The resulting markdown should not contain HTML.
+        - Make sure the markdown is valid. The resulting markdown should not contain HTML or HTML entities.
+        - Prefer to use emojis such as ✅ and over HTML entities like &#10004; or &#10008;.
         - If there is any ambiguity or information conflict, note them clearly inside the table and explain under **Additional Information:**.
         - Normalize whitespace; remove decorative or layout-only characters.
         - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
@@ -66,7 +67,7 @@ class TableInterpretationAgentGenAiImpl(
         | Feature | Free | Pro AI | Premium AI | Enterprise AI |
         |---|---|---|---|---|
         | **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |
-        | **Price** | Free | Starting from US$ 99/month | Starting from US$ 299/month | Let’s talk |
+        | **Price** | Free | Starting from US$ 99/month | Starting from US$ 299/month | Let's talk |
         | **Call to Action** | Try Free Forever | Start for Free | Start for Free | Book a Demo |
         | **Key features** | 50 monthly active contacts | Up to 2,000 monthly active contacts | Up to 12,000 monthly active contacts | Custom number of monthly active contacts |
         | | Includes 3 user accounts | Includes 3 user accounts | Includes 10 user accounts | Custom number of user accounts |
