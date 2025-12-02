@@ -58,7 +58,7 @@ class TableInterpretationAgentGenAiImpl(
         - Do not invent data. Only use what is present in the supplied HTML.
         - Make sure all table data is captured with no information loss. All text must be represented in the markdown.
         - Make sure the markdown is valid. The resulting markdown should not contain HTML or HTML entities.
-        - Prefer to use emojis such as ✅ and over HTML entities like &#10004; or &#10008;.
+        - Prefer to use emojis such as ✅ over HTML entities like &#10004; or &#10008;.
         - If there is any ambiguity or information conflict, note them clearly inside the table and explain under **Additional Information:**.
         - Normalize whitespace; remove decorative or layout-only characters.
         - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
