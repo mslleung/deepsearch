@@ -8,6 +8,8 @@ import io.deepsearch.domain.repositories.IWebpageTableInterpretationRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
@@ -21,6 +23,8 @@ class TableInterpretationService(
     private val webpageTableInterpretationRepository: IWebpageTableInterpretationRepository,
     private val tokenUsageService: ILlmTokenUsageService
 ) : ITableInterpretationService {
+
+    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     /**
      * Interprets a table using an LLM agent and returns markdown.
@@ -36,6 +40,7 @@ class TableInterpretationService(
 
         val existing = webpageTableInterpretationRepository.findByHash(dataHash)
         if (existing != null) {
+            logger.debug("Cache hit for table {}", input.tableIdentification.auxiliaryInfo)
             return existing.markdown
         }
 
@@ -90,6 +95,7 @@ class TableInterpretationService(
         for (index in inputs.indices) {
             val cached = webpageTableInterpretationRepository.findByHash(hashes[index])
             if (cached != null) {
+                logger.debug("Cache hit for table {}", index)
                 results[index] = cached.markdown
             }
         }
