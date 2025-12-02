@@ -601,14 +601,15 @@ class PlaywrightBrowserPage(
         lateinit var media: IBrowserPage.MediaExtractionResult
         
         val duration = measureTimeMillis {
-            // Fetch all data in parallel (still serialized by apiMutex, but requests are queued)
+            // Step 1: Extract media FIRST - this injects ds-icon/ds-image IDs into the DOM
+            media = extractMedia()
+            
+            // Step 2: Now fetch HTML (with injected IDs) and bounding boxes in parallel
             val htmlDeferred = async { getFullHtml() }
             val boundingBoxesDeferred = async { getBoundingBoxesByCssSelector("body") }
-            val mediaDeferred = async { extractMedia() }
             
             html = htmlDeferred.await()
             boundingBoxes = boundingBoxesDeferred.await()
-            media = mediaDeferred.await()
         }
         
         logger.debug("Page snapshot captured in {} ms", duration)
