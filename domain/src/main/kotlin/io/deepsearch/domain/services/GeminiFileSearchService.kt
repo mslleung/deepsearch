@@ -83,8 +83,8 @@ interface IGeminiFileSearchService {
      *
      * @param storeName The Gemini store resource name
      * @param query The search query
-     * @param maxAgeMs Optional maximum age in milliseconds; results from files
-     *                 uploaded before this threshold are filtered out client-side
+     * @param maxAgeMs Optional maximum age in milliseconds; files uploaded before
+     *                 this threshold are filtered out server-side via metadataFilter
      * @return Search results with content chunks and citations
      */
     suspend fun queryStore(
@@ -271,12 +271,13 @@ class GeminiFileSearchService(
         query: String,
         maxAgeMs: Long?
     ): FileSearchResult {
-        logger.debug("Querying file search store {}: '{}'", storeName, query)
+        logger.debug("Querying file search store {}: '{}' (maxAgeMs: {})", storeName, query, maxAgeMs)
 
         val result = fileSearchQueryAgent.generate(
             FileSearchQueryInput(
                 storeName = storeName,
-                query = query
+                query = query,
+                maxAgeMs = maxAgeMs
             )
         )
 

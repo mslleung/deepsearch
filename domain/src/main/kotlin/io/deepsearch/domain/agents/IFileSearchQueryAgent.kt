@@ -6,7 +6,8 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 data class FileSearchQueryInput(
     val storeName: String,
-    val query: String
+    val query: String,
+    val maxAgeMs: Long? = null
 ) : IAgent.IAgentInput
 
 data class FileSearchQueryOutput(

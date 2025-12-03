@@ -78,12 +78,15 @@ interface IFileSearchService {
      * @param domain The domain to query (e.g., "docs.example.com")
      * @param query The search query
      * @param sessionId Session ID for token tracking
+     * @param maxAgeMs Optional maximum age in milliseconds; files uploaded before
+     *                 this threshold are filtered out server-side
      * @return FileQueryResult containing search results, markdown, and citations
      */
     suspend fun query(
         domain: String,
         query: String,
-        sessionId: SessionId
+        sessionId: SessionId,
+        maxAgeMs: Long? = null
     ): FileQueryResult
 }
 
@@ -171,18 +174,20 @@ class FileSearchService(
     override suspend fun query(
         domain: String,
         query: String,
-        sessionId: SessionId
+        sessionId: SessionId,
+        maxAgeMs: Long?
     ): FileQueryResult {
-        logger.debug("Querying file search for domain {}: '{}'", domain, query)
+        logger.debug("Querying file search for domain {}: '{}' (maxAgeMs: {})", domain, query, maxAgeMs)
 
         // Get the store for this domain
         val storeInfo = geminiFileSearchService.findStore(domain)
             ?: throw IllegalStateException("No file search store found for domain: $domain")
 
-        // Query the file search store
+        // Query the file search store with age filter
         val searchResult = geminiFileSearchService.queryStore(
             storeName = storeInfo.name,
-            query = query
+            query = query,
+            maxAgeMs = maxAgeMs
         )
 
         // Record token usage

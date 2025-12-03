@@ -1,6 +1,8 @@
 package io.deepsearch.application.searchorchestrators.cacheonlysearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
+import io.deepsearch.application.services.FileQueryResult
+import io.deepsearch.application.services.IFileSearchService
 import io.deepsearch.application.services.ILlmTokenUsageService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
@@ -11,16 +13,21 @@ import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
 import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
 import io.deepsearch.domain.agents.StreamingSourceShortlistInput
+import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
+import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.net.URI
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -28,11 +35,19 @@ interface ICacheOnlySearchOrchestrator : ISearchOrchestrator
 
 /**
  * Orchestrates cache-only search using pre-indexed data.
+ * 
+ * Searches both:
+ * - Cached HTML pages (via hybrid search)
+ * - File search stores (for PDFs, documents, etc.)
+ * 
+ * Both searches are performed in parallel for optimal performance.
+ * 
  * Returns a Flow<SearchEvent> that emits session start and completion events.
  */
 @OptIn(ExperimentalTime::class)
 class CacheOnlySearchOrchestrator(
     private val webpageCacheService: WebpageCacheService,
+    private val fileSearchService: IFileSearchService,
     private val streamingSourceShortlistAgent: IStreamingSourceShortlistAgent,
     private val answerSynthesisAgent: IAnswerSynthesisAgent,
     private val querySessionService: IQuerySessionService,
@@ -68,23 +83,39 @@ class CacheOnlySearchOrchestrator(
         try {
             logger.debug("[{}] Executing cache-only search for query: {}", sessionId.value, searchQuery.query)
 
-            // Step 1: Perform hybrid search on cached data
-            val cachedWebpages = webpageCacheService.searchHybrid(
-                query = searchQuery.query,
-                baseUrl = searchQuery.url,
-                maxCacheAge = maxCacheAge,
-                limit = 20,
-                sessionId = sessionId
-            )
+            // Step 1: Perform hybrid search and file search in parallel
+            val domain = extractDomain(searchQuery.url)
+            
+            val (cachedWebpages, fileSearchResult) = coroutineScope {
+                val hybridSearchDeferred = async {
+                    webpageCacheService.searchHybrid(
+                        query = searchQuery.query,
+                        baseUrl = searchQuery.url,
+                        maxCacheAge = maxCacheAge,
+                        limit = 20,
+                        sessionId = sessionId
+                    )
+                }
+                
+                val fileSearchDeferred = async {
+                    queryFileSearch(domain, searchQuery.query, sessionId, maxCacheAge)
+                }
+                
+                Pair(hybridSearchDeferred.await(), fileSearchDeferred.await())
+            }
 
-            logger.debug("[{}] Hybrid search found {} cached webpages", sessionId.value, cachedWebpages.size)
+            logger.debug(
+                "[{}] Parallel search complete: {} cached webpages, file search: {}",
+                sessionId.value, cachedWebpages.size, if (fileSearchResult != null) "found" else "none"
+            )
 
             // Filter valid webpages with markdown content
             val validWebpages = cachedWebpages.filter { !it.markdown.isNullOrBlank() }
 
-            if (validWebpages.isEmpty()) {
+            // Check if we have any content (webpages or file search)
+            if (validWebpages.isEmpty() && (fileSearchResult == null || fileSearchResult.markdown.isBlank())) {
                 logger.info("[{}] No cached content found for query", sessionId.value)
-                querySessionService.completeSessionLinksExhausted(sessionId, "No relevant webpages found in cache.")
+                querySessionService.completeSessionLinksExhausted(sessionId, "No relevant content found in cache.")
 
                 val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
                 emit(
@@ -97,25 +128,27 @@ class CacheOnlySearchOrchestrator(
                 return@flow
             }
 
-            // Record URL accesses and emit URL processed events
-            validWebpages.forEach { webpage ->
-                urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
-                emit(
-                    SearchEvent.UrlProcessed(
-                        sessionId = sessionId,
-                        url = webpage.url,
-                        accessType = "CACHED",
-                        title = webpage.title,
-                        description = webpage.description,
-                        markdownLength = webpage.markdown?.length
+            // Record URL accesses and emit URL processed events for webpages
+            emitWebpageProcessedEvents(validWebpages, sessionId)
+
+            // Emit file search processed event if we have results
+            if (fileSearchResult != null && fileSearchResult.markdown.isNotBlank()) {
+                fileSearchResult.citations.forEach { citation ->
+                    emit(
+                        SearchEvent.UrlProcessed(
+                            sessionId = sessionId,
+                            url = citation.sourceUrl,
+                            accessType = "FILE_SEARCH",
+                            title = "File Search Results",
+                            description = "Documents from $domain",
+                            markdownLength = fileSearchResult.markdown.length
+                        )
                     )
-                )
+                }
             }
 
-            // Convert to MarkdownSource
-            val markdownSources = validWebpages.map {
-                MarkdownSource(it.url, it.title, it.description, it.markdown!!)
-            }
+            // Combine all markdown sources
+            val markdownSources = buildMarkdownSources(validWebpages, fileSearchResult, domain)
 
             // Step 2: Run through source shortlist agent
             val shortlistOutput = streamingSourceShortlistAgent.generate(
@@ -189,6 +222,90 @@ class CacheOnlySearchOrchestrator(
                     errorMessage = e.message ?: "Unknown error"
                 )
             )
+        }
+    }
+
+    /**
+     * Query file search store for a domain, returning null if no store exists.
+     */
+    private suspend fun queryFileSearch(
+        domain: String,
+        query: String,
+        sessionId: QuerySessionId,
+        maxCacheAge: Long?
+    ): FileQueryResult? {
+        return try {
+            fileSearchService.query(domain, query, sessionId, maxCacheAge)
+        } catch (e: IllegalStateException) {
+            // No file search store for this domain - this is expected
+            logger.debug("[{}] No file search store for domain {}: {}", sessionId.value, domain, e.message)
+            null
+        } catch (e: Exception) {
+            logger.warn("[{}] File search failed for domain {}: {}", sessionId.value, domain, e.message)
+            null
+        }
+    }
+
+    /**
+     * Emit UrlProcessed events and record URL accesses for cached webpages.
+     */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<SearchEvent>.emitWebpageProcessedEvents(
+        webpages: List<WebpageMarkdown>,
+        sessionId: QuerySessionId
+    ) {
+        webpages.forEach { webpage ->
+            urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
+            emit(
+                SearchEvent.UrlProcessed(
+                    sessionId = sessionId,
+                    url = webpage.url,
+                    accessType = "CACHED",
+                    title = webpage.title,
+                    description = webpage.description,
+                    markdownLength = webpage.markdown?.length
+                )
+            )
+        }
+    }
+
+    /**
+     * Build combined markdown sources from webpages and file search results.
+     */
+    private fun buildMarkdownSources(
+        webpages: List<WebpageMarkdown>,
+        fileSearchResult: FileQueryResult?,
+        domain: String
+    ): List<MarkdownSource> {
+        return buildList {
+            // Add webpage sources
+            webpages.forEach { webpage ->
+                add(MarkdownSource(webpage.url, webpage.title, webpage.description, webpage.markdown!!))
+            }
+            
+            // Add file search results if available
+            if (fileSearchResult != null && fileSearchResult.markdown.isNotBlank()) {
+                add(
+                    MarkdownSource(
+                        url = fileSearchResult.citations[0].sourceUrl,
+                        title = "File Search Results",
+                        description = "Documents from $domain",
+                        markdown = fileSearchResult.markdown
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * Extract domain from URL.
+     */
+    private fun extractDomain(url: String): String {
+        return try {
+            val uri = URI(url)
+            uri.host?.lowercase() ?: url
+        } catch (e: Exception) {
+            logger.warn("Failed to extract domain from URL: {}", url)
+            url
         }
     }
 }

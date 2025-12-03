@@ -10,6 +10,7 @@ import io.deepsearch.domain.agents.FileSearchQueryOutput
 import io.deepsearch.domain.agents.IFileSearchQueryAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.models.valueobjects.FileSearchChunk
+import io.deepsearch.domain.models.valueobjects.GeminiFileMetadata
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -34,19 +35,28 @@ class FileSearchQueryAgentGenAiImpl(
     """.trimIndent()
 
     override suspend fun generate(input: FileSearchQueryInput): FileSearchQueryOutput {
-        val (storeName, query) = input
-        logger.debug("File search query on store '{}': '{}'", storeName, query)
+        val (storeName, query, maxAgeMs) = input
+        logger.debug("File search query on store '{}': '{}' (maxAgeMs: {})", storeName, query, maxAgeMs)
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
+        // Build FileSearch with optional metadata filter for age
+        val fileSearchBuilder = FileSearch.builder()
+            .fileSearchStoreNames(listOf(storeName))
+            .topK(15)
+
+        // Apply metadata filter if maxAgeMs is specified
+        // Uses AIP-160 filter syntax: https://google.aip.dev/160
+        if (maxAgeMs != null) {
+            val threshold = System.currentTimeMillis() - maxAgeMs
+            val filter = "${GeminiFileMetadata.KEY_UPLOADED_AT} >= $threshold"
+            fileSearchBuilder.metadataFilter(filter)
+            logger.debug("Applying metadata filter: {}", filter)
+        }
+
         val fileSearchTool = Tool.builder()
-            .fileSearch(
-                FileSearch.builder()
-                    .fileSearchStoreNames(listOf(storeName))
-                    .topK(15)
-                    .build()
-            )
+            .fileSearch(fileSearchBuilder.build())
             .build()
 
         val response = client.models.generateContent(
