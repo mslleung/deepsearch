@@ -134,20 +134,21 @@ class UrlContentProcessingService(
         val normalizedUrl = normalizeUrlService.normalize(url) ?: url
 
         urlProcessingLockRegistry.withKeyLock(normalizedUrl) {
-            when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl, maxCacheAge)) {
-                is CachedWebpageResult.Hit -> {
-                    logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
-                    handleCachedResultAsFlow(url, cacheResult.webpageMarkdown, discoverLinks)
-                        .collect { event -> emit(event) }
-                    return@withKeyLock
-                }
-
-                is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
-                    logger.debug("Cache miss/expired for URL, proceeding with processing: {}", normalizedUrl)
-                }
-            }
-
             try {
+                when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl, maxCacheAge)) {
+                    is CachedWebpageResult.Hit -> {
+                        logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
+                        handleCachedResultAsFlow(url, cacheResult.webpageMarkdown, discoverLinks)
+                            .collect { event -> emit(event) }
+                        return@withKeyLock
+                    }
+
+                    is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
+                        // non-html links will always miss
+                        logger.debug("Cache miss/expired for URL, proceeding with processing: {}", normalizedUrl)
+                    }
+                }
+
                 when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
                     is ContentTypeResult.Html -> {
                         logger.debug("Detected HTML content for: {}", normalizedUrl)
@@ -168,7 +169,12 @@ class UrlContentProcessingService(
                             maxCacheAge,
                             sessionId
                         ) { markdown ->
-                            discoverLinksForFile(markdown, contentTypeResult.bytes, contentTypeResult.mimeType, normalizedUrl)
+                            discoverLinksForFile(
+                                markdown,
+                                contentTypeResult.bytes,
+                                contentTypeResult.mimeType,
+                                normalizedUrl
+                            )
                         }.collect { event -> emit(event) }
                     }
 
@@ -347,39 +353,19 @@ class UrlContentProcessingService(
             ingestResult.wasUploaded, ingestResult.markdown.length
         )
 
-        // Create separate flows for link discovery and markdown emission
-        val linkDiscoveryFlow = flow {
-            try {
-                // Discover links from the extracted markdown (not the entire file)
-                val discoveredLinks = discoverLinks(ingestResult.markdown)
-                logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
-                emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
-            } catch (e: Exception) {
-                logger.warn("File link discovery failed for {}: {}", normalizedUrl, e.message)
-                emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, emptyList()))
-            }
-        }
-
-        val markdownEmissionFlow = flow {
-            emit(
-                UrlProcessingEvent.MarkdownExtractionComplete(
-                    url = normalizedUrl,
-                    markdown = ingestResult.markdown,
-                    title = ingestResult.fileInfo.displayName,
-                    description = "File from ${ingestResult.fileInfo.sourceUrl}",
-                    wasCached = !ingestResult.wasUploaded
-                )
+        send(
+            UrlProcessingEvent.MarkdownExtractionComplete(
+                url = normalizedUrl,
+                markdown = ingestResult.markdown,
+                title = ingestResult.fileInfo.displayName,
+                description = "File from ${ingestResult.fileInfo.sourceUrl}",
+                wasCached = !ingestResult.wasUploaded
             )
-        }
+        )
 
-        // Merge both flows - markdown emission and link discovery run in parallel
-        merge(linkDiscoveryFlow, markdownEmissionFlow)
-            .onCompletion { cause ->
-                if (cause != null) {
-                    logger.debug("File processing flow cancelled for {}: {}", normalizedUrl, cause.message)
-                }
-            }
-            .collect { event -> send(event) }
+        val discoveredLinks = discoverLinks(ingestResult.markdown)
+        send(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
+        logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
     }
 
     private suspend fun cacheFailure(

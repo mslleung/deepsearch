@@ -538,13 +538,12 @@ class AgenticBrowserSearchOrchestrator(
         try {
             // Extract domain from URL
             val domain = extractDomain(searchQuery.url)
-            logger.debug("[{}] Querying file search store for domain: {}", sessionId.value, domain)
+            logger.debug("[{}] Looking for file search store for domain: {}", sessionId.value, domain)
 
-            // Try to get existing store for this domain
-            val storeInfo = try {
-                geminiFileSearchService.getOrCreateStore(domain)
-            } catch (e: Exception) {
-                logger.debug("[{}] No file search store for domain {}: {}", sessionId.value, domain, e.message)
+            // Only query if a store already exists for this domain
+            val storeInfo = geminiFileSearchService.findStore(domain)
+            if (storeInfo == null) {
+                logger.debug("[{}] No file search store exists for domain: {}, skipping file search", sessionId.value, domain)
                 fileSearchChannel.close()
                 return@flow
             }
@@ -568,13 +567,12 @@ class AgenticBrowserSearchOrchestrator(
             // Convert chunks to MarkdownSource and emit
             searchResult.chunks.forEach { chunk ->
                 if (chunk.content.isNotBlank()) {
-                    val sourceUrl = chunk.sourceUrl.ifBlank { searchQuery.url }
-                    seenUrls.add(sourceUrl)
+                    seenUrls.add(chunk.sourceUrl)
 
                     eventChannel.send(
                         SearchEvent.UrlProcessed(
                             sessionId = sessionId,
-                            url = sourceUrl,
+                            url = chunk.sourceUrl,
                             accessType = "FILE_SEARCH",
                             title = chunk.fileName,
                             description = "Retrieved from file search",
@@ -584,7 +582,7 @@ class AgenticBrowserSearchOrchestrator(
 
                     emit(
                         MarkdownSource(
-                            url = sourceUrl,
+                            url = chunk.sourceUrl,
                             title = chunk.fileName,
                             description = "Retrieved from file search",
                             markdown = chunk.content

@@ -23,7 +23,14 @@ data class TextLinkDiscoveryInput(
 data class TextLinkDiscoveryOutput(
     val links: List<WebpageLink>,
     val tokenUsage: TokenUsageMetrics
-) : IAgent.IAgentOutput
+) : IAgent.IAgentOutput {
+    companion object {
+        fun empty() = TextLinkDiscoveryOutput(
+            links = emptyList(),
+            tokenUsage = TokenUsageMetrics.empty()
+        )
+    }
+}
 
 /**
  * Agent that discovers relevant URLs from text content (e.g., file search results, markdown).

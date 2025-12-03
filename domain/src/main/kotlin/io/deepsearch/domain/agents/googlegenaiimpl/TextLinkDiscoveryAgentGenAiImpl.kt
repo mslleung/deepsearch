@@ -21,7 +21,7 @@ import java.net.URI
 
 /**
  * Agent that discovers relevant URLs from text content using LLM analysis.
- * 
+ *
  * Analyzes text (e.g., file search results, markdown) to find URLs that are
  * relevant to the user's query. Filters to same-domain URLs.
  */
@@ -81,8 +81,7 @@ class TextLinkDiscoveryAgentGenAiImpl(
         2. Evaluate each URL for relevance to the user's query
         3. Only return URLs that are directly relevant and would help answer the query
         4. Provide a brief reason explaining why each URL is relevant
-        5. Only include URLs that belong to the same domain as the source URL
-        6. Return the URLs exactly as found in the text
+        5. Return the URLs exactly as found in the text
         
         If no relevant URLs are found, return an empty links array.
     """.trimIndent()
@@ -90,39 +89,26 @@ class TextLinkDiscoveryAgentGenAiImpl(
     override suspend fun generate(input: TextLinkDiscoveryInput): TextLinkDiscoveryOutput {
         logger.debug("Analyzing text for relevant links, query: '{}'", input.query)
 
-        // Extract base host for domain filtering
-        val baseHost = try {
-            URI(input.sourceUrl).host?.lowercase()
-        } catch (e: Exception) {
-            logger.warn("Could not parse source URL: {}", input.sourceUrl)
-            null
-        }
+        val baseHost = URI(input.sourceUrl).host?.lowercase()
+            ?: return TextLinkDiscoveryOutput.empty()
 
-        if (baseHost == null) {
-            return TextLinkDiscoveryOutput(
-                links = emptyList(),
-                tokenUsage = TokenUsageMetrics.empty()
-            )
-        }
-
-        // Quick check: if text has no URLs, skip LLM call
-        val urlPattern = """https?://[^\s<>"{}|\\^`\[\]]+""".toRegex()
-        if (!urlPattern.containsMatchIn(input.text)) {
+        if (!URL_PATTERN.containsMatchIn(input.text)) {
             logger.debug("No URLs found in text, skipping LLM analysis")
-            return TextLinkDiscoveryOutput(
-                links = emptyList(),
-                tokenUsage = TokenUsageMetrics.empty()
-            )
+            return TextLinkDiscoveryOutput.empty()
         }
 
-        val userPrompt = buildString {
-            appendLine("User Query: ${input.query}")
-            appendLine("Source URL (for domain filtering): ${input.sourceUrl}")
-            appendLine()
-            appendLine("Text content to analyze:")
-            appendLine(input.text.take(15000)) // Limit text size
+        val (textWithOnlySameDomainUrls, externalUrlCount) = stripExternalUrls(input.text, baseHost)
+
+        if (!URL_PATTERN.containsMatchIn(textWithOnlySameDomainUrls)) {
+            logger.debug("No same-domain URLs found in text (removed {} external URLs), skipping LLM analysis", externalUrlCount)
+            return TextLinkDiscoveryOutput.empty()
         }
 
+        if (externalUrlCount > 0) {
+            logger.debug("Stripped {} external domain URLs from text before LLM analysis", externalUrlCount)
+        }
+
+        val userPrompt = buildPrompt(input.query, textWithOnlySameDomainUrls)
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
@@ -132,7 +118,7 @@ class TextLinkDiscoveryAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(0.2F)
+                        .temperature(0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
@@ -158,22 +144,9 @@ class TextLinkDiscoveryAgentGenAiImpl(
                 result.text() ?: throw RuntimeException("No text response from model")
             }
 
-            response.links.distinctBy { it.url }.filter { linkJson ->
-                try {
-                    val linkUri = URI(linkJson.url)
-                    val linkHost = linkUri.host?.lowercase()
-                    linkHost == baseHost && (linkUri.scheme == "http" || linkUri.scheme == "https")
-                } catch (e: Exception) {
-                    logger.warn("Invalid URL in LLM response: '{}'", linkJson.url)
-                    false
-                }
-            }.map { linkJson ->
-                WebpageLink(
-                    url = linkJson.url.trimEnd('.', ',', ')', ']', ';', ':'),
-                    source = LinkSource.FILE_CONTENT,
-                    reason = linkJson.reason
-                )
-            }
+            response.links
+                .distinctBy { it.url }
+                .mapNotNull { validateAndMapLink(it, input.text, baseHost) }
         } catch (e: Exception) {
             logger.warn("Failed to analyze text for links: {}", e.message)
             emptyList()
@@ -186,5 +159,65 @@ class TextLinkDiscoveryAgentGenAiImpl(
             tokenUsage = tokenUsage
         )
     }
-}
 
+    private fun isSameDomain(url: String, baseHost: String): Boolean {
+        return try {
+            val linkUri = URI(url)
+            val linkHost = linkUri.host?.lowercase()
+            linkHost == baseHost && (linkUri.scheme == "http" || linkUri.scheme == "https")
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun stripExternalUrls(text: String, baseHost: String): Pair<String, Int> {
+        var externalUrlCount = 0
+        val filteredText = URL_PATTERN.replace(text) { matchResult ->
+            val url = matchResult.value
+            if (isSameDomain(url, baseHost)) {
+                url
+            } else {
+                externalUrlCount++
+                ""
+            }
+        }
+        return Pair(filteredText, externalUrlCount)
+    }
+
+    private fun buildPrompt(query: String, text: String): String {
+        return buildString {
+            appendLine("User Query: $query")
+            appendLine()
+            appendLine("Text content to analyze:")
+            appendLine(text)
+        }
+    }
+
+    private fun validateAndMapLink(
+        linkJson: RelevantLinkJson,
+        originalText: String,
+        baseHost: String
+    ): WebpageLink? {
+        val url = linkJson.url.trimEnd('.', ',', ')', ']', ';', ':')
+
+        if (!originalText.contains(url)) {
+            logger.warn("Filtering hallucinated link not found in original text: '{}'", url)
+            return null
+        }
+
+        if (!isSameDomain(url, baseHost)) {
+            logger.warn("Filtering external domain or invalid link from LLM response: '{}'", url)
+            return null
+        }
+
+        return WebpageLink(
+            url = url,
+            source = LinkSource.FILE_CONTENT,
+            reason = linkJson.reason
+        )
+    }
+
+    companion object {
+        private val URL_PATTERN = """https?://[^\s<>"{}|\\^`\[\]]+""".toRegex()
+    }
+}

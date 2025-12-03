@@ -10,7 +10,7 @@ import io.deepsearch.domain.services.OcrImageTextExtractionService
 import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.CssSelectorConstructionService
-import io.deepsearch.domain.services.GeminiFileSearchServiceImpl
+import io.deepsearch.domain.services.GeminiFileSearchService
 import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.ICssSelectorConstructionService
@@ -43,9 +43,10 @@ val domainModule = module {
     singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
-    singleOf(::GeminiFileSearchServiceImpl) bind IGeminiFileSearchService::class
+    singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
 
     // Singleton domain agents (used by singleton application services)
+    singleOf(::FileSearchQueryAgentGenAiImpl) bind IFileSearchQueryAgent::class
     singleOf(::GoogleSearchLinkDiscoveryAgentGenAiImpl) bind IGoogleSearchLinkDiscoveryAgent::class
     singleOf(::LinkRelevanceAnalysisAgentGenAiImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
