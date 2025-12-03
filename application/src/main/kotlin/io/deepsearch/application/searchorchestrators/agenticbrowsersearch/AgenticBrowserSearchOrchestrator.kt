@@ -7,6 +7,7 @@ import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
+import io.deepsearch.domain.services.IGeminiFileSearchService
 import io.deepsearch.domain.agents.AnswerStreamItem
 import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
@@ -88,6 +89,7 @@ class AgenticBrowserSearchOrchestrator(
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
+    private val geminiFileSearchService: IGeminiFileSearchService,
     private val dispatchers: IDispatcherProvider,
     private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService
 ) : IAgenticBrowserSearchOrchestrator {
@@ -127,6 +129,7 @@ class AgenticBrowserSearchOrchestrator(
             val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val serperSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val hybridSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+            val fileSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
             // Launch flow processing
@@ -156,10 +159,19 @@ class AgenticBrowserSearchOrchestrator(
                     hybridSearchDiscoveredLinksChannel,
                     channel
                 ),
+                processFileSearchFlow(
+                    sessionId,
+                    searchQuery,
+                    seenUrls,
+                    maxCacheAge,
+                    fileSearchDiscoveredLinksChannel,
+                    channel
+                ),
                 processRecursiveDiscoveredLinksFlow(
                     sessionId, searchQuery, seenUrls, budget,
                     initialDiscoveredLinksChannel, serperSearchDiscoveredLinksChannel,
-                    hybridSearchDiscoveredLinksChannel, recursiveDiscoveredLinksChannel,
+                    hybridSearchDiscoveredLinksChannel, fileSearchDiscoveredLinksChannel,
+                    recursiveDiscoveredLinksChannel,
                     maxCacheAge, channel
                 )
             )
@@ -368,6 +380,7 @@ class AgenticBrowserSearchOrchestrator(
         initialChannel: Channel<WebpageLink>,
         serperChannel: Channel<WebpageLink>,
         hybridChannel: Channel<WebpageLink>,
+        fileSearchChannel: Channel<WebpageLink>,
         recursiveChannel: Channel<WebpageLink>,
         maxCacheAge: Long?,
         eventChannel: SendChannel<SearchEvent>
@@ -375,7 +388,7 @@ class AgenticBrowserSearchOrchestrator(
         val inFlight = ConcurrentHashMap.newKeySet<String>()
 
         return merge(
-            merge(initialChannel.receiveAsFlow(), serperChannel.receiveAsFlow(), hybridChannel.receiveAsFlow())
+            merge(initialChannel.receiveAsFlow(), serperChannel.receiveAsFlow(), hybridChannel.receiveAsFlow(), fileSearchChannel.receiveAsFlow())
                 .onCompletion { if (inFlight.isEmpty()) recursiveChannel.close() },
             recursiveChannel.receiveAsFlow()
         )
@@ -410,7 +423,7 @@ class AgenticBrowserSearchOrchestrator(
                                             errorMessage = e.reason
                                         )
                                     )
-                                    if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && inFlight.isEmpty()) {
+                                    if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && fileSearchChannel.isClosedForSend && inFlight.isEmpty()) {
                                         recursiveChannel.close()
                                     }
                                 }
@@ -428,7 +441,7 @@ class AgenticBrowserSearchOrchestrator(
                                         )
                                     }
                                     newLinks.forEach { recursiveChannel.send(it) }
-                                    if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && inFlight.isEmpty() && newLinks.isEmpty()) {
+                                    if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && fileSearchChannel.isClosedForSend && inFlight.isEmpty() && newLinks.isEmpty()) {
                                         recursiveChannel.close()
                                     }
                                 }
@@ -506,6 +519,113 @@ class AgenticBrowserSearchOrchestrator(
             }
             .onCompletion { hybridChannel.close() }
             .collect()
+    }
+
+    /**
+     * Process file search using Gemini File Search stores.
+     * Queries the file search store for the target domain and returns relevant content
+     * from indexed files (PDFs, documents, etc.).
+     * Also discovers links from chunk content and emits them for recursive crawling.
+     */
+    private fun processFileSearchFlow(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        maxCacheAge: Long?,
+        fileSearchChannel: Channel<WebpageLink>,
+        eventChannel: SendChannel<SearchEvent>
+    ): Flow<MarkdownSource> = flow {
+        try {
+            // Extract domain from URL
+            val domain = extractDomain(searchQuery.url)
+            logger.debug("[{}] Querying file search store for domain: {}", sessionId.value, domain)
+
+            // Try to get existing store for this domain
+            val storeInfo = try {
+                geminiFileSearchService.getOrCreateStore(domain)
+            } catch (e: Exception) {
+                logger.debug("[{}] No file search store for domain {}: {}", sessionId.value, domain, e.message)
+                fileSearchChannel.close()
+                return@flow
+            }
+
+            // Query the file search store
+            val searchResult = geminiFileSearchService.queryStore(
+                storeName = storeInfo.name,
+                query = searchQuery.query,
+                maxAgeMs = maxCacheAge
+            )
+
+            // Record token usage
+            tokenUsageService.recordTokenUsage(
+                sessionId, "FileSearchFlow.queryStore",
+                searchResult.tokenUsage.modelName, searchResult.tokenUsage.promptTokens,
+                searchResult.tokenUsage.outputTokens, searchResult.tokenUsage.totalTokens
+            )
+
+            logger.debug("[{}] File search returned {} chunks", sessionId.value, searchResult.chunks.size)
+
+            // Convert chunks to MarkdownSource and emit
+            searchResult.chunks.forEach { chunk ->
+                if (chunk.content.isNotBlank()) {
+                    val sourceUrl = chunk.sourceUrl.ifBlank { searchQuery.url }
+                    seenUrls.add(sourceUrl)
+
+                    eventChannel.send(
+                        SearchEvent.UrlProcessed(
+                            sessionId = sessionId,
+                            url = sourceUrl,
+                            accessType = "FILE_SEARCH",
+                            title = chunk.fileName,
+                            description = "Retrieved from file search",
+                            markdownLength = chunk.content.length
+                        )
+                    )
+
+                    emit(
+                        MarkdownSource(
+                            url = sourceUrl,
+                            title = chunk.fileName,
+                            description = "Retrieved from file search",
+                            markdown = chunk.content
+                        )
+                    )
+                }
+            }
+
+            // Discover relevant links from chunk content using LLM (similar to processHybridSearchFlow)
+            searchResult.chunks.asFlow()
+                .flatMapMerge(concurrency = 20) { chunk ->
+                    flow<Unit> {
+                        try {
+                            val links = webpageLinkDiscoveryService.discoverRelevantLinksFromText(
+                                query = searchQuery.query,
+                                text = chunk.content,
+                                sourceUrl = searchQuery.url,
+                                sessionId = sessionId
+                            )
+                            links.filter { it.url !in seenUrls }.forEach { link ->
+                                fileSearchChannel.send(link)
+                            }
+                        } catch (e: Exception) {
+                            logger.warn("[{}] File search link discovery failed: {}", sessionId.value, e.message)
+                        }
+                    }
+                }
+                .onCompletion { fileSearchChannel.close() }
+                .collect()
+        } catch (e: Exception) {
+            logger.warn("[{}] File search flow failed: {}", sessionId.value, e.message)
+            fileSearchChannel.close()
+        }
+    }
+
+    private fun extractDomain(url: String): String {
+        return try {
+            java.net.URI(url).host?.lowercase() ?: url
+        } catch (e: Exception) {
+            url
+        }
     }
 
     private fun createSerperSearchLinkDiscoveryFlow(

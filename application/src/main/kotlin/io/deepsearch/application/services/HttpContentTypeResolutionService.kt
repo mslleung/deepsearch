@@ -29,7 +29,11 @@ sealed class ContentTypeResult {
         val mimeType: String
     ) : ContentTypeResult()
     
-    data class Pdf(
+    /**
+     * A file type supported by Gemini File Search.
+     * This includes PDFs, Office documents, text files, code files, and more.
+     */
+    data class SupportedFile(
         val finalUrl: String,
         val bytes: ByteArray,
         val statusCode: Int,
@@ -40,7 +44,7 @@ sealed class ContentTypeResult {
             if (this === other) return true
             if (javaClass != other?.javaClass) return false
 
-            other as Pdf
+            other as SupportedFile
 
             if (finalUrl != other.finalUrl) return false
             if (!bytes.contentEquals(other.bytes)) return false
@@ -67,15 +71,135 @@ sealed class ContentTypeResult {
         val statusCode: Int,
         val reasonPhrase: String
     ) : ContentTypeResult()
+    
+    /**
+     * File exceeds the maximum size limit (25 MB).
+     */
+    data class FileTooLarge(
+        val finalUrl: String,
+        val contentLength: Long,
+        val maxSizeBytes: Long,
+        val mimeType: String
+    ) : ContentTypeResult()
+}
+
+/**
+ * MIME types supported by Gemini File Search.
+ * See: https://ai.google.dev/gemini-api/docs/file-search
+ */
+object GeminiSupportedMimeTypes {
+    // Application types
+    private val APPLICATION_TYPES = setOf(
+        "application/pdf",
+        "application/json",
+        "application/xml",
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+        "application/vnd.oasis.opendocument.text",
+        "application/vnd.jupyter",
+        "application/sql",
+        "application/typescript",
+        "application/ecmascript",
+        "application/dart",
+        "application/vnd.dart",
+        "application/x-sh",
+        "application/x-shellscript",
+        "application/x-csh",
+        "application/x-zsh",
+        "application/x-powershell",
+        "application/x-php",
+        "application/x-latex",
+        "application/x-tex",
+        "application/x-hwp",
+        "application/x-hwp-v5",
+        "application/zip"
+    )
+
+    // Text types
+    private val TEXT_TYPES = setOf(
+        "text/plain",
+        "text/html",
+        "text/css",
+        "text/csv",
+        "text/markdown",
+        "text/xml",
+        "text/javascript",
+        "text/jsx",
+        "text/tsx",
+        "text/yaml",
+        "text/x-python",
+        "text/x-java",
+        "text/x-java-source",
+        "text/x-kotlin",
+        "text/x-scala",
+        "text/x-go",
+        "text/x-rust",
+        "text/x-swift",
+        "text/x-csharp",
+        "text/x-c",
+        "text/x-c++src",
+        "text/x-c++hdr",
+        "text/x-csrc",
+        "text/x-chdr",
+        "text/x-ruby-script",
+        "text/x-perl",
+        "text/x-perl-script",
+        "text/x-php",
+        "text/x-sh",
+        "text/x-sql",
+        "text/x-diff",
+        "text/x-haskell",
+        "text/x-lua",
+        "text/x-erlang",
+        "text/x-lisp",
+        "text/x-scheme",
+        "text/x-pascal",
+        "text/x-objcsrc",
+        "text/rtf",
+        "text/tab-separated-values",
+        "text/tsv",
+        "text/vtt"
+    )
+
+    /**
+     * Check if a MIME type is supported by Gemini File Search.
+     */
+    fun isSupported(mimeType: String): Boolean {
+        val normalizedMimeType = mimeType.lowercase().substringBefore(';').trim()
+        
+        // Check exact matches
+        if (normalizedMimeType in APPLICATION_TYPES || normalizedMimeType in TEXT_TYPES) {
+            return true
+        }
+        
+        // Check prefix matches for text/* types (many code formats use text/x-* patterns)
+        if (normalizedMimeType.startsWith("text/")) {
+            return true
+        }
+        
+        return false
+    }
 }
 
 /**
  * Service for resolving HTTP content types and downloading content.
- * Uses HEAD request first for efficiency, falls back to GET for PDFs.
+ * Uses HEAD request first for efficiency, falls back to GET for supported files.
  */
 class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+    
+    companion object {
+        /**
+         * Maximum file size for processing: 25 MB.
+         * Files larger than this are skipped to avoid memory issues and API limits.
+         */
+        const val MAX_FILE_SIZE_BYTES = 25L * 1024 * 1024
+    }
     
     private val client = HttpClient(OkHttp) {
         followRedirects = true
@@ -92,12 +216,14 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
             val statusCode = headResponse.status.value
             val reasonPhrase = headResponse.status.description
             val contentType = headResponse.contentType()?.toString() ?: "unknown"
+            val contentLength = headResponse.contentLength()
             
             logger.debug(
-                "HEAD response for {}: status={}, contentType={}",
+                "HEAD response for {}: status={}, contentType={}, contentLength={}",
                 url,
                 statusCode,
-                contentType
+                contentType,
+                contentLength
             )
             
             // Throw exception if request failed
@@ -113,6 +239,7 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
             
             // Route based on content type
             return when {
+                // HTML content - process with browser
                 contentType.contains("text/html", ignoreCase = true) ||
                 contentType.contains("application/xhtml", ignoreCase = true) -> {
                     ContentTypeResult.Html(
@@ -122,15 +249,37 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
                         mimeType = contentType
                     )
                 }
-                contentType.contains("application/pdf", ignoreCase = true) -> {
-                    // For PDF, we need to download the content
-                    logger.debug("Downloading PDF from: {}", finalUrl)
-                    val getResponse = client.get(finalUrl)
-                    val pdfBytes = getResponse.readRawBytes()
+                // Supported file types for Gemini File Search
+                GeminiSupportedMimeTypes.isSupported(contentType) -> {
+                    // Check content length from HEAD response if available
+                    if (contentLength != null && contentLength > MAX_FILE_SIZE_BYTES) {
+                        logger.warn("File too large ({} bytes > {} bytes): {}", contentLength, MAX_FILE_SIZE_BYTES, finalUrl)
+                        return ContentTypeResult.FileTooLarge(
+                            finalUrl = finalUrl,
+                            contentLength = contentLength,
+                            maxSizeBytes = MAX_FILE_SIZE_BYTES,
+                            mimeType = contentType
+                        )
+                    }
                     
-                    ContentTypeResult.Pdf(
+                    logger.debug("Downloading supported file from: {} (type: {})", finalUrl, contentType)
+                    val getResponse = client.get(finalUrl)
+                    val fileBytes = getResponse.readRawBytes()
+                    
+                    // Double-check actual size after download
+                    if (fileBytes.size > MAX_FILE_SIZE_BYTES) {
+                        logger.warn("Downloaded file too large ({} bytes > {} bytes): {}", fileBytes.size, MAX_FILE_SIZE_BYTES, finalUrl)
+                        return ContentTypeResult.FileTooLarge(
+                            finalUrl = finalUrl,
+                            contentLength = fileBytes.size.toLong(),
+                            maxSizeBytes = MAX_FILE_SIZE_BYTES,
+                            mimeType = contentType
+                        )
+                    }
+                    
+                    ContentTypeResult.SupportedFile(
                         finalUrl = finalUrl,
-                        bytes = pdfBytes,
+                        bytes = fileBytes,
                         statusCode = statusCode,
                         reasonPhrase = reasonPhrase,
                         mimeType = contentType

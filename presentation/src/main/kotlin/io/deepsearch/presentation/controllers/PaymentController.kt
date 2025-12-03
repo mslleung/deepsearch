@@ -8,6 +8,8 @@ import io.deepsearch.presentation.dto.CreateCheckoutSessionRequest
 import io.deepsearch.presentation.dto.CreateCheckoutSessionResponse
 import io.deepsearch.presentation.dto.CreatePortalSessionRequest
 import io.deepsearch.presentation.dto.CreatePortalSessionResponse
+import io.deepsearch.presentation.dto.ConfirmSubscriptionRequest
+import io.deepsearch.presentation.dto.ConfirmSubscriptionResponse
 import io.deepsearch.presentation.dto.CreateSubscriptionIntentRequest
 import io.deepsearch.presentation.dto.CreateSubscriptionIntentResponse
 import io.deepsearch.presentation.dto.PaymentConfigResponse
@@ -115,6 +117,44 @@ class PaymentController(
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
         } catch (e: Exception) {
             logger.error("Error creating subscription intent: {}", e.message, e)
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        }
+    }
+
+    /**
+     * Confirms a subscription payment after the frontend has completed the Stripe payment flow.
+     * This verifies the payment with Stripe and creates the subscription in our database.
+     */
+    suspend fun confirmSubscription(call: ApplicationCall) {
+        try {
+            val userId = getUserIdFromJwt(call)
+            if (userId == null) {
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
+                return
+            }
+
+            val request = call.receive<ConfirmSubscriptionRequest>()
+
+            val result = paymentService.confirmSubscription(
+                userId = userId,
+                subscriptionId = request.subscriptionId
+            )
+
+            val response = ConfirmSubscriptionResponse(
+                success = result.success,
+                planName = result.planName,
+                totalAvailable = result.totalAvailable
+            )
+
+            call.respond(HttpStatusCode.OK, response)
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Bad request in confirmSubscription: {}", e.message, e)
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+        } catch (e: IllegalStateException) {
+            logger.warn("Subscription not ready: {}", e.message)
+            call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
+        } catch (e: Exception) {
+            logger.error("Error confirming subscription: {}", e.message, e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }

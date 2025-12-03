@@ -7,7 +7,8 @@ enum class LinkSource {
     LINK_RELEVANCE,
     ALL_LINKS,
     SITEMAP,
-    VECTOR_SIMILARITY
+    VECTOR_SIMILARITY,
+    FILE_CONTENT  // URLs extracted from file content (PDFs, docs, etc.)
 }
 
 data class WebpageLink(

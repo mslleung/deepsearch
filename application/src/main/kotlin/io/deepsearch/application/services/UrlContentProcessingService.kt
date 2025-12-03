@@ -68,7 +68,8 @@ class UrlContentProcessingService(
     private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
     private val webpageExtractionService: IWebpageExtractionService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
-    private val pdfConversionService: IPdfConversionService,
+    private val fileIngestionService: IFileIngestionService,
+    private val tokenUsageService: ILlmTokenUsageService,
     private val urlProcessingLockRegistry: UrlProcessingLockRegistry
 ) : IUrlContentProcessingService {
 
@@ -80,9 +81,19 @@ class UrlContentProcessingService(
         maxCacheAge: Long?,
         sessionId: QuerySessionId
     ): Flow<UrlProcessingEvent> {
-        return processInternalAsFlow(url, maxCacheAge, sessionId) { html ->
-            webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url, sessionId)
-        }
+        return processInternalAsFlow(
+            url = url,
+            query = query,
+            maxCacheAge = maxCacheAge,
+            sessionId = sessionId,
+            discoverLinks = { html ->
+                webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url, sessionId)
+            },
+            discoverLinksForFile = { markdown, fileBytes, mimeType, sourceUrl ->
+                // Use LLM to find query-relevant links from file search results
+                webpageLinkDiscoveryService.discoverRelevantLinksFromText(query, markdown, sourceUrl, sessionId)
+            }
+        )
     }
 
     override fun processUrlAsFlow(
@@ -90,16 +101,33 @@ class UrlContentProcessingService(
         sessionId: PeriodicIndexSessionId
     ): Flow<UrlProcessingEvent> {
         // max cache age is set to 0 so the cache will always expire, this is because periodic index should forcefully refresh everything
-        return processInternalAsFlow(url, 0, sessionId) { html ->
-            webpageLinkDiscoveryService.discoverAllLinks(html, url)
-        }
+        // For periodic index, we use a generic query for file search
+        return processInternalAsFlow(
+            url = url,
+            query = "Extract all relevant content",
+            maxCacheAge = 0,
+            sessionId = sessionId,
+            discoverLinks = { html ->
+                webpageLinkDiscoveryService.discoverAllLinks(html, url)
+            },
+            discoverLinksForFile = { markdown, fileBytes, mimeType, sourceUrl ->
+                // Extract all links without LLM - use PDF parser for PDFs, regex for others
+                if (mimeType.contains("pdf", ignoreCase = true)) {
+                    webpageLinkDiscoveryService.discoverAllLinksFromPdf(fileBytes, sourceUrl)
+                } else {
+                    webpageLinkDiscoveryService.discoverLinksFromText(markdown, sourceUrl)
+                }
+            }
+        )
     }
 
     private fun processInternalAsFlow(
         url: String,
+        query: String,
         maxCacheAge: Long?,
         sessionId: SessionId,
-        discoverLinks: suspend (html: String) -> List<WebpageLink>
+        discoverLinks: suspend (html: String) -> List<WebpageLink>,
+        discoverLinksForFile: suspend (markdown: String, fileBytes: ByteArray, mimeType: String, sourceUrl: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
         logger.debug("Processing URL: {}", url)
 
@@ -113,6 +141,7 @@ class UrlContentProcessingService(
                         .collect { event -> emit(event) }
                     return@withKeyLock
                 }
+
                 is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
                     logger.debug("Cache miss/expired for URL, proceeding with processing: {}", normalizedUrl)
                 }
@@ -125,14 +154,42 @@ class UrlContentProcessingService(
                         processHtmlUrlAsFlow(normalizedUrl, sessionId, discoverLinks)
                             .collect { event -> emit(event) }
                     }
-                    is ContentTypeResult.Pdf -> {
-                        logger.debug("Detected PDF content for: {} ({} bytes)", normalizedUrl, contentTypeResult.bytes.size)
-                        processPdfUrlAsFlow(normalizedUrl, contentTypeResult, sessionId)
-                            .collect { event -> emit(event) }
+
+                    is ContentTypeResult.SupportedFile -> {
+                        logger.debug(
+                            "Detected supported file for: {} ({} bytes, type: {})",
+                            normalizedUrl, contentTypeResult.bytes.size, contentTypeResult.mimeType
+                        )
+
+                        processFileUrlAsFlow(
+                            normalizedUrl,
+                            contentTypeResult,
+                            query,
+                            maxCacheAge,
+                            sessionId
+                        ) { markdown ->
+                            discoverLinksForFile(markdown, contentTypeResult.bytes, contentTypeResult.mimeType, normalizedUrl)
+                        }.collect { event -> emit(event) }
                     }
+
+                    is ContentTypeResult.FileTooLarge -> {
+                        logger.warn(
+                            "File too large for {}: {} bytes (max: {} bytes)",
+                            normalizedUrl, contentTypeResult.contentLength, contentTypeResult.maxSizeBytes
+                        )
+                        throw FileTooLargeException(
+                            normalizedUrl,
+                            contentTypeResult.contentLength,
+                            contentTypeResult.maxSizeBytes
+                        )
+                    }
+
                     is ContentTypeResult.Unsupported -> {
-                        logger.debug("Unsupported content type for {}: {}", normalizedUrl, contentTypeResult.contentType)
-                        // Throw exception for unsupported content (will be cached in catch block)
+                        logger.debug(
+                            "Unsupported content type for {}: {}",
+                            normalizedUrl,
+                            contentTypeResult.contentType
+                        )
                         throw UnsupportedContentTypeException(normalizedUrl, contentTypeResult.contentType)
                     }
                 }
@@ -161,9 +218,17 @@ class UrlContentProcessingService(
         // Emit links first, then markdown (consistent with non-cached flow)
         logger.debug("Emitting {} cached links for URL: {}", links.size, originalUrl)
         emit(UrlProcessingEvent.LinkDiscoveryComplete(originalUrl, links))
-        
+
         logger.debug("Emitting cached markdown for URL: {} ({} chars)", originalUrl, cached.markdown?.length ?: 0)
-        emit(UrlProcessingEvent.MarkdownExtractionComplete(originalUrl, cached.markdown ?: "", cached.title, cached.description, wasCached = true))
+        emit(
+            UrlProcessingEvent.MarkdownExtractionComplete(
+                originalUrl,
+                cached.markdown ?: "",
+                cached.title,
+                cached.description,
+                wasCached = true
+            )
+        )
     }
 
     private fun processHtmlUrlAsFlow(
@@ -173,7 +238,7 @@ class UrlContentProcessingService(
     ): Flow<UrlProcessingEvent> = channelFlow {
         browserRuntimePool.acquireRuntime { runtime ->
             val browser = runtime.createBrowser()
-            
+
             try {
                 val context = browser.createContext()
                 val page = context.newPage()
@@ -191,7 +256,11 @@ class UrlContentProcessingService(
                 val markdownExtractionFlow = flow {
                     try {
                         val extractionResult = webpageExtractionService.extractWebpage(page, sessionId)
-                        logger.debug("Markdown extraction complete for {}: {} chars", normalizedUrl, extractionResult.markdown.length)
+                        logger.debug(
+                            "Markdown extraction complete for {}: {} chars",
+                            normalizedUrl,
+                            extractionResult.markdown.length
+                        )
 
                         webpageCacheService.cacheWebpage(
                             url = normalizedUrl,
@@ -205,13 +274,15 @@ class UrlContentProcessingService(
                             sessionId = sessionId
                         )
 
-                        emit(UrlProcessingEvent.MarkdownExtractionComplete(
-                            normalizedUrl, 
-                            extractionResult.markdown,
-                            extractionResult.title,
-                            extractionResult.description,
-                            wasCached = false
-                        ))
+                        emit(
+                            UrlProcessingEvent.MarkdownExtractionComplete(
+                                normalizedUrl,
+                                extractionResult.markdown,
+                                extractionResult.title,
+                                extractionResult.description,
+                                wasCached = false
+                            )
+                        )
                     } catch (e: Exception) {
                         // Wrap markdown extraction failures
                         throw MarkdownExtractionException(normalizedUrl, e)
@@ -227,36 +298,88 @@ class UrlContentProcessingService(
                         }
                     }
                     .collect { event -> send(event) }
-                    
+
             } finally {
                 browser.close()
             }
         }
     }
 
-    private fun processPdfUrlAsFlow(
+    /**
+     * Process a supported file (PDF, docx, etc.) using Gemini File Search.
+     *
+     * Flow (similar to processHtmlUrlAsFlow):
+     * 1. Use FileIngestionService to upload (if needed) and query the file
+     * 2. Emit MarkdownExtractionComplete with file search results
+     * 3. Discover links from the extracted markdown (not the entire file)
+     * 4. Emit LinkDiscoveryComplete with discovered links
+     *
+     * @param discoverLinks Lambda to discover links from the extracted markdown.
+     *        For relevant links: uses LLM to find query-relevant URLs.
+     *        For all links: extracts all URLs using regex/parser.
+     */
+    private fun processFileUrlAsFlow(
         normalizedUrl: String,
-        result: ContentTypeResult.Pdf,
-        sessionId: SessionId
-    ): Flow<UrlProcessingEvent> = flow {
-        val markdown = pdfConversionService.convertPdfToMarkdown(result.bytes, sessionId)
+        result: ContentTypeResult.SupportedFile,
+        query: String,
+        maxCacheAge: Long?,
+        sessionId: SessionId,
+        discoverLinks: suspend (markdown: String) -> List<WebpageLink>
+    ): Flow<UrlProcessingEvent> = channelFlow {
+        logger.debug(
+            "Processing file: {} ({} bytes, type: {})",
+            normalizedUrl, result.bytes.size, result.mimeType
+        )
 
-        webpageCacheService.cacheWebpage(
+        // First, ingest the file and get the markdown result
+        val ingestResult = fileIngestionService.ingestAndQuery(
             url = normalizedUrl,
-            title = null,
-            description = null,
-            markdown = markdown,
-            html = null,
-            httpStatus = result.statusCode,
-            httpReason = result.reasonPhrase,
+            fileBytes = result.bytes,
             mimeType = result.mimeType,
+            query = query,
+            maxCacheAge = maxCacheAge,
             sessionId = sessionId
         )
 
-        logger.debug("Processed PDF for URL: {} ({} chars)", normalizedUrl, markdown.length)
+        logger.debug(
+            "File ingestion complete for {}: {} (uploaded: {}, {} chars markdown)",
+            normalizedUrl, ingestResult.fileInfo.displayName,
+            ingestResult.wasUploaded, ingestResult.markdown.length
+        )
 
-        // PDFs don't have discoverable links, only markdown
-        emit(UrlProcessingEvent.MarkdownExtractionComplete(normalizedUrl, markdown, null, null, wasCached = false))
+        // Create separate flows for link discovery and markdown emission
+        val linkDiscoveryFlow = flow {
+            try {
+                // Discover links from the extracted markdown (not the entire file)
+                val discoveredLinks = discoverLinks(ingestResult.markdown)
+                logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
+                emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
+            } catch (e: Exception) {
+                logger.warn("File link discovery failed for {}: {}", normalizedUrl, e.message)
+                emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, emptyList()))
+            }
+        }
+
+        val markdownEmissionFlow = flow {
+            emit(
+                UrlProcessingEvent.MarkdownExtractionComplete(
+                    url = normalizedUrl,
+                    markdown = ingestResult.markdown,
+                    title = ingestResult.fileInfo.displayName,
+                    description = "File from ${ingestResult.fileInfo.sourceUrl}",
+                    wasCached = !ingestResult.wasUploaded
+                )
+            )
+        }
+
+        // Merge both flows - markdown emission and link discovery run in parallel
+        merge(linkDiscoveryFlow, markdownEmissionFlow)
+            .onCompletion { cause ->
+                if (cause != null) {
+                    logger.debug("File processing flow cancelled for {}: {}", normalizedUrl, cause.message)
+                }
+            }
+            .collect { event -> send(event) }
     }
 
     private suspend fun cacheFailure(
@@ -270,7 +393,7 @@ class UrlContentProcessingService(
             is UnsupportedContentTypeException -> Triple(200, "OK", exception.contentType)
             else -> Triple(0, exception.message ?: "Unknown error", null)
         }
-        
+
         webpageCacheService.cacheWebpage(
             url = normalizedUrl,
             title = null,

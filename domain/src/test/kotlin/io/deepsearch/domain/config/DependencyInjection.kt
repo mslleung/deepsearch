@@ -67,7 +67,6 @@ private val domainCommonTestModule = module {
     singleOf(::MarkdownConversionAgentGenAiImpl) bind IMarkdownConversionAgent::class
     singleOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
     singleOf(::MultiImageTextExtractionAgentGenAiImpl) bind IMultiImageTextExtractionAgent::class
-    singleOf(::PdfToMarkdownAgentGenAiImpl) bind IPdfToMarkdownAgent::class
     singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::QueryBreakdownAgentGenAiImpl) bind IQueryBreakdownAgent::class
     singleOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
@@ -77,6 +76,7 @@ private val domainCommonTestModule = module {
     singleOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
+    singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
 
     // domain services
     singleOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class

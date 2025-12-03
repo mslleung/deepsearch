@@ -100,6 +100,26 @@ interface IPaymentService {
      * Gets the Stripe publishable key for frontend usage.
      */
     fun getPublishableKey(): String
+
+    /**
+     * Result of confirming a subscription payment.
+     */
+    data class ConfirmSubscriptionResult(
+        val success: Boolean,
+        val planName: String,
+        val totalAvailable: Int
+    )
+
+    /**
+     * Confirms a subscription payment and creates the subscription in our database.
+     * This should be called after the frontend confirms payment with Stripe.
+     * It verifies the payment status with Stripe and creates the subscription synchronously.
+     *
+     * @param userId The user who made the payment
+     * @param subscriptionId The Stripe subscription ID returned from createSubscriptionIntent
+     * @return The confirmation result with the new subscription details
+     */
+    suspend fun confirmSubscription(userId: UserId, subscriptionId: String): ConfirmSubscriptionResult
 }
 
 @OptIn(ExperimentalTime::class)
@@ -248,6 +268,75 @@ class PaymentService(
     }
 
     override fun getPublishableKey(): String = stripeConfig.publishableKey
+
+    override suspend fun confirmSubscription(
+        userId: UserId,
+        subscriptionId: String
+    ): IPaymentService.ConfirmSubscriptionResult {
+        // Retrieve the subscription from Stripe to verify its status
+        val stripeSubscription = Subscription.retrieve(subscriptionId)
+
+        // Verify the subscription belongs to this user
+        val subscriptionUserId = stripeSubscription.metadata["user_id"]?.toIntOrNull()
+        if (subscriptionUserId != userId.value) {
+            throw IllegalArgumentException("Subscription does not belong to this user")
+        }
+
+        // Check if subscription is active (payment succeeded)
+        if (stripeSubscription.status != "active") {
+            throw IllegalStateException("Subscription payment not completed. Status: ${stripeSubscription.status}")
+        }
+
+        // Check if we already have this subscription in our database
+        val existingSubscription = userSubscriptionRepository.findByStripeSubscriptionId(subscriptionId)
+        if (existingSubscription != null) {
+            // Already exists (maybe webhook was faster), just return success
+            return IPaymentService.ConfirmSubscriptionResult(
+                success = true,
+                planName = existingSubscription.planName,
+                totalAvailable = existingSubscription.maxSearches + existingSubscription.rolloverSearches
+            )
+        }
+
+        // Create the subscription in our database
+        val planName = stripeSubscription.metadata["plan_name"]
+            ?: throw IllegalStateException("Missing plan_name in subscription metadata")
+
+        val plan = SubscriptionPlan.fromName(planName)
+            ?: throw IllegalStateException("Unknown plan name: $planName")
+
+        // Cancel old subscriptions and calculate rollover
+        val rolloverSearches = cancelOldSubscriptionsAndGetRollover(userId)
+
+        val now = Clock.System.now()
+        val expiryDate = if (plan.tier == PlanTier.FREE) null else now + 30.days
+
+        val subscription = UserSubscription.fromPlan(
+            userId = userId,
+            plan = plan,
+            startDate = now,
+            expiryDate = expiryDate,
+            stripeSubscriptionId = subscriptionId,
+            stripePriceId = stripeSubscription.metadata["stripe_price_id"],
+            stripeStatus = StripeSubscriptionStatus.ACTIVE,
+            rolloverSearches = rolloverSearches
+        )
+
+        userSubscriptionRepository.save(subscription)
+
+        logger.info(
+            "Confirmed subscription for user {} plan {} with {} rollover searches",
+            userId,
+            planName,
+            rolloverSearches
+        )
+
+        return IPaymentService.ConfirmSubscriptionResult(
+            success = true,
+            planName = planName,
+            totalAvailable = plan.maxSearches + rolloverSearches
+        )
+    }
 
     // ==================== Private Helper Methods ====================
 

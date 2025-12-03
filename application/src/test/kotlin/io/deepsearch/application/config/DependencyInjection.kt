@@ -8,6 +8,7 @@ import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOr
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.application.services.ApiKeyService
 import io.deepsearch.application.services.AuthService
+import io.deepsearch.application.services.FileIngestionService
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.application.services.IPopupContainerIdentificationService
@@ -20,14 +21,13 @@ import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.HttpContentTypeResolutionService
 import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IAuthService
+import io.deepsearch.application.services.IFileIngestionService
 import io.deepsearch.application.services.IHttpContentTypeResolutionService
-import io.deepsearch.application.services.IPdfConversionService
 import io.deepsearch.application.services.IPeriodicIndexJobRegistry
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
-import io.deepsearch.application.services.PdfConversionService
 import io.deepsearch.application.services.PopupContainerIdentificationService
 import io.deepsearch.application.services.SearchService
 import io.deepsearch.application.services.SemanticIdentificationService
@@ -115,7 +115,7 @@ private val applicationCommonTestModule = module {
     singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
     singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
-    singleOf(::PdfConversionService) bind IPdfConversionService::class
+    singleOf(::FileIngestionService) bind IFileIngestionService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class

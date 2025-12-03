@@ -38,3 +38,15 @@ data class CreateSubscriptionIntentResponse(
     val subscriptionId: String,
     val clientSecret: String
 )
+
+@Serializable
+data class ConfirmSubscriptionRequest(
+    val subscriptionId: String
+)
+
+@Serializable
+data class ConfirmSubscriptionResponse(
+    val success: Boolean,
+    val planName: String,
+    val totalAvailable: Int
+)

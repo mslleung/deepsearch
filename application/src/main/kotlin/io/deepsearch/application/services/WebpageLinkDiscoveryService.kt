@@ -3,8 +3,14 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.GoogleSearchLinkDiscoveryInput
 import io.deepsearch.domain.agents.IGoogleSearchLinkDiscoveryAgent
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
+import io.deepsearch.domain.agents.ITextLinkDiscoveryAgent
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
+import io.deepsearch.domain.agents.TextLinkDiscoveryInput
 import io.deepsearch.domain.models.entities.SitemapCache
+import org.apache.pdfbox.Loader
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
+import org.apache.pdfbox.text.PDFTextStripper
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -48,6 +54,24 @@ interface IWebpageLinkDiscoveryService {
      * Discovers links from a sitemap XML file. Uses caching with 1-day TTL.
      */
     suspend fun discoverSitemapLinks(sitemapUrl: String): List<WebpageLink>
+
+    /**
+     * Discovers links from plain text content (e.g., file search results, markdown).
+     * Extracts URLs using regex and filters to same-domain.
+     */
+    fun discoverLinksFromText(text: String, sourceUrl: String): List<WebpageLink>
+
+    /**
+     * Discovers relevant links from text content using LLM analysis.
+     * Similar to discoverRelevantLinksByAgent but for plain text instead of HTML.
+     */
+    suspend fun discoverRelevantLinksFromText(query: String, text: String, sourceUrl: String, sessionId: SessionId): List<WebpageLink>
+
+    /**
+     * Discovers all links from a PDF file without using LLM.
+     * Uses PDFBox to extract URLs from PDF annotations and text content.
+     */
+    fun discoverAllLinksFromPdf(pdfBytes: ByteArray, sourceUrl: String): List<WebpageLink>
 }
 
 @OptIn(ExperimentalTime::class)
@@ -55,6 +79,7 @@ class WebpageLinkDiscoveryService(
     private val googleSearchLinkDiscoveryAgent: IGoogleSearchLinkDiscoveryAgent,
     private val serperService: ISerperService,
     private val linkRelevanceAnalysisAgent: ILinkRelevanceAnalysisAgent,
+    private val textLinkDiscoveryAgent: ITextLinkDiscoveryAgent,
     private val sitemapCacheRepository: ISitemapCacheRepository,
     private val sitemapLockRegistry: ISitemapLinkDiscoveryLockRegistry,
     private val normalizeUrlService: INormalizeUrlService,
@@ -251,6 +276,148 @@ class WebpageLinkDiscoveryService(
             val textContent = locElements.item(i)?.textContent?.trim()
             if (textContent.isNullOrBlank()) null else textContent
         }
+    }
+
+    override fun discoverLinksFromText(text: String, sourceUrl: String): List<WebpageLink> {
+        val baseDomain = extractBaseDomain(sourceUrl)
+        if (baseDomain == null) {
+            logger.warn("Could not extract base domain from URL: {}", sourceUrl)
+            return emptyList()
+        }
+
+        // Extract URLs using regex
+        val urlPattern = """https?://[^\s<>"{}|\\^`\[\]]+""".toRegex()
+        val urls = urlPattern.findAll(text)
+            .map { it.value.trimEnd('.', ',', ')', ']', ';', ':', '\'', '"') }
+            .filter { url ->
+                try {
+                    val normalizedUrl = normalizeUrlService.normalize(url) ?: url
+                    val urlBaseDomain = extractBaseDomain(normalizedUrl)
+                    urlBaseDomain == baseDomain
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            .distinct()
+            .toList()
+
+        val links = urls.map { url ->
+            WebpageLink(
+                url = url,
+                source = LinkSource.FILE_CONTENT,
+                reason = "URL found in file search result"
+            )
+        }
+
+        logger.debug("Discovered {} same-domain links from text content", links.size)
+        return links
+    }
+
+    override suspend fun discoverRelevantLinksFromText(
+        query: String,
+        text: String,
+        sourceUrl: String,
+        sessionId: SessionId
+    ): List<WebpageLink> {
+        logger.debug("Discovering relevant links from text for query: '{}'", query)
+
+        val baseDomain = extractBaseDomain(sourceUrl)
+        if (baseDomain == null) {
+            logger.warn("Could not extract base domain from URL: {}", sourceUrl)
+            return emptyList()
+        }
+
+        val output = textLinkDiscoveryAgent.generate(
+            TextLinkDiscoveryInput(
+                text = text,
+                sourceUrl = sourceUrl,
+                query = query
+            )
+        )
+
+        // Record token usage
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "TextLinkDiscoveryAgent",
+            modelName = output.tokenUsage.modelName,
+            promptTokens = output.tokenUsage.promptTokens,
+            outputTokens = output.tokenUsage.outputTokens,
+            totalTokens = output.tokenUsage.totalTokens
+        )
+
+        val filteredLinks = output.links.filter { link ->
+            val normalizedLinkUrl = normalizeUrlService.normalize(link.url) ?: link.url
+            val normalizedLinkBaseDomain = extractBaseDomain(normalizedLinkUrl)
+            normalizedLinkBaseDomain == baseDomain
+        }
+
+        logger.debug("Discovered {} relevant links from text (filtered to {} same-domain)", output.links.size, filteredLinks.size)
+        return filteredLinks
+    }
+
+    override fun discoverAllLinksFromPdf(pdfBytes: ByteArray, sourceUrl: String): List<WebpageLink> {
+        val baseDomain = extractBaseDomain(sourceUrl)
+        if (baseDomain == null) {
+            logger.warn("Could not extract base domain from URL: {}", sourceUrl)
+            return emptyList()
+        }
+
+        val urls = mutableSetOf<String>()
+
+        try {
+            val document = Loader.loadPDF(pdfBytes)
+            document.use { pdf ->
+                // 1. Extract URLs from PDF link annotations
+                for (page in pdf.pages) {
+                    val annotations = page.annotations ?: continue
+                    for (annotation in annotations) {
+                        if (annotation is PDAnnotationLink) {
+                            val action = annotation.action
+                            if (action is PDActionURI) {
+                                val uri = action.uri
+                                if (uri != null && (uri.startsWith("http://") || uri.startsWith("https://"))) {
+                                    urls.add(uri)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Extract URLs from PDF text content using regex
+                val stripper = PDFTextStripper()
+                val text = stripper.getText(pdf)
+                val urlPattern = """https?://[^\s<>"{}|\\^`\[\]]+""".toRegex()
+                urlPattern.findAll(text).forEach { match ->
+                    val url = match.value.trimEnd('.', ',', ')', ']', ';', ':', '\'', '"')
+                    urls.add(url)
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn("Failed to extract links from PDF: {}", e.message)
+            return emptyList()
+        }
+
+        // Filter to same-domain URLs
+        val filteredUrls = urls.filter { url ->
+            try {
+                val normalizedUrl = normalizeUrlService.normalize(url) ?: url
+                val urlBaseDomain = extractBaseDomain(normalizedUrl)
+                urlBaseDomain == baseDomain
+            } catch (e: Exception) {
+                false
+            }
+        }
+
+        val links = filteredUrls.map { url ->
+            WebpageLink(
+                url = url,
+                source = LinkSource.FILE_CONTENT,
+                reason = "URL found in PDF"
+            )
+        }
+
+        logger.debug("Discovered {} same-domain links from PDF", links.size)
+        return links
     }
 }
 

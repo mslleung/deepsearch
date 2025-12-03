@@ -10,9 +10,11 @@ import io.deepsearch.domain.services.OcrImageTextExtractionService
 import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.CssSelectorConstructionService
+import io.deepsearch.domain.services.GeminiFileSearchServiceImpl
 import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.ICssSelectorConstructionService
+import io.deepsearch.domain.services.IGeminiFileSearchService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
@@ -41,13 +43,14 @@ val domainModule = module {
     singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
+    singleOf(::GeminiFileSearchServiceImpl) bind IGeminiFileSearchService::class
 
     // Singleton domain agents (used by singleton application services)
     singleOf(::GoogleSearchLinkDiscoveryAgentGenAiImpl) bind IGoogleSearchLinkDiscoveryAgent::class
     singleOf(::LinkRelevanceAnalysisAgentGenAiImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
     singleOf(::MultiImageTextExtractionAgentGenAiImpl) bind IMultiImageTextExtractionAgent::class
-    singleOf(::PdfToMarkdownAgentGenAiImpl) bind IPdfToMarkdownAgent::class
+    singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class

@@ -124,6 +124,16 @@ class ContentTooLargeException(
 ) : NetworkConnectionException(url, "Content too large: $sizeBytes bytes", cause)
 
 /**
+ * File exceeds the maximum size limit for processing.
+ */
+class FileTooLargeException(
+    url: String,
+    val sizeBytes: Long,
+    val maxSizeBytes: Long,
+    cause: Throwable? = null
+) : NetworkConnectionException(url, "File too large: $sizeBytes bytes (max: $maxSizeBytes bytes)", cause)
+
+/**
  * Browser failed to navigate to the URL.
  * This includes Playwright-specific navigation errors.
  */
@@ -159,3 +169,11 @@ class ParsingException(
     url: String,
     cause: Throwable
 ) : MarkdownConversionException(url, "Parsing error: ${cause.message}", cause)
+
+/**
+ * File ingestion into Gemini File Search failed.
+ */
+class FileIngestionException(
+    url: String,
+    cause: Throwable
+) : MarkdownConversionException(url, "File ingestion failed: ${cause.message}", cause)
