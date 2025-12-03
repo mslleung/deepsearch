@@ -40,7 +40,7 @@ val applicationModule = module {
     singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
     singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
-    singleOf(::FileIngestionService) bind IFileIngestionService::class
+    singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class

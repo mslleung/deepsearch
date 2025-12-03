@@ -8,7 +8,7 @@ import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOr
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.application.services.ApiKeyService
 import io.deepsearch.application.services.AuthService
-import io.deepsearch.application.services.FileIngestionService
+import io.deepsearch.application.services.FileSearchService
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.application.services.IPopupContainerIdentificationService
@@ -21,7 +21,7 @@ import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.HttpContentTypeResolutionService
 import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IAuthService
-import io.deepsearch.application.services.IFileIngestionService
+import io.deepsearch.application.services.IFileSearchService
 import io.deepsearch.application.services.IHttpContentTypeResolutionService
 import io.deepsearch.application.services.IPeriodicIndexJobRegistry
 import io.deepsearch.application.services.IQuerySessionService
@@ -115,7 +115,7 @@ private val applicationCommonTestModule = module {
     singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
     singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
-    singleOf(::FileIngestionService) bind IFileIngestionService::class
+    singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class

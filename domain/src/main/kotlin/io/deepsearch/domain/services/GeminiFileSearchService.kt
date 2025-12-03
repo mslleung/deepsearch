@@ -4,13 +4,15 @@ import com.google.genai.Client
 import com.google.genai.types.CreateFileSearchStoreConfig
 import com.google.genai.types.CustomMetadata
 import com.google.genai.types.UploadToFileSearchStoreConfig
+import com.google.genai.types.UploadToFileSearchStoreOperation
 import io.deepsearch.domain.agents.FileSearchQueryInput
 import io.deepsearch.domain.agents.IFileSearchQueryAgent
+import io.deepsearch.domain.config.DefaultDispatcherProvider
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.FileSearchResult
 import io.deepsearch.domain.models.valueobjects.FileSearchStoreInfo
 import io.deepsearch.domain.models.valueobjects.GeminiFileInfo
 import io.deepsearch.domain.models.valueobjects.GeminiFileMetadata
-import io.deepsearch.domain.repositories.IFileSearchStoreRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -116,13 +118,18 @@ interface IGeminiFileSearchService {
  * Uses SDK methods for all operations including store management, file operations,
  * and querying via the FileSearch tool.
  *
+ * Uses a naming convention for store displayName to associate stores with domains:
+ * - Format: "deepsearch-{domain}" (e.g., "deepsearch-docs.example.com")
+ * - Stores are looked up via SDK list() and matched by displayName
+ * - This eliminates the need for local state, making the Gemini API the single source of truth
+ *
  * @see https://ai.google.dev/api/file-search/file-search-stores
  */
 @OptIn(ExperimentalTime::class)
 class GeminiFileSearchService(
     private val client: Client,
-    private val fileSearchStoreRepository: IFileSearchStoreRepository,
-    private val fileSearchQueryAgent: IFileSearchQueryAgent
+    private val fileSearchQueryAgent: IFileSearchQueryAgent,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IGeminiFileSearchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -130,59 +137,60 @@ class GeminiFileSearchService(
     companion object {
         private const val MAX_POLL_ATTEMPTS = 60
         private const val POLL_INTERVAL_MS = 5000L
+        private const val STORE_DISPLAY_NAME_PREFIX = "deepsearch-"
     }
+
+    private fun domainToDisplayName(domain: String): String = "$STORE_DISPLAY_NAME_PREFIX$domain"
 
     // ==================== Store Management ====================
 
-    override suspend fun findStore(domain: String): FileSearchStoreInfo? {
-        val existing = fileSearchStoreRepository.findByDomain(domain) ?: return null
-        logger.debug("Found existing file search store for domain {}: {}", domain, existing.geminiStoreName)
-        return FileSearchStoreInfo(
-            name = existing.geminiStoreName,
-            displayName = "DeepSearch-$domain",
-            domain = domain
-        )
+    override suspend fun findStore(domain: String): FileSearchStoreInfo? = withContext(dispatcherProvider.io) {
+        val targetDisplayName = domainToDisplayName(domain)
+        logger.debug("Looking for file search store with displayName: {}", targetDisplayName)
+
+        val pager = client.fileSearchStores.list(null)
+
+        for (store in pager) {
+            val storeDisplayName = store.displayName().orElse(null) ?: continue
+            if (storeDisplayName == targetDisplayName) {
+                val storeName = store.name().orElse(null) ?: continue
+                logger.debug("Found existing file search store for domain {}: {}", domain, storeName)
+                return@withContext FileSearchStoreInfo(
+                    name = storeName,
+                    displayName = storeDisplayName,
+                    domain = domain
+                )
+            }
+        }
+
+        logger.debug("No file search store found for domain: {}", domain)
+        null
     }
 
-    override suspend fun getOrCreateStore(domain: String): FileSearchStoreInfo {
-        // Check local repository first
-        val existing = fileSearchStoreRepository.findByDomain(domain)
+    override suspend fun getOrCreateStore(domain: String): FileSearchStoreInfo = withContext(dispatcherProvider.io) {
+        // Check Gemini API for existing store with matching displayName
+        val existing = findStore(domain)
         if (existing != null) {
-            logger.debug("Found existing file search store for domain {}: {}", domain, existing.geminiStoreName)
-            return FileSearchStoreInfo(
-                name = existing.geminiStoreName,
-                displayName = "DeepSearch-$domain",
-                domain = domain
-            )
+            return@withContext existing
         }
 
         // Create new store via SDK
         logger.info("Creating new file search store for domain: {}", domain)
-        val displayName = "DeepSearch-$domain"
+        val displayName = domainToDisplayName(domain)
 
-        val store = withContext(Dispatchers.IO) {
-            client.fileSearchStores.create(
-                CreateFileSearchStoreConfig.builder()
-                    .displayName(displayName)
-                    .build()
-            )
-        }
+        val store = client.fileSearchStores.create(
+            CreateFileSearchStoreConfig.builder()
+                .displayName(displayName)
+                .build()
+        )
 
         val storeName = store.name().orElseThrow {
             IllegalStateException("Created store does not have a name")
         }
 
-        logger.info("Created file search store: {}", storeName)
+        logger.info("Created file search store: {} for domain: {}", storeName, domain)
 
-        // Save to local repository
-        fileSearchStoreRepository.create(
-            io.deepsearch.domain.models.entities.FileSearchStore(
-                domain = domain,
-                geminiStoreName = storeName
-            )
-        )
-
-        return FileSearchStoreInfo(
+        FileSearchStoreInfo(
             name = storeName,
             displayName = displayName,
             domain = domain
@@ -205,7 +213,7 @@ class GeminiFileSearchService(
         mimeType: String,
         sourceUrl: String,
         fileHash: String
-    ): GeminiFileInfo {
+    ): GeminiFileInfo = withContext(dispatcherProvider.io) {
         val now = Clock.System.now()
         val displayName = extractDisplayName(sourceUrl)
 
@@ -230,25 +238,23 @@ class GeminiFileSearchService(
                 .build()
         )
 
-        // Upload via SDK
-        val operation = withContext(Dispatchers.IO) {
-            client.fileSearchStores.uploadToFileSearchStore(
-                storeName,
-                fileBytes,
-                UploadToFileSearchStoreConfig.builder()
-                    .displayName(displayName)
-                    .mimeType(mimeType)
-                    .customMetadata(customMetadata)
-                    .build()
-            )
-        }
+        // Upload via SDK - returns UploadToFileSearchStoreOperation
+        val operation = client.fileSearchStores.uploadToFileSearchStore(
+            storeName,
+            fileBytes,
+            UploadToFileSearchStoreConfig.builder()
+                .displayName(displayName)
+                .mimeType(mimeType)
+                .customMetadata(customMetadata)
+                .build()
+        )
 
-        // Poll for completion using SDK
-        val documentName = pollUploadOperation(operation.name().orElse(""))
+        // Poll for completion using typed operation object
+        val documentName = pollUploadOperation(operation)
 
         logger.info("File uploaded: {} -> {}", documentName, storeName)
 
-        return GeminiFileInfo(
+        GeminiFileInfo(
             name = documentName,
             displayName = displayName,
             mimeType = mimeType,
@@ -284,13 +290,11 @@ class GeminiFileSearchService(
 
     // ==================== Delete ====================
 
-    override suspend fun deleteFile(storeName: String, fileName: String) {
+    override suspend fun deleteFile(storeName: String, fileName: String) = withContext(dispatcherProvider.io) {
         logger.info("Deleting file {} from store {}", fileName, storeName)
 
         try {
-            withContext(Dispatchers.IO) {
-                client.fileSearchStores.documents.delete(fileName, null)
-            }
+            client.fileSearchStores.documents.delete(fileName, null)
             logger.debug("File deleted: {}", fileName)
         } catch (e: Exception) {
             logger.warn("Failed to delete file: {}", e.message)
@@ -303,12 +307,10 @@ class GeminiFileSearchService(
         return listFilesFromSdk(storeName)
     }
 
-    private suspend fun listFilesFromSdk(storeName: String): List<GeminiFileInfo> {
+    private suspend fun listFilesFromSdk(storeName: String): List<GeminiFileInfo> = withContext(dispatcherProvider.io) {
         logger.debug("Listing files in store: {}", storeName)
 
-        val pager = withContext(Dispatchers.IO) {
-            client.fileSearchStores.documents.list(storeName, null)
-        }
+        val pager = client.fileSearchStores.documents.list(storeName, null)
 
         val results = mutableListOf<GeminiFileInfo>()
         for (doc in pager) {
@@ -338,48 +340,55 @@ class GeminiFileSearchService(
             )
         }
 
-        return results
+        results
     }
 
     // ==================== Helper Methods ====================
 
-    private suspend fun pollUploadOperation(operationName: String): String {
-        if (operationName.isBlank()) {
-            throw RuntimeException("Operation name is blank")
-        }
-
-        repeat(MAX_POLL_ATTEMPTS) { attempt ->
-            val operation = withContext(Dispatchers.IO) {
-                client.operations.get(operationName, null)
+    /**
+     * Poll for upload operation completion using the typed UploadToFileSearchStoreOperation.
+     *
+     * The SDK's operations.get() method requires a typed Operation object, not a string.
+     * When the operation is done, we extract the document name from the typed response.
+     */
+    private suspend fun pollUploadOperation(initialOperation: UploadToFileSearchStoreOperation): String =
+        withContext(dispatcherProvider.io) {
+            val operationName = initialOperation.name().orElseThrow {
+                RuntimeException("Operation does not have a name")
             }
 
-            val isDone = operation.done().orElse(false)
-            if (isDone) {
-                // Check for error
-                operation.error().ifPresent { error ->
-                    val message = error.message().orElse("Unknown error")
-                    throw RuntimeException("Upload failed: $message")
-                }
+            var currentOperation = initialOperation
 
-                // Extract document name from response metadata
-                val response = operation.response().orElse(null)
-                if (response != null) {
-                    val nameValue = response["name"]
-                    if (nameValue is String && nameValue.contains("documents")) {
-                        return nameValue
+            repeat(MAX_POLL_ATTEMPTS) { attempt ->
+                val isDone = currentOperation.done().orElse(false)
+                if (isDone) {
+                    // Check for error
+                    currentOperation.error().ifPresent { error ->
+                        throw RuntimeException("Upload failed: $error")
                     }
+
+                    // Extract document name from the typed response
+                    val response = currentOperation.response().orElse(null)
+                    if (response != null) {
+                        val documentName = response.documentName().orElse(null)
+                        if (documentName != null) {
+                            return@withContext documentName
+                        }
+                    }
+
+                    // Fallback: derive document name from operation name
+                    return@withContext operationName.replace("/operations/", "/documents/")
                 }
 
-                // Fallback: derive document name from operation name
-                return operationName.replace("/operations/", "/documents/")
+                delay(POLL_INTERVAL_MS)
+                logger.debug("Polling upload operation {}: attempt {}", operationName, attempt + 1)
+
+                // Refresh the operation status using typed operation object
+                currentOperation = client.operations.get(currentOperation, null)
             }
 
-            delay(POLL_INTERVAL_MS)
-            logger.debug("Polling upload operation {}: attempt {}", operationName, attempt + 1)
+            throw RuntimeException("Upload operation timed out: $operationName")
         }
-
-        throw RuntimeException("Upload operation timed out: $operationName")
-    }
 
     private fun extractDisplayName(url: String): String {
         return try {

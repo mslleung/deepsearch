@@ -68,7 +68,7 @@ class UrlContentProcessingService(
     private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
     private val webpageExtractionService: IWebpageExtractionService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
-    private val fileIngestionService: IFileIngestionService,
+    private val fileSearchService: IFileSearchService,
     private val tokenUsageService: ILlmTokenUsageService,
     private val urlProcessingLockRegistry: UrlProcessingLockRegistry
 ) : IUrlContentProcessingService {
@@ -315,10 +315,11 @@ class UrlContentProcessingService(
      * Process a supported file (PDF, docx, etc.) using Gemini File Search.
      *
      * Flow (similar to processHtmlUrlAsFlow):
-     * 1. Use FileIngestionService to upload (if needed) and query the file
-     * 2. Emit MarkdownExtractionComplete with file search results
-     * 3. Discover links from the extracted markdown (not the entire file)
-     * 4. Emit LinkDiscoveryComplete with discovered links
+     * 1. Use FileSearchService to ingest (upload if needed) the file
+     * 2. Query the file search store for relevant content
+     * 3. Emit MarkdownExtractionComplete with file search results
+     * 4. Discover links from the extracted markdown (not the entire file)
+     * 5. Emit LinkDiscoveryComplete with discovered links
      *
      * @param discoverLinks Lambda to discover links from the extracted markdown.
      *        For relevant links: uses LLM to find query-relevant URLs.
@@ -337,33 +338,42 @@ class UrlContentProcessingService(
             normalizedUrl, result.bytes.size, result.mimeType
         )
 
-        // First, ingest the file and get the markdown result
-        val ingestResult = fileIngestionService.ingestAndQuery(
+        // First, ingest the file (upload if needed)
+        val ingestResult = fileSearchService.ingest(
             url = normalizedUrl,
             fileBytes = result.bytes,
             mimeType = result.mimeType,
+            maxCacheAge = maxCacheAge
+        )
+
+        logger.debug(
+            "File ingestion complete for {}: {} (uploaded: {})",
+            normalizedUrl, ingestResult.fileInfo.displayName, ingestResult.wasUploaded
+        )
+
+        // Then query the file search store for relevant content
+        val queryResult = fileSearchService.query(
+            domain = ingestResult.storeInfo.domain,
             query = query,
-            maxCacheAge = maxCacheAge,
             sessionId = sessionId
         )
 
         logger.debug(
-            "File ingestion complete for {}: {} (uploaded: {}, {} chars markdown)",
-            normalizedUrl, ingestResult.fileInfo.displayName,
-            ingestResult.wasUploaded, ingestResult.markdown.length
+            "File query complete for {}: {} chars markdown",
+            normalizedUrl, queryResult.markdown.length
         )
 
         send(
             UrlProcessingEvent.MarkdownExtractionComplete(
                 url = normalizedUrl,
-                markdown = ingestResult.markdown,
+                markdown = queryResult.markdown,
                 title = ingestResult.fileInfo.displayName,
                 description = "File from ${ingestResult.fileInfo.sourceUrl}",
                 wasCached = !ingestResult.wasUploaded
             )
         )
 
-        val discoveredLinks = discoverLinks(ingestResult.markdown)
+        val discoveredLinks = discoverLinks(queryResult.markdown)
         send(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
         logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
     }

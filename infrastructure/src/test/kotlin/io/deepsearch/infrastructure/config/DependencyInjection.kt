@@ -53,7 +53,6 @@ private val infrastructureCommonTestModule = module {
     singleOf(::PeriodicIndexConfigTable)
     singleOf(::SitemapCacheTable)
     singleOf(::LlmTokenUsageTable)
-    singleOf(::FileSearchStoreTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -71,7 +70,6 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
     singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
     singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
-    singleOf(::ExposedFileSearchStoreRepository) bind IFileSearchStoreRepository::class
 }
 
 val infrastructureTestModule = module {

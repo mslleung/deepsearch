@@ -2,9 +2,9 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.valueobjects.FileSearchChunk
 import io.deepsearch.domain.models.valueobjects.FileSearchResult
+import io.deepsearch.domain.models.valueobjects.FileSearchStoreInfo
 import io.deepsearch.domain.models.valueobjects.GeminiFileInfo
 import io.deepsearch.domain.models.valueobjects.SessionId
-import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.services.IGeminiFileSearchService
 import io.deepsearch.domain.services.INormalizeUrlService
 import org.slf4j.Logger
@@ -17,14 +17,21 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 /**
- * Result of file ingestion and query.
+ * Result of file ingestion.
  */
 @OptIn(ExperimentalTime::class)
 data class FileIngestResult(
     val fileInfo: GeminiFileInfo,
-    val wasUploaded: Boolean,        // true if file was newly uploaded, false if existing
+    val storeInfo: FileSearchStoreInfo,
+    val wasUploaded: Boolean        // true if file was newly uploaded, false if existing
+)
+
+/**
+ * Result of querying a file search store.
+ */
+data class FileQueryResult(
     val searchResult: FileSearchResult,
-    val markdown: String,            // Combined markdown from search results
+    val markdown: String,           // Combined markdown from search results
     val citations: List<FileCitation>
 )
 
@@ -38,54 +45,68 @@ data class FileCitation(
 )
 
 /**
- * Service interface for file ingestion into Gemini File Search.
+ * Service interface for file-based RAG using Gemini File Search.
+ *
+ * This is the application layer interface to file RAG capabilities.
+ * Uses GeminiFileSearchService (domain layer) for the actual file search operations.
  */
-interface IFileIngestionService {
+interface IFileSearchService {
+
     /**
-     * Ingest a file and immediately query for relevant content.
-     * 
+     * Ingest a file into Gemini File Search for the domain extracted from the URL.
+     *
      * Handles deduplication via file hash:
      * - If file with same hash exists and is not expired, skips upload
      * - If file is new or expired, uploads with metadata
-     * - Always queries the file search store for relevant content
-     * 
-     * @param url Original URL where the file was found
+     *
+     * @param url Original URL where the file was found (used to extract domain)
      * @param fileBytes The file content
      * @param mimeType MIME type of the file
-     * @param query Search query for retrieving relevant content
      * @param maxCacheAge Maximum age in milliseconds for cached files (null = no expiry)
-     * @param sessionId Session ID for token tracking
-     * @return FileIngestResult containing file info, search results, and markdown
+     * @return FileIngestResult containing file info and upload status
      */
-    suspend fun ingestAndQuery(
+    suspend fun ingest(
         url: String,
         fileBytes: ByteArray,
         mimeType: String,
-        query: String,
-        maxCacheAge: Long?,
-        sessionId: SessionId
+        maxCacheAge: Long?
     ): FileIngestResult
+
+    /**
+     * Query a domain's file search store for relevant content.
+     *
+     * @param domain The domain to query (e.g., "docs.example.com")
+     * @param query The search query
+     * @param sessionId Session ID for token tracking
+     * @return FileQueryResult containing search results, markdown, and citations
+     */
+    suspend fun query(
+        domain: String,
+        query: String,
+        sessionId: SessionId
+    ): FileQueryResult
 }
 
 /**
- * Service for ingesting files into Gemini File Search with deduplication.
+ * Service for file-based RAG using Gemini File Search.
+ *
+ * Provides file ingestion with deduplication and querying capabilities.
+ * Uses one file search store per domain.
  */
 @OptIn(ExperimentalTime::class, ExperimentalEncodingApi::class)
-class FileIngestionService(
+class FileSearchService(
     private val geminiFileSearchService: IGeminiFileSearchService,
     private val normalizeUrlService: INormalizeUrlService,
     private val tokenUsageService: ILlmTokenUsageService
-) : IFileIngestionService {
+) : IFileSearchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun ingestAndQuery(
+    override suspend fun ingest(
         url: String,
         fileBytes: ByteArray,
         mimeType: String,
-        query: String,
-        maxCacheAge: Long?,
-        sessionId: SessionId
+        maxCacheAge: Long?
     ): FileIngestResult {
         logger.debug("Ingesting file from {}: {} bytes, type: {}", url, fileBytes.size, mimeType)
 
@@ -100,10 +121,10 @@ class FileIngestionService(
 
         // Check for existing file with matching hash
         val existingFile = geminiFileSearchService.findFileByHash(storeInfo.name, fileHash)
-        
+
         val (fileInfo, wasUploaded) = if (existingFile != null) {
             val fileAge = Clock.System.now().toEpochMilliseconds() - existingFile.uploadedAt.toEpochMilliseconds()
-            
+
             if (maxCacheAge != null && fileAge > maxCacheAge) {
                 // File is expired, re-upload
                 logger.debug("Existing file {} is expired (age: {} ms), re-uploading", existingFile.name, fileAge)
@@ -134,17 +155,40 @@ class FileIngestionService(
             Pair(newFile, true)
         }
 
+        logger.debug(
+            "File ingestion complete: {} uploaded for domain {}",
+            if (wasUploaded) "newly" else "already",
+            domain
+        )
+
+        return FileIngestResult(
+            fileInfo = fileInfo,
+            storeInfo = storeInfo,
+            wasUploaded = wasUploaded
+        )
+    }
+
+    override suspend fun query(
+        domain: String,
+        query: String,
+        sessionId: SessionId
+    ): FileQueryResult {
+        logger.debug("Querying file search for domain {}: '{}'", domain, query)
+
+        // Get the store for this domain
+        val storeInfo = geminiFileSearchService.findStore(domain)
+            ?: throw IllegalStateException("No file search store found for domain: $domain")
+
         // Query the file search store
         val searchResult = geminiFileSearchService.queryStore(
             storeName = storeInfo.name,
-            query = query,
-            maxAgeMs = maxCacheAge
+            query = query
         )
 
         // Record token usage
         tokenUsageService.recordTokenUsage(
             sessionId = sessionId,
-            agentName = "FileIngestionService.queryStore",
+            agentName = "FileSearchService.query",
             modelName = searchResult.tokenUsage.modelName,
             promptTokens = searchResult.tokenUsage.promptTokens,
             outputTokens = searchResult.tokenUsage.outputTokens,
@@ -152,18 +196,14 @@ class FileIngestionService(
         )
 
         // Build markdown and citations from search results
-        val (markdown, citations) = buildMarkdownWithCitations(searchResult.chunks, url)
+        val (markdown, citations) = buildMarkdownWithCitations(searchResult.chunks, storeInfo.domain)
 
         logger.debug(
-            "File ingestion complete: {} uploaded, {} chunks, {} chars markdown",
-            if (wasUploaded) "newly" else "already",
-            searchResult.chunks.size,
-            markdown.length
+            "File search complete for domain {}: {} chunks, {} chars markdown",
+            domain, searchResult.chunks.size, markdown.length
         )
 
-        return FileIngestResult(
-            fileInfo = fileInfo,
-            wasUploaded = wasUploaded,
+        return FileQueryResult(
             searchResult = searchResult,
             markdown = markdown,
             citations = citations
@@ -189,7 +229,7 @@ class FileIngestionService(
 
     private fun buildMarkdownWithCitations(
         chunks: List<FileSearchChunk>,
-        defaultSourceUrl: String
+        domain: String
     ): Pair<String, List<FileCitation>> {
         if (chunks.isEmpty()) {
             return Pair("", emptyList())
@@ -198,8 +238,8 @@ class FileIngestionService(
         val markdown = StringBuilder()
         val citations = mutableListOf<FileCitation>()
 
-        chunks.forEachIndexed { index, chunk ->
-            val sourceUrl = chunk.sourceUrl.ifBlank { defaultSourceUrl }
+        chunks.forEach { chunk ->
+            val sourceUrl = chunk.sourceUrl.ifBlank { "https://$domain" }
             val fileName = chunk.fileName.ifBlank { "Document" }
 
             // Add content with citation reference
