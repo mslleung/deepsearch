@@ -88,7 +88,7 @@ class PeriodicIndexJobRegistry(
         runs.compute(id) { _, existing ->
             if (existing == null) {
                 val flow = MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>(replay = 1)
-                val coroutine = applicationScope.scope.launch { runPeriodicIndex(job, flow) }
+                val coroutine = applicationScope.scope.launch(dispatchers.io) { runPeriodicIndex(job, flow) }
                 Run(flow, coroutine)
             } else existing
         }
