@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory
  * Custom column type for PostgreSQL vector type using pgvector extension.
  * Supports R2DBC by using the native vector type support in r2dbc-postgresql 1.0.3+.
  * 
- * R2DBC PostgreSQL natively supports the vector type and accepts float[] arrays.
+ * R2DBC PostgreSQL natively supports the vector type via io.r2dbc.postgresql.codec.Vector.
  * See: https://github.com/pgjdbc/r2dbc-postgresql#data-type-mapping
  */
 class VectorColumnType(private val dimensions: Int) : ColumnType<List<Float>>() {
@@ -40,14 +40,14 @@ class VectorColumnType(private val dimensions: Int) : ColumnType<List<Float>>() 
     
     /**
      * Convert Kotlin List<Float> to database value.
-     * Returns FloatArray for R2DBC PostgreSQL's native vector support.
-     * R2DBC PostgreSQL 1.0.3+ natively handles float[] as vector type.
+     * Returns io.r2dbc.postgresql.codec.Vector for R2DBC PostgreSQL's native vector support.
+     * R2DBC PostgreSQL 1.0.3+ requires Vector objects for encoding (not raw FloatArray).
      */
-    override fun notNullValueToDB(value: List<Float>): FloatArray {
+    override fun notNullValueToDB(value: List<Float>): Vector {
         require(value.size == dimensions) {
             "Vector dimension mismatch: expected $dimensions, got ${value.size}"
         }
-        return value.toFloatArray()
+        return Vector.of(value)
     }
     
     /**
