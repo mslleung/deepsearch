@@ -28,10 +28,8 @@ import javax.imageio.ImageIO
  *
  * Given multiple images that may contain text (including tables), extract the text
  * and preserve structure (especially for tables).
- * This agent is designed to process multiple images efficiently by:
- * - Batching images into groups of up to 5 per LLM call
- * - Processing batches in parallel to maximize throughput
- * - Detecting and rejecting oversized images before LLM processing
+ * This agent processes each image individually in its own LLM call to maximize
+ * extraction quality, while processing multiple images in parallel for throughput.
  */
 class MultiImageTextExtractionAgentGenAiImpl(
     private val client: com.google.genai.Client
@@ -40,49 +38,32 @@ class MultiImageTextExtractionAgentGenAiImpl(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     companion object {
-        private const val BATCH_SIZE = 1
         private const val MAX_PIXEL_COUNT = 33_000_000L // ~33 million pixels (e.g., 6000×5500)
     }
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Extracted texts from multiple images")
+        .description("Extracted text from a single image")
         .properties(
             mapOf(
-                "texts" to Schema.builder()
-                    .type("ARRAY")
-                    .description("Array of text extractions in order")
-                    .items(
-                        Schema.builder()
-                            .type("OBJECT")
-                            .description("Single image text extraction")
-                            .properties(
-                                mapOf(
-                                    "extractedText" to Schema.builder()
-                                        .type("STRING")
-                                        .description("Text extracted from the image, preserving structure (especially tables)")
-                                        .nullable(true)
-                                        .build()
-                                )
-                            )
-                            .required(listOf("extractedText"))
-                            .build()
-                    )
+                "extractedText" to Schema.builder()
+                    .type("STRING")
+                    .description("Text extracted from the image, preserving structure (especially tables)")
+                    .nullable(true)
                     .build()
             )
         )
-        .required(listOf("texts"))
+        .required(listOf("extractedText"))
         .build()
 
     private val systemInstruction = """
-        You are given multiple images in sequence that may contain text. Your task is to extract all visible text from each image.
+        You are given an image that may contain text. Your task is to extract all visible text from the image.
         
         Instructions:
-        - Extract all text present in each image, with reasonable line breaks
+        - Extract all text present in the image, with reasonable line breaks
         - IMPORTANT: When you see data arranged in rows and columns (a table), you MUST convert it to HTML table format using <table>, <tr>, <td> tags
         - For table merged cells, use colspan/rowspan attributes (e.g., <td colspan="2">)
-        - If an image contains no meaningful text, return null for that image
-        - Return extracted texts in the same order as the images were provided
+        - If the image contains no meaningful text, return null for extractedText
         
         Example extracted text for an image with table: 
         You MUST output the table in HTML format, such as:
@@ -131,25 +112,21 @@ class MultiImageTextExtractionAgentGenAiImpl(
         
         Expected output shape:
         {
-            "texts": [
-                {"extractedText": string | null}
-            ]
+            "extractedText": string | null
         }
     """.trimIndent()
 
 
     @Serializable
-    private data class MultiImageTextExtractionResponse(
-        val texts: List<TextResponse>
-    )
-
-    @Serializable
-    private data class TextResponse(
+    private data class SingleImageTextExtractionResponse(
         val extractedText: String?
     )
 
     override suspend fun generate(input: MultiImageTextExtractionInput): MultiImageTextExtractionOutput {
-        logger.debug("Extracting text from {} images (will process in batches of {})", input.images.size, BATCH_SIZE)
+        logger.debug(
+            "Extracting text from {} images (processing each image individually in parallel)",
+            input.images.size
+        )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
@@ -161,43 +138,46 @@ class MultiImageTextExtractionAgentGenAiImpl(
             )
         }
 
-        // Split images into batches of BATCH_SIZE and process in parallel
-        return if (input.images.size <= BATCH_SIZE) {
-            // Single batch - process directly
-            val (output, tokenUsage) = processBatch(input.images)
-            output.copy(tokenUsage = tokenUsage)
+        // Process each image individually, in parallel if multiple images
+        return if (input.images.size == 1) {
+            // Single image - process directly
+            val (extraction, tokenUsage) = processSingleImage(input.images[0], 0)
+            MultiImageTextExtractionOutput(
+                extractions = listOf(extraction),
+                tokenUsage = tokenUsage
+            )
         } else {
-            // Multiple batches - process in parallel
-            processInParallelBatches(input.images)
+            // Multiple images - process in parallel
+            processImagesInParallel(input.images)
         }
     }
 
     /**
-     * Process multiple batches of images in parallel.
+     * Process multiple images in parallel, each with its own LLM call.
      */
-    private suspend fun processInParallelBatches(images: List<MultiImageTextExtractionInput.ImageItem>): MultiImageTextExtractionOutput =
+    private suspend fun processImagesInParallel(images: List<MultiImageTextExtractionInput.ImageItem>): MultiImageTextExtractionOutput =
         coroutineScope {
-            val batches = images.chunked(BATCH_SIZE)
-            logger.debug("Processing {} images in {} parallel batches", images.size, batches.size)
+            logger.debug("Processing {} images in parallel", images.size)
 
-            // Process all batches in parallel
-            val batchResults = batches.map { batch ->
+            // Process all images in parallel
+            val results = images.mapIndexed { index, image ->
                 async {
-                    processBatch(batch)
+                    processSingleImage(image, index)
                 }
             }.awaitAll()
 
-            // Combine results from all batches in order
-            val allExtractions = batchResults.flatMap { it.first.extractions }
-            val aggregatedTokenUsage = batchResults.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
-                TokenUsageMetrics(
-                    modelName = acc.modelName,
-                    promptTokens = acc.promptTokens + tokenUsage.promptTokens,
-                    outputTokens = acc.outputTokens + tokenUsage.outputTokens,
-                    totalTokens = acc.totalTokens + tokenUsage.totalTokens
-                )
-            }
-            
+            // Combine results in order
+            val allExtractions = results.map { it.first }
+            val aggregatedTokenUsage =
+                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
+                    TokenUsageMetrics(
+                        modelName = acc.modelName,
+                        promptTokens = acc.promptTokens + tokenUsage.promptTokens,
+                        outputTokens = acc.outputTokens + tokenUsage.outputTokens,
+                        totalTokens = acc.totalTokens + tokenUsage.totalTokens
+                    )
+                }
+
             MultiImageTextExtractionOutput(
                 extractions = allExtractions,
                 tokenUsage = aggregatedTokenUsage
@@ -205,54 +185,33 @@ class MultiImageTextExtractionAgentGenAiImpl(
         }
 
     /**
-     * Process a single batch of images (up to BATCH_SIZE).
-     * Returns a Pair of (output, tokenUsage) for aggregation.
+     * Process a single image with a dedicated LLM call.
+     * Returns a Pair of (extraction, tokenUsage) for aggregation.
      */
-    private suspend fun processBatch(images: List<MultiImageTextExtractionInput.ImageItem>): Pair<MultiImageTextExtractionOutput, TokenUsageMetrics> {
-        logger.debug("Processing batch of {} images", images.size)
-
+    private suspend fun processSingleImage(
+        image: MultiImageTextExtractionInput.ImageItem,
+        imageIndex: Int
+    ): Pair<MultiImageTextExtractionOutput.TextExtraction, TokenUsageMetrics> {
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        // Pre-filter oversized images to avoid LLM processing
-        val oversizedPositions = mutableSetOf<Int>()
-        val imagesToProcess = images.filterIndexed { index, image ->
-            if (isImageTooLarge(image.bytes, image.mimeType)) {
-                logger.error(
-                    "Image at batch position {} is too large (resolution exceeds {} pixels); returning empty string",
-                    index,
-                    MAX_PIXEL_COUNT
-                )
-                oversizedPositions.add(index)
-                false
-            } else {
-                true
-            }
+        // Check if image is too large
+        if (isImageTooLarge(image.bytes, image.mimeType)) {
+            logger.error(
+                "Image at position {} is too large (resolution exceeds {} pixels); returning empty string",
+                imageIndex,
+                MAX_PIXEL_COUNT
+            )
+            return MultiImageTextExtractionOutput.TextExtraction(extractedText = "") to tokenUsage
         }
 
-        // If all images in batch are oversized, return early with empty strings
-        if (imagesToProcess.isEmpty()) {
-            return MultiImageTextExtractionOutput(
-                extractions = images.map {
-                    MultiImageTextExtractionOutput.TextExtraction(extractedText = "")
-                },
-                tokenUsage = tokenUsage
-            ) to tokenUsage
-        }
+        // Build content with single image
+        val contentParts = listOf(
+            Part.fromBytes(image.bytes, image.mimeType.value),
+            Part.fromText("Extract all text from this image")
+        )
 
-        // Build content with all images
-        val contentParts = mutableListOf<Part>()
-
-        // Add each image as an image part with position label
-        imagesToProcess.forEachIndexed { index, image ->
-            contentParts.add(Part.fromText("Image ${index + 1}:"))
-            contentParts.add(Part.fromBytes(image.bytes, image.mimeType.value))
-        }
-
-        // Add instruction text
-        contentParts.add(Part.fromText("Extract text from the above ${imagesToProcess.size} images in order"))
-
-        val response = retryLlmCall<MultiImageTextExtractionResponse> {
+        val response = retryLlmCall<SingleImageTextExtractionResponse> {
             val result = client.models.generateContent(
                 modelId,
                 listOf(Content.fromParts(*(contentParts.toTypedArray()))),
@@ -271,7 +230,7 @@ class MultiImageTextExtractionAgentGenAiImpl(
             )
 
             result.checkFinishReason()
-            
+
             // Extract token usage
             result.usageMetadata().ifPresent { metadata ->
                 tokenUsage = TokenUsageMetrics(
@@ -285,43 +244,26 @@ class MultiImageTextExtractionAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
-        // Transform HTML tables to markdown for each extracted text
-        val transformedTexts = response.texts.map { textResponse ->
-            textResponse.extractedText?.let { rawText ->
-                if (rawText.isNotBlank()) {
-                    transformHTMLTablesToMarkdown(rawText).trim()
-                } else {
-                    null
-                }
+        // Transform HTML tables to markdown
+        val extractedText = response.extractedText?.let { rawText ->
+            if (rawText.isNotBlank()) {
+                transformHTMLTablesToMarkdown(rawText).trim()
+            } else {
+                null
             }
         }
 
-        // Reconstruct full batch output list, inserting LLM results at non-oversized positions
-        val llmResultsIterator = transformedTexts.iterator()
-        val extractions = images.indices.map { position ->
-            val extractedText = if (oversizedPositions.contains(position)) {
-                ""
-            } else {
-                llmResultsIterator.next()
-            }
-
-            if (extractedText != null && extractedText.isNotBlank()) {
-                logger.debug("Text extracted from image at batch position {}: {}", position, extractedText)
-            } else {
-                logger.debug(
-                    "No text found in image at batch position {} ({} bytes)",
-                    position,
-                    images[position].bytes.size
-                )
-            }
-
-            MultiImageTextExtractionOutput.TextExtraction(extractedText = extractedText)
+        if (extractedText != null && extractedText.isNotBlank()) {
+            logger.debug("Text extracted from image at position {}: {}", imageIndex, extractedText)
+        } else {
+            logger.debug(
+                "No text found in image at position {} ({} bytes)",
+                imageIndex,
+                image.bytes.size
+            )
         }
 
-        return MultiImageTextExtractionOutput(
-            extractions = extractions,
-            tokenUsage = tokenUsage
-        ) to tokenUsage
+        return MultiImageTextExtractionOutput.TextExtraction(extractedText = extractedText) to tokenUsage
     }
 
     /**
