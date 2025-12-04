@@ -18,6 +18,7 @@ import kotlin.time.ExperimentalTime
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
@@ -283,6 +285,7 @@ class PeriodicIndexJobRegistry(
                     )
                 )
             }
+            .flowOn(Dispatchers.Default.limitedParallelism(1))
             .catch { e ->
                 logger.error("[{}] Error during periodic index: {}", jobId, e.message, e)
             }
