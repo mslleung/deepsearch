@@ -1,6 +1,7 @@
 package io.deepsearch.infrastructure.config
 
 import io.deepsearch.domain.repositories.*
+import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
 import io.deepsearch.infrastructure.services.DatabaseConfigurationService
@@ -28,6 +29,7 @@ val infrastructureModule = module {
     singleOf(::UserSubscriptionTable)
     singleOf(::WebpageIconCacheTable)
     singleOf(::WebpageImageCacheTable)
+    singleOf(::WebpageImageLinkageTable)
     singleOf(::WebpagePopupCacheTable)
     singleOf(::WebpageTableCacheTable)
     singleOf(::WebpageTableInterpretationCacheTable)
@@ -43,6 +45,7 @@ val infrastructureModule = module {
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
+    singleOf(::ExposedWebpageImageLinkageRepository) bind IWebpageImageLinkageRepository::class
     singleOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
     singleOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
     singleOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class

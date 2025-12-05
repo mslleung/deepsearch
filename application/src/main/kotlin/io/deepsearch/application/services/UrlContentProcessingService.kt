@@ -15,6 +15,7 @@ import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.services.INormalizeUrlService
+import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
 
 interface IUrlContentProcessingService {
     /**
@@ -70,7 +71,8 @@ class UrlContentProcessingService(
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val fileSearchService: IFileSearchService,
     private val tokenUsageService: ILlmTokenUsageService,
-    private val urlProcessingLockRegistry: UrlProcessingLockRegistry
+    private val urlProcessingLockRegistry: UrlProcessingLockRegistry,
+    private val webpageImageLinkageRepository: IWebpageImageLinkageRepository
 ) : IUrlContentProcessingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -279,6 +281,14 @@ class UrlContentProcessingService(
                             mimeType = "text/html",
                             sessionId = sessionId
                         )
+
+                        // Update URL-to-image linkages
+                        if (extractionResult.imageHashes.isNotEmpty()) {
+                            webpageImageLinkageRepository.upsertLinkages(
+                                normalizedUrl,
+                                extractionResult.imageHashes
+                            )
+                        }
 
                         emit(
                             UrlProcessingEvent.MarkdownExtractionComplete(

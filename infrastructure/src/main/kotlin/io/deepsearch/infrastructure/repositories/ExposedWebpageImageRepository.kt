@@ -4,11 +4,12 @@ import io.deepsearch.domain.models.entities.WebpageImage
 import io.deepsearch.domain.repositories.IWebpageImageRepository
 import io.deepsearch.infrastructure.database.WebpageImageCacheTable
 import io.deepsearch.infrastructure.services.ITransactionService
-import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.r2dbc.batchUpsert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.upsert
@@ -29,6 +30,8 @@ class ExposedWebpageImageRepository(
             keys = arrayOf(webpageImageTable.imageBytesHash)
         ) {
             it[imageBytesHash] = hashBase64
+            it[imageBytes] = Base64.encode(image.imageBytes)
+            it[mimeType] = image.mimeType
             it[extractedText] = image.extractedText
             it[createdAtEpochMs] = image.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = image.updatedAt.toEpochMilliseconds()
@@ -45,6 +48,8 @@ class ExposedWebpageImageRepository(
         ) { image ->
             val hashBase64 = Base64.encode(image.imageBytesHash)
             this[webpageImageTable.imageBytesHash] = hashBase64
+            this[webpageImageTable.imageBytes] = Base64.encode(image.imageBytes)
+            this[webpageImageTable.mimeType] = image.mimeType
             this[webpageImageTable.extractedText] = image.extractedText
             this[webpageImageTable.createdAtEpochMs] = image.createdAt.toEpochMilliseconds()
             this[webpageImageTable.updatedAtEpochMs] = image.updatedAt.toEpochMilliseconds()
@@ -60,9 +65,21 @@ class ExposedWebpageImageRepository(
             .singleOrNull()
     }
 
+    override suspend fun findByHashes(imageHashes: List<ByteArray>): List<WebpageImage> = transactionService.withTransaction {
+        if (imageHashes.isEmpty()) return@withTransaction emptyList()
+        
+        val hashesBase64 = imageHashes.map { Base64.encode(it) }
+        webpageImageTable.selectAll()
+            .where { webpageImageTable.imageBytesHash inList hashesBase64 }
+            .map { mapRowToWebpageImage(it) }
+            .toList()
+    }
+
     private fun mapRowToWebpageImage(row: ResultRow): WebpageImage {
         return WebpageImage(
             imageBytesHash = Base64.decode(row[webpageImageTable.imageBytesHash]),
+            imageBytes = Base64.decode(row[webpageImageTable.imageBytes]),
+            mimeType = row[webpageImageTable.mimeType],
             extractedText = row[webpageImageTable.extractedText],
             createdAt = Instant.fromEpochMilliseconds(row[webpageImageTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[webpageImageTable.updatedAtEpochMs]),

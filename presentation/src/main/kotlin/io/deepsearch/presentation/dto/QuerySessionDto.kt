@@ -38,6 +38,15 @@ data class ContentSourceDto(
     val markdown: String
 )
 
+/**
+ * DTO for image data returned in search results.
+ */
+@Serializable
+data class ImageDto(
+    val base64: String,  // Base64 encoded image bytes
+    val mimeType: String // Image MIME type (e.g., "image/webp", "image/png")
+)
+
 @Serializable
 data class QuerySessionDetailDto(
     val id: String,
@@ -50,6 +59,7 @@ data class QuerySessionDetailDto(
     val answerSources: List<String>,
     val exploredSources: List<String>,
     val traversedUrls: List<UrlAccessDto>,
+    val images: Map<String, ImageDto> = emptyMap(), // Map of imageId -> ImageDto
     val durationMs: Long?,
     val createdAt: Long,
     val updatedAt: Long

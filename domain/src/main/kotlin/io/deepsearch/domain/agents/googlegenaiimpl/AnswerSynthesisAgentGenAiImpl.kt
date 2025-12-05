@@ -30,12 +30,17 @@ class AnswerSynthesisAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Comprehensive answer to the query")
+        .description("Comprehensive answer to the query with referenced images")
         .properties(
             mapOf(
                 "answer" to Schema.builder()
                     .type("STRING")
                     .description("Comprehensive answer to the search query based on shortlisted sources")
+                    .build(),
+                "imageIds" to Schema.builder()
+                    .type("ARRAY")
+                    .description("List of image IDs (format: img-xxx) from the sources that should be displayed with the answer")
+                    .items(Schema.builder().type("STRING").build())
                     .build()
             )
         )
@@ -69,15 +74,23 @@ class AnswerSynthesisAgentGenAiImpl(
         - Only provide what can be substantiated by the sources
         - Do not speculate or fill gaps with external knowledge
         
+        Image References:
+        - Sources may contain <image id="img-xxx">description</image> tags representing images
+        - If an image is relevant to your answer, include its ID in the imageIds array
+        - Only include images that add value to the answer (e.g., product images, diagrams, charts)
+        - Do not include decorative or irrelevant images
+        
         Expected Output Shape:
         {
-            "answer": "your comprehensive answer text"
+            "answer": "your comprehensive answer text",
+            "imageIds": ["img-xxx", "img-yyy"]  // optional, only include if relevant images exist
         }
     """.trimIndent()
 
     @Serializable
     private data class SynthesisResponse(
-        val answer: String
+        val answer: String,
+        val imageIds: List<String> = emptyList()
     )
 
     override suspend fun generate(input: AnswerSynthesisInput): AnswerSynthesisOutput {
@@ -139,6 +152,7 @@ class AnswerSynthesisAgentGenAiImpl(
 
         return AnswerSynthesisOutput(
             answer = response.answer,
+            imageIds = response.imageIds,
             tokenUsage = tokenUsage
         )
     }
@@ -211,8 +225,30 @@ class AnswerSynthesisAgentGenAiImpl(
             }
         }
 
-        logger.debug("Streaming answer synthesis complete: {} chars total", lastAnswerLength)
-        emit(AnswerStreamItem.Complete(tokenUsage))
+        // Extract imageIds from the complete JSON
+        val imageIds = extractImageIds(accumulatedJson)
+        
+        logger.debug("Streaming answer synthesis complete: {} chars total, {} images", lastAnswerLength, imageIds.size)
+        emit(AnswerStreamItem.Complete(tokenUsage, imageIds))
+    }
+
+    /**
+     * Extract imageIds array from accumulated JSON.
+     * The JSON format is: {"answer": "...", "imageIds": ["img-xxx", "img-yyy"]}
+     */
+    private fun extractImageIds(json: String): List<String> {
+        val regex = """"imageIds"\s*:\s*\[([^\]]*)\]""".toRegex()
+        val match = regex.find(json) ?: return emptyList()
+        
+        val arrayContent = match.groupValues[1]
+        if (arrayContent.isBlank()) return emptyList()
+        
+        // Extract individual string values from the array
+        val stringRegex = """"([^"]+)"""".toRegex()
+        return stringRegex.findAll(arrayContent)
+            .map { it.groupValues[1] }
+            .filter { it.startsWith("img-") }
+            .toList()
     }
 
     /**

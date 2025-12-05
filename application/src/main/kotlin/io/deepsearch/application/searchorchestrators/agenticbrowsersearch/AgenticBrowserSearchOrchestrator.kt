@@ -720,6 +720,7 @@ class AgenticBrowserSearchOrchestrator(
     ): SearchEvent.SessionCompleted {
         // Stream the answer and emit chunks
         var fullAnswer = ""
+        var imageIds = emptyList<String>()
         answerSynthesisAgent.generateStream(
             AnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist)
         ).collect { item ->
@@ -736,6 +737,8 @@ class AgenticBrowserSearchOrchestrator(
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
+                    // Capture image IDs from answer synthesis
+                    imageIds = item.imageIds
                 }
             }
         }
@@ -763,7 +766,8 @@ class AgenticBrowserSearchOrchestrator(
         return SearchEvent.SessionCompleted(
             sessionId = sessionId,
             finishReason = finishReason,
-            sessionDetail = sessionDetail
+            sessionDetail = sessionDetail,
+            imageIds = imageIds
         )
     }
 }

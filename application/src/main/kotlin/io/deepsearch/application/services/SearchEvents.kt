@@ -80,7 +80,12 @@ sealed class SearchEvent {
          * The full session detail including URL accesses and cached webpages.
          * The presentation layer maps this to DTOs for serialization.
          */
-        val sessionDetail: QuerySessionDetail
+        val sessionDetail: QuerySessionDetail,
+        /**
+         * Image IDs referenced in the answer (format: "img-xxx").
+         * These can be used to fetch image bytes from the repository.
+         */
+        val imageIds: List<String> = emptyList()
     ) : SearchEvent()
 
     /**

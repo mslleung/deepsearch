@@ -73,7 +73,7 @@ sealed class SearchEventDto {
 
     /**
      * Session completed event with full session detail for the frontend.
-     * Includes contentSources, answerSources, and traversedUrls.
+     * Includes contentSources, answerSources, traversedUrls, and images.
      */
     @Serializable
     @SerialName("session_completed")
@@ -86,6 +86,7 @@ sealed class SearchEventDto {
         val contentSources: List<ContentSourceDto>,
         val answerSources: List<String>,
         val traversedUrls: List<UrlAccessDto>,
+        val images: Map<String, ImageDto> = emptyMap(), // Map of imageId -> ImageDto
         override val timestampMs: Long
     ) : SearchEventDto()
 
@@ -102,9 +103,12 @@ sealed class SearchEventDto {
 /**
  * Maps a SearchEvent (application layer) to SearchEventDto (presentation layer).
  * Converts QuerySessionId value objects to String for serialization.
+ * 
+ * @param images Optional map of image IDs to ImageDto for SessionCompleted events.
+ *               Pass this when images need to be included in the response.
  */
 @OptIn(ExperimentalTime::class)
-fun SearchEvent.toDto(): SearchEventDto {
+fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDto {
     return when (this) {
         is SearchEvent.SessionCreated -> SearchEventDto.SessionCreatedDto(
             sessionId = sessionId.value,
@@ -206,6 +210,7 @@ fun SearchEvent.toDto(): SearchEventDto {
                 contentSources = contentSources,
                 answerSources = answerSources,
                 traversedUrls = traversedUrls,
+                images = images,
                 timestampMs = timestampMs
             )
         }

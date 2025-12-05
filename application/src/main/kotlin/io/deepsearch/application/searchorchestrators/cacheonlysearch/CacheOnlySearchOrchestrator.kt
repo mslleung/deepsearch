@@ -175,6 +175,7 @@ class CacheOnlySearchOrchestrator(
 
             // Step 3: Synthesize answer with streaming
             var fullAnswer = ""
+            var imageIds = emptyList<String>()
             answerSynthesisAgent.generateStream(
                 AnswerSynthesisInput(searchQuery.query, shortlistOutput.updatedShortlist)
             ).collect { item ->
@@ -190,6 +191,8 @@ class CacheOnlySearchOrchestrator(
                             item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                             item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                         )
+                        // Capture image IDs from answer synthesis
+                        imageIds = item.imageIds
                     }
                 }
             }
@@ -208,7 +211,8 @@ class CacheOnlySearchOrchestrator(
                 SearchEvent.SessionCompleted(
                     sessionId = sessionId,
                     finishReason = "ANSWER_COMPLETE",
-                    sessionDetail = sessionDetail
+                    sessionDetail = sessionDetail,
+                    imageIds = imageIds
                 )
             )
 

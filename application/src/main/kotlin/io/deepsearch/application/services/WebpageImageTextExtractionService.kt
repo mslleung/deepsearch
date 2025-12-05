@@ -15,9 +15,33 @@ import org.slf4j.LoggerFactory
 import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
+/**
+ * Result of image text extraction, containing both the extracted text and the image hash.
+ * The hash can be used to generate unique image IDs for XML tags.
+ */
+data class ImageExtractionResult(
+    val extractedText: String?,
+    val imageBytesHash: ByteArray
+) {
+    /**
+     * Returns a base64-encoded hash suitable for use as an image ID.
+     * Format: "img-{base64Hash}" with URL-safe encoding (+ -> -, / -> _)
+     */
+    fun toImageId(): String {
+        val base64Hash = Base64.encode(imageBytesHash)
+        val urlSafeHash = base64Hash.replace("+", "-").replace("/", "_").trimEnd('=')
+        return "img-$urlSafeHash"
+    }
+}
+
 interface IWebpageImageTextExtractionService {
     suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: SessionId): String?
     suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: SessionId): List<String?>
+    
+    /**
+     * Extract text from images and return results with image hashes for XML tag generation.
+     */
+    suspend fun extractTextFromImagesWithHashes(images: List<IBrowserPage.WebImage>, sessionId: SessionId): List<ImageExtractionResult>
 }
 
 class WebpageImageTextExtractionService(
@@ -49,6 +73,14 @@ class WebpageImageTextExtractionService(
      */
     @OptIn(ExperimentalTime::class)
     override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: SessionId): List<String?> {
+        return extractTextFromImagesWithHashes(images, sessionId).map { it.extractedText }
+    }
+
+    @OptIn(ExperimentalTime::class)
+    override suspend fun extractTextFromImagesWithHashes(
+        images: List<IBrowserPage.WebImage>,
+        sessionId: SessionId
+    ): List<ImageExtractionResult> {
         if (images.isEmpty()) {
             return emptyList()
         }
@@ -60,7 +92,6 @@ class WebpageImageTextExtractionService(
         images.forEach { image ->
             val existing = webpageImageRepository.findByHash(image.bytesHash)
             if (existing != null) {
-//                logger.debug("Found cached result for image")
                 cachedResults[Base64.encode(image.bytesHash)] = existing.extractedText?.takeIf { it.isNotBlank() }
             } else {
                 uncachedImages.add(image)
@@ -73,36 +104,36 @@ class WebpageImageTextExtractionService(
             
             // Filter images by OCR text detection
             val imagesWithText = mutableListOf<IBrowserPage.WebImage>()
-            val imagesWithoutText = mutableListOf<IBrowserPage.WebImage>()
             
-			coroutineScope {
-				val ocrResults = uncachedImages.map { image ->
-					async { image to !ocrService.extractText(image.bytes, image.mimeType).isEmpty() }
-				}.awaitAll()
+            coroutineScope {
+                val ocrResults = uncachedImages.map { image ->
+                    async { image to !ocrService.extractText(image.bytes, image.mimeType).isEmpty() }
+                }.awaitAll()
 
-				val imagesToCacheWithoutText = mutableListOf<WebpageImage>()
-				
-				ocrResults.forEach { (image, hasText) ->
-					if (hasText) {
-						imagesWithText.add(image)
-					} else {
-						logger.debug("No text detected in image by OCR, skipping LLM")
-						imagesWithoutText.add(image)
-						// Cache as having no text
-						imagesToCacheWithoutText.add(
-							WebpageImage(
-								imageBytesHash = image.bytesHash,
-								extractedText = null
-							)
-						)
-						cachedResults[Base64.encode(image.bytesHash)] = null
-					}
-				}
-				
-				if (imagesToCacheWithoutText.isNotEmpty()) {
-					webpageImageRepository.batchUpsert(imagesToCacheWithoutText)
-				}
-			}
+                val imagesToCacheWithoutText = mutableListOf<WebpageImage>()
+                
+                ocrResults.forEach { (image, hasText) ->
+                    if (hasText) {
+                        imagesWithText.add(image)
+                    } else {
+                        logger.debug("No text detected in image by OCR, skipping LLM")
+                        // Cache as having no text, but still store raw bytes
+                        imagesToCacheWithoutText.add(
+                            WebpageImage(
+                                imageBytesHash = image.bytesHash,
+                                imageBytes = image.bytes,
+                                mimeType = image.mimeType.value,
+                                extractedText = null
+                            )
+                        )
+                        cachedResults[Base64.encode(image.bytesHash)] = null
+                    }
+                }
+                
+                if (imagesToCacheWithoutText.isNotEmpty()) {
+                    webpageImageRepository.batchUpsert(imagesToCacheWithoutText)
+                }
+            }
 
             // Process images with text using multi-image agent
             if (imagesWithText.isNotEmpty()) {
@@ -129,12 +160,14 @@ class WebpageImageTextExtractionService(
                     totalTokens = extractionOutput.tokenUsage.totalTokens
                 )
 
-                // Cache results
+                // Cache results with raw bytes
                 val imagesToCache = imagesWithText.mapIndexed { index, image ->
                     val extractedText = extractionOutput.extractions[index].extractedText?.takeIf { it.isNotBlank() }
                     cachedResults[Base64.encode(image.bytesHash)] = extractedText
                     WebpageImage(
                         imageBytesHash = image.bytesHash,
+                        imageBytes = image.bytes,
+                        mimeType = image.mimeType.value,
                         extractedText = extractedText
                     )
                 }
@@ -142,7 +175,12 @@ class WebpageImageTextExtractionService(
             }
         }
 
-        // Return results in original order
-        return images.map { image -> cachedResults[Base64.encode(image.bytesHash)] }
+        // Return results in original order with hashes
+        return images.map { image -> 
+            ImageExtractionResult(
+                extractedText = cachedResults[Base64.encode(image.bytesHash)],
+                imageBytesHash = image.bytesHash
+            )
+        }
     }
 }

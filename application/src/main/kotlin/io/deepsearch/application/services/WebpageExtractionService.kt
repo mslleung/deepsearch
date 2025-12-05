@@ -22,7 +22,8 @@ import kotlin.system.measureTimeMillis
 data class WebpageExtractionResult(
     val markdown: String,
     val title: String?,
-    val description: String?
+    val description: String?,
+    val imageHashes: List<ByteArray> = emptyList() // Image hashes for URL-image linkage tracking
 )
 
 interface IWebpageExtractionService {
@@ -81,7 +82,7 @@ class WebpageExtractionService(
             data class FlowResults(
                 val semanticElements: SemanticElements,
                 val iconReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
-                val imageReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
+                val imageResults: ImageReplacementsWithHashes,
                 val tableResults: TableFlowResult
             )
             
@@ -90,8 +91,8 @@ class WebpageExtractionService(
                 iconReplacementsFlow,
                 imageReplacementsFlow,
                 tablesFlow
-            ) { semantic, iconRep, imageRep, tableResults ->
-                FlowResults(semantic, iconRep, imageRep, tableResults)
+            ) { semantic, iconRep, imageResults, tableResults ->
+                FlowResults(semantic, iconRep, imageResults, tableResults)
             }.first()
 
             logger.debug(
@@ -101,7 +102,7 @@ class WebpageExtractionService(
             )
 
             // Step 3: Replace icons and images in DOM
-            webpage.replaceElementsByCssSelectorWithText(results.iconReplacements + results.imageReplacements)
+            webpage.replaceElementsByCssSelectorWithText(results.iconReplacements + results.imageResults.replacements)
 
             // Step 4: Extract popup text (before removal)
             val popupText = extractPopupText(webpage, results.semanticElements)
@@ -139,7 +140,8 @@ class WebpageExtractionService(
             result = WebpageExtractionResult(
                 markdown = markdown,
                 title = title,
-                description = description
+                description = description,
+                imageHashes = results.imageResults.imageHashes
             )
         }
         logger.debug("Webpage extraction took {} ms", duration)
@@ -180,6 +182,11 @@ class WebpageExtractionService(
         logger.debug("Icon interpretation took {} ms", duration)
     }
 
+    private data class ImageReplacementsWithHashes(
+        val replacements: List<IBrowserPage.CssSelectorReplacementWithText>,
+        val imageHashes: List<ByteArray>
+    )
+
     private fun interpretImagesFlow(
         webpage: IBrowserPage,
         snapshot: IBrowserPage.PageSnapshot,
@@ -207,15 +214,34 @@ class WebpageExtractionService(
                 }
             }
 
-            val extractedTexts = webpageImageTextExtractionService.extractTextFromImages(allImages, sessionId)
-            val replacements = allImages.zip(extractedTexts).flatMap { (image, extractedText) ->
+            val extractionResults = webpageImageTextExtractionService.extractTextFromImagesWithHashes(allImages, sessionId)
+            val replacements = allImages.zip(extractionResults).flatMap { (image, result) ->
+                val wrappedText = wrapImageTextWithXmlTag(result)
                 image.cssSelectors.map { cssSelector ->
-                    IBrowserPage.CssSelectorReplacementWithText(cssSelector, extractedText)
+                    IBrowserPage.CssSelectorReplacementWithText(cssSelector, wrappedText)
                 }
             }
-            emit(replacements)
+            val imageHashes = extractionResults.map { it.imageBytesHash }
+            emit(ImageReplacementsWithHashes(replacements, imageHashes))
         }
         logger.debug("Image interpretation took {} ms", duration)
+    }
+
+    /**
+     * Wraps extracted image text in XML tags with an image ID.
+     * Format:
+     * - Single line: <image id="img-xxx">interpreted text</image>
+     * - Multi-line: <image id="img-xxx">\ninterpreted text\n</image>
+     */
+    private fun wrapImageTextWithXmlTag(result: ImageExtractionResult): String? {
+        val text = result.extractedText ?: return null
+        val imageId = result.toImageId()
+        
+        return if (text.contains('\n')) {
+            "<image id=\"$imageId\">\n$text\n</image>"
+        } else {
+            "<image id=\"$imageId\">$text</image>"
+        }
     }
 
     /**

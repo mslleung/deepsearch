@@ -16,10 +16,11 @@ data class AnswerSynthesisInput(
 
 /**
  * Output from answer synthesis agent.
- * Contains the generated comprehensive answer.
+ * Contains the generated comprehensive answer and referenced image IDs.
  */
 data class AnswerSynthesisOutput(
     val answer: String,
+    val imageIds: List<String> = emptyList(), // Image IDs referenced in the answer (format: "img-xxx")
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
@@ -33,9 +34,12 @@ sealed class AnswerStreamItem {
     data class Chunk(val text: String) : AnswerStreamItem()
 
     /**
-     * Emitted after all chunks, contains token usage from the final response chunk.
+     * Emitted after all chunks, contains token usage and referenced image IDs.
      */
-    data class Complete(val tokenUsage: TokenUsageMetrics) : AnswerStreamItem()
+    data class Complete(
+        val tokenUsage: TokenUsageMetrics,
+        val imageIds: List<String> = emptyList()
+    ) : AnswerStreamItem()
 }
 
 /**

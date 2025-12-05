@@ -9,10 +9,13 @@ import io.deepsearch.domain.exceptions.AiInterpretationException
 import io.deepsearch.domain.exceptions.InvalidUrlException
 import io.deepsearch.domain.exceptions.WebScrapeException
 import io.deepsearch.domain.exceptions.WebScrapeTimeoutException
+import io.deepsearch.domain.repositories.IWebpageImageRepository
+import io.deepsearch.presentation.dto.ImageDto
 import io.deepsearch.presentation.dto.SearchEventDto
 import io.deepsearch.presentation.dto.SearchRequest
 import io.deepsearch.presentation.dto.toDetailDto
 import io.deepsearch.presentation.dto.toDto
+import kotlin.io.encoding.Base64
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -28,7 +31,8 @@ class SearchController(
     private val searchService: ISearchService,
     private val apiKeyService: IApiKeyService,
     private val rateLimitService: IRateLimitService,
-    private val subscriptionPlanService: IUserSubscriptionService
+    private val subscriptionPlanService: IUserSubscriptionService,
+    private val webpageImageRepository: IWebpageImageRepository
 ) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -304,7 +308,12 @@ class SearchController(
 
             eventFlow.collect { event ->
                 // Map application-layer SearchEvent to presentation-layer SearchEventDto
-                val eventDto = event.toDto()
+                val images = if (event is SearchEvent.SessionCompleted && event.imageIds.isNotEmpty()) {
+                    fetchImagesByIds(event.imageIds)
+                } else {
+                    emptyMap()
+                }
+                val eventDto = event.toDto(images)
                 val payload = Json.encodeToString(SearchEventDto.serializer(), eventDto)
                 sse.send(ServerSentEvent(payload))
             }
@@ -329,5 +338,56 @@ class SearchController(
                 logger.warn("Failed to send error event: {}", sendError.message)
             }
         }
+    }
+
+    /**
+     * Fetch images by their IDs (format: "img-{urlSafeBase64Hash}") and convert to ImageDto map.
+     */
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    private suspend fun fetchImagesByIds(imageIds: List<String>): Map<String, ImageDto> {
+        if (imageIds.isEmpty()) return emptyMap()
+
+        // Convert image IDs back to byte array hashes
+        val idToHash = imageIds.mapNotNull { imageId ->
+            if (imageId.startsWith("img-")) {
+                try {
+                    // Reverse URL-safe encoding: - -> +, _ -> /
+                    val base64Hash = imageId.removePrefix("img-")
+                        .replace("-", "+")
+                        .replace("_", "/")
+                    // Add padding if needed
+                    val paddedHash = when (base64Hash.length % 4) {
+                        2 -> "$base64Hash=="
+                        3 -> "$base64Hash="
+                        else -> base64Hash
+                    }
+                    imageId to Base64.decode(paddedHash)
+                } catch (e: Exception) {
+                    logger.warn("Failed to decode image ID {}: {}", imageId, e.message)
+                    null
+                }
+            } else null
+        }.toMap()
+
+        if (idToHash.isEmpty()) return emptyMap()
+
+        // Fetch all images by their hashes
+        val hashes = idToHash.values.toList()
+        val images = webpageImageRepository.findByHashes(hashes)
+
+        // Build result map
+        val result = mutableMapOf<String, ImageDto>()
+        images.forEach { image ->
+            // Find the image ID for this hash
+            idToHash.entries.find { it.value.contentEquals(image.imageBytesHash) }?.let { (imageId, _) ->
+                result[imageId] = ImageDto(
+                    base64 = Base64.encode(image.imageBytes),
+                    mimeType = image.mimeType
+                )
+            }
+        }
+
+        logger.debug("Fetched {} images out of {} requested", result.size, imageIds.size)
+        return result
     }
 }
