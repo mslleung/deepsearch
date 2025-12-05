@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.merge
@@ -210,7 +211,8 @@ class PeriodicIndexJobRegistry(
     /**
      * Reactive flow orchestration for periodic indexing links.
      * Uses channel-based architecture similar to AgenticBrowserSearchOrchestrator.
-     * Link sources: initial URL, Serper search, sitemap, and recursive discovered links.
+     * Link sources: initial URL, Serper search, sitemap, carried-over URLs from previous job,
+     * and recursive discovered links.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun extractAndCacheLinks(
@@ -221,6 +223,10 @@ class PeriodicIndexJobRegistry(
         val seenUrls = ConcurrentHashMap.newKeySet<String>()
         val processedCount = AtomicInteger(job.processedCount)
         val urlTracker = UrlTracker()
+
+        // Fetch carried-over URLs from the last completed job for this user/baseUrl
+        val carriedOverUrls = fetchCarriedOverUrls(job)
+        logger.info("[{}] Fetched {} carried-over URLs from previous job", jobId, carriedOverUrls.size)
 
         // Channels for discovered links from different sources
         val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
@@ -235,7 +241,8 @@ class PeriodicIndexJobRegistry(
                 job = job,
                 seenUrls = seenUrls,
                 initialDiscoveredLinksChannel = initialDiscoveredLinksChannel,
-                urlTracker = urlTracker
+                urlTracker = urlTracker,
+                carriedOverUrls = carriedOverUrls
             ),
             processSerperSearchLinksFlow(
                 jobId = jobId,
@@ -296,8 +303,29 @@ class PeriodicIndexJobRegistry(
     }
 
     /**
-     * Process the initial base URL.
+     * Fetch URLs from the last completed job for the same user and baseUrl.
+     * Returns only successfully processed URLs (CACHED + UNCACHED).
+     */
+    private suspend fun fetchCarriedOverUrls(job: PeriodicIndexJob): Set<String> {
+        val lastCompletedJob = periodicIndexJobRepository.findLastCompletedByUserIdAndBaseUrl(
+            userId = job.userId,
+            baseUrl = job.baseUrl
+        ) ?: return emptySet()
+
+        val lastJobId = lastCompletedJob.id ?: return emptySet()
+        val lastSessionId = PeriodicIndexSessionId(lastJobId)
+
+        // Get successful URLs from the previous job (both cached and uncached)
+        val cachedUrls = urlAccessService.getCachedUrls(lastSessionId).map { it.url }
+        val uncachedUrls = urlAccessService.getUncachedUrls(lastSessionId).map { it.url }
+
+        return (cachedUrls + uncachedUrls).toSet()
+    }
+
+    /**
+     * Process the initial base URL and carried-over URLs from the previous job.
      * Emits discovered links to the initialDiscoveredLinksChannel.
+     * Carried-over URLs that fail are tracked but do not count toward progress.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun processInitialLinkFlow(
@@ -305,16 +333,27 @@ class PeriodicIndexJobRegistry(
         job: PeriodicIndexJob,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        urlTracker: UrlTracker
+        urlTracker: UrlTracker,
+        carriedOverUrls: Set<String>
     ): Flow<PeriodicIndexStepResult> {
-        return flowOf(job.baseUrl)
+        // Combine base URL with carried-over URLs (base URL first for priority)
+        val allInitialUrls = listOf(job.baseUrl) + carriedOverUrls.filter { it != job.baseUrl }
+        val carriedOverSet = carriedOverUrls.toSet()
+        val processedUrlCount = AtomicInteger(0)
+        val totalInitialUrls = allInitialUrls.size
+
+        return allInitialUrls.asFlow()
             .flatMapMerge(concurrency = 10) { url ->
                 flow {
                     val normalizedUrl = normalize(url)
+                    val isCarriedOver = carriedOverSet.contains(normalizedUrl)
 
                     if (!seenUrls.add(normalizedUrl)) {
                         logger.debug("[{}] Initial URL already seen: {}", jobId, normalizedUrl)
-                        initialDiscoveredLinksChannel.close()
+                        // Check if all URLs are processed to close the channel
+                        if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
+                            initialDiscoveredLinksChannel.close()
+                        }
                         return@flow
                     }
 
@@ -324,7 +363,11 @@ class PeriodicIndexJobRegistry(
                         .catch { e ->
                             if (e is CancellationException) throw e
                             if (e is UrlProcessingException) {
-                                logger.warn("[{}] Failed to process initial URL {}: {}", jobId, normalizedUrl, e.message)
+                                if (isCarriedOver) {
+                                    logger.info("[{}] Carried-over URL failed (not counting as progress): {}: {}", jobId, normalizedUrl, e.message)
+                                } else {
+                                    logger.warn("[{}] Failed to process initial URL {}: {}", jobId, normalizedUrl, e.message)
+                                }
                                 val failedAccess = FailedUrlAccess(
                                     url = normalizedUrl,
                                     timestamp = Clock.System.now(),
@@ -333,6 +376,10 @@ class PeriodicIndexJobRegistry(
                                 )
                                 urlAccessService.recordUrlAccess(sessionId, failedAccess)
                                 urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+                                // Check if all URLs are processed to close the channel
+                                if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
+                                    initialDiscoveredLinksChannel.close()
+                                }
                             } else {
                                 logger.error("[{}] Unexpected error processing initial URL {}: {}", jobId, normalizedUrl, e.message, e)
                                 urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
@@ -346,7 +393,10 @@ class PeriodicIndexJobRegistry(
                                     event.discoveredLinks
                                         .filter { link -> normalize(link.url).startsWith(job.baseUrl) }
                                         .forEach { link -> initialDiscoveredLinksChannel.send(link) }
-                                    initialDiscoveredLinksChannel.close()
+                                    // Check if all URLs are processed to close the channel
+                                    if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
+                                        initialDiscoveredLinksChannel.close()
+                                    }
                                 }
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
                                     logger.debug("[{}] Initial URL markdown extracted: {} chars", jobId, event.markdown.length)

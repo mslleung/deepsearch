@@ -14,5 +14,6 @@ interface IPeriodicIndexJobRepository {
     suspend fun countByUserId(userId: UserId, state: PeriodicIndexJobState? = null): Long
     suspend fun listByUserIdAndBaseUrl(userId: UserId, baseUrl: String, state: PeriodicIndexJobState? = null, offset: Int = 0, limit: Int = 10): List<PeriodicIndexJob>
     suspend fun countByUserIdAndBaseUrl(userId: UserId, baseUrl: String, state: PeriodicIndexJobState? = null): Long
+    suspend fun findLastCompletedByUserIdAndBaseUrl(userId: UserId, baseUrl: String): PeriodicIndexJob?
 }
 

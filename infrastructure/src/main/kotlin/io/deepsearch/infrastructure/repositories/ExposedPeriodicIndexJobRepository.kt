@@ -158,6 +158,19 @@ class ExposedPeriodicIndexJobRepository(
         query.count()
     }
 
+    override suspend fun findLastCompletedByUserIdAndBaseUrl(userId: UserId, baseUrl: String): PeriodicIndexJob? = transactionService.withTransaction {
+        periodicIndexJobTable.selectAll()
+            .where { 
+                (periodicIndexJobTable.userId eq userId.value) and 
+                (periodicIndexJobTable.baseUrl eq baseUrl) and 
+                (periodicIndexJobTable.state eq PeriodicIndexJobState.COMPLETED.name) 
+            }
+            .orderBy(periodicIndexJobTable.createdAtMs, SortOrder.DESC)
+            .limit(1)
+            .map { mapRow(it) }
+            .singleOrNull()
+    }
+
     private fun mapRow(row: ResultRow): PeriodicIndexJob = PeriodicIndexJob(
         id = row[periodicIndexJobTable.id],
         userId = UserId(row[periodicIndexJobTable.userId]),
