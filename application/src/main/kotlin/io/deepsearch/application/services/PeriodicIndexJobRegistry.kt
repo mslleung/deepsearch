@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.ext.pathDepth
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
@@ -392,6 +393,7 @@ class PeriodicIndexJobRegistry(
                                     logger.debug("[{}] Initial URL discovered {} links", jobId, event.discoveredLinks.size)
                                     event.discoveredLinks
                                         .filter { link -> normalize(link.url).startsWith(job.baseUrl) }
+                                        .sortedBy { it.pathDepth() }
                                         .forEach { link -> initialDiscoveredLinksChannel.send(link) }
                                     // Check if all URLs are processed to close the channel
                                     if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
@@ -471,6 +473,7 @@ class PeriodicIndexJobRegistry(
                                     logger.debug("[{}] Serper link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
                                     event.discoveredLinks
                                         .filter { discovered -> normalize(discovered.url).startsWith(job.baseUrl) }
+                                        .sortedBy { it.pathDepth() }
                                         .forEach { discovered -> serperDiscoveredLinksChannel.send(discovered) }
                                 }
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
@@ -546,6 +549,7 @@ class PeriodicIndexJobRegistry(
                                     logger.debug("[{}] Sitemap link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
                                     event.discoveredLinks
                                         .filter { discovered -> normalize(discovered.url).startsWith(job.baseUrl) }
+                                        .sortedBy { it.pathDepth() }
                                         .forEach { discovered -> sitemapDiscoveredLinksChannel.send(discovered) }
                                 }
                                 is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
@@ -661,9 +665,11 @@ class PeriodicIndexJobRegistry(
                                         val normalizedDiscovered = normalize(discovered.url)
                                         normalizedDiscovered.startsWith(job.baseUrl) && !seenUrls.contains(normalizedDiscovered)
                                     }
-                                    newDiscoveredLinks.forEach { discovered ->
-                                        recursiveDiscoveredLinksChannel.send(discovered)
-                                    }
+                                    newDiscoveredLinks
+                                        .sortedBy { it.pathDepth() }
+                                        .forEach { discovered ->
+                                            recursiveDiscoveredLinksChannel.send(discovered)
+                                        }
 
                                     logger.debug("[{}] In-flight links count: {}", jobId, inFlightLinkDiscoveryProcessing.size)
 
@@ -732,6 +738,7 @@ class PeriodicIndexJobRegistry(
             val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(query)
                 .filter { normalize(it.url).startsWith(job.baseUrl) }
                 .distinctBy { normalize(it.url) }
+                .sortedBy { it.pathDepth() }
                 .take(50)
             logger.debug("[{}] Serper search discovered {} links for base URL: {}", jobId, serperLinks.size, job.baseUrl)
             serperLinks.forEach { link -> emit(link) }
@@ -748,6 +755,7 @@ class PeriodicIndexJobRegistry(
         try {
             val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
                 .filter { normalize(it.url).startsWith(job.baseUrl) }
+                .sortedBy { it.pathDepth() }
             logger.debug("[{}] Sitemap discovered {} links", jobId, sitemapLinks.size)
             sitemapLinks.forEach { link -> emit(link) }
         } catch (e: Exception) {

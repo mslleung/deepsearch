@@ -46,7 +46,6 @@ private val infrastructureCommonTestModule = module {
     singleOf(::WebpageTableInterpretationCacheTable)
     singleOf(::WebpageSemanticElementCacheTable)
     singleOf(::WebpageMarkdownCacheTable)
-    singleOf(::PdfMarkdownCacheTable)
     singleOf(::QuerySessionTable)
     singleOf(::UrlAccessTable)
     singleOf(::PeriodicIndexJobTable)

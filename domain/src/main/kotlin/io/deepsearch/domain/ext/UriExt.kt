@@ -1,5 +1,6 @@
 package io.deepsearch.domain.ext
 
+import io.deepsearch.domain.models.valueobjects.WebpageLink
 import org.slf4j.LoggerFactory
 import java.net.URI
 
@@ -191,3 +192,22 @@ private fun containsIllegalUriCharacters(s: String): Boolean {
     }
 }
 
+/**
+ * Calculates the path depth of a WebpageLink URL.
+ * Shorter paths (lower depth) indicate potentially more important pages like catalogues.
+ * 
+ * Examples:
+ * - "/" returns 0
+ * - "/products" returns 1
+ * - "/products/electronics/phones" returns 3
+ * 
+ * @return The number of path segments, or Int.MAX_VALUE if the URL cannot be parsed
+ */
+fun WebpageLink.pathDepth(): Int {
+    return try {
+        val path = URI(url).path ?: "/"
+        path.split("/").count { it.isNotBlank() }
+    } catch (e: Exception) {
+        Int.MAX_VALUE // Unknown URLs get lowest priority
+    }
+}
