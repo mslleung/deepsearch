@@ -84,6 +84,7 @@ ktor-server-cors = { module = "io.ktor:ktor-server-cors", version.ref = "ktor-ve
 ktor-server-call-id = { module = "io.ktor:ktor-server-call-id", version.ref = "ktor-version" }
 ktor-server-call-logging = { module = "io.ktor:ktor-server-call-logging", version.ref = "ktor-version" }
 ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor-version" }
+ktor-server-rate-limit = { module = "io.ktor:ktor-server-rate-limit", version.ref = "ktor-version" }
 stripe = { module = "com.stripe:stripe-java", version.ref = "stripe-version" }
 
 [plugins]

@@ -53,7 +53,6 @@ val applicationModule = module {
     requestScope {
         scopedOf(::ApiKeyService) bind IApiKeyService::class
         scopedOf(::AuthService) bind IAuthService::class
-        scopedOf(::RateLimitService) bind IRateLimitService::class
         scopedOf(::UserSubscriptionService) bind IUserSubscriptionService::class
         scopedOf(::UsageService) bind IUsageService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class

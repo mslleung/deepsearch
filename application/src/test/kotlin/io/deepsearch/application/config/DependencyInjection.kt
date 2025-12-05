@@ -45,7 +45,6 @@ import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.ILlmTokenUsageService
 import io.deepsearch.application.services.IPeriodicIndexJobService
 import io.deepsearch.application.services.IPeriodicIndexService
-import io.deepsearch.application.services.IRateLimitService
 import io.deepsearch.application.services.IUrlProcessingLockRegistry
 import io.deepsearch.application.services.ISitemapLinkDiscoveryLockRegistry
 import io.deepsearch.application.services.IUrlAccessService
@@ -59,7 +58,6 @@ import io.deepsearch.application.services.PeriodicIndexJobService
 import io.deepsearch.application.services.PeriodicIndexScheduler
 import io.deepsearch.application.services.PeriodicIndexService
 import io.deepsearch.application.services.QuerySessionService
-import io.deepsearch.application.services.RateLimitService
 import io.deepsearch.application.services.SitemapLinkDiscoveryLockRegistry
 import io.deepsearch.application.services.UrlAccessService
 import io.deepsearch.infrastructure.services.TransactionService
@@ -99,7 +97,6 @@ private val applicationCommonTestModule = module {
 
     singleOf(::ApiKeyService) bind IApiKeyService::class
     singleOf(::AuthService) bind IAuthService::class
-    singleOf(::RateLimitService) bind IRateLimitService::class
     singleOf(::UserSubscriptionService) bind IUserSubscriptionService::class
     singleOf(::UsageService) bind IUsageService::class
     singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class

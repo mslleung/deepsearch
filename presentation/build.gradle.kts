@@ -34,6 +34,7 @@ dependencies {
     implementation(libs.ktor.server.call.id)
     implementation(libs.ktor.server.call.logging)
     implementation(libs.ktor.server.status.pages)
+    implementation(libs.ktor.server.rate.limit)
     
     // Ktor client dependencies (for OAuth)
     implementation(libs.ktor.client.core)

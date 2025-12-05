@@ -1,7 +1,6 @@
 package io.deepsearch.presentation.controllers
 
 import io.deepsearch.application.services.IApiKeyService
-import io.deepsearch.application.services.IRateLimitService
 import io.deepsearch.application.services.ISearchService
 import io.deepsearch.application.services.IUserSubscriptionService
 import io.deepsearch.application.services.SearchEvent
@@ -26,7 +25,6 @@ import org.slf4j.LoggerFactory
 class SearchController(
     private val searchService: ISearchService,
     private val apiKeyService: IApiKeyService,
-    private val rateLimitService: IRateLimitService,
     private val subscriptionPlanService: IUserSubscriptionService,
     private val webpageImageRepository: IWebpageImageRepository
 ) {
@@ -50,20 +48,6 @@ class SearchController(
         }
 
         val apiKey = apiKeyService.getApiKeyByRawKey(rawApiKey)!!
-
-        // Check rate limit
-        val allowed = rateLimitService.checkRateLimit(apiKey.id!!, apiKey.rateLimitPerMinute)
-        if (!allowed) {
-            call.respond(
-                HttpStatusCode.TooManyRequests,
-                mapOf(
-                    "error" to "Rate limit exceeded",
-                    "limit" to apiKey.rateLimitPerMinute.toString(),
-                    "message" to "You have exceeded ${apiKey.rateLimitPerMinute} requests per minute"
-                )
-            )
-            return
-        }
 
         // Check usage limit (subscription quota)
         val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
@@ -162,25 +146,6 @@ class SearchController(
             }
 
             val apiKey = apiKeyService.getApiKeyByRawKey(rawApiKey)!!
-
-            // Check rate limit
-            val allowed = rateLimitService.checkRateLimit(apiKey.id!!, apiKey.rateLimitPerMinute)
-            if (!allowed) {
-                sse.send(
-                    ServerSentEvent(
-                        Json.encodeToString(
-                            SearchEventDto.serializer(),
-                            SearchEventDto.SessionErrorDto(
-                                "",
-                                "RateLimitExceeded",
-                                "You have exceeded ${apiKey.rateLimitPerMinute} requests per minute",
-                                System.currentTimeMillis()
-                            )
-                        )
-                    )
-                )
-                return
-            }
 
             // Check usage limit
             val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
