@@ -270,6 +270,7 @@ class PeriodicIndexJobRegistry(
                 urlTracker = urlTracker
             )
         )
+            .flowOn(dispatchers.io)
             .takeWhile { processedCount.get() < job.maxUrlCount }
             .onEach { result ->
                 val count = processedCount.incrementAndGet()
@@ -293,7 +294,7 @@ class PeriodicIndexJobRegistry(
                     )
                 )
             }
-            .flowOn(Dispatchers.Default.limitedParallelism(1))
+            .flowOn(dispatchers.io.limitedParallelism(1))
             .catch { e ->
                 logger.error("[{}] Error during periodic index: {}", jobId, e.message, e)
             }
