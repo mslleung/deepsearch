@@ -22,8 +22,6 @@ import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
-import org.slf4j.Logger
-import org.slf4j.LoggerFactory
 
 class AuthController(
     private val authService: IAuthService,
@@ -32,86 +30,64 @@ class AuthController(
     private val apiKeyService: IApiKeyService,
     private val httpClient: HttpClient
 ) {
-    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     suspend fun register(call: ApplicationCall) {
-        try {
-            val request = call.receive<RegisterRequest>()
-            
-            val user = authService.registerUser(
-                email = Email(request.email),
-                password = request.password
-            )
+        val request = call.receive<RegisterRequest>()
+        
+        val user = authService.registerUser(
+            email = Email(request.email),
+            password = request.password
+        )
 
-            val token = jwtService.generateToken(user.id!!)
-            val playgroundKey = apiKeyService.getOrCreatePlaygroundKey(user.id!!)
-            
-            call.respond(
-                HttpStatusCode.Created,
-                LoginResponse(
-                    token = token,
-                    user = user.toUserResponse(),
-                    playgroundKey = playgroundKey
-                )
+        val token = jwtService.generateToken(user.id!!)
+        val playgroundKey = apiKeyService.getOrCreatePlaygroundKey(user.id!!)
+        
+        call.respond(
+            HttpStatusCode.Created,
+            LoginResponse(
+                token = token,
+                user = user.toUserResponse(),
+                playgroundKey = playgroundKey
             )
-        } catch (e: IllegalArgumentException) {
-            logger.warn("Bad request in register: {}", e.message, e)
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Invalid request")))
-        } catch (e: Exception) {
-            logger.error("Unexpected error in register: {}", e.message, e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
-        }
+        )
     }
 
     suspend fun login(call: ApplicationCall) {
-        try {
-            val request = call.receive<LoginRequest>()
-            
-            val user = authService.authenticateUser(
-                email = Email(request.email),
-                password = request.password
-            )
-            
-            if (user == null) {
-                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid email or password"))
-                return
-            }
-
-            val token = jwtService.generateToken(user.id!!)
-            val playgroundKey = apiKeyService.getOrCreatePlaygroundKey(user.id!!)
-            
-            call.respond(
-                HttpStatusCode.OK,
-                LoginResponse(
-                    token = token,
-                    user = user.toUserResponse(),
-                    playgroundKey = playgroundKey
-                )
-            )
-        } catch (e: IllegalArgumentException) {
-            logger.warn("Bad request in login: {}", e.message, e)
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Invalid request")))
-        } catch (e: Exception) {
-            logger.error("Unexpected error in login: {}", e.message, e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
+        val request = call.receive<LoginRequest>()
+        
+        val user = authService.authenticateUser(
+            email = Email(request.email),
+            password = request.password
+        )
+        
+        if (user == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid email or password"))
+            return
         }
+
+        val token = jwtService.generateToken(user.id!!)
+        val playgroundKey = apiKeyService.getOrCreatePlaygroundKey(user.id!!)
+        
+        call.respond(
+            HttpStatusCode.OK,
+            LoginResponse(
+                token = token,
+                user = user.toUserResponse(),
+                playgroundKey = playgroundKey
+            )
+        )
     }
 
     suspend fun getCurrentUser(call: ApplicationCall) {
-        try {
-            val principal = call.principal<JWTPrincipal>()
-            val userIdValue = principal?.payload?.getClaim(JwtConfig.CLAIM_USER_ID)?.asInt()
-            
-            if (userIdValue == null) {
-                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid token"))
-                return
-            }
-            
-            val user = userService.getUserById(UserId(userIdValue))
-            call.respond(HttpStatusCode.OK, user.toUserResponse())
-        } catch (e: Exception) {
-            logger.error("Unexpected error in getCurrentUser: {}", e.message, e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Internal server error"))
+        val principal = call.principal<JWTPrincipal>()
+        val userIdValue = principal?.payload?.getClaim(JwtConfig.CLAIM_USER_ID)?.asInt()
+        
+        if (userIdValue == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid token"))
+            return
         }
+        
+        val user = userService.getUserById(UserId(userIdValue))
+        call.respond(HttpStatusCode.OK, user.toUserResponse())
     }
 
     suspend fun logout(call: ApplicationCall) {
@@ -125,6 +101,8 @@ class AuthController(
         // It will redirect to Google's authorization page
     }
 
+    // OAuth callback uses redirects for error handling, not JSON responses
+    // Keep try-catch here since StatusPages cannot handle redirect-based errors
     suspend fun handleGoogleCallback(call: ApplicationCall) {
         try {
             val principal = call.principal<OAuthAccessTokenResponse.OAuth2>()

@@ -26,109 +26,89 @@ class AdminUserController(
 ) {
 
     suspend fun getAllUsers(call: ApplicationCall) {
-        try {
-            val users = userService.getAllUsers()
+        val users = userService.getAllUsers()
+        
+        // Enrich with subscription and usage data
+        val usersDto = users.map { user ->
+            val subscriptions = userSubscriptionRepository.findByUserId(user.id!!)
+            val usageStats = runCatching { usageService.getUserUsageStats(user.id!!, 365) }.getOrNull()
             
-            // Enrich with subscription and usage data
-            val usersDto = users.map { user ->
-                val subscriptions = userSubscriptionRepository.findByUserId(user.id!!)
-                val usageStats = try {
-                    usageService.getUserUsageStats(user.id!!, 365)
-                } catch (e: Exception) {
-                    null
-                }
-                
-                user.toAdminDto(
-                    subscriptions = subscriptions,
-                    totalUsage = usageStats?.totalUsage
-                )
-            }
-            
-            call.respond(HttpStatusCode.OK, usersDto)
-        } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+            user.toAdminDto(
+                subscriptions = subscriptions,
+                totalUsage = usageStats?.totalUsage
+            )
         }
+        
+        call.respond(HttpStatusCode.OK, usersDto)
     }
 
     suspend fun getUserById(call: ApplicationCall) {
-        try {
-            val userId = call.parameters["id"]?.toIntOrNull()
-            if (userId == null) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid user ID"))
-                return
-            }
-
-            val user = userService.getUserById(UserId(userId))
-            val subscriptions = userSubscriptionRepository.findByUserId(user.id!!)
-            val usageStats = usageService.getUserUsageStats(user.id!!, 365)
-            
-            val userDto = user.toAdminDto(
-                subscriptions = subscriptions,
-                totalUsage = usageStats.totalUsage
-            )
-            
-            call.respond(HttpStatusCode.OK, userDto)
-        } catch (e: Exception) {
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to e.message))
+        val userId = call.parameters["id"]?.toIntOrNull()
+        if (userId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid user ID"))
+            return
         }
+
+        val user = userService.getUserById(UserId(userId))
+        val subscriptions = userSubscriptionRepository.findByUserId(user.id!!)
+        val usageStats = usageService.getUserUsageStats(user.id!!, 365)
+        
+        val userDto = user.toAdminDto(
+            subscriptions = subscriptions,
+            totalUsage = usageStats.totalUsage
+        )
+        
+        call.respond(HttpStatusCode.OK, userDto)
     }
 
     suspend fun updateUser(call: ApplicationCall) {
-        try {
-            val userId = call.parameters["id"]?.toIntOrNull()
-            if (userId == null) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid user ID"))
-                return
-            }
-
-            val request = call.receive<UpdateUserRequest>()
-            val user = userService.getUserById(UserId(userId))
-
-            // Update email if provided
-            if (request.email != null) {
-                val updatedUser = User(
-                    id = user.id,
-                    email = Email(request.email),
-                    passwordHash = user.passwordHash,
-                    oauthProvider = user.oauthProvider,
-                    oauthProviderId = user.oauthProviderId,
-                    createdAt = user.createdAt,
-                    updatedAt = kotlin.time.Clock.System.now(),
-                    version = user.version
-                )
-                userService.updateUser(UserId(userId), updatedUser)
-            }
-
-            // Update password if provided
-            if (request.password != null) {
-                val passwordHash = BCrypt.hashpw(request.password, BCrypt.gensalt(12))
-                user.updatePassword(PasswordHash(passwordHash), kotlin.time.Clock.System.now())
-                userService.updateUser(UserId(userId), user)
-            }
-
-            val updatedUser = userService.getUserById(UserId(userId))
-            call.respond(HttpStatusCode.OK, updatedUser.toAdminDto())
-        } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        val userId = call.parameters["id"]?.toIntOrNull()
+        if (userId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid user ID"))
+            return
         }
+
+        val request = call.receive<UpdateUserRequest>()
+        val user = userService.getUserById(UserId(userId))
+
+        // Update email if provided
+        if (request.email != null) {
+            val updatedUser = User(
+                id = user.id,
+                email = Email(request.email),
+                passwordHash = user.passwordHash,
+                oauthProvider = user.oauthProvider,
+                oauthProviderId = user.oauthProviderId,
+                createdAt = user.createdAt,
+                updatedAt = kotlin.time.Clock.System.now(),
+                version = user.version
+            )
+            userService.updateUser(UserId(userId), updatedUser)
+        }
+
+        // Update password if provided
+        if (request.password != null) {
+            val passwordHash = BCrypt.hashpw(request.password, BCrypt.gensalt(12))
+            user.updatePassword(PasswordHash(passwordHash), kotlin.time.Clock.System.now())
+            userService.updateUser(UserId(userId), user)
+        }
+
+        val updatedUser = userService.getUserById(UserId(userId))
+        call.respond(HttpStatusCode.OK, updatedUser.toAdminDto())
     }
 
     suspend fun deleteUser(call: ApplicationCall) {
-        try {
-            val userId = call.parameters["id"]?.toIntOrNull()
-            if (userId == null) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid user ID"))
-                return
-            }
+        val userId = call.parameters["id"]?.toIntOrNull()
+        if (userId == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid user ID"))
+            return
+        }
 
-            val deleted = userService.deleteUser(UserId(userId))
-            if (deleted) {
-                call.respond(HttpStatusCode.OK, mapOf("message" to "User deleted successfully"))
-            } else {
-                call.respond(HttpStatusCode.NotFound, mapOf("error" to "User not found"))
-            }
-        } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        val deleted = userService.deleteUser(UserId(userId))
+        if (deleted) {
+            call.respond(HttpStatusCode.OK, mapOf("message" to "User deleted successfully"))
+        } else {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "User not found"))
         }
     }
 }

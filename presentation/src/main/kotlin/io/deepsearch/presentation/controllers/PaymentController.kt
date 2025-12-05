@@ -31,54 +31,41 @@ class PaymentController(
      * Returns the Stripe publishable key for frontend initialization.
      */
     suspend fun getConfig(call: ApplicationCall) {
-        try {
-            val response = PaymentConfigResponse(
-                publishableKey = paymentService.getPublishableKey()
-            )
-            call.respond(HttpStatusCode.OK, response)
-        } catch (e: Exception) {
-            logger.error("Error getting payment config: {}", e.message, e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
-        }
+        val response = PaymentConfigResponse(
+            publishableKey = paymentService.getPublishableKey()
+        )
+        call.respond(HttpStatusCode.OK, response)
     }
 
     /**
      * Creates a Stripe Checkout session for subscribing to a plan.
      */
     suspend fun createCheckoutSession(call: ApplicationCall) {
-        try {
-            val userId = getUserIdFromJwt(call)
-            if (userId == null) {
-                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
-                return
-            }
-
-            val request = call.receive<CreateCheckoutSessionRequest>()
-            
-            val plan = SubscriptionPlan.fromName(request.planName)
-            if (plan == null || plan == SubscriptionPlan.FREE) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid plan name"))
-                return
-            }
-
-            val result = paymentService.createCheckoutSession(
-                userId = userId,
-                plan = plan
-            )
-
-            val response = CreateCheckoutSessionResponse(
-                sessionId = result.sessionId,
-                checkoutUrl = result.checkoutUrl
-            )
-
-            call.respond(HttpStatusCode.OK, response)
-        } catch (e: IllegalArgumentException) {
-            logger.warn("Bad request in createCheckoutSession: {}", e.message, e)
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
-        } catch (e: Exception) {
-            logger.error("Error creating checkout session: {}", e.message, e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        val userId = getUserIdFromJwt(call)
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
+            return
         }
+
+        val request = call.receive<CreateCheckoutSessionRequest>()
+        
+        val plan = SubscriptionPlan.fromName(request.planName)
+        if (plan == null || plan == SubscriptionPlan.FREE) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid plan name"))
+            return
+        }
+
+        val result = paymentService.createCheckoutSession(
+            userId = userId,
+            plan = plan
+        )
+
+        val response = CreateCheckoutSessionResponse(
+            sessionId = result.sessionId,
+            checkoutUrl = result.checkoutUrl
+        )
+
+        call.respond(HttpStatusCode.OK, response)
     }
 
     /**
@@ -86,39 +73,31 @@ class PaymentController(
      * Returns a client secret to be used with the Payment Element on the frontend.
      */
     suspend fun createSubscriptionIntent(call: ApplicationCall) {
-        try {
-            val userId = getUserIdFromJwt(call)
-            if (userId == null) {
-                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
-                return
-            }
-
-            val request = call.receive<CreateSubscriptionIntentRequest>()
-
-            val plan = SubscriptionPlan.fromName(request.planName)
-            if (plan == null || plan == SubscriptionPlan.FREE) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid plan name"))
-                return
-            }
-
-            val result = paymentService.createSubscriptionIntent(
-                userId = userId,
-                plan = plan
-            )
-
-            val response = CreateSubscriptionIntentResponse(
-                subscriptionId = result.subscriptionId,
-                clientSecret = result.clientSecret
-            )
-
-            call.respond(HttpStatusCode.OK, response)
-        } catch (e: IllegalArgumentException) {
-            logger.warn("Bad request in createSubscriptionIntent: {}", e.message, e)
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
-        } catch (e: Exception) {
-            logger.error("Error creating subscription intent: {}", e.message, e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        val userId = getUserIdFromJwt(call)
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
+            return
         }
+
+        val request = call.receive<CreateSubscriptionIntentRequest>()
+
+        val plan = SubscriptionPlan.fromName(request.planName)
+        if (plan == null || plan == SubscriptionPlan.FREE) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid plan name"))
+            return
+        }
+
+        val result = paymentService.createSubscriptionIntent(
+            userId = userId,
+            plan = plan
+        )
+
+        val response = CreateSubscriptionIntentResponse(
+            subscriptionId = result.subscriptionId,
+            clientSecret = result.clientSecret
+        )
+
+        call.respond(HttpStatusCode.OK, response)
     }
 
     /**
@@ -126,95 +105,68 @@ class PaymentController(
      * This verifies the payment with Stripe and creates the subscription in our database.
      */
     suspend fun confirmSubscription(call: ApplicationCall) {
-        try {
-            val userId = getUserIdFromJwt(call)
-            if (userId == null) {
-                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
-                return
-            }
-
-            val request = call.receive<ConfirmSubscriptionRequest>()
-
-            val result = paymentService.confirmSubscription(
-                userId = userId,
-                subscriptionId = request.subscriptionId
-            )
-
-            val response = ConfirmSubscriptionResponse(
-                success = result.success,
-                planName = result.planName,
-                totalAvailable = result.totalAvailable
-            )
-
-            call.respond(HttpStatusCode.OK, response)
-        } catch (e: IllegalArgumentException) {
-            logger.warn("Bad request in confirmSubscription: {}", e.message, e)
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
-        } catch (e: IllegalStateException) {
-            logger.warn("Subscription not ready: {}", e.message)
-            call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
-        } catch (e: Exception) {
-            logger.error("Error confirming subscription: {}", e.message, e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        val userId = getUserIdFromJwt(call)
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
+            return
         }
+
+        val request = call.receive<ConfirmSubscriptionRequest>()
+
+        val result = paymentService.confirmSubscription(
+            userId = userId,
+            subscriptionId = request.subscriptionId
+        )
+
+        val response = ConfirmSubscriptionResponse(
+            success = result.success,
+            planName = result.planName,
+            totalAvailable = result.totalAvailable
+        )
+
+        call.respond(HttpStatusCode.OK, response)
     }
 
     /**
      * Handles Stripe webhook events.
      * This endpoint does NOT require authentication - Stripe calls it directly.
+     * Note: We keep basic validation here since Stripe expects specific responses for retries.
      */
     suspend fun handleWebhook(call: ApplicationCall) {
-        try {
-            val payload = call.receiveText()
-            val signature = call.request.header("Stripe-Signature")
-            
-            if (signature == null) {
-                logger.warn("Webhook called without Stripe-Signature header")
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing Stripe-Signature header"))
-                return
-            }
-
-            paymentService.handleWebhookEvent(payload, signature)
-
-            // Return 200 OK to acknowledge receipt
-            call.respond(HttpStatusCode.OK, mapOf("received" to true))
-        } catch (e: IllegalArgumentException) {
-            logger.warn("Invalid webhook: {}", e.message)
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
-        } catch (e: Exception) {
-            logger.error("Error processing webhook: {}", e.message, e)
-            // Return 500 so Stripe will retry
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        val payload = call.receiveText()
+        val signature = call.request.header("Stripe-Signature")
+        
+        if (signature == null) {
+            logger.warn("Webhook called without Stripe-Signature header")
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing Stripe-Signature header"))
+            return
         }
+
+        paymentService.handleWebhookEvent(payload, signature)
+
+        // Return 200 OK to acknowledge receipt
+        call.respond(HttpStatusCode.OK, mapOf("received" to true))
     }
 
     /**
      * Creates a Stripe Customer Portal session for managing subscriptions.
      */
     suspend fun createPortalSession(call: ApplicationCall) {
-        try {
-            val userId = getUserIdFromJwt(call)
-            if (userId == null) {
-                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
-                return
-            }
-
-            val request = call.receive<CreatePortalSessionRequest>()
-
-            val result = paymentService.createCustomerPortalSession(
-                userId = userId,
-                returnUrl = request.returnUrl
-            )
-
-            val response = CreatePortalSessionResponse(url = result.url)
-            call.respond(HttpStatusCode.OK, response)
-        } catch (e: IllegalStateException) {
-            logger.warn("Cannot create portal session: {}", e.message)
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
-        } catch (e: Exception) {
-            logger.error("Error creating portal session: {}", e.message, e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        val userId = getUserIdFromJwt(call)
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
+            return
         }
+
+        val request = call.receive<CreatePortalSessionRequest>()
+
+        val result = paymentService.createCustomerPortalSession(
+            userId = userId,
+            returnUrl = request.returnUrl
+        )
+
+        val response = CreatePortalSessionResponse(url = result.url)
+        call.respond(HttpStatusCode.OK, response)
     }
 
     private fun getUserIdFromJwt(call: ApplicationCall): UserId? {

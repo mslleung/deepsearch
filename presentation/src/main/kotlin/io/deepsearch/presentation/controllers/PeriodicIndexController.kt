@@ -4,7 +4,6 @@ import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IPeriodicIndexService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUserSubscriptionService
-import io.deepsearch.application.services.PeriodicIndexLimitExceededException
 import io.deepsearch.domain.models.entities.PeriodicIndexConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexPeriod
 import io.deepsearch.domain.models.entities.SubscriptionPlan
@@ -18,8 +17,6 @@ import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
-import org.slf4j.Logger
-import org.slf4j.LoggerFactory
 
 class PeriodicIndexController(
     private val periodicIndexService: IPeriodicIndexService,
@@ -28,7 +25,6 @@ class PeriodicIndexController(
     private val userSubscriptionService: IUserSubscriptionService,
     private val apiKeyService: IApiKeyService
 ) {
-    private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     /**
      * GET /api/periodic-index/configs
@@ -76,12 +72,7 @@ class PeriodicIndexController(
     suspend fun createConfig(call: ApplicationCall) {
         val userId = getUserIdFromApiKey(call) ?: return call.respond(HttpStatusCode.Unauthorized)
 
-        val request = try {
-            call.receive<PeriodicIndexConfigRequest>()
-        } catch (e: Exception) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request body"))
-            return
-        }
+        val request = call.receive<PeriodicIndexConfigRequest>()
 
         val validationError = validateConfigRequest(request)
         if (validationError != null) {
@@ -91,26 +82,15 @@ class PeriodicIndexController(
 
         val maxAllowed = getMaxAllowedConfigs(userId)
         
-        try {
-            val config = periodicIndexService.createConfig(
-                userId = userId,
-                url = request.url,
-                sitemapUrl = request.sitemapUrl,
-                periodDays = request.periodDays,
-                maxUrlCount = request.maxUrlCount,
-                maxAllowedConfigs = maxAllowed
-            )
-            call.respond(HttpStatusCode.Created, config.toResponse())
-        } catch (e: PeriodicIndexLimitExceededException) {
-            call.respond(HttpStatusCode.Forbidden, mapOf(
-                "error" to "You have reached your limit of ${e.maxAllowed} periodic index configurations. Please upgrade your plan for more.",
-                "currentCount" to e.currentCount,
-                "maxAllowed" to e.maxAllowed
-            ))
-        } catch (e: Exception) {
-            logger.error("Failed to create periodic index config for user $userId", e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to create config"))
-        }
+        val config = periodicIndexService.createConfig(
+            userId = userId,
+            url = request.url,
+            sitemapUrl = request.sitemapUrl,
+            periodDays = request.periodDays,
+            maxUrlCount = request.maxUrlCount,
+            maxAllowedConfigs = maxAllowed
+        )
+        call.respond(HttpStatusCode.Created, config.toResponse())
     }
 
     /**
@@ -133,12 +113,7 @@ class PeriodicIndexController(
             return
         }
 
-        val request = try {
-            call.receive<PeriodicIndexConfigRequest>()
-        } catch (e: Exception) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid request body"))
-            return
-        }
+        val request = call.receive<PeriodicIndexConfigRequest>()
 
         val validationError = validateConfigRequest(request)
         if (validationError != null) {
@@ -146,21 +121,14 @@ class PeriodicIndexController(
             return
         }
 
-        try {
-            val config = periodicIndexService.updateConfig(
-                configId = configId,
-                url = request.url,
-                sitemapUrl = request.sitemapUrl,
-                periodDays = request.periodDays,
-                maxUrlCount = request.maxUrlCount
-            )
-            call.respond(HttpStatusCode.OK, config.toResponse())
-        } catch (e: IllegalArgumentException) {
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to e.message))
-        } catch (e: Exception) {
-            logger.error("Failed to update periodic index config $configId", e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to update config"))
-        }
+        val config = periodicIndexService.updateConfig(
+            configId = configId,
+            url = request.url,
+            sitemapUrl = request.sitemapUrl,
+            periodDays = request.periodDays,
+            maxUrlCount = request.maxUrlCount
+        )
+        call.respond(HttpStatusCode.OK, config.toResponse())
     }
 
     /**
@@ -207,15 +175,8 @@ class PeriodicIndexController(
             return
         }
 
-        try {
-            val config = periodicIndexService.enableConfig(configId)
-            call.respond(HttpStatusCode.OK, config.toResponse())
-        } catch (e: IllegalArgumentException) {
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to e.message))
-        } catch (e: Exception) {
-            logger.error("Failed to enable periodic index config $configId", e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to enable config"))
-        }
+        val config = periodicIndexService.enableConfig(configId)
+        call.respond(HttpStatusCode.OK, config.toResponse())
     }
 
     /**
@@ -238,15 +199,8 @@ class PeriodicIndexController(
             return
         }
 
-        try {
-            val config = periodicIndexService.disableConfig(configId)
-            call.respond(HttpStatusCode.OK, config.toResponse())
-        } catch (e: IllegalArgumentException) {
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to e.message))
-        } catch (e: Exception) {
-            logger.error("Failed to disable periodic index config $configId", e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to disable config"))
-        }
+        val config = periodicIndexService.disableConfig(configId)
+        call.respond(HttpStatusCode.OK, config.toResponse())
     }
 
     /**
@@ -269,15 +223,8 @@ class PeriodicIndexController(
             return
         }
 
-        try {
-            val job = periodicIndexService.triggerNow(configId)
-            call.respond(HttpStatusCode.OK, job.toResponse())
-        } catch (e: IllegalArgumentException) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Invalid request")))
-        } catch (e: Exception) {
-            logger.error("Failed to trigger periodic index for config $configId", e)
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Failed to trigger index"))
-        }
+        val job = periodicIndexService.triggerNow(configId)
+        call.respond(HttpStatusCode.OK, job.toResponse())
     }
 
     /**

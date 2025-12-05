@@ -12,6 +12,7 @@ import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.domain.config.GoogleOAuthConfig
 import io.deepsearch.domain.config.StripeConfig
+import io.deepsearch.presentation.config.configureStatusPages
 import io.deepsearch.presentation.config.presentationModule
 import io.deepsearch.presentation.routes.*
 import io.ktor.client.*
@@ -59,6 +60,7 @@ fun Application.module() {
     configureSerialization()
     configureCORS()
     configureDependencyInjection()
+    configureStatusPages()
     configureAuthentication()
     configureWebSockets()
     configureSSE()

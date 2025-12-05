@@ -7,6 +7,7 @@ import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.presentation.admin.config.adminPresentationModule
 import io.deepsearch.presentation.admin.routes.*
+import io.deepsearch.presentation.config.configureStatusPages
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.http.*
@@ -29,6 +30,7 @@ fun Application.adminModule() {
     configureSerialization()
     configureCORS()
     configureDependencyInjection()
+    configureStatusPages()
 
     // Configure admin routes (no authentication required)
     configureAdminUserRoutes()
