@@ -14,9 +14,12 @@ class LlmTimeoutException(cause: Throwable) : LlmException("LLM request timed ou
 
 /**
  * LLM rate limit was exceeded (HTTP 429).
- * May require exponential backoff or switching to a different model.
+ * Thrown after all retry attempts have been exhausted.
  */
-class LlmRateLimitException(cause: Throwable) : LlmException("LLM rate limit exceeded", cause)
+class LlmRateLimitException(
+    val retriesAttempted: Int,
+    cause: Throwable
+) : LlmException("LLM rate limit exceeded after $retriesAttempted retries", cause)
 
 /**
  * Failed to deserialize LLM response as expected JSON structure.

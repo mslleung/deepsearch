@@ -367,7 +367,7 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
                 else -> buildHierarchicalSelector(element, doc)
             }
             
-            logger.debug("Constructed selector '{}' for identifier '{}'", selector, identifier)
+//            logger.debug("Constructed selector '{}' for identifier '{}'", selector, identifier)
             selector
         } catch (e: Exception) {
             logger.error("Failed to construct CSS selector from identifier: {}", identifier, e)

@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flatMapMerge
@@ -134,31 +135,14 @@ class AgenticBrowserSearchOrchestrator(
             val fileSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
-            // Launch flow processing
-            var answerAccumulator = AnswerAccumulator()
-            merge(
+            // Flows that don't require query optimization - start immediately
+            val immediateFlows = merge(
                 processInitialLinkFlow(
                     sessionId,
                     searchQuery,
                     seenUrls,
                     initialDiscoveredLinksChannel,
                     maxCacheAge,
-                    channel
-                ),
-                processSerperSearchLinksFlow(
-                    sessionId,
-                    searchQuery,
-                    seenUrls,
-                    serperSearchDiscoveredLinksChannel,
-                    maxCacheAge,
-                    channel
-                ),
-                processHybridSearchFlow(
-                    sessionId,
-                    searchQuery,
-                    seenUrls,
-                    maxCacheAge,
-                    hybridSearchDiscoveredLinksChannel,
                     channel
                 ),
                 processFileSearchFlow(
@@ -177,6 +161,37 @@ class AgenticBrowserSearchOrchestrator(
                     maxCacheAge, channel
                 )
             )
+
+            // Flows that require query optimization - optimize once, then start both in parallel
+            val optimizedQueryFlows = flow {
+                val optimizedSearchQuery = optimizeQueryForSerp(sessionId, searchQuery)
+                emitAll(
+                    merge(
+                        processSerperSearchLinksFlow(
+                            sessionId,
+                            searchQuery,
+                            optimizedSearchQuery,
+                            seenUrls,
+                            serperSearchDiscoveredLinksChannel,
+                            maxCacheAge,
+                            channel
+                        ),
+                        processHybridSearchFlow(
+                            sessionId,
+                            searchQuery,
+                            optimizedSearchQuery,
+                            seenUrls,
+                            maxCacheAge,
+                            hybridSearchDiscoveredLinksChannel,
+                            channel
+                        )
+                    )
+                )
+            }
+
+            // Launch flow processing - all flows run in parallel
+            var answerAccumulator = AnswerAccumulator()
+            merge(immediateFlows, optimizedQueryFlows)
                 .cancellable()
                 .filter { it.markdown.isNotBlank() }
                 .chunkedWithTimeout(chunkSize = 5, timeoutMs = 1000)
@@ -275,10 +290,12 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Process discovered links from SERP search.
+     * @param optimizedSearchQuery The query optimized for search engines
      */
     private fun processSerperSearchLinksFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
+        optimizedSearchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         discoveredLinksChannel: Channel<WebpageLink>,
         maxCacheAge: Long?,
@@ -286,7 +303,7 @@ class AgenticBrowserSearchOrchestrator(
     ): Flow<MarkdownSource> {
         return processDiscoveredLinksFlow(
             sessionId, searchQuery, seenUrls,
-            createSerperSearchLinkDiscoveryFlow(sessionId, searchQuery),
+            createSerperSearchLinkDiscoveryFlow(sessionId, optimizedSearchQuery),
             discoveredLinksChannel, maxCacheAge, eventChannel
         )
     }
@@ -492,15 +509,20 @@ class AgenticBrowserSearchOrchestrator(
             }
     }
 
+    /**
+     * Process hybrid search using cached webpages.
+     * @param optimizedSearchQuery The query optimized for search engines
+     */
     private fun processHybridSearchFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
+        optimizedSearchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         maxCacheAge: Long?,
         hybridChannel: Channel<WebpageLink>,
         eventChannel: SendChannel<SearchEvent>
     ): Flow<MarkdownSource> = flow {
-        val webpages = webpageCacheService.searchHybrid(searchQuery.query, searchQuery.url, maxCacheAge, 15, sessionId)
+        val webpages = webpageCacheService.searchHybrid(optimizedSearchQuery.query, searchQuery.url, maxCacheAge, 15, sessionId)
             .filter { !it.markdown.isNullOrBlank() && !it.html.isNullOrBlank() }
 
         seenUrls.addAll(webpages.map { it.url })
@@ -526,7 +548,7 @@ class AgenticBrowserSearchOrchestrator(
                 flow<Unit> {
                     try {
                         val links = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
-                            searchQuery.query,
+                            optimizedSearchQuery.query,
                             webpage.html!!,
                             webpage.url,
                             sessionId
@@ -650,13 +672,16 @@ class AgenticBrowserSearchOrchestrator(
         }
     }
 
+    /**
+     * Creates a flow that discovers links via SERP search.
+     * @param optimizedSearchQuery The query already optimized for search engines
+     */
     private fun createSerperSearchLinkDiscoveryFlow(
         sessionId: QuerySessionId,
-        searchQuery: SearchQuery
+        optimizedSearchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {
         try {
-            val effectiveQuery = optimizeQueryForSerp(sessionId, searchQuery)
-            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(effectiveQuery).forEach { emit(it) }
+            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(optimizedSearchQuery).forEach { emit(it) }
         } catch (e: Exception) {
             logger.error("[{}] SERP search failed: {}", sessionId.value, e.message)
         }

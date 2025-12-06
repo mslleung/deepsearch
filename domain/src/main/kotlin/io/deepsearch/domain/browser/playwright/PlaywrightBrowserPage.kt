@@ -1079,7 +1079,7 @@ class PlaywrightBrowserPage(
         attributeName: String,
         attributeValue: String
     ) {
-        logger.debug("Injecting attribute '{}={}' into elements matching: {}", attributeName, attributeValue, cssSelector)
+//        logger.debug("Injecting attribute '{}={}' into elements matching: {}", attributeName, attributeValue, cssSelector)
 
         apiMutex.withLock {
             page.evaluate(

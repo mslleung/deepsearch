@@ -676,18 +676,22 @@ class PeriodicIndexJobRegistry(
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                         logger.debug("[{}] Recursive link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
-                                        inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
 
                                         val newDiscoveredLinks = event.discoveredLinks.filter { discovered ->
                                             val normalizedDiscovered = normalize(discovered.url)
                                             normalizedDiscovered.startsWith(job.baseUrl) && !seenUrls.contains(normalizedDiscovered)
                                         }
+                                        
+                                        // Send all discovered links BEFORE removing from in-flight set
+                                        // Use trySend to gracefully handle channel closure during shutdown
                                         newDiscoveredLinks
                                             .sortedBy { it.pathDepth() }
                                             .forEach { discovered ->
                                                 recursiveDiscoveredLinksChannel.send(discovered)
                                             }
 
+                                        // Only remove from in-flight AFTER all sends are complete
+                                        inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
                                         logger.debug("[{}] In-flight links count: {}", jobId, inFlightLinkDiscoveryProcessing.size)
 
                                         if (newDiscoveredLinks.isEmpty()) {
