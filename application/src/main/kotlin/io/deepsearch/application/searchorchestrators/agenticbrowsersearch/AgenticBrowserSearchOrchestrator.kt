@@ -202,22 +202,20 @@ class AgenticBrowserSearchOrchestrator(
                 .filter { answerAccumulator -> answerAccumulator.isComplete }
                 .take(1)
                 .onEach { completedAnswerAccumulator -> // should only be one emission
-                    val completionEvent = finishQuerySession(
+                    finishQuerySession(
                         sessionId,
                         searchQuery,
                         completedAnswerAccumulator,
                         budget,
                         channel
                     )
-                    send(completionEvent)
                 }
                 .onCompletion { // answer did not complete, but the upstream flow completed, return our incomplete answer
                     if (answerAccumulator.isComplete) {
                         // already called the early exit in the onEach above
                         return@onCompletion
                     }
-                    val completionEvent = finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
-                    send(completionEvent)
+                    finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
                 }
                 .single()
         } catch (e: CancellationException) {
@@ -522,8 +520,9 @@ class AgenticBrowserSearchOrchestrator(
         hybridChannel: Channel<WebpageLink>,
         eventChannel: SendChannel<SearchEvent>
     ): Flow<MarkdownSource> = flow {
-        val webpages = webpageCacheService.searchHybrid(optimizedSearchQuery.query, searchQuery.url, maxCacheAge, 15, sessionId)
-            .filter { !it.markdown.isNullOrBlank() && !it.html.isNullOrBlank() }
+        val webpages =
+            webpageCacheService.searchHybrid(optimizedSearchQuery.query, searchQuery.url, maxCacheAge, 15, sessionId)
+                .filter { !it.markdown.isNullOrBlank() && !it.html.isNullOrBlank() }
 
         seenUrls.addAll(webpages.map { it.url })
 
@@ -762,7 +761,7 @@ class AgenticBrowserSearchOrchestrator(
         accumulator: AnswerAccumulator,
         budget: SearchBudget,
         eventChannel: SendChannel<SearchEvent>
-    ): SearchEvent.SessionCompleted {
+    ) {
         // Stream the answer and emit chunks
         var fullAnswer = ""
         var imageIds = emptyList<String>()
@@ -784,35 +783,42 @@ class AgenticBrowserSearchOrchestrator(
                     )
                     // Capture image IDs from answer synthesis
                     imageIds = item.imageIds
+
+                    val answerSources = accumulator.currentShortlist.map { it.url }
+                    if (answerSources.isNotEmpty()) {
+                        urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
+                    }
+
+                    val finishReason = when {
+                        accumulator.isComplete -> "ANSWER_COMPLETE"
+                        querySessionService.isBudgetExceeded(sessionId, budget) -> "BUDGET_EXCEEDED"
+                        else -> "LINKS_EXHAUSTED"
+                    }
+
+                    when (finishReason) {
+                        "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer)
+                        "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(
+                            sessionId,
+                            fullAnswer,
+                            budget
+                        )
+
+                        else -> querySessionService.completeSessionLinksExhausted(sessionId, fullAnswer)
+                    }
+
+                    // Fetch full session detail for the completed event
+                    val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
+
+                    eventChannel.send(
+                        SearchEvent.SessionCompleted(
+                            sessionId = sessionId,
+                            finishReason = finishReason,
+                            sessionDetail = sessionDetail,
+                            imageIds = imageIds
+                        )
+                    )
                 }
             }
         }
-
-        val answerSources = accumulator.currentShortlist.map { it.url }
-        if (answerSources.isNotEmpty()) {
-            urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
-        }
-
-        val finishReason = when {
-            accumulator.isComplete -> "ANSWER_COMPLETE"
-            querySessionService.isBudgetExceeded(sessionId, budget) -> "BUDGET_EXCEEDED"
-            else -> "LINKS_EXHAUSTED"
-        }
-
-        when (finishReason) {
-            "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer)
-            "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(sessionId, fullAnswer, budget)
-            else -> querySessionService.completeSessionLinksExhausted(sessionId, fullAnswer)
-        }
-
-        // Fetch full session detail for the completed event
-        val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
-
-        return SearchEvent.SessionCompleted(
-            sessionId = sessionId,
-            finishReason = finishReason,
-            sessionDetail = sessionDetail,
-            imageIds = imageIds
-        )
     }
 }

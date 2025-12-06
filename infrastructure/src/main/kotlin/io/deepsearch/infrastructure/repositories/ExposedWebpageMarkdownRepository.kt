@@ -219,8 +219,24 @@ class ExposedWebpageMarkdownRepository(
         minUpdatedAtEpochMs: Long?,
         limit: Int
     ): List<WebpageMarkdown> = transactionService.withTransaction {
+        // Sanitize and limit query to prevent tsquery buffer overflow issues
+        // PostgreSQL websearch_to_tsquery can generate very large tsquery expressions for long queries
+        val sanitizedQuery = sanitizeSearchQuery(textQuery)
+        
+        // Log if query was truncated
+        if (sanitizedQuery != textQuery) {
+            logger.warn(
+                "Search query was sanitized/truncated (original length: {}, sanitized length: {}). " +
+                "Original: '{}...', Sanitized: '{}'",
+                textQuery.length,
+                sanitizedQuery.length,
+                textQuery.take(100),
+                sanitizedQuery
+            )
+        }
+        
         // Escape single quotes for SQL safety
-        val escapedQuery = textQuery.replace("'", "''")
+        val escapedQuery = sanitizedQuery.replace("'", "''")
         
         // Create custom SQL expression for full-text search match using @@ operator
         // This ensures documents that don't match the query are filtered out
@@ -322,6 +338,31 @@ class ExposedWebpageMarkdownRepository(
     }
 
     companion object {
+        /**
+         * Maximum query length for full-text search to prevent tsquery buffer overflow.
+         * PostgreSQL websearch_to_tsquery can generate very large tsquery expressions
+         * that exceed R2DBC buffer limits (>100KB), causing IndexOutOfBoundsException.
+         */
+        private const val MAX_SEARCH_QUERY_LENGTH = 500
+        
+        /**
+         * Sanitizes and limits search query for PostgreSQL websearch_to_tsquery.
+         * Prevents buffer overflow issues by:
+         * - Limiting query length to MAX_SEARCH_QUERY_LENGTH characters
+         * - Removing problematic Unicode characters (emoji, special symbols)
+         * - Collapsing multiple spaces
+         * - Trimming whitespace
+         */
+        fun sanitizeSearchQuery(query: String): String {
+            return query
+                .take(MAX_SEARCH_QUERY_LENGTH)              // Limit length to prevent huge tsquery expressions
+                .replace(Regex("[\\p{So}\\p{Sk}]"), " ")    // Remove emoji and pictographs
+                .replace(Regex("\\p{Cf}"), "")               // Remove format characters
+                .replace(Regex("[\\p{C}]"), "")              // Remove other control characters
+                .replace(Regex("\\s+"), " ")                 // Collapse multiple whitespace
+                .trim()
+        }
+        
         /**
          * Sanitizes text for PostgreSQL full-text search (tsvector).
          * Removes Unicode characters that can cause R2DBC decoding issues:

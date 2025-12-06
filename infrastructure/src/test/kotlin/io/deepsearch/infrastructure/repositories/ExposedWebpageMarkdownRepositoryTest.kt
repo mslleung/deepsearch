@@ -30,6 +30,57 @@ class ExposedWebpageMarkdownRepositoryTest : KoinTest {
     private val textEmbeddingService by inject<ITextEmbeddingService>()
 
     @Test
+    fun searchHybridWithLongQuery() = runTest(testCoroutineDispatcher) {
+        // Create test data with markdown content
+        val urlPrefix = "https://example.com/long-query/"
+        
+        val markdown = "Kotlin is a modern programming language that makes developers happier. It is concise, safe, and interoperable with Java."
+        
+        // Generate real embedding for the document
+        val embeddingResult = textEmbeddingService.embedDocuments(listOf(markdown))
+        val embedding = embeddingResult.embeddings[0]
+        
+        // Insert test webpage with searchable content and real embedding
+        val webpage = WebpageMarkdown(
+            url = "${urlPrefix}kotlin-guide",
+            title = null,
+            description = null,
+            markdown = markdown,
+            html = "<html><body>Kotlin guide</body></html>",
+            httpStatus = 200,
+            httpReason = "OK",
+            mimeType = "text/html",
+            embedding = embedding,
+            createdAt = kotlin.time.Clock.System.now(),
+            updatedAt = kotlin.time.Clock.System.now()
+        )
+        
+        webpageMarkdownRepository.upsert(webpage)
+        
+        // Generate a very long query (over MAX_SEARCH_QUERY_LENGTH)
+        val longQuery = "Kotlin programming language ".repeat(100) // Creates a ~2700 character query
+        
+        // Generate real embedding for the search query
+        val queryEmbeddingResult = textEmbeddingService.embedQuery("Kotlin programming language")
+        
+        // Perform hybrid search with very long query - should not throw IndexOutOfBoundsException
+        val searchResults = webpageMarkdownRepository.searchHybrid(
+            textQuery = longQuery,
+            queryEmbedding = queryEmbeddingResult.embedding,
+            urlPrefix = urlPrefix,
+            minUpdatedAtEpochMs = null,
+            limit = 10
+        )
+        
+        // Assert the query was handled successfully (even if truncated)
+        assertNotNull(searchResults, "Search results should not be null even with long query")
+        assertTrue(
+            searchResults.any { it.url == "${urlPrefix}kotlin-guide" },
+            "Search results should contain the Kotlin guide page even with truncated query"
+        )
+    }
+
+    @Test
     fun searchHybrid() = runTest(testCoroutineDispatcher) {
         // Create test data with markdown content
         val urlPrefix = "https://example.com/"
@@ -110,4 +161,71 @@ class ExposedWebpageMarkdownRepositoryTest : KoinTest {
         )
     }
 
+}
+
+/**
+ * Unit tests for ExposedWebpageMarkdownRepository utility functions.
+ * These don't require Koin setup as they're testing pure functions.
+ */
+class ExposedWebpageMarkdownRepositoryUnitTest {
+    
+    @Test
+    fun `sanitizes normal query correctly`() {
+        val query = "Kotlin programming language"
+        val sanitized = ExposedWebpageMarkdownRepository.sanitizeSearchQuery(query)
+        assertEquals("Kotlin programming language", sanitized)
+    }
+    
+    @Test
+    fun `truncates very long query`() {
+        val longQuery = "a".repeat(1000)
+        val sanitized = ExposedWebpageMarkdownRepository.sanitizeSearchQuery(longQuery)
+        assertTrue(sanitized.length <= 500, "Query should be truncated to max 500 characters")
+        assertEquals(500, sanitized.length)
+    }
+    
+    @Test
+    fun `removes emoji from query`() {
+        val queryWithEmoji = "Kotlin 😀 programming 🎉 language"
+        val sanitized = ExposedWebpageMarkdownRepository.sanitizeSearchQuery(queryWithEmoji)
+        assertFalse(sanitized.contains("😀"))
+        assertFalse(sanitized.contains("🎉"))
+        assertTrue(sanitized.contains("Kotlin"))
+        assertTrue(sanitized.contains("programming"))
+    }
+    
+    @Test
+    fun `collapses multiple spaces`() {
+        val queryWithSpaces = "Kotlin    programming     language"
+        val sanitized = ExposedWebpageMarkdownRepository.sanitizeSearchQuery(queryWithSpaces)
+        assertEquals("Kotlin programming language", sanitized)
+    }
+    
+    @Test
+    fun `trims whitespace`() {
+        val queryWithWhitespace = "  Kotlin programming language  "
+        val sanitized = ExposedWebpageMarkdownRepository.sanitizeSearchQuery(queryWithWhitespace)
+        assertEquals("Kotlin programming language", sanitized)
+    }
+    
+    @Test
+    fun `handles empty query`() {
+        val emptyQuery = ""
+        val sanitized = ExposedWebpageMarkdownRepository.sanitizeSearchQuery(emptyQuery)
+        assertEquals("", sanitized)
+    }
+    
+    @Test
+    fun `handles query with only whitespace`() {
+        val whitespaceQuery = "   \t  \n  "
+        val sanitized = ExposedWebpageMarkdownRepository.sanitizeSearchQuery(whitespaceQuery)
+        assertEquals("", sanitized)
+    }
+    
+    @Test
+    fun `removes control characters`() {
+        val queryWithControlChars = "Kotlin\u0000programming\u0001language"
+        val sanitized = ExposedWebpageMarkdownRepository.sanitizeSearchQuery(queryWithControlChars)
+        assertEquals("Kotlinprogramminglanguage", sanitized)
+    }
 }
