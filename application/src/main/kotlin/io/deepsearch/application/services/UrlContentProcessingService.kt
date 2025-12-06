@@ -16,6 +16,7 @@ import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
+import io.deepsearch.infrastructure.services.ITransactionService
 
 interface IUrlContentProcessingService {
     /**
@@ -72,7 +73,8 @@ class UrlContentProcessingService(
     private val fileSearchService: IFileSearchService,
     private val tokenUsageService: ILlmTokenUsageService,
     private val urlProcessingLockRegistry: UrlProcessingLockRegistry,
-    private val webpageImageLinkageRepository: IWebpageImageLinkageRepository
+    private val webpageImageLinkageRepository: IWebpageImageLinkageRepository,
+    private val transactionService: ITransactionService
 ) : IUrlContentProcessingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -263,42 +265,48 @@ class UrlContentProcessingService(
 
                 val markdownExtractionFlow = flow {
                     try {
-                        val extractionResult = webpageExtractionService.extractWebpage(page, sessionId)
-                        logger.debug(
-                            "Markdown extraction complete for {}: {} chars",
-                            normalizedUrl,
-                            extractionResult.markdown.length
-                        )
-
-                        webpageCacheService.cacheWebpage(
-                            url = normalizedUrl,
-                            title = extractionResult.title,
-                            description = extractionResult.description,
-                            markdown = extractionResult.markdown,
-                            html = extractedHtml,
-                            httpStatus = 200,
-                            httpReason = "OK",
-                            mimeType = "text/html",
-                            sessionId = sessionId
-                        )
-
-                        // Update URL-to-image linkages
-                        if (extractionResult.imageHashes.isNotEmpty()) {
-                            webpageImageLinkageRepository.upsertLinkages(
+                        // Wrap extraction and linkage creation in a single transaction
+                        // to ensure atomicity and prevent foreign key constraint violations
+                        transactionService.withTransaction {
+                            val extractionResult = webpageExtractionService.extractWebpage(page, sessionId)
+                            logger.debug(
+                                "Markdown extraction complete for {}: {} chars",
                                 normalizedUrl,
-                                extractionResult.imageHashes
+                                extractionResult.markdown.length
+                            )
+
+                            webpageCacheService.cacheWebpage(
+                                url = normalizedUrl,
+                                title = extractionResult.title,
+                                description = extractionResult.description,
+                                markdown = extractionResult.markdown,
+                                html = extractedHtml,
+                                httpStatus = 200,
+                                httpReason = "OK",
+                                mimeType = "text/html",
+                                sessionId = sessionId
+                            )
+
+                            // Update URL-to-image linkages
+                            // This must be in the same transaction as extractWebpage to ensure
+                            // the image records exist before linkages reference them
+                            if (extractionResult.imageHashes.isNotEmpty()) {
+                                webpageImageLinkageRepository.upsertLinkages(
+                                    normalizedUrl,
+                                    extractionResult.imageHashes
+                                )
+                            }
+
+                            emit(
+                                UrlProcessingEvent.MarkdownExtractionComplete(
+                                    normalizedUrl,
+                                    extractionResult.markdown,
+                                    extractionResult.title,
+                                    extractionResult.description,
+                                    wasCached = false
+                                )
                             )
                         }
-
-                        emit(
-                            UrlProcessingEvent.MarkdownExtractionComplete(
-                                normalizedUrl,
-                                extractionResult.markdown,
-                                extractionResult.title,
-                                extractionResult.description,
-                                wasCached = false
-                            )
-                        )
                     } catch (e: Exception) {
                         // Wrap markdown extraction failures
                         throw MarkdownExtractionException(normalizedUrl, e)
