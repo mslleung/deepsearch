@@ -85,9 +85,9 @@ data class AdaptiveRateLimiterConfig(
 )
 
 @OptIn(ExperimentalTime::class)
-class AdaptiveRateLimiter(
+class AdaptiveRateLimiter() : IAdaptiveRateLimiter {
+
     private val config: AdaptiveRateLimiterConfig = AdaptiveRateLimiterConfig()
-) : IAdaptiveRateLimiter {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     private val domainStates = ConcurrentHashMap<String, DomainRateLimitState>()
@@ -167,7 +167,7 @@ class AdaptiveRateLimiter(
     /**
      * Tracks rate limit state for a single domain.
      * Thread-safe for concurrent access using atomic operations.
-     * 
+     *
      * Uses a counting approach instead of dynamic semaphore resizing:
      * - A semaphore with max capacity (initialConcurrency) handles permit waiting
      * - An atomic counter tracks the current logical limit
@@ -175,13 +175,13 @@ class AdaptiveRateLimiter(
      */
     private inner class DomainRateLimitState(private val config: AdaptiveRateLimiterConfig) {
         private val mutex = Mutex()
-        
+
         // The actual semaphore with fixed max capacity
         private val semaphore = Semaphore(config.initialConcurrency)
-        
+
         // Current logical limit (can be reduced/increased within bounds)
         private val currentLimitAtomic = AtomicInteger(config.initialConcurrency)
-        
+
         // Count of currently active requests (those that have acquired permits)
         private val activeRequests = AtomicInteger(0)
 
@@ -189,6 +189,7 @@ class AdaptiveRateLimiter(
         private val successCountAtomic = AtomicLong(0)
         private var successesSinceLastIncrease = AtomicInteger(0)
         private val rateLimitCountAtomic = AtomicLong(0)
+
         @Volatile
         private var lastRateLimitTime: Long? = null
 
@@ -200,11 +201,11 @@ class AdaptiveRateLimiter(
             while (true) {
                 // First acquire from the semaphore (this is the max possible concurrency)
                 semaphore.acquire()
-                
+
                 // Then check if we're within the current logical limit
                 val active = activeRequests.incrementAndGet()
                 val limit = currentLimitAtomic.get()
-                
+
                 if (active <= limit) {
                     // We're within the limit, proceed
                     return
@@ -237,23 +238,24 @@ class AdaptiveRateLimiter(
         suspend fun onSuccess() {
             successCountAtomic.incrementAndGet()
             val successes = successesSinceLastIncrease.incrementAndGet()
-            
+
             // Only try to increase if we're below the initial limit
             val currentLimit = currentLimitAtomic.get()
             if (currentLimit < config.initialConcurrency && successes >= config.successesBeforeIncrease) {
                 mutex.withLock {
                     // Double-check within lock
                     val limit = currentLimitAtomic.get()
-                    if (limit < config.initialConcurrency && 
-                        successesSinceLastIncrease.get() >= config.successesBeforeIncrease) {
-                        
+                    if (limit < config.initialConcurrency &&
+                        successesSinceLastIncrease.get() >= config.successesBeforeIncrease
+                    ) {
+
                         val newLimit = (limit + config.increaseStep)
                             .coerceAtMost(config.initialConcurrency)
-                        
+
                         if (newLimit > limit) {
                             currentLimitAtomic.set(newLimit)
                             successesSinceLastIncrease.set(0)
-                            
+
                             logger.debug(
                                 "Increased concurrency limit to {} after {} successes",
                                 newLimit, config.successesBeforeIncrease
@@ -276,7 +278,7 @@ class AdaptiveRateLimiter(
 
                 if (newLimit < currentLimit) {
                     currentLimitAtomic.set(newLimit)
-                    
+
                     logger.info(
                         "Reduced concurrency limit from {} to {} due to rate limiting",
                         currentLimit, newLimit
