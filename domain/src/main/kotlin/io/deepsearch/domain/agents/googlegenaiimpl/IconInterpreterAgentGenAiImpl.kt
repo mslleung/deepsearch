@@ -85,7 +85,7 @@ class IconInterpreterAgentGenAiImpl(
             )
         }
         
-        val response = retryLlmCall<IconInterpretationResponse> {
+        val response = retryLlmCall<IconInterpretationResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 listOf(Content.fromParts(Part.fromBytes(input.bytes, input.mimeType.value))),

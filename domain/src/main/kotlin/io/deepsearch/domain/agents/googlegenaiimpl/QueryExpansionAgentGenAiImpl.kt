@@ -101,7 +101,7 @@ class QueryExpansionAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = retryLlmCall<QueryExpansionResponse> {
+        val response = retryLlmCall<QueryExpansionResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 input.searchQuery.query,

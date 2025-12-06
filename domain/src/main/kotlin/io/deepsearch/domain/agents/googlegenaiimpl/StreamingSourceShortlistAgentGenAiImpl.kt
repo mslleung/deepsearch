@@ -167,7 +167,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
         // Build user prompt with query, current shortlist, and new sources
         val userPrompt = buildUserPrompt(input)
 
-        val response = retryLlmCall<ShortlistResponse> {
+        val response = retryLlmCall<ShortlistResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 userPrompt,

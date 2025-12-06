@@ -113,7 +113,7 @@ class AnswerSynthesisAgentGenAiImpl(
 
         val userPrompt = buildUserPrompt(input)
 
-        val response = retryLlmCall<SynthesisResponse> {
+        val response = retryLlmCall<SynthesisResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 userPrompt,

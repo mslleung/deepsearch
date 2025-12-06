@@ -123,7 +123,7 @@ class TableIdentificationAgentGenAiImpl(
 
         // Step 4: Pass to LLM
         
-        val response = retryLlmCall<TableIdentificationResponse> {
+        val response = retryLlmCall<TableIdentificationResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 listOf(Content.fromParts(Part.fromText(cleanedHtml))),

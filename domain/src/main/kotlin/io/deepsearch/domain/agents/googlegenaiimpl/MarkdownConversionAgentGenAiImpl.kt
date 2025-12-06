@@ -80,7 +80,7 @@ class MarkdownConversionAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_3_PRO_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = retryLlmCall<MarkdownConversionResponse> {
+        val response = retryLlmCall<MarkdownConversionResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 listOf(

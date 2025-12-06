@@ -127,7 +127,7 @@ class TableInterpretationAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = retryLlmCall<TableInterpretationResponse> {
+        val response = retryLlmCall<TableInterpretationResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 userPrompt,

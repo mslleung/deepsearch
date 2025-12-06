@@ -76,7 +76,7 @@ class SerpQueryOptimizationAgentGenAiImpl(
             Target website: ${input.targetUrl}
         """.trimIndent()
 
-        val response = retryLlmCall<SerpOptimizationResponse> {
+        val response = retryLlmCall<SerpOptimizationResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 userPrompt,

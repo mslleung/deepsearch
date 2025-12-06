@@ -71,7 +71,7 @@ class BlinkTestAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
-        val response = retryLlmCall<BlinkTestResponse> {
+        val response = retryLlmCall<BlinkTestResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 listOf(

@@ -203,7 +203,7 @@ class MultiIconInterpreterAgentGenAiImpl(
         // Add instruction text
         contentParts.add(Part.fromText("Interpret the above ${iconsToProcess.size} icons in order"))
 
-        val response = retryLlmCall<MultiIconInterpretationResponse> {
+        val response = retryLlmCall<MultiIconInterpretationResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 listOf(Content.fromParts(*(contentParts.toTypedArray()))),

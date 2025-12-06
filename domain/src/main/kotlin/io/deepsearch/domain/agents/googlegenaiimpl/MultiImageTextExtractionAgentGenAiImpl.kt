@@ -215,7 +215,7 @@ class MultiImageTextExtractionAgentGenAiImpl(
             Part.fromText("Extract all text from this image")
         )
 
-        val response = retryLlmCall<SingleImageTextExtractionResponse> {
+        val response = retryLlmCall<SingleImageTextExtractionResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 listOf(Content.fromParts(*(contentParts.toTypedArray()))),

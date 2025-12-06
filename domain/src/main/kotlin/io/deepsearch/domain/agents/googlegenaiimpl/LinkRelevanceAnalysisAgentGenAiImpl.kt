@@ -128,7 +128,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
         val links = try {
-            val response = retryLlmCall<LinkAnalysisResponse> {
+            val response = retryLlmCall<LinkAnalysisResponse>(this::class.simpleName!!) {
                 val result = client.models.generateContent(
                     modelId,
                     userPrompt,

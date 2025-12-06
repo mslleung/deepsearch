@@ -111,6 +111,7 @@ internal sealed class LlmCallResult<out T> {
  * - Falls back to exponential backoff if parsing fails
  * - Max rate limit retries: 3
  * 
+ * @param agentName Name of the agent making the call (for logging)
  * @param maxDeserializationRetries Maximum number of attempts for deserialization failures (default 1)
  * @param llmCall Lambda that performs the LLM call and returns the response string
  * @return Deserialized response of type T
@@ -118,6 +119,7 @@ internal sealed class LlmCallResult<out T> {
  * @throws LlmRateLimitException if all rate limit retries are exhausted
  */
 suspend inline fun <reified T> retryLlmCall(
+    agentName: String,
     maxDeserializationRetries: Int = 1,
     crossinline llmCall: suspend () -> String
 ): T {
@@ -126,7 +128,7 @@ suspend inline fun <reified T> retryLlmCall(
 
     while (true) {
         // Try the LLM call with deserialization retries
-        val result = tryLlmCallWithDeserializationRetries<T>(maxDeserializationRetries, logger, llmCall)
+        val result = tryLlmCallWithDeserializationRetries<T>(agentName, maxDeserializationRetries, logger, llmCall)
         
         when (result) {
             is LlmCallResult.Success -> return result.value
@@ -138,14 +140,14 @@ suspend inline fun <reified T> retryLlmCall(
             is LlmCallResult.RateLimited -> {
                 rateLimitAttempt++
                 if (rateLimitAttempt > MAX_RATE_LIMIT_RETRIES) {
-                    logger.error("Rate limit retries exhausted after $MAX_RATE_LIMIT_RETRIES attempts")
+                    logger.error("[{}] Rate limit retries exhausted after {} attempts", agentName, MAX_RATE_LIMIT_RETRIES)
                     throw LlmRateLimitException(MAX_RATE_LIMIT_RETRIES, result.exception)
                 }
                 
                 val delayMs = parseRetryDelayOrDefault(result.exception.message, rateLimitAttempt - 1)
                 logger.warn(
-                    "Rate limited (429) on attempt $rateLimitAttempt/$MAX_RATE_LIMIT_RETRIES. " +
-                    "Waiting ${delayMs}ms before retry."
+                    "[{}] Rate limited (429) on attempt {}/{}. Waiting {}ms before retry.",
+                    agentName, rateLimitAttempt, MAX_RATE_LIMIT_RETRIES, delayMs
                 )
                 delay(delayMs)
                 // Continue to next iteration
@@ -160,6 +162,7 @@ suspend inline fun <reified T> retryLlmCall(
  */
 @PublishedApi
 internal suspend inline fun <reified T> tryLlmCallWithDeserializationRetries(
+    agentName: String,
     maxRetries: Int,
     logger: org.slf4j.Logger,
     crossinline llmCall: suspend () -> String
@@ -169,15 +172,15 @@ internal suspend inline fun <reified T> tryLlmCallWithDeserializationRetries(
     repeat(maxRetries) { attempt ->
         try {
             val response = llmCall()
-            logger.debug("Decoding LLM response: {}", response)
+            logger.debug("[{}] Decoding LLM response: {}", agentName, response)
             return LlmCallResult.Success(Json.decodeFromStringWithCodeBlocks<T>(response))
         } catch (e: LlmDeserializationException) {
             lastDeserializationException = e
             val attemptNum = attempt + 1
             if (attemptNum < maxRetries) {
-                logger.warn("LLM deserialization failed on attempt $attemptNum/$maxRetries: ${e.message}. Retrying...")
+                logger.warn("[{}] LLM deserialization failed on attempt {}/{}: {}. Retrying...", agentName, attemptNum, maxRetries, e.message)
             } else {
-                logger.error("LLM deserialization failed after $maxRetries attempts: ${e.message}")
+                logger.error("[{}] LLM deserialization failed after {} attempts: {}", agentName, maxRetries, e.message)
             }
         } catch (e: Exception) {
             if (isRateLimitException(e)) {

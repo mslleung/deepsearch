@@ -117,7 +117,7 @@ class StreamingAnswerAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = retryLlmCall<StreamingAnswerResponse> {
+        val response = retryLlmCall<StreamingAnswerResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 userPrompt,

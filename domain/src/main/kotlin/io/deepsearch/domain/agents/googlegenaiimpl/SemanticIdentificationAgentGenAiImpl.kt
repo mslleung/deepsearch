@@ -147,7 +147,7 @@ class SemanticIdentificationAgentGenAiImpl(
 
         // Step 4: Pass to LLM
         
-        val response = retryLlmCall<SemanticIdentificationResponse> {
+        val response = retryLlmCall<SemanticIdentificationResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 cleanedHtml,

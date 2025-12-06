@@ -73,7 +73,7 @@ class PopupContainerIdentificationAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = retryLlmCall<PopupContainerIdentificationResponse> {
+        val response = retryLlmCall<PopupContainerIdentificationResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 listOf(

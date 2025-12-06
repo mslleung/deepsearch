@@ -78,7 +78,7 @@ class GenerateAnswerAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
-        val response = retryLlmCall<GenerateAnswerResponse> {
+        val response = retryLlmCall<GenerateAnswerResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 userPrompt,

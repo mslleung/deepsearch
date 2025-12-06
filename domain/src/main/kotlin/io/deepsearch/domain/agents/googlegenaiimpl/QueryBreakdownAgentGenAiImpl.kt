@@ -110,7 +110,7 @@ class QueryBreakdownAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = retryLlmCall<QueryBreakdownResponse> {
+        val response = retryLlmCall<QueryBreakdownResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 input.searchQuery.query,
