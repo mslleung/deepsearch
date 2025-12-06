@@ -10,7 +10,7 @@ import org.koin.ktor.plugin.scope
 
 fun Application.configurePeriodicIndexRoutes() {
     routing {
-        rateLimit(RateLimitProviders.API_KEY) {
+        rateLimit(RateLimitProviders.API_KEY_GENERAL) {
             authenticate("api-key") {
                 route("/api/periodic-index") {
                     // Config management

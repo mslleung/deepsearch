@@ -11,7 +11,7 @@ import org.koin.ktor.plugin.scope
 
 fun Application.configurePeriodicIndexJobRoutes() {
     routing {
-        rateLimit(RateLimitProviders.API_KEY) {
+        rateLimit(RateLimitProviders.API_KEY_GENERAL) {
             authenticate("api-key") {
                 route("/api") {
                     route("/periodic-index/jobs") {

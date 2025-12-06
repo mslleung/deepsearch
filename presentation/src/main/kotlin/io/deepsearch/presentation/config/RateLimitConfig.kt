@@ -20,8 +20,11 @@ object RateLimitProviders {
     /** User-based limits for JWT-authenticated web-app routes */
     val WEB_APP = RateLimitName("web-app")
     
-    /** Dynamic API key limits based on key type (prefix-based detection) */
+    /** Dynamic API key limits for search operations based on key type (prefix-based detection) */
     val API_KEY = RateLimitName("api-key")
+    
+    /** General API key limits for non-search operations (60 req/min for all API keys) */
+    val API_KEY_GENERAL = RateLimitName("api-key-general")
 }
 
 /**
@@ -83,6 +86,15 @@ fun Application.configureRateLimit() {
                 } else {
                     1 // Unknown prefix - use base limit (will fail auth anyway)
                 }
+            }
+        }
+
+        // General API key rate limiting for non-search operations (60 req/min)
+        register(RateLimitProviders.API_KEY_GENERAL) {
+            rateLimiter(limit = 60, refillPeriod = 1.minutes)
+
+            requestKey { call ->
+                extractApiKeyFromRequest(call)
             }
         }
     }
