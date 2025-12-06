@@ -8,12 +8,12 @@ import io.r2dbc.pool.ConnectionPoolConfiguration
 import io.r2dbc.postgresql.PostgresqlConnectionConfiguration
 import io.r2dbc.postgresql.PostgresqlConnectionFactory
 import io.r2dbc.spi.IsolationLevel
+import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.core.vendors.PostgreSQLDialect
-import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
-import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabaseConfig
-import org.jetbrains.exposed.v1.r2dbc.SchemaUtils
+import org.jetbrains.exposed.v1.r2dbc.*
 import org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction
+import org.slf4j.LoggerFactory
 import java.io.File
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -50,7 +50,17 @@ class DatabaseConfigurationService(
     private val periodicIndexConfigTable: PeriodicIndexConfigTable,
 ) : IDatabaseConfigurationService {
 
+    private val logger = LoggerFactory.getLogger(DatabaseConfigurationService::class.java)
     private val _database: R2dbcDatabase = configureDatabase()
+    
+    companion object {
+        /**
+         * Maximum text length (in characters) passed to PostgreSQL to_tsvector.
+         * Prevents tsvector from growing too large (>100KB) which causes R2DBC buffer overflow.
+         * 100,000 characters is approximately 100KB, well within R2DBC buffer limits.
+         */
+        private const val MAX_TSVECTOR_INPUT_LENGTH = 100_000
+    }
 
     override fun getDatabase() = _database
 
@@ -112,12 +122,15 @@ class DatabaseConfigurationService(
                 
                 // Create trigger function to auto-update tsvector when sanitized markdown changes
                 // Uses markdown_sanitized (not markdown) to avoid R2DBC issues with emoji/special chars in tsvector
+                // Limits text to first MAX_TSVECTOR_INPUT_LENGTH chars to prevent tsvector from growing too large (R2DBC buffer overflow)
                 exec(
                     """
                     CREATE OR REPLACE FUNCTION webpage_markdowns_markdown_search_vector_update() 
                     RETURNS trigger AS $$
                     BEGIN
-                      NEW.markdown_search_vector := to_tsvector('simple', COALESCE(NEW.markdown_sanitized, ''));
+                      NEW.markdown_search_vector := to_tsvector('simple', 
+                        LEFT(COALESCE(NEW.markdown_sanitized, ''), $MAX_TSVECTOR_INPUT_LENGTH)
+                      );
                       RETURN NEW;
                     END;
                     $$ LANGUAGE plpgsql;
