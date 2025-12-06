@@ -194,7 +194,7 @@ class AgenticBrowserSearchOrchestrator(
             merge(immediateFlows, optimizedQueryFlows)
                 .cancellable()
                 .filter { it.markdown.isNotBlank() }
-                .chunkedWithTimeout(chunkSize = 5, timeoutMs = 1000)
+                .chunkedWithTimeout(chunkSize = 15, timeoutMs = 1000)
                 .runningFold(AnswerAccumulator()) { state, markdownResults ->
                     aggregateMarkdownResultIntoAnswer(sessionId, searchQuery, state, markdownResults, channel)
                 }
@@ -697,10 +697,6 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery
     ): SearchQuery {
         val wordCount = searchQuery.query.trim().split("\\s+".toRegex()).size
-        if (wordCount <= 10) {
-            logger.debug("[{}] Query has {} words, skipping SERP optimization", sessionId.value, wordCount)
-            return searchQuery
-        }
 
         logger.debug("[{}] Query has {} words, optimizing for SERP", sessionId.value, wordCount)
 

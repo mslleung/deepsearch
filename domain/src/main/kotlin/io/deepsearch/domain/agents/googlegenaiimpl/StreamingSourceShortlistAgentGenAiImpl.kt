@@ -100,10 +100,13 @@ class StreamingSourceShortlistAgentGenAiImpl(
            - Set isGoodEnough=false if the best source is an `OFFICIAL_SNAPSHOT` (Blog/News) when the query asks for static facts (Price, Specs, Current Features), unless you have verified no Living Doc exists.
            - Set isGoodEnough=false if the answer relies on data that is too old.
            - **ALWAYS** set `isGoodEnough=false` if the source suggests a "New Update" but the URL indicates a blog post (e.g., /blog/pricing-update), as we must find the actual implementation page.
+           - When isGoodEnough=false, the pipeline will fetch more sources for the next shortlist generation. 
+             Since sources are not given to you in any order, prefer to process more sources if the sources seem to
+             be biased and not directly answer the query.
            - Set isGoodEnough=true only when you have high-quality, current sources that directly answer the query.
         
         Shortlist Management:
-        - Maximum ~10 sources in shortlist (remove less relevant ones if needed)
+        - Maximum ~20 sources in shortlist (remove less relevant ones if needed)
         - Each source must add unique value
         - Prioritize OFFICIAL_LIVING_DOC with DIRECT_ANSWER for factual queries
         - If new sources conflict with existing ones, keep the most authoritative and current
