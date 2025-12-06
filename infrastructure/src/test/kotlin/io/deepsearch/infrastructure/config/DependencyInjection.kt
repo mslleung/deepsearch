@@ -41,6 +41,7 @@ private val infrastructureCommonTestModule = module {
     singleOf(::UserSubscriptionTable)
     singleOf(::WebpageIconCacheTable)
     singleOf(::WebpageImageCacheTable)
+    singleOf(::WebpageImageLinkageTable)
     singleOf(::WebpagePopupCacheTable)
     singleOf(::WebpageTableCacheTable)
     singleOf(::WebpageTableInterpretationCacheTable)
