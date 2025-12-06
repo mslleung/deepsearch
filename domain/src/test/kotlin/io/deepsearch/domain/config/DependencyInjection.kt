@@ -9,6 +9,8 @@ import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.ocr.ITesseractPool
 import io.deepsearch.domain.services.OcrImageTextExtractionService
 import io.deepsearch.domain.ocr.TesseractPoolImpl
+import io.deepsearch.domain.ratelimit.AdaptiveRateLimiter
+import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.CssSelectorConstructionService
 import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
@@ -80,6 +82,7 @@ private val domainCommonTestModule = module {
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
 
     // domain services
+    singleOf(::AdaptiveRateLimiter) bind IAdaptiveRateLimiter::class
     singleOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
     singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
     singleOf(::JwtService) bind IJwtService::class

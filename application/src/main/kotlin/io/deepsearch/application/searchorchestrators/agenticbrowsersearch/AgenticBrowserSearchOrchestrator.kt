@@ -22,6 +22,7 @@ import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.exceptions.MarkdownConversionException
 import io.deepsearch.domain.exceptions.NetworkConnectionException
+import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.ext.chunkedWithTimeout
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
@@ -91,7 +92,8 @@ class AgenticBrowserSearchOrchestrator(
     private val webpageCacheService: WebpageCacheService,
     private val geminiFileSearchService: IGeminiFileSearchService,
     private val dispatchers: IDispatcherProvider,
-    private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService
+    private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService,
+    private val adaptiveRateLimiter: IAdaptiveRateLimiter
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -291,6 +293,7 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Common processing logic for discovered links.
+     * Uses adaptive rate limiting per domain to respect website rate limits.
      */
     private fun processDiscoveredLinksFlow(
         sessionId: QuerySessionId,
@@ -311,66 +314,74 @@ class AgenticBrowserSearchOrchestrator(
                 flow {
                     val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
                     eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
-                    urlContentProcessingService.processUrlAsFlow(
-                        normalizedUrl,
-                        searchQuery.query,
-                        maxCacheAge,
-                        sessionId
-                    )
-                        .catch { e ->
-                            when (e) {
-                                is CancellationException -> throw e
-                                is NetworkConnectionException, is MarkdownConversionException -> {
-                                    urlAccessService.recordUrlAccess(
-                                        sessionId, FailedUrlAccess(
-                                            url = e.url, timestamp = Clock.System.now(),
-                                            exceptionType = e::class.simpleName!!, message = e.reason
-                                        )
-                                    )
-                                    eventChannel.send(
-                                        SearchEvent.UrlProcessed(
-                                            sessionId,
-                                            e.url,
-                                            "FAILED",
-                                            errorMessage = e.reason
-                                        )
-                                    )
-                                }
 
-                                else -> throw e
-                            }
-                        }
-                        .onEach { event ->
-                            when (event) {
-                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    event.discoveredLinks.forEach { discoveredLinksChannel.send(it) }
-                                }
-
-                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    val urlAccess = if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now())
-                                    else UncachedUrlAccess(event.url, Clock.System.now())
-                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                    eventChannel.send(
-                                        SearchEvent.UrlProcessed(
-                                            sessionId = sessionId,
-                                            url = event.url,
-                                            accessType = if (event.wasCached) "CACHED" else "UNCACHED",
-                                            title = event.title,
-                                            description = event.description,
-                                            markdownLength = event.markdown.length
+                    // Use adaptive rate limiter to respect website rate limits
+                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
+                        urlContentProcessingService.processUrlAsFlow(
+                            normalizedUrl,
+                            searchQuery.query,
+                            maxCacheAge,
+                            sessionId
+                        )
+                            .catch { e ->
+                                when (e) {
+                                    is CancellationException -> throw e
+                                    is NetworkConnectionException, is MarkdownConversionException -> {
+                                        urlAccessService.recordUrlAccess(
+                                            sessionId, FailedUrlAccess(
+                                                url = e.url, timestamp = Clock.System.now(),
+                                                exceptionType = e::class.simpleName!!, message = e.reason
+                                            )
                                         )
-                                    )
+                                        eventChannel.send(
+                                            SearchEvent.UrlProcessed(
+                                                sessionId,
+                                                e.url,
+                                                "FAILED",
+                                                errorMessage = e.reason
+                                            )
+                                        )
+                                    }
+
+                                    else -> throw e
                                 }
                             }
-                        }
-                        .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                        .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
-                        .collect { emit(it) }
+                            .onEach { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                        event.discoveredLinks.forEach { discoveredLinksChannel.send(it) }
+                                    }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        val urlAccess =
+                                            if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now())
+                                            else UncachedUrlAccess(event.url, Clock.System.now())
+                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                        eventChannel.send(
+                                            SearchEvent.UrlProcessed(
+                                                sessionId = sessionId,
+                                                url = event.url,
+                                                accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                                title = event.title,
+                                                description = event.description,
+                                                markdownLength = event.markdown.length
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                            .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
+                            .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
+                            .collect { emit(it) }
+                    }
                 }
             }
             .onCompletion { discoveredLinksChannel.close() }
     }
 
+    /**
+     * Process recursively discovered links with adaptive rate limiting.
+     */
     @OptIn(DelicateCoroutinesApi::class)
     private fun processRecursiveDiscoveredLinksFlow(
         sessionId: QuerySessionId,
@@ -388,7 +399,12 @@ class AgenticBrowserSearchOrchestrator(
         val inFlight = ConcurrentHashMap.newKeySet<String>()
 
         return merge(
-            merge(initialChannel.receiveAsFlow(), serperChannel.receiveAsFlow(), hybridChannel.receiveAsFlow(), fileSearchChannel.receiveAsFlow())
+            merge(
+                initialChannel.receiveAsFlow(),
+                serperChannel.receiveAsFlow(),
+                hybridChannel.receiveAsFlow(),
+                fileSearchChannel.receiveAsFlow()
+            )
                 .onCompletion { if (inFlight.isEmpty()) recursiveChannel.close() },
             recursiveChannel.receiveAsFlow()
         )
@@ -403,71 +419,75 @@ class AgenticBrowserSearchOrchestrator(
                     val url = normalizeUrlService.normalize(link.url) ?: link.url
                     inFlight.add(url)
                     eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, url))
-                    urlContentProcessingService.processUrlAsFlow(url, searchQuery.query, maxCacheAge, sessionId)
-                        .catch { e ->
-                            when (e) {
-                                is CancellationException -> throw e
-                                is NetworkConnectionException, is MarkdownConversionException -> {
-                                    urlAccessService.recordUrlAccess(
-                                        sessionId, FailedUrlAccess(
-                                            url = e.url, timestamp = Clock.System.now(),
-                                            exceptionType = e::class.simpleName!!, message = e.reason
-                                        )
-                                    )
-                                    inFlight.remove(e.url)
-                                    eventChannel.send(
-                                        SearchEvent.UrlProcessed(
-                                            sessionId,
-                                            e.url,
-                                            "FAILED",
-                                            errorMessage = e.reason
-                                        )
-                                    )
-                                    if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && fileSearchChannel.isClosedForSend && inFlight.isEmpty()) {
-                                        recursiveChannel.close()
-                                    }
-                                }
 
-                                else -> throw e
-                            }
-                        }
-                        .onEach { event ->
-                            when (event) {
-                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    inFlight.remove(event.url)
-                                    val newLinks = event.discoveredLinks.filter {
-                                        !seenUrls.contains(
-                                            normalizeUrlService.normalize(it.url) ?: it.url
+                    // Use adaptive rate limiter to respect website rate limits
+                    adaptiveRateLimiter.withRateLimit(url) {
+                        urlContentProcessingService.processUrlAsFlow(url, searchQuery.query, maxCacheAge, sessionId)
+                            .catch { e ->
+                                when (e) {
+                                    is CancellationException -> throw e
+                                    is NetworkConnectionException, is MarkdownConversionException -> {
+                                        urlAccessService.recordUrlAccess(
+                                            sessionId, FailedUrlAccess(
+                                                url = e.url, timestamp = Clock.System.now(),
+                                                exceptionType = e::class.simpleName!!, message = e.reason
+                                            )
                                         )
+                                        inFlight.remove(e.url)
+                                        eventChannel.send(
+                                            SearchEvent.UrlProcessed(
+                                                sessionId,
+                                                e.url,
+                                                "FAILED",
+                                                errorMessage = e.reason
+                                            )
+                                        )
+                                        if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && fileSearchChannel.isClosedForSend && inFlight.isEmpty()) {
+                                            recursiveChannel.close()
+                                        }
                                     }
-                                    newLinks.forEach { recursiveChannel.send(it) }
-                                    if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && fileSearchChannel.isClosedForSend && inFlight.isEmpty() && newLinks.isEmpty()) {
-                                        recursiveChannel.close()
-                                    }
-                                }
 
-                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    val access = if (event.wasCached) CachedUrlAccess(
-                                        event.url,
-                                        Clock.System.now()
-                                    ) else UncachedUrlAccess(event.url, Clock.System.now())
-                                    urlAccessService.recordUrlAccess(sessionId, access)
-                                    eventChannel.send(
-                                        SearchEvent.UrlProcessed(
-                                            sessionId = sessionId,
-                                            url = event.url,
-                                            accessType = if (event.wasCached) "CACHED" else "UNCACHED",
-                                            title = event.title,
-                                            description = event.description,
-                                            markdownLength = event.markdown.length
-                                        )
-                                    )
+                                    else -> throw e
                                 }
                             }
-                        }
-                        .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                        .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
-                        .collect { emit(it) }
+                            .onEach { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                        inFlight.remove(event.url)
+                                        val newLinks = event.discoveredLinks.filter {
+                                            !seenUrls.contains(
+                                                normalizeUrlService.normalize(it.url) ?: it.url
+                                            )
+                                        }
+                                        newLinks.forEach { recursiveChannel.send(it) }
+                                        if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && fileSearchChannel.isClosedForSend && inFlight.isEmpty() && newLinks.isEmpty()) {
+                                            recursiveChannel.close()
+                                        }
+                                    }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        val access = if (event.wasCached) CachedUrlAccess(
+                                            event.url,
+                                            Clock.System.now()
+                                        ) else UncachedUrlAccess(event.url, Clock.System.now())
+                                        urlAccessService.recordUrlAccess(sessionId, access)
+                                        eventChannel.send(
+                                            SearchEvent.UrlProcessed(
+                                                sessionId = sessionId,
+                                                url = event.url,
+                                                accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                                title = event.title,
+                                                description = event.description,
+                                                markdownLength = event.markdown.length
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                            .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
+                            .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
+                            .collect { emit(it) }
+                    }
                 }
             }
     }
@@ -543,7 +563,11 @@ class AgenticBrowserSearchOrchestrator(
             // Only query if a store already exists for this domain
             val storeInfo = geminiFileSearchService.findStore(domain)
             if (storeInfo == null) {
-                logger.debug("[{}] No file search store exists for domain: {}, skipping file search", sessionId.value, domain)
+                logger.debug(
+                    "[{}] No file search store exists for domain: {}, skipping file search",
+                    sessionId.value,
+                    domain
+                )
                 fileSearchChannel.close()
                 return@flow
             }

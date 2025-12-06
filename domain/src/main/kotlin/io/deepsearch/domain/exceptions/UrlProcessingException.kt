@@ -106,6 +106,21 @@ private fun formatHttpServerError(statusCode: Int, reasonPhrase: String): String
 }
 
 /**
+ * Rate limit exceeded after exhausting all retries.
+ * This is thrown when the adaptive rate limiter has attempted multiple retries
+ * with exponential backoff but continues to receive HTTP 429 responses.
+ */
+class RateLimitExceededException(
+    url: String,
+    val retriesAttempted: Int,
+    cause: Throwable? = null
+) : NetworkConnectionException(
+    url,
+    "Rate limit exceeded after $retriesAttempted retries",
+    cause
+)
+
+/**
  * Content type not supported (e.g., video, audio).
  */
 class UnsupportedContentTypeException(

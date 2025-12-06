@@ -14,6 +14,7 @@ import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.domain.exceptions.UrlProcessingException
+import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import io.deepsearch.domain.services.INormalizeUrlService
@@ -60,7 +61,8 @@ class PeriodicIndexJobRegistry(
     private val periodicIndexJobRepository: IPeriodicIndexJobRepository,
     private val urlAccessService: IUrlAccessService,
     private val dispatchers: IDispatcherProvider,
-    private val applicationScope: IApplicationCoroutineScope
+    private val applicationScope: IApplicationCoroutineScope,
+    private val adaptiveRateLimiter: IAdaptiveRateLimiter
 ) : IPeriodicIndexJobRegistry {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -361,60 +363,64 @@ class PeriodicIndexJobRegistry(
 
                     urlTracker.startProcessing(normalizedUrl)
                     val sessionId = PeriodicIndexSessionId(jobId)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
-                        .catch { e ->
-                            if (e is CancellationException) throw e
-                            if (e is UrlProcessingException) {
-                                if (isCarriedOver) {
-                                    logger.info("[{}] Carried-over URL failed (not counting as progress): {}: {}", jobId, normalizedUrl, e.message)
-                                } else {
-                                    logger.warn("[{}] Failed to process initial URL {}: {}", jobId, normalizedUrl, e.message)
-                                }
-                                val failedAccess = FailedUrlAccess(
-                                    url = normalizedUrl,
-                                    timestamp = Clock.System.now(),
-                                    exceptionType = e::class.simpleName!!,
-                                    message = e.message ?: "Unknown error"
-                                )
-                                urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                // Check if all URLs are processed to close the channel
-                                if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
-                                    initialDiscoveredLinksChannel.close()
-                                }
-                            } else {
-                                logger.error("[{}] Unexpected error processing initial URL {}: {}", jobId, normalizedUrl, e.message, e)
-                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                throw e
-                            }
-                        }
-                        .onEach { event ->
-                            when (event) {
-                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    logger.debug("[{}] Initial URL discovered {} links", jobId, event.discoveredLinks.size)
-                                    event.discoveredLinks
-                                        .filter { link -> normalize(link.url).startsWith(job.baseUrl) }
-                                        .sortedBy { it.pathDepth() }
-                                        .forEach { link -> initialDiscoveredLinksChannel.send(link) }
+                    
+                    // Use adaptive rate limiter to respect website rate limits
+                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
+                            .catch { e ->
+                                if (e is CancellationException) throw e
+                                if (e is UrlProcessingException) {
+                                    if (isCarriedOver) {
+                                        logger.info("[{}] Carried-over URL failed (not counting as progress): {}: {}", jobId, normalizedUrl, e.message)
+                                    } else {
+                                        logger.warn("[{}] Failed to process initial URL {}: {}", jobId, normalizedUrl, e.message)
+                                    }
+                                    val failedAccess = FailedUrlAccess(
+                                        url = normalizedUrl,
+                                        timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!,
+                                        message = e.message ?: "Unknown error"
+                                    )
+                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
                                     // Check if all URLs are processed to close the channel
                                     if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
                                         initialDiscoveredLinksChannel.close()
                                     }
-                                }
-                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    logger.debug("[{}] Initial URL markdown extracted: {} chars", jobId, event.markdown.length)
-                                    val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                    } else {
-                                        UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                    }
-                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                    urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
-                                    emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                } else {
+                                    logger.error("[{}] Unexpected error processing initial URL {}: {}", jobId, normalizedUrl, e.message, e)
+                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+                                    throw e
                                 }
                             }
-                        }
-                        .collect {}
+                            .onEach { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                        logger.debug("[{}] Initial URL discovered {} links", jobId, event.discoveredLinks.size)
+                                        event.discoveredLinks
+                                            .filter { link -> normalize(link.url).startsWith(job.baseUrl) }
+                                            .sortedBy { it.pathDepth() }
+                                            .forEach { link -> initialDiscoveredLinksChannel.send(link) }
+                                        // Check if all URLs are processed to close the channel
+                                        if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
+                                            initialDiscoveredLinksChannel.close()
+                                        }
+                                    }
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        logger.debug("[{}] Initial URL markdown extracted: {} chars", jobId, event.markdown.length)
+                                        val urlAccess = if (event.wasCached) {
+                                            CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                        } else {
+                                            UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                        }
+                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                        urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
+                                        emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                    }
+                                }
+                            }
+                            .collect {}
+                    }
                 }
             }
             .onCompletion {
@@ -449,48 +455,52 @@ class PeriodicIndexJobRegistry(
                     val normalizedUrl = normalize(link.url)
                     urlTracker.startProcessing(normalizedUrl)
                     val sessionId = PeriodicIndexSessionId(jobId)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
-                        .catch { e ->
-                            if (e is CancellationException) throw e
-                            if (e is UrlProcessingException) {
-                                logger.warn("[{}] Failed to process Serper link {}: {}", jobId, normalizedUrl, e.message)
-                                val failedAccess = FailedUrlAccess(
-                                    url = normalizedUrl,
-                                    timestamp = Clock.System.now(),
-                                    exceptionType = e::class.simpleName!!,
-                                    message = e.message ?: "Unknown error"
-                                )
-                                urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                            } else {
-                                logger.error("[{}] Unexpected error processing Serper link {}: {}", jobId, normalizedUrl, e.message, e)
-                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                throw e
-                            }
-                        }
-                        .onEach { event ->
-                            when (event) {
-                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    logger.debug("[{}] Serper link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
-                                    event.discoveredLinks
-                                        .filter { discovered -> normalize(discovered.url).startsWith(job.baseUrl) }
-                                        .sortedBy { it.pathDepth() }
-                                        .forEach { discovered -> serperDiscoveredLinksChannel.send(discovered) }
+                    
+                    // Use adaptive rate limiter to respect website rate limits
+                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
+                            .catch { e ->
+                                if (e is CancellationException) throw e
+                                if (e is UrlProcessingException) {
+                                    logger.warn("[{}] Failed to process Serper link {}: {}", jobId, normalizedUrl, e.message)
+                                    val failedAccess = FailedUrlAccess(
+                                        url = normalizedUrl,
+                                        timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!,
+                                        message = e.message ?: "Unknown error"
+                                    )
+                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+                                } else {
+                                    logger.error("[{}] Unexpected error processing Serper link {}: {}", jobId, normalizedUrl, e.message, e)
+                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+                                    throw e
                                 }
-                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    logger.debug("[{}] Serper link markdown extracted: {} chars", jobId, event.markdown.length)
-                                    val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                    } else {
-                                        UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                            }
+                            .onEach { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                        logger.debug("[{}] Serper link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
+                                        event.discoveredLinks
+                                            .filter { discovered -> normalize(discovered.url).startsWith(job.baseUrl) }
+                                            .sortedBy { it.pathDepth() }
+                                            .forEach { discovered -> serperDiscoveredLinksChannel.send(discovered) }
                                     }
-                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                    urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
-                                    emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        logger.debug("[{}] Serper link markdown extracted: {} chars", jobId, event.markdown.length)
+                                        val urlAccess = if (event.wasCached) {
+                                            CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                        } else {
+                                            UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                        }
+                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                        urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
+                                        emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                    }
                                 }
                             }
-                        }
-                        .collect {}
+                            .collect {}
+                    }
                 }
             }
             .onCompletion {
@@ -525,48 +535,52 @@ class PeriodicIndexJobRegistry(
                     val normalizedUrl = normalize(link.url)
                     urlTracker.startProcessing(normalizedUrl)
                     val sessionId = PeriodicIndexSessionId(jobId)
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
-                        .catch { e ->
-                            if (e is CancellationException) throw e
-                            if (e is UrlProcessingException) {
-                                logger.warn("[{}] Failed to process sitemap link {}: {}", jobId, normalizedUrl, e.message)
-                                val failedAccess = FailedUrlAccess(
-                                    url = normalizedUrl,
-                                    timestamp = Clock.System.now(),
-                                    exceptionType = e::class.simpleName!!,
-                                    message = e.message ?: "Unknown error"
-                                )
-                                urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                            } else {
-                                logger.error("[{}] Unexpected error processing sitemap link {}: {}", jobId, normalizedUrl, e.message, e)
-                                urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                throw e
-                            }
-                        }
-                        .onEach { event ->
-                            when (event) {
-                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    logger.debug("[{}] Sitemap link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
-                                    event.discoveredLinks
-                                        .filter { discovered -> normalize(discovered.url).startsWith(job.baseUrl) }
-                                        .sortedBy { it.pathDepth() }
-                                        .forEach { discovered -> sitemapDiscoveredLinksChannel.send(discovered) }
+                    
+                    // Use adaptive rate limiter to respect website rate limits
+                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
+                            .catch { e ->
+                                if (e is CancellationException) throw e
+                                if (e is UrlProcessingException) {
+                                    logger.warn("[{}] Failed to process sitemap link {}: {}", jobId, normalizedUrl, e.message)
+                                    val failedAccess = FailedUrlAccess(
+                                        url = normalizedUrl,
+                                        timestamp = Clock.System.now(),
+                                        exceptionType = e::class.simpleName!!,
+                                        message = e.message ?: "Unknown error"
+                                    )
+                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+                                } else {
+                                    logger.error("[{}] Unexpected error processing sitemap link {}: {}", jobId, normalizedUrl, e.message, e)
+                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+                                    throw e
                                 }
-                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    logger.debug("[{}] Sitemap link markdown extracted: {} chars", jobId, event.markdown.length)
-                                    val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                    } else {
-                                        UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                            }
+                            .onEach { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                        logger.debug("[{}] Sitemap link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
+                                        event.discoveredLinks
+                                            .filter { discovered -> normalize(discovered.url).startsWith(job.baseUrl) }
+                                            .sortedBy { it.pathDepth() }
+                                            .forEach { discovered -> sitemapDiscoveredLinksChannel.send(discovered) }
                                     }
-                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                    urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
-                                    emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        logger.debug("[{}] Sitemap link markdown extracted: {} chars", jobId, event.markdown.length)
+                                        val urlAccess = if (event.wasCached) {
+                                            CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                        } else {
+                                            UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                        }
+                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                        urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
+                                        emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                    }
                                 }
                             }
-                        }
-                        .collect {}
+                            .collect {}
+                    }
                 }
             }
             .onCompletion {
@@ -626,55 +640,23 @@ class PeriodicIndexJobRegistry(
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
                     urlTracker.startProcessing(normalizedUrl)
 
-                    urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
-                        .catch { e ->
-                            when (e) {
-                                is CancellationException -> throw e
-                                is UrlProcessingException -> {
-                                    logger.warn("[{}] Failed to process recursive link {}: {}", jobId, normalizedUrl, e.message)
-                                    val failedAccess = FailedUrlAccess(
-                                        url = normalizedUrl,
-                                        timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!,
-                                        message = e.message ?: "Unknown error"
-                                    )
-                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                    inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
-                                    checkAndCloseRecursiveChannel(
-                                        initialDiscoveredLinksChannel,
-                                        serperDiscoveredLinksChannel,
-                                        sitemapDiscoveredLinksChannel,
-                                        recursiveDiscoveredLinksChannel,
-                                        inFlightLinkDiscoveryProcessing
-                                    )
-                                }
-                                else -> {
-                                    logger.error("[{}] Unexpected error processing recursive link {}: {}", jobId, normalizedUrl, e.message, e)
-                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                    throw e
-                                }
-                            }
-                        }
-                        .onEach { event ->
-                            when (event) {
-                                is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                    logger.debug("[{}] Recursive link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
-                                    inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
-
-                                    val newDiscoveredLinks = event.discoveredLinks.filter { discovered ->
-                                        val normalizedDiscovered = normalize(discovered.url)
-                                        normalizedDiscovered.startsWith(job.baseUrl) && !seenUrls.contains(normalizedDiscovered)
-                                    }
-                                    newDiscoveredLinks
-                                        .sortedBy { it.pathDepth() }
-                                        .forEach { discovered ->
-                                            recursiveDiscoveredLinksChannel.send(discovered)
-                                        }
-
-                                    logger.debug("[{}] In-flight links count: {}", jobId, inFlightLinkDiscoveryProcessing.size)
-
-                                    if (newDiscoveredLinks.isEmpty()) {
+                    // Use adaptive rate limiter to respect website rate limits
+                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
+                            .catch { e ->
+                                when (e) {
+                                    is CancellationException -> throw e
+                                    is UrlProcessingException -> {
+                                        logger.warn("[{}] Failed to process recursive link {}: {}", jobId, normalizedUrl, e.message)
+                                        val failedAccess = FailedUrlAccess(
+                                            url = normalizedUrl,
+                                            timestamp = Clock.System.now(),
+                                            exceptionType = e::class.simpleName!!,
+                                            message = e.message ?: "Unknown error"
+                                        )
+                                        urlAccessService.recordUrlAccess(sessionId, failedAccess)
+                                        urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+                                        inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
                                         checkAndCloseRecursiveChannel(
                                             initialDiscoveredLinksChannel,
                                             serperDiscoveredLinksChannel,
@@ -683,21 +665,56 @@ class PeriodicIndexJobRegistry(
                                             inFlightLinkDiscoveryProcessing
                                         )
                                     }
-                                }
-                                is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                    logger.debug("[{}] Recursive link markdown extracted: {} chars", jobId, event.markdown.length)
-                                    val urlAccess = if (event.wasCached) {
-                                        CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                    } else {
-                                        UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                    else -> {
+                                        logger.error("[{}] Unexpected error processing recursive link {}: {}", jobId, normalizedUrl, e.message, e)
+                                        urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+                                        throw e
                                     }
-                                    urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                    urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
-                                    emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                 }
                             }
-                        }
-                        .collect {}
+                            .onEach { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                        logger.debug("[{}] Recursive link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
+                                        inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
+
+                                        val newDiscoveredLinks = event.discoveredLinks.filter { discovered ->
+                                            val normalizedDiscovered = normalize(discovered.url)
+                                            normalizedDiscovered.startsWith(job.baseUrl) && !seenUrls.contains(normalizedDiscovered)
+                                        }
+                                        newDiscoveredLinks
+                                            .sortedBy { it.pathDepth() }
+                                            .forEach { discovered ->
+                                                recursiveDiscoveredLinksChannel.send(discovered)
+                                            }
+
+                                        logger.debug("[{}] In-flight links count: {}", jobId, inFlightLinkDiscoveryProcessing.size)
+
+                                        if (newDiscoveredLinks.isEmpty()) {
+                                            checkAndCloseRecursiveChannel(
+                                                initialDiscoveredLinksChannel,
+                                                serperDiscoveredLinksChannel,
+                                                sitemapDiscoveredLinksChannel,
+                                                recursiveDiscoveredLinksChannel,
+                                                inFlightLinkDiscoveryProcessing
+                                            )
+                                        }
+                                    }
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        logger.debug("[{}] Recursive link markdown extracted: {} chars", jobId, event.markdown.length)
+                                        val urlAccess = if (event.wasCached) {
+                                            CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                        } else {
+                                            UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                        }
+                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                        urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
+                                        emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                    }
+                                }
+                            }
+                            .collect {}
+                    }
                 }
             }
             .onCompletion { cause ->

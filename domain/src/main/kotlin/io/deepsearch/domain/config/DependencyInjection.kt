@@ -8,6 +8,8 @@ import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.ocr.ITesseractPool
 import io.deepsearch.domain.services.OcrImageTextExtractionService
 import io.deepsearch.domain.ocr.TesseractPoolImpl
+import io.deepsearch.domain.ratelimit.AdaptiveRateLimiter
+import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.CssSelectorConstructionService
 import io.deepsearch.domain.services.GeminiFileSearchService
@@ -44,6 +46,9 @@ val domainModule = module {
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
+    
+    // Adaptive rate limiter (singleton to maintain state across requests per domain)
+    singleOf(::AdaptiveRateLimiter) bind IAdaptiveRateLimiter::class
 
     // Singleton domain agents (used by singleton application services)
     singleOf(::FileSearchQueryAgentGenAiImpl) bind IFileSearchQueryAgent::class
