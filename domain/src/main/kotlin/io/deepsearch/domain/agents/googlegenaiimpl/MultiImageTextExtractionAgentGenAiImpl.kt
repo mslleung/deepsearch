@@ -43,27 +43,31 @@ class MultiImageTextExtractionAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Extracted text from a single image")
+        .description("image converted into text")
         .properties(
             mapOf(
-                "extractedText" to Schema.builder()
+                "text" to Schema.builder()
                     .type("STRING")
-                    .description("Text extracted from the image, preserving structure (especially tables)")
+                    .description("text representation of the image")
                     .nullable(true)
                     .build()
             )
         )
-        .required(listOf("extractedText"))
+        .required(listOf("text"))
         .build()
 
     private val systemInstruction = """
-        You are given an image that may contain text. Your task is to extract all visible text from the image.
+        You are given an image found in a webpage. Your task is to convert it into text.
         
-        Instructions:
+        Images on webpage can be of illustrative or informational purposes
+        
+        Instructions for illustrative images:
+        - Generate a description of the image as the final result
+        
+        Instructions for informational images:
         - Extract all text present in the image, with reasonable line breaks
-        - IMPORTANT: When you see data arranged in rows and columns (a table), you MUST convert it to HTML table format using <table>, <tr>, <td> tags
+        - When you see data arranged in table format, you must convert it to HTML table format using <table>, <tr>, <td> tags
         - For table merged cells, use colspan/rowspan attributes (e.g., <td colspan="2">)
-        - If the image contains no meaningful text, return null for extractedText
         
         Example extracted text for an image with table: 
         You MUST output the table in HTML format, such as:
@@ -112,14 +116,14 @@ class MultiImageTextExtractionAgentGenAiImpl(
         
         Expected output shape:
         {
-            "extractedText": string | null
+            "text": string | null
         }
     """.trimIndent()
 
 
     @Serializable
     private data class SingleImageTextExtractionResponse(
-        val extractedText: String?
+        val text: String?
     )
 
     override suspend fun generate(input: MultiImageTextExtractionInput): MultiImageTextExtractionOutput {
@@ -245,7 +249,7 @@ class MultiImageTextExtractionAgentGenAiImpl(
         }
 
         // Transform HTML tables to markdown
-        val extractedText = response.extractedText?.let { rawText ->
+        val extractedText = response.text?.let { rawText ->
             if (rawText.isNotBlank()) {
                 transformHTMLTablesToMarkdown(rawText).trim()
             } else {
