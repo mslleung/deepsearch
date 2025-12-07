@@ -29,12 +29,10 @@ class LinkRelevanceAnalysisAgentTest : KoinTest {
 
     @Test
     fun `finds relevant links in actual webpage HTML`() = runTest(testCoroutineDispatcher) {
-        browserPool.withContext { context ->
+        browserPool.withPage { page ->
             // Given
             val url = "https://www.example.com/"
             val query = "information about the website"
-
-            val page = context.newPage()
 
             page.navigate(url)
             val html = page.getFullHtml()
@@ -54,12 +52,10 @@ class LinkRelevanceAnalysisAgentTest : KoinTest {
     @Test
     fun `finds relevant links for body check packages on OT&P homepage with direct query`() =
         runTest(testCoroutineDispatcher) {
-            browserPool.withContext { context ->
+            browserPool.withPage { page ->
                 // Given
                 val url = "https://www.otandp.com/"
                 val query = "information about body check packages"
-
-                val page = context.newPage()
 
                 page.navigate(url)
                 val html = page.getFullHtml()
@@ -79,12 +75,10 @@ class LinkRelevanceAnalysisAgentTest : KoinTest {
     @Test
     fun `finds relevant links for body check packages on OT&P homepage with indirect query`() =
         runTest(testCoroutineDispatcher) {
-            browserPool.withContext { context ->
+            browserPool.withPage { page ->
                 // Given
                 val url = "https://www.otandp.com/"
                 val query = "how much is Singular Test: VO2 Max"
-
-                val page = context.newPage()
 
                 page.navigate(url)
                 val html = page.getFullHtml()
@@ -106,12 +100,10 @@ class LinkRelevanceAnalysisAgentTest : KoinTest {
     @Test
     fun `finds relevant links for body check packages on OT&P homepage with very indirect query`() =
         runTest(testCoroutineDispatcher) {
-            browserPool.withContext { context ->
+            browserPool.withPage { page ->
                 // Given
                 val url = "https://www.otandp.com/otandp-digital-app"
                 val query = "what are the steps to delete my data on the OT&P Digital App?"
-
-                val page = context.newPage()
 
                 page.navigate(url)
                 val html = page.getFullHtml()
@@ -133,12 +125,10 @@ class LinkRelevanceAnalysisAgentTest : KoinTest {
     @Test
     fun `finds relevant links on Sleekflow homepage with direct query`() =
         runTest(testCoroutineDispatcher) {
-            browserPool.withContext { context ->
+            browserPool.withPage { page ->
                 // Given
                 val url = "https://sleekflow.io/"
                 val query = "pricing information"
-
-                val page = context.newPage()
 
                 page.navigate(url)
                 val html = page.getFullHtml()

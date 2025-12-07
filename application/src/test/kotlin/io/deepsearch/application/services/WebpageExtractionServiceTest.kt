@@ -38,9 +38,7 @@ class WebpageExtractionServiceTest : KoinTest {
         ]
     )
     fun `extract webpage text`(url: String) = runTest(testCoroutineDispatcher) {
-        browserPool.withContext { context ->
-            val page = context.newPage()
-
+        browserPool.withPage { page ->
             page.navigate(url)
             withContext(Dispatchers.IO) {
                 val text = webpageExtractionService.extractWebpage(page, QuerySessionId("test-session-id"))
