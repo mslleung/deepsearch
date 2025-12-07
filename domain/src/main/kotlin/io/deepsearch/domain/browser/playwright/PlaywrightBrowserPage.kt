@@ -1141,4 +1141,8 @@ class PlaywrightBrowserPage(
             else -> BrowserNavigationException(url, e)
         }
     }
+
+    override suspend fun close() {
+        apiMutex.withLock { page.close() }
+    }
 }

@@ -244,9 +244,7 @@ class UrlContentProcessingService(
         sessionId: SessionId,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
-        browserPool.withContext { context ->
-            val page = context.newPage()
-
+        browserPool.withPage { page ->
             page.navigate(normalizedUrl)
             val extractedHtml = page.getFullHtml()
 

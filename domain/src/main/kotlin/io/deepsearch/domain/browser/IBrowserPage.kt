@@ -293,4 +293,9 @@ interface IBrowserPage {
      * @param attributeValue Value of the attribute to inject
      */
     suspend fun injectAttributeByCssSelector(cssSelector: String, attributeName: String, attributeValue: String)
+
+    /**
+     * Close this page and release associated resources.
+     */
+    suspend fun close()
 }
