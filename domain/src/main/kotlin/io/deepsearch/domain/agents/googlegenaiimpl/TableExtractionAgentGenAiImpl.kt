@@ -5,9 +5,9 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
-import io.deepsearch.domain.agents.IMultiImageTextExtractionAgent
-import io.deepsearch.domain.agents.MultiImageTextExtractionInput
-import io.deepsearch.domain.agents.MultiImageTextExtractionOutput
+import io.deepsearch.domain.agents.ITableExtractionAgent
+import io.deepsearch.domain.agents.TableExtractionInput
+import io.deepsearch.domain.agents.TableExtractionOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.constants.ImageMimeType
@@ -24,16 +24,17 @@ import java.io.ByteArrayInputStream
 import javax.imageio.ImageIO
 
 /**
- * Multimodal multi-image text extraction agent.
+ * Table extraction agent specialized for extracting tabular data from images.
  *
- * Given multiple images that may contain text (including tables), extract the text
- * and preserve structure (especially for tables).
- * This agent processes each image individually in its own LLM call to maximize
+ * This agent processes images known to contain tables and extracts
+ * the data in HTML table format, which is then converted to markdown.
+ *
+ * Each image is processed individually in its own LLM call to maximize
  * extraction quality, while processing multiple images in parallel for throughput.
  */
-class MultiImageTextExtractionAgentGenAiImpl(
+class TableExtractionAgentGenAiImpl(
     private val client: com.google.genai.Client
-) : IMultiImageTextExtractionAgent {
+) : ITableExtractionAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -43,12 +44,12 @@ class MultiImageTextExtractionAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("image converted into text")
+        .description("table extracted from image as text")
         .properties(
             mapOf(
                 "text" to Schema.builder()
                     .type("STRING")
-                    .description("text representation of the image")
+                    .description("text representation of the image with tables in HTML format")
                     .nullable(true)
                     .build()
             )
@@ -57,54 +58,42 @@ class MultiImageTextExtractionAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are given an image found in a webpage. Your task is to convert it into text.
+        You are given an image that contains a table. Your task is to extract all content including the table.
         
-        Images on webpage can be of illustrative or informational purposes
-        
-        Instructions for illustrative images:
-        - Generate a description of the image as the final result
-        
-        Instructions for informational images:
+        Instructions:
         - Extract all text present in the image, with reasonable line breaks
         - When you see data arranged in table format, you must convert it to HTML table format using <table>, <tr>, <td> tags
         - For table merged cells, use colspan/rowspan attributes (e.g., <td colspan="2">)
+        - Make sure the table dimension correctly reflects what is seen in the image
         
         Example extracted text for an image with table: 
         You MUST output the table in HTML format, such as:
         <table>
             <thead>
                 <tr>
-                    <td colspan="3">價目表</td>
-                </tr>
-                <tr>
                     <td></td>
-                    <td>be@me. 透明牙箍</td>
-                    <td>be@me. PRO</td>
-                </tr>
-                <tr>
-                    <td></td>
-                    <td>牙齒更整齊</td>
-                    <td>解決更複雜牙齒問題</td>
+                    <td>be@me. 透明牙箍 <br/> 牙齒更整齊</td>
+                    <td>be@me. PRO <br/> 解決更複雜牙齒問題</td>
                 </tr>
             </thead>
             <tbody>
                 <tr>
                     <td>原價</td>
-                    <td>$16,800</td>
-                    <td>$28,620</td>
+                    <td>${'$'}16,800</td>
+                    <td>${'$'}28,620</td>
                 </tr>
                 <tr>
                     <td>網上預約折扣</td>
-                    <td colspan="2">減$1,820</td>
+                    <td colspan="2">減${'$'}1,820</td>
                 </tr>
                 <tr>
                     <td>學生箍牙優惠</td>
-                    <td colspan="2">再減 $500</td>
+                    <td colspan="2">再減 ${'$'}500</td>
                 </tr>
                 <tr>
                     <td>優惠價</td>
-                    <td>$14,480</td>
-                    <td>$26,300</td>
+                    <td>${'$'}14,480</td>
+                    <td>${'$'}26,300</td>
                 </tr>
             </tbody>
         </table>
@@ -120,15 +109,14 @@ class MultiImageTextExtractionAgentGenAiImpl(
         }
     """.trimIndent()
 
-
     @Serializable
-    private data class SingleImageTextExtractionResponse(
+    private data class SingleTableExtractionResponse(
         val text: String?
     )
 
-    override suspend fun generate(input: MultiImageTextExtractionInput): MultiImageTextExtractionOutput {
+    override suspend fun generate(input: TableExtractionInput): TableExtractionOutput {
         logger.debug(
-            "Extracting text from {} images (processing each image individually in parallel)",
+            "Extracting tables from {} images (processing each image individually in parallel)",
             input.images.size
         )
 
@@ -136,7 +124,7 @@ class MultiImageTextExtractionAgentGenAiImpl(
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.images.isEmpty()) {
-            return MultiImageTextExtractionOutput(
+            return TableExtractionOutput(
                 extractions = emptyList(),
                 tokenUsage = emptyTokenUsage
             )
@@ -146,7 +134,7 @@ class MultiImageTextExtractionAgentGenAiImpl(
         return if (input.images.size == 1) {
             // Single image - process directly
             val (extraction, tokenUsage) = processSingleImage(input.images[0], 0)
-            MultiImageTextExtractionOutput(
+            TableExtractionOutput(
                 extractions = listOf(extraction),
                 tokenUsage = tokenUsage
             )
@@ -159,9 +147,9 @@ class MultiImageTextExtractionAgentGenAiImpl(
     /**
      * Process multiple images in parallel, each with its own LLM call.
      */
-    private suspend fun processImagesInParallel(images: List<MultiImageTextExtractionInput.ImageItem>): MultiImageTextExtractionOutput =
+    private suspend fun processImagesInParallel(images: List<TableExtractionInput.ImageItem>): TableExtractionOutput =
         coroutineScope {
-            logger.debug("Processing {} images in parallel", images.size)
+            logger.debug("Processing {} images in parallel for table extraction", images.size)
 
             // Process all images in parallel
             val results = images.mapIndexed { index, image ->
@@ -182,7 +170,7 @@ class MultiImageTextExtractionAgentGenAiImpl(
                     )
                 }
 
-            MultiImageTextExtractionOutput(
+            TableExtractionOutput(
                 extractions = allExtractions,
                 tokenUsage = aggregatedTokenUsage
             )
@@ -193,9 +181,9 @@ class MultiImageTextExtractionAgentGenAiImpl(
      * Returns a Pair of (extraction, tokenUsage) for aggregation.
      */
     private suspend fun processSingleImage(
-        image: MultiImageTextExtractionInput.ImageItem,
+        image: TableExtractionInput.ImageItem,
         imageIndex: Int
-    ): Pair<MultiImageTextExtractionOutput.TextExtraction, TokenUsageMetrics> {
+    ): Pair<TableExtractionOutput.TextExtraction, TokenUsageMetrics> {
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
@@ -206,16 +194,16 @@ class MultiImageTextExtractionAgentGenAiImpl(
                 imageIndex,
                 MAX_PIXEL_COUNT
             )
-            return MultiImageTextExtractionOutput.TextExtraction(extractedText = "") to tokenUsage
+            return TableExtractionOutput.TextExtraction(extractedText = "") to tokenUsage
         }
 
         // Build content with single image
         val contentParts = listOf(
             Part.fromBytes(image.bytes, image.mimeType.value),
-            Part.fromText("Extract all text from this image")
+            Part.fromText("Extract all content from this image, converting any tables to HTML format")
         )
 
-        val response = retryLlmCall<SingleImageTextExtractionResponse>(this::class.simpleName!!) {
+        val response = retryLlmCall<SingleTableExtractionResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
                 modelId,
                 listOf(Content.fromParts(*(contentParts.toTypedArray()))),
@@ -258,16 +246,16 @@ class MultiImageTextExtractionAgentGenAiImpl(
         }
 
         if (extractedText != null && extractedText.isNotBlank()) {
-            logger.debug("Text extracted from image at position {}: {}", imageIndex, extractedText)
+            logger.debug("Table extracted from image at position {}: {}", imageIndex, extractedText.take(200))
         } else {
             logger.debug(
-                "No text found in image at position {} ({} bytes)",
+                "No table content extracted from image at position {} ({} bytes)",
                 imageIndex,
                 image.bytes.size
             )
         }
 
-        return MultiImageTextExtractionOutput.TextExtraction(extractedText = extractedText) to tokenUsage
+        return TableExtractionOutput.TextExtraction(extractedText = extractedText) to tokenUsage
     }
 
     /**
@@ -402,5 +390,4 @@ class MultiImageTextExtractionAgentGenAiImpl(
         return sb.toString().trimEnd()
     }
 }
-
 

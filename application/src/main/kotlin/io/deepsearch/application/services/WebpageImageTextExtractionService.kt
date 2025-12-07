@@ -1,10 +1,13 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.agents.IMultiImageTextExtractionAgent
-import io.deepsearch.domain.agents.MultiImageTextExtractionInput
+import io.deepsearch.domain.agents.IImageClassificationAgent
+import io.deepsearch.domain.agents.ITableExtractionAgent
+import io.deepsearch.domain.agents.ImageClassificationInput
+import io.deepsearch.domain.agents.TableExtractionInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageImage
 import io.deepsearch.domain.models.valueobjects.SessionId
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.repositories.IWebpageImageRepository
 import kotlinx.coroutines.async
@@ -45,7 +48,8 @@ interface IWebpageImageTextExtractionService {
 }
 
 class WebpageImageTextExtractionService(
-    private val multiImageTextExtractionAgent: IMultiImageTextExtractionAgent,
+    private val imageClassificationAgent: IImageClassificationAgent,
+    private val tableExtractionAgent: ITableExtractionAgent,
     private val webpageImageRepository: IWebpageImageRepository,
     private val ocrService: IOcrImageTextExtractionService,
     private val tokenUsageService: ILlmTokenUsageService
@@ -68,7 +72,7 @@ class WebpageImageTextExtractionService(
      * Efficiently processes multiple images by:
      * - Checking cache first for all images
      * - Batching uncached images for LLM processing
-     * - Using multi-image agent that processes up to 50 images per LLM call
+     * - Using a two-stage approach: classification first, then table extraction if needed
      * Results are cached to avoid reprocessing the same images.
      */
     @OptIn(ExperimentalTime::class)
@@ -135,14 +139,15 @@ class WebpageImageTextExtractionService(
                 }
             }
 
-            // Process images with text using multi-image agent
+            // Process images with text using two-stage approach
             if (imagesWithText.isNotEmpty()) {
-                logger.debug("Text detected by OCR in {} images, using LLM for extraction", imagesWithText.size)
+                logger.debug("Text detected by OCR in {} images, using LLM for classification", imagesWithText.size)
                 
-                val extractionOutput = multiImageTextExtractionAgent.generate(
-                    MultiImageTextExtractionInput(
+                // Stage 1: Classify all images and extract initial text
+                val classificationOutput = imageClassificationAgent.generate(
+                    ImageClassificationInput(
                         images = imagesWithText.map { image ->
-                            MultiImageTextExtractionInput.ImageItem(
+                            ImageClassificationInput.ImageItem(
                                 bytes = image.bytes,
                                 mimeType = image.mimeType
                             )
@@ -150,20 +155,62 @@ class WebpageImageTextExtractionService(
                     )
                 )
 
-                // Record token usage
-                tokenUsageService.recordTokenUsage(
-                    sessionId = sessionId,
-                    agentName = "MultiImageTextExtractionAgent",
-                    modelName = extractionOutput.tokenUsage.modelName,
-                    promptTokens = extractionOutput.tokenUsage.promptTokens,
-                    outputTokens = extractionOutput.tokenUsage.outputTokens,
-                    totalTokens = extractionOutput.tokenUsage.totalTokens
+                // Record token usage for classification
+                recordTokenUsage(sessionId, "ImageClassificationAgent", classificationOutput.tokenUsage)
+
+                // Partition images by containsTable flag
+                val imageClassifications = imagesWithText.zip(classificationOutput.classifications)
+                val imagesWithTables = imageClassifications.filter { it.second.containsTable }
+                val imagesWithoutTables = imageClassifications.filter { !it.second.containsTable }
+
+                // Log detailed classification results for debugging
+                val illustrativeCount = classificationOutput.classifications.count { 
+                    it.imageType == io.deepsearch.domain.agents.ImageClassificationOutput.ImageType.ILLUSTRATIVE 
+                }
+                val informationalCount = classificationOutput.classifications.count { 
+                    it.imageType == io.deepsearch.domain.agents.ImageClassificationOutput.ImageType.INFORMATIONAL 
+                }
+                logger.debug(
+                    "Classification results: {} illustrative, {} informational, {} with tables, {} without tables",
+                    illustrativeCount,
+                    informationalCount,
+                    imagesWithTables.size,
+                    imagesWithoutTables.size
                 )
 
-                // Cache results with raw bytes
-                val imagesToCache = imagesWithText.mapIndexed { index, image ->
-                    val extractedText = extractionOutput.extractions[index].extractedText?.takeIf { it.isNotBlank() }
-                    cachedResults[Base64.encode(image.bytesHash)] = extractedText
+                // For images without tables, use classification text directly
+                imagesWithoutTables.forEach { (image, classification) ->
+                    cachedResults[Base64.encode(image.bytesHash)] = classification.text?.takeIf { it.isNotBlank() }
+                }
+
+                // Stage 2: Extract tables from images that contain them
+                if (imagesWithTables.isNotEmpty()) {
+                    logger.debug("Extracting tables from {} images", imagesWithTables.size)
+                    
+                    val tableExtractionOutput = tableExtractionAgent.generate(
+                        TableExtractionInput(
+                            images = imagesWithTables.map { (image, _) ->
+                                TableExtractionInput.ImageItem(
+                                    bytes = image.bytes,
+                                    mimeType = image.mimeType
+                                )
+                            }
+                        )
+                    )
+
+                    // Record token usage for table extraction
+                    recordTokenUsage(sessionId, "TableExtractionAgent", tableExtractionOutput.tokenUsage)
+
+                    // Store table extraction results
+                    imagesWithTables.zip(tableExtractionOutput.extractions).forEach { (imageClassification, extraction) ->
+                        val (image, _) = imageClassification
+                        cachedResults[Base64.encode(image.bytesHash)] = extraction.extractedText?.takeIf { it.isNotBlank() }
+                    }
+                }
+
+                // Cache all results with raw bytes
+                val imagesToCache = imagesWithText.map { image ->
+                    val extractedText = cachedResults[Base64.encode(image.bytesHash)]
                     WebpageImage(
                         imageBytesHash = image.bytesHash,
                         imageBytes = image.bytes,
@@ -182,5 +229,16 @@ class WebpageImageTextExtractionService(
                 imageBytesHash = image.bytesHash
             )
         }
+    }
+
+    private suspend fun recordTokenUsage(sessionId: SessionId, agentName: String, tokenUsage: TokenUsageMetrics) {
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = agentName,
+            modelName = tokenUsage.modelName,
+            promptTokens = tokenUsage.promptTokens,
+            outputTokens = tokenUsage.outputTokens,
+            totalTokens = tokenUsage.totalTokens
+        )
     }
 }

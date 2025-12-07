@@ -52,10 +52,6 @@ class TableInterpretationAgentGenAiImpl(
     
         Note that HTML tables may not be in perfect row/column format due to styling etc. Bounding box is crucial
         for mapping elements that are out of place.
-        
-        You must output a JSON object with two fields:
-        - "markdown": The table as a GitHub-flavored Markdown table ONLY. Do not include any notes or commentary here.
-        - "additionalInfo": (optional, nullable) Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements). Use null if there is nothing to add.
     
         Rules:
         - Preserve the table's row and column structure and order accurately.
@@ -70,7 +66,11 @@ class TableInterpretationAgentGenAiImpl(
         - If there is any ambiguity or information conflict, note them in the additionalInfo field.
         - Normalize whitespace; remove decorative or layout-only characters.
         - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
-    
+
+        You must output a JSON object with two fields:
+        - "markdown": The table as a GitHub-flavored Markdown table.
+        - "additionalInfo": Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements). Use null if there is nothing to add.
+
         Example markdown:
         | Feature | Free | Pro AI | Premium AI | Enterprise AI |
         |---|---|---|---|---|
@@ -90,7 +90,7 @@ class TableInterpretationAgentGenAiImpl(
         *   **Premium AI** includes "Free Onboarding Support" and is marked as "Most Popular".
         *   **Enterprise AI** includes "🌟 AI Solution Engineer Support".
 
-        Example with no additional info:
+        Output structure:
         {
           "markdown": string,
           "additionalInfo": string | null

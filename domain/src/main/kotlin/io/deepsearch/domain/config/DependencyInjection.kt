@@ -55,7 +55,8 @@ val domainModule = module {
     singleOf(::GoogleSearchLinkDiscoveryAgentGenAiImpl) bind IGoogleSearchLinkDiscoveryAgent::class
     singleOf(::LinkRelevanceAnalysisAgentGenAiImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
-    singleOf(::MultiImageTextExtractionAgentGenAiImpl) bind IMultiImageTextExtractionAgent::class
+    singleOf(::ImageClassificationAgentGenAiImpl) bind IImageClassificationAgent::class
+    singleOf(::TableExtractionAgentGenAiImpl) bind ITableExtractionAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
