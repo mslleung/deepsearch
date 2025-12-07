@@ -68,28 +68,15 @@ class TableInterpretationAgentGenAiImpl(
         - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
         - If the HTML do not look like a table, interpret and coerce the data into tabular markdown format while preserving semantic meaning.
 
-        Example markdown:
-        | Feature | Free | Pro AI | Premium AI | Enterprise AI |
-        |---|---|---|---|---|
-        | **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |
-        | **Price** | Free | Starting from US$ 99/month | Starting from US$ 299/month | Let's talk |
-        | **Call to Action** | Try Free Forever | Start for Free | Start for Free | Book a Demo |
-        | **Key features** | 50 monthly active contacts | Up to 2,000 monthly active contacts | Up to 12,000 monthly active contacts | Custom number of monthly active contacts |
-        | | Includes 3 user accounts | Includes 3 user accounts | Includes 10 user accounts | Custom number of user accounts |
-        | | Test all core features without affecting your live business using the | Unlimited Broadcast | Analytics dashboards | Salesforce & custom integrations |
-        | | | Unlimited Flow Builder usage | Webhook & API calls | Dedicated Customer success manager |
-        | | | Unlimited contact storage | Role-based access control | PII masking |
-        | | | Team Inbox | Advanced AI Agents with integrations | |
-        | | | AI Agent | | |
-
-        Example additional information:
-        *   **Pro AI** includes "Free Onboarding Support".
-        *   **Premium AI** includes "Free Onboarding Support" and is marked as "Most Popular".
-        *   **Enterprise AI** includes "🌟 AI Solution Engineer Support".
-
         The output must strictly conform to JSON structured output with 2 fields:
         - "markdown": The table as a GitHub-flavored Markdown table.
         - "additionalInfo": Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements). Use null if there is nothing to add.
+
+        Example output:
+        {
+          "markdown": "| Feature | Free | Pro AI | Premium AI | Enterprise AI |\n|---|---|---|---|---|\n| **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |\n| **Price** | Free | Starting from US$ 99/month | Starting from US$ 299/month | Let's talk |\n| **Call to Action** | Try Free Forever | Start for Free | Start for Free | Book a Demo |\n| **Key features** | 50 monthly active contacts | Up to 2,000 monthly active contacts | Up to 12,000 monthly active contacts | Custom number of monthly active contacts |\n| | Includes 3 user accounts | Includes 3 user accounts | Includes 10 user accounts | Custom number of user accounts |\n| | Test all core features without affecting your live business using the | Unlimited Broadcast | Analytics dashboards | Salesforce & custom integrations |\n| | | Unlimited Flow Builder usage | Webhook & API calls | Dedicated Customer success manager |\n| | | Unlimited contact storage | Role-based access control | PII masking |\n| | | Team Inbox | Advanced AI Agents with integrations | |\n| | | AI Agent | | |",
+          "additionalInfo": "*   **Pro AI** includes \"Free Onboarding Support\".\n*   **Premium AI** includes \"Free Onboarding Support\" and is marked as \"Most Popular\".\n*   **Enterprise AI** includes \"🌟 AI Solution Engineer Support\"."
+        }
 
         Output structure:
         {
