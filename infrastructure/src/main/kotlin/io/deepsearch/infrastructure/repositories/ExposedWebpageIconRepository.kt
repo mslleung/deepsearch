@@ -39,8 +39,12 @@ class ExposedWebpageIconRepository(
     override suspend fun batchUpsert(icons: List<WebpageIcon>): Unit = transactionService.withTransaction {
         if (icons.isEmpty()) return@withTransaction
 
+        // Sort by hash to ensure consistent lock ordering and prevent deadlocks
+        // when multiple concurrent transactions upsert overlapping keys
+        val sortedIcons = icons.sortedBy { Base64.encode(it.imageBytesHash) }
+
         webpageIconTable.batchUpsert(
-            data = icons,
+            data = sortedIcons,
             keys = arrayOf(webpageIconTable.imageBytesHash)
         ) { icon ->
             val hashBase64 = Base64.encode(icon.imageBytesHash)

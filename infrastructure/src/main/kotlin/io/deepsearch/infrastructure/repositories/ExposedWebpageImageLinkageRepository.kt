@@ -37,8 +37,12 @@ class ExposedWebpageImageLinkageRepository(
         
         // Upsert the new linkages as active
         if (imageHashes.isNotEmpty()) {
+            // Sort by hash to ensure consistent lock ordering and prevent deadlocks
+            // when multiple concurrent transactions upsert overlapping keys
+            val sortedHashes = imageHashes.sortedBy { Base64.encode(it) }
+
             webpageImageLinkageTable.batchUpsert(
-                data = imageHashes,
+                data = sortedHashes,
                 keys = arrayOf(webpageImageLinkageTable.url, webpageImageLinkageTable.imageBytesHash)
             ) { hash ->
                 val hashBase64 = Base64.encode(hash)

@@ -42,8 +42,12 @@ class ExposedWebpageImageRepository(
     override suspend fun batchUpsert(images: List<WebpageImage>): Unit = transactionService.withTransaction {
         if (images.isEmpty()) return@withTransaction
 
+        // Sort by hash to ensure consistent lock ordering and prevent deadlocks
+        // when multiple concurrent transactions upsert overlapping keys
+        val sortedImages = images.sortedBy { Base64.encode(it.imageBytesHash) }
+
         webpageImageTable.batchUpsert(
-            data = images,
+            data = sortedImages,
             keys = arrayOf(webpageImageTable.imageBytesHash)
         ) { image ->
             val hashBase64 = Base64.encode(image.imageBytesHash)

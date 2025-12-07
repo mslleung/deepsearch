@@ -40,8 +40,12 @@ class ExposedWebpageTableInterpretationRepository(
     override suspend fun batchUpsert(interpretations: List<WebpageTableInterpretation>): Unit = transactionService.withTransaction {
         if (interpretations.isEmpty()) return@withTransaction
 
+        // Sort by hash to ensure consistent lock ordering and prevent deadlocks
+        // when multiple concurrent transactions upsert overlapping keys
+        val sortedInterpretations = interpretations.sortedBy { Base64.encode(it.tableDataHash) }
+
         webpageTableInterpretationTable.batchUpsert(
-            data = interpretations,
+            data = sortedInterpretations,
             keys = arrayOf(webpageTableInterpretationTable.tableDataHash)
         ) { interpretation ->
             val hashBase64 = Base64.encode(interpretation.tableDataHash)

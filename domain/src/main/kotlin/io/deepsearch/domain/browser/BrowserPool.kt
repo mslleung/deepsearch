@@ -12,8 +12,8 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.hours
 
 private const val MAX_BROWSERS: Int = 10
-private const val MAX_CONTEXTS_PER_BROWSER: Int = 5
-private const val STANDBY_BROWSERS: Int = 5
+private const val MAX_CONTEXTS_PER_BROWSER: Int = 15
+private const val STANDBY_BROWSERS: Int = 1
 private val MAX_USAGE_DURATION = 1.hours
 
 /**
