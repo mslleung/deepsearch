@@ -27,12 +27,13 @@ class BlinkTestAgentTest : KoinTest {
 
     @Test
     fun `blink test should pass for clearly related query`() = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
             // Given
             val searchQuery = SearchQuery(
                 query = "website purpose",
                 url = "https://www.example.com/"
             )
+            val page = context.newPage()
 
             page.navigate(searchQuery.url)
             val screenshot = page.takeScreenshot()
@@ -53,12 +54,13 @@ class BlinkTestAgentTest : KoinTest {
 
     @Test
     fun `blink test should fail for clearly unrelated query`() = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
             // Given
             val searchQuery = SearchQuery(
                 query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
                 url = "https://www.example.com/"
             )
+            val page = context.newPage()
 
             page.navigate(searchQuery.url)
             val screenshot = page.takeScreenshot()

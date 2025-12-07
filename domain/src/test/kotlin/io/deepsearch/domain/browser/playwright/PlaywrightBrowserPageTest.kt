@@ -25,7 +25,9 @@ class PlaywrightBrowserPageTest : KoinTest {
 
     @Test
     fun `getting title for example webpage`() = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
+
             page.navigate("https://example.com/")
             val title = page.getTitle()
 
@@ -35,7 +37,9 @@ class PlaywrightBrowserPageTest : KoinTest {
 
     @Test
     fun `getting description for example webpage`() = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
+
             page.navigate("https://example.com/")
             val description = page.getDescription()
 
@@ -45,7 +49,9 @@ class PlaywrightBrowserPageTest : KoinTest {
 
     @Test
     fun `getting icons for example webpage`() = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
+
             page.navigate("https://www.otandp.com/body-check/")
             val icons = page.extractIcons()
 
@@ -55,7 +61,9 @@ class PlaywrightBrowserPageTest : KoinTest {
 
     @Test
     fun `extracting images with CORS fallback`() = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
+
             // Navigate to a page with CORS-blocked images
             page.navigate("https://www.otandp.com/body-check/")
             val images = page.extractImages()

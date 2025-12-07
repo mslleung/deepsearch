@@ -51,7 +51,8 @@ class DirectAnswerAgentTest : KoinTest {
     @ParameterizedTest
     @MethodSource("testCases")
     fun `generates direct answer for webpage query`(url: String, query: String) = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
             page.navigate(url)
 
             val screenshot = page.takeFullPageScreenshot()

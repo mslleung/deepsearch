@@ -30,7 +30,8 @@ class SemanticIdentificationAgentTest : KoinTest {
 
     @Test
     fun `should identify no semantic elements on simple example page`() = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
             // Navigate to data URL with the example HTML
             page.navigate("https://www.example.com/")
             val snapshot = page.captureSnapshot()
@@ -60,7 +61,8 @@ class SemanticIdentificationAgentTest : KoinTest {
         ]
     )
     fun `should identify navigation elements`(url: String) = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
             page.navigate(url)
             val snapshot = page.captureSnapshot()
 

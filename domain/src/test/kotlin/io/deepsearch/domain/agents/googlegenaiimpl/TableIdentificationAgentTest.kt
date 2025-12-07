@@ -37,7 +37,8 @@ class TableIdentificationAgentTest : KoinTest {
         ]
     )
     fun `identifies a single table from webpage HTML`(url: String) = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
             page.navigate(url)
             val snapshot = page.captureSnapshot()
 

@@ -43,7 +43,8 @@ class MarkdownConversionAgentTest : KoinTest {
         ]
     )
     fun `converts webpage to markdown`(url: String) = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
             page.navigate(url)
 
             val screenshot = page.takeFullPageScreenshot()

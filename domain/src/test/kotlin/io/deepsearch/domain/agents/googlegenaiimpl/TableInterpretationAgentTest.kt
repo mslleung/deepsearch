@@ -36,7 +36,8 @@ class TableInterpretationAgentTest : KoinTest {
         ]
     )
     fun `interprets identified table to markdown`(url: String) = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
             page.navigate(url)
             val snapshot = page.captureSnapshot()
             val idOutput = tableIdentificationAgent.generate(

@@ -5,7 +5,6 @@ import com.microsoft.playwright.Page
 import com.microsoft.playwright.PlaywrightException
 import com.microsoft.playwright.options.ScreenshotType
 import com.microsoft.playwright.options.LoadState
-import com.microsoft.playwright.options.WaitUntilState
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.exceptions.BrowserNavigationException
@@ -60,45 +59,31 @@ class PlaywrightBrowserPage(
     /**
      * Navigate to a new URL and wait for default load state.
      * Enhanced with Cloudflare challenge handling and anti-bot measures.
-     *
-     * Optimized to release the mutex between navigation initiation (COMMIT) and
-     * waiting for LOAD state, allowing other pages/contexts to use Playwright
-     * while this page loads.
      */
     override suspend fun navigate(url: String) {
         logger.debug("Navigate to {}", url)
-
-        val navigationTime = measureTimeMillis {
-            // Step 1: Initiate navigation with COMMIT (quick return after server responds)
-            val response = try {
-                apiMutex.withLock {
-                    page.navigate(url, Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT))
-                }
-            } catch (e: PlaywrightException) {
-                throw mapPlaywrightException(url, e)
-            }
-
-            // Check HTTP status immediately
-            response?.let {
-                val statusCode = it.status()
-                val reasonPhrase = it.statusText()
-                when (statusCode) {
-                    in 400..499 -> throw HttpClientErrorException(url, statusCode, reasonPhrase)
-                    in 500..599 -> throw HttpServerErrorException(url, statusCode, reasonPhrase)
-                }
-            }
-
-            // Step 2: Wait for LOAD state (mutex released in between, allowing other pages to work)
+        apiMutex.withLock {
             try {
-                apiMutex.withLock {
+                val navigationTime = measureTimeMillis {
+                    val response = page.navigate(url)
+
                     page.waitForLoadState(LoadState.LOAD)
+
+                    // Check HTTP status code
+                    response?.let {
+                        val statusCode = it.status()
+                        val reasonPhrase = it.statusText()
+                        when (statusCode) {
+                            in 400..499 -> throw HttpClientErrorException(url, statusCode, reasonPhrase)
+                            in 500..599 -> throw HttpServerErrorException(url, statusCode, reasonPhrase)
+                        }
+                    }
                 }
+                logger.debug("Navigate to {} took {} ms", url, navigationTime)
             } catch (e: PlaywrightException) {
                 throw mapPlaywrightException(url, e)
             }
         }
-
-        logger.debug("Navigate to {} took {} ms", url, navigationTime)
     }
 
     override suspend fun takeScreenshot(): IBrowserPage.Screenshot {

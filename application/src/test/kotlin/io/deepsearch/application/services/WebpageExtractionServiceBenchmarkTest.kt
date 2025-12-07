@@ -36,7 +36,9 @@ class WebpageExtractionServiceBenchmarkTest : KoinTest {
         ]
     )
     fun `benchmark webpage extraction performance`(url: String) = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
+        browserPool.withContext { context ->
+            val page = context.newPage()
+
             page.navigate(url)
 
             val extractionTime = measureTimeMillis {
