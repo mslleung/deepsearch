@@ -1,8 +1,9 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.browser.playwright.PlaywrightBrowserRuntime
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.Logger
@@ -53,7 +54,9 @@ interface IBrowserPool {
  * - If pool is full and all at capacity: waits for a page to be released
  * - Browsers are recycled when expired AND have no active pages
  */
-class BrowserPool : IBrowserPool {
+class BrowserPool(
+    private val applicationCoroutineScope: IApplicationCoroutineScope
+) : IBrowserPool {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -87,8 +90,8 @@ class BrowserPool : IBrowserPool {
     private val idGenerator = AtomicLong(1)
 
     init {
-        // Prewarm standby browsers at startup
-        runBlocking {
+        // Prewarm standby browsers at startup (non-blocking)
+        applicationCoroutineScope.scope.launch {
             prewarmBrowsers()
         }
     }
