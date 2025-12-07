@@ -66,10 +66,7 @@ class TableInterpretationAgentGenAiImpl(
         - If there is any ambiguity or information conflict, note them in the additionalInfo field.
         - Normalize whitespace; remove decorative or layout-only characters.
         - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
-
-        You must output a JSON object with two fields:
-        - "markdown": The table as a GitHub-flavored Markdown table.
-        - "additionalInfo": Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements). Use null if there is nothing to add.
+        - If the HTML do not look like a table, interpret and coerce the data into tabular markdown format while preserving semantic meaning.
 
         Example markdown:
         | Feature | Free | Pro AI | Premium AI | Enterprise AI |
@@ -89,6 +86,10 @@ class TableInterpretationAgentGenAiImpl(
         *   **Pro AI** includes "Free Onboarding Support".
         *   **Premium AI** includes "Free Onboarding Support" and is marked as "Most Popular".
         *   **Enterprise AI** includes "🌟 AI Solution Engineer Support".
+
+        The output must strictly conform to JSON structured output with 2 fields:
+        - "markdown": The table as a GitHub-flavored Markdown table.
+        - "additionalInfo": Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements). Use null if there is nothing to add.
 
         Output structure:
         {
