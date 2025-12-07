@@ -20,7 +20,6 @@ import io.deepsearch.domain.exceptions.UrlProcessingException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -59,18 +58,18 @@ class PlaywrightBrowserPage(
     override suspend fun getUrl(): String = apiMutex.withLock { page.url() }
 
     /**
-     * Navigate to a new URL and wait for page load.
+     * Navigate to a new URL and wait for default load state.
      * Enhanced with Cloudflare challenge handling and anti-bot measures.
      *
-     * Uses a polling approach for load detection to minimize mutex hold time.
-     * This allows multiple pages in the same runtime to load in parallel,
-     * since each page only holds the mutex briefly during API calls.
+     * Optimized to release the mutex between navigation initiation (COMMIT) and
+     * waiting for LOAD state, allowing other pages/contexts to use Playwright
+     * while this page loads.
      */
     override suspend fun navigate(url: String) {
         logger.debug("Navigate to {}", url)
 
         val navigationTime = measureTimeMillis {
-            // Step 1: Initiate navigation with COMMIT (mutex held briefly)
+            // Step 1: Initiate navigation with COMMIT (quick return after server responds)
             val response = try {
                 apiMutex.withLock {
                     page.navigate(url, Page.NavigateOptions().setWaitUntil(WaitUntilState.COMMIT))
@@ -89,27 +88,13 @@ class PlaywrightBrowserPage(
                 }
             }
 
-            // Step 2: Poll for load completion (mutex held briefly per poll, ~5-10ms each)
-            // This allows other pages to interleave their operations during the delays
-            val maxWaitMs = 30_000L
-            val pollIntervalMs = 100L
-            val startTime = System.currentTimeMillis()
-            
-            while (System.currentTimeMillis() - startTime < maxWaitMs) {
-                val readyState = try {
-                    apiMutex.withLock {
-                        page.evaluate("() => document.readyState") as String
-                    }
-                } catch (e: PlaywrightException) {
-                    throw mapPlaywrightException(url, e)
+            // Step 2: Wait for LOAD state (mutex released in between, allowing other pages to work)
+            try {
+                apiMutex.withLock {
+                    page.waitForLoadState(LoadState.LOAD)
                 }
-                
-                if (readyState == "complete") {
-                    break
-                }
-                
-                // Release mutex during delay - other pages can work
-                delay(pollIntervalMs)
+            } catch (e: PlaywrightException) {
+                throw mapPlaywrightException(url, e)
             }
         }
 
