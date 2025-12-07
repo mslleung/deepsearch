@@ -268,6 +268,13 @@ class TableInterpretationAgentGenAiImpl(
         val doc = Jsoup.parseBodyFragment(rawHtml)
         doc.outputSettings().prettyPrint(false)
 
+        // Step 0: Strip image XML tags but keep their text content
+        // Image tags are in format: <image id="img-xxx">text</image>
+        // We want to preserve the interpreted text for table understanding
+        doc.select("image").forEach { element ->
+            element.unwrap()
+        }
+
         // Step 1: Remove noise elements
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
