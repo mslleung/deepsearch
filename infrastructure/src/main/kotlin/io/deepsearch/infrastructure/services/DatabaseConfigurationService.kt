@@ -82,6 +82,32 @@ class DatabaseConfigurationService(
             suspendTransaction(database) {
                 // Enable pgvector extension for vector similarity search
                 exec("CREATE EXTENSION IF NOT EXISTS vector")
+                
+                // Create implicit casts from text/varchar to vector so parameterized queries work.
+                // R2DBC PostgreSQL doesn't have a built-in encoder for vector type, so we bind
+                // vectors as text strings. These casts allow PostgreSQL to automatically convert them.
+                exec("""
+                    DO $$
+                    BEGIN
+                        -- Cast from text to vector
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_cast 
+                            WHERE castsource = 'text'::regtype 
+                            AND casttarget = 'vector'::regtype
+                        ) THEN
+                            CREATE CAST (text AS vector) WITH INOUT AS IMPLICIT;
+                        END IF;
+                        
+                        -- Cast from varchar to vector (R2DBC may bind strings as varchar)
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_cast 
+                            WHERE castsource = 'character varying'::regtype 
+                            AND casttarget = 'vector'::regtype
+                        ) THEN
+                            CREATE CAST (character varying AS vector) WITH INOUT AS IMPLICIT;
+                        END IF;
+                    END $$;
+                """.trimIndent())
 
                 SchemaUtils.create(
                     userTable,

@@ -2,7 +2,7 @@ import java.sql.DriverManager
 
 buildscript {
     dependencies {
-        classpath("org.postgresql:postgresql:42.7.3")
+        classpath("org.postgresql:postgresql:42.7.8")
     }
 }
 

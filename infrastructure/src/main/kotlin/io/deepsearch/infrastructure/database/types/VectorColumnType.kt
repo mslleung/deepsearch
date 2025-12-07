@@ -9,9 +9,12 @@ import org.slf4j.LoggerFactory
 
 /**
  * Custom column type for PostgreSQL vector type using pgvector extension.
- * Supports R2DBC by using the native vector type support in r2dbc-postgresql 1.0.3+.
+ * Supports R2DBC with r2dbc-postgresql 1.0.3+.
  * 
- * R2DBC PostgreSQL natively supports the vector type via io.r2dbc.postgresql.codec.Vector.
+ * - Encoding (write): Uses string format "[1.0,2.0,...]" which PostgreSQL implicitly casts to vector.
+ *   R2DBC PostgreSQL doesn't have a built-in encoder for the Vector type.
+ * - Decoding (read): Uses io.r2dbc.postgresql.codec.Vector which R2DBC PostgreSQL natively returns.
+ * 
  * See: https://github.com/pgjdbc/r2dbc-postgresql#data-type-mapping
  */
 class VectorColumnType(private val dimensions: Int) : ColumnType<List<Float>>() {
@@ -40,14 +43,15 @@ class VectorColumnType(private val dimensions: Int) : ColumnType<List<Float>>() 
     
     /**
      * Convert Kotlin List<Float> to database value.
-     * Returns io.r2dbc.postgresql.codec.Vector for R2DBC PostgreSQL's native vector support.
-     * R2DBC PostgreSQL 1.0.3+ requires Vector objects for encoding (not raw FloatArray).
+     * Returns a String in pgvector format "[1.0,2.0,3.0,...]" which PostgreSQL
+     * implicitly casts to the vector type. R2DBC PostgreSQL doesn't have a built-in
+     * encoder for the Vector type, so we use string representation instead.
      */
-    override fun notNullValueToDB(value: List<Float>): Vector {
+    override fun notNullValueToDB(value: List<Float>): String {
         require(value.size == dimensions) {
             "Vector dimension mismatch: expected $dimensions, got ${value.size}"
         }
-        return Vector.of(value)
+        return "[${value.joinToString(",")}]"
     }
     
     /**
