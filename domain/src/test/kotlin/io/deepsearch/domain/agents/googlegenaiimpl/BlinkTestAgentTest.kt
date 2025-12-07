@@ -1,7 +1,7 @@
 package io.deepsearch.domain.agents.googlegenaiimpl
 
 import io.deepsearch.domain.agents.IBlinkTestAgent
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
@@ -22,19 +22,17 @@ class BlinkTestAgentTest : KoinTest {
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val browserRuntimePool by inject<IBrowserRuntimePool>()
+    private val browserPool by inject<IBrowserPool>()
     private val agent by inject<IBlinkTestAgent>()
 
     @Test
     fun `blink test should pass for clearly related query`() = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
+        browserPool.withContext { context ->
             // Given
             val searchQuery = SearchQuery(
                 query = "website purpose",
                 url = "https://www.example.com/"
             )
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
             val page = context.newPage()
 
             page.navigate(searchQuery.url)
@@ -56,14 +54,12 @@ class BlinkTestAgentTest : KoinTest {
 
     @Test
     fun `blink test should fail for clearly unrelated query`() = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
+        browserPool.withContext { context ->
             // Given
             val searchQuery = SearchQuery(
                 query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
                 url = "https://www.example.com/"
             )
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
             val page = context.newPage()
 
             page.navigate(searchQuery.url)

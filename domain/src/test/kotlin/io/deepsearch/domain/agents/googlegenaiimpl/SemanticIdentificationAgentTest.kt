@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.SemanticIdentificationInput
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
@@ -26,13 +26,11 @@ class SemanticIdentificationAgentTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<ISemanticIdentificationAgent>()
-    private val browserRuntimePool by inject<IBrowserRuntimePool>()
+    private val browserPool by inject<IBrowserPool>()
 
     @Test
     fun `should identify no semantic elements on simple example page`() = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
             // Navigate to data URL with the example HTML
             page.navigate("https://www.example.com/")
@@ -63,9 +61,7 @@ class SemanticIdentificationAgentTest : KoinTest {
         ]
     )
     fun `should identify navigation elements`(url: String) = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
             page.navigate(url)
             val snapshot = page.captureSnapshot()

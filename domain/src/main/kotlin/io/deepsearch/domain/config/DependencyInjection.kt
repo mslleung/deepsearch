@@ -2,8 +2,8 @@ package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googlegenaiimpl.*
-import io.deepsearch.domain.browser.BrowserRuntimePool
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.BrowserPool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.ocr.ITesseractPool
 import io.deepsearch.domain.services.OcrImageTextExtractionService
@@ -35,8 +35,8 @@ val domainModule = module {
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
     singleOf(::DefaultDispatcherProvider) bind IDispatcherProvider::class
 
-    // OCR services
-    singleOf(::BrowserRuntimePool) { createdAtStart() } bind IBrowserRuntimePool::class
+    // Browser and OCR pools
+    singleOf(::BrowserPool) { createdAtStart() } bind IBrowserPool::class
     singleOf(::TesseractPoolImpl) { createdAtStart() } bind ITesseractPool::class
 
     // Singleton domain services (used by singleton application services)

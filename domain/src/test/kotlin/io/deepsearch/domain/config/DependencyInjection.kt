@@ -3,8 +3,8 @@ package io.deepsearch.domain.config
 import com.google.genai.Client
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googlegenaiimpl.*
-import io.deepsearch.domain.browser.BrowserRuntimePool
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.BrowserPool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.ocr.ITesseractPool
 import io.deepsearch.domain.services.OcrImageTextExtractionService
@@ -51,7 +51,7 @@ private val domainCommonTestModule = module {
 
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
 
-    singleOf(::BrowserRuntimePool) bind IBrowserRuntimePool::class
+    singleOf(::BrowserPool) bind IBrowserPool::class
     singleOf(::TesseractPoolImpl) bind ITesseractPool::class
 
     // GenAI agents as singletons for tests

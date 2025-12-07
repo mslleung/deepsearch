@@ -1,6 +1,6 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.*
 import kotlinx.coroutines.flow.Flow
@@ -63,7 +63,7 @@ interface IUrlContentProcessingService {
 }
 
 class UrlContentProcessingService(
-    private val browserRuntimePool: IBrowserRuntimePool,
+    private val browserPool: IBrowserPool,
     private val normalizeUrlService: INormalizeUrlService,
     private val webpageCacheService: IWebpageCacheService,
     private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
@@ -244,84 +244,76 @@ class UrlContentProcessingService(
         sessionId: SessionId,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
+        browserPool.withContext { context ->
+            val page = context.newPage()
 
-            try {
-                val context = browser.createContext()
-                val page = context.newPage()
+            page.navigate(normalizedUrl)
+            val extractedHtml = page.getFullHtml()
 
-                page.navigate(normalizedUrl)
-                val extractedHtml = page.getFullHtml()
-
-                // Create separate flows for each operation - these are cancellation-aware
-                val linkDiscoveryFlow = flow {
-                    val discoveredLinks = discoverLinks(extractedHtml)
-                    logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
-                    emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
-                }
-
-                val markdownExtractionFlow = flow {
-                    try {
-                        // Extract webpage content - this internally stores images in their own
-                        // committed transactions via webpageImageRepository.batchUpsert()
-                        val extractionResult = webpageExtractionService.extractWebpage(page, sessionId)
-                        logger.debug(
-                            "Markdown extraction complete for {}: {} chars",
-                            normalizedUrl,
-                            extractionResult.markdown.length
-                        )
-
-                        // Cache the webpage content (has its own transaction)
-                        webpageCacheService.cacheWebpage(
-                            url = normalizedUrl,
-                            title = extractionResult.title,
-                            description = extractionResult.description,
-                            markdown = extractionResult.markdown,
-                            html = extractedHtml,
-                            httpStatus = 200,
-                            httpReason = "OK",
-                            mimeType = "text/html",
-                            sessionId = sessionId
-                        )
-
-                        // Update URL-to-image linkages in a separate transaction
-                        // Images are already committed by extractWebpage(), so FK constraints are satisfied
-                        if (extractionResult.imageHashes.isNotEmpty()) {
-                            webpageImageLinkageRepository.upsertLinkages(
-                                normalizedUrl,
-                                extractionResult.imageHashes
-                            )
-                        }
-
-                        emit(
-                            UrlProcessingEvent.MarkdownExtractionComplete(
-                                normalizedUrl,
-                                extractionResult.markdown,
-                                extractionResult.title,
-                                extractionResult.description,
-                                wasCached = false
-                            )
-                        )
-                    } catch (e: Exception) {
-                        // Wrap markdown extraction failures
-                        throw MarkdownExtractionException(normalizedUrl, e)
-                    }
-                }
-
-                // Merge both flows - they emit independently as each completes
-                // When this flow is cancelled, merge stops collecting immediately and propagates cancellation
-                merge(linkDiscoveryFlow, markdownExtractionFlow)
-                    .onCompletion { cause ->
-                        if (cause != null) {
-                            logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)
-                        }
-                    }
-                    .collect { event -> send(event) }
-
-            } finally {
-                browser.close()
+            // Create separate flows for each operation - these are cancellation-aware
+            val linkDiscoveryFlow = flow {
+                val discoveredLinks = discoverLinks(extractedHtml)
+                logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
+                emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
             }
+
+            val markdownExtractionFlow = flow {
+                try {
+                    // Extract webpage content - this internally stores images in their own
+                    // committed transactions via webpageImageRepository.batchUpsert()
+                    val extractionResult = webpageExtractionService.extractWebpage(page, sessionId)
+                    logger.debug(
+                        "Markdown extraction complete for {}: {} chars",
+                        normalizedUrl,
+                        extractionResult.markdown.length
+                    )
+
+                    // Cache the webpage content (has its own transaction)
+                    webpageCacheService.cacheWebpage(
+                        url = normalizedUrl,
+                        title = extractionResult.title,
+                        description = extractionResult.description,
+                        markdown = extractionResult.markdown,
+                        html = extractedHtml,
+                        httpStatus = 200,
+                        httpReason = "OK",
+                        mimeType = "text/html",
+                        sessionId = sessionId
+                    )
+
+                    // Update URL-to-image linkages in a separate transaction
+                    // Images are already committed by extractWebpage(), so FK constraints are satisfied
+                    if (extractionResult.imageHashes.isNotEmpty()) {
+                        webpageImageLinkageRepository.upsertLinkages(
+                            normalizedUrl,
+                            extractionResult.imageHashes
+                        )
+                    }
+
+                    emit(
+                        UrlProcessingEvent.MarkdownExtractionComplete(
+                            normalizedUrl,
+                            extractionResult.markdown,
+                            extractionResult.title,
+                            extractionResult.description,
+                            wasCached = false
+                        )
+                    )
+                } catch (e: Exception) {
+                    // Wrap markdown extraction failures
+                    throw MarkdownExtractionException(normalizedUrl, e)
+                }
+            }
+
+            // Merge both flows - they emit independently as each completes
+            // When this flow is cancelled, merge stops collecting immediately and propagates cancellation
+            merge(linkDiscoveryFlow, markdownExtractionFlow)
+                .onCompletion { cause ->
+                    if (cause != null) {
+                        logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)
+                    }
+                }
+                .collect { event -> send(event) }
         }
     }
 

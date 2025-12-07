@@ -1,49 +1,24 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.browser.IBrowserRuntimePool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.exceptions.UrlProcessingException
 import io.deepsearch.domain.ext.pathDepth
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
-import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
-import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
-import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
-import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
-import io.deepsearch.domain.models.valueobjects.WebpageLink
-import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
-import io.deepsearch.domain.exceptions.UrlProcessingException
+import io.deepsearch.domain.models.valueobjects.*
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
-import kotlin.time.Clock
-import kotlin.time.ExperimentalTime
+import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.domain.services.INormalizeUrlService
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.flatMapMerge
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.merge
-import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.takeWhile
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 interface IPeriodicIndexJobRegistry {
     fun events(jobId: Long): SharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>
@@ -53,7 +28,6 @@ interface IPeriodicIndexJobRegistry {
 
 @OptIn(ExperimentalTime::class)
 class PeriodicIndexJobRegistry(
-    private val browserRuntimePool: IBrowserRuntimePool,
     private val normalizeUrlService: INormalizeUrlService,
     private val webpageCacheService: IWebpageCacheService,
     private val urlContentProcessingService: IUrlContentProcessingService,

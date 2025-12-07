@@ -4,7 +4,7 @@ import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -26,7 +26,7 @@ class TableInterpretationAgentTest : KoinTest {
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val tableIdentificationAgent by inject<ITableIdentificationAgent>()
     private val tableInterpretationAgent by inject<ITableInterpretationAgent>()
-    private val browserRuntimePool by inject<IBrowserRuntimePool>()
+    private val browserPool by inject<IBrowserPool>()
 
     @ParameterizedTest
     @ValueSource(
@@ -36,9 +36,7 @@ class TableInterpretationAgentTest : KoinTest {
         ]
     )
     fun `interprets identified table to markdown`(url: String) = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
             page.navigate(url)
             val snapshot = page.captureSnapshot()

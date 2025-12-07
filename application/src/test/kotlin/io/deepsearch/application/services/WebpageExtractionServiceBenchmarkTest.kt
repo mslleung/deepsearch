@@ -1,7 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationBenchmarkTestModule
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +24,7 @@ class WebpageExtractionServiceBenchmarkTest : KoinTest {
         modules(applicationBenchmarkTestModule)
     }
 
-    private val browserRuntimePool by inject<IBrowserRuntimePool>()
+    private val browserPool by inject<IBrowserPool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val webpageExtractionService by inject<IWebpageExtractionService>()
 
@@ -36,9 +36,7 @@ class WebpageExtractionServiceBenchmarkTest : KoinTest {
         ]
     )
     fun `benchmark webpage extraction performance`(url: String) = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
 
             page.navigate(url)
@@ -51,7 +49,6 @@ class WebpageExtractionServiceBenchmarkTest : KoinTest {
             }
 
             println("Extraction time for $url: ${extractionTime}ms")
-
         }
     }
 }

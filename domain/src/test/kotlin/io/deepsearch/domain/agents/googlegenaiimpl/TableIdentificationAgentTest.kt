@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentificationInput
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -24,7 +24,7 @@ class TableIdentificationAgentTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<ITableIdentificationAgent>()
-    private val browserRuntimePool by inject<IBrowserRuntimePool>()
+    private val browserPool by inject<IBrowserPool>()
 
     @ParameterizedTest
     @ValueSource(
@@ -37,9 +37,7 @@ class TableIdentificationAgentTest : KoinTest {
         ]
     )
     fun `identifies a single table from webpage HTML`(url: String) = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
             page.navigate(url)
             val snapshot = page.captureSnapshot()

@@ -11,40 +11,58 @@ import kotlinx.coroutines.sync.withLock
 /**
  * Playwright-backed browser instance created from a runtime.
  *
- * Each browser has its own mutex to ensure thread-safe access to the Playwright API,
- * allowing multiple browsers from the same runtime to operate concurrently.
- * Browsers are typically created per-link during web scraping.
+ * Uses the runtime's shared mutex to serialize all Playwright API calls.
+ * This ensures thread-safe access to the Playwright connection which
+ * can only process messages sequentially.
  */
 class PlaywrightBrowser(
-    private val playwright: Playwright
+    playwright: Playwright,
+    private val apiMutex: Mutex
 ) : IBrowser {
     private val playwrightBrowser = playwright.chromium().launch(
         BrowserType.LaunchOptions()
             .setHeadless(true)
             .setArgs(
                 listOf(
+                    // Anti-detection
                     "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
+                    "--disable-web-security",
+                    "--disable-infobars",
+                    
+                    // Stability
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
-                    "--disable-web-security",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--window-size=1920,1080",
-                    "--disable-infobars",
+                    "--disable-dev-shm-usage",
+                    
+                    // Memory optimizations
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    "--renderer-process-limit=2",
+                    "--disable-site-isolation-trials",
+                    "--js-flags=--max-old-space-size=128",
+                    "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
+                    "--disable-sync",
+                    "--metrics-recording-only",
+                    "--no-first-run",
+                    
+                    // Background process optimizations
                     "--disable-extensions",
                     "--disable-background-networking",
                     "--disable-background-timer-throttling",
                     "--disable-backgrounding-occluded-windows",
                     "--disable-renderer-backgrounding",
-                    "--disable-ipc-flooding-protection"
+                    "--disable-ipc-flooding-protection",
+                    
+                    // Window size
+                    "--window-size=1920,1080"
                 )
             )
     )
-    private val apiMutex: Mutex = Mutex()
 
     override suspend fun createContext(): IBrowserContext {
+        // All Playwright API calls must be inside the mutex lock
         val context = apiMutex.withLock {
-            playwrightBrowser.newContext(
+            val ctx = playwrightBrowser.newContext(
                 Browser.NewContextOptions()
                     .setUserAgent(
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -70,20 +88,22 @@ class PlaywrightBrowser(
                     .setJavaScriptEnabled(true)
                     .setBypassCSP(true)
             )
-        }
 
-        // Set up route blocking for expensive resource types
-        context.route("**/*") { route ->
-            val resourceType = route.request().resourceType()
-            when (resourceType) {
-                "media",      // video/audio
-                "manifest",   // app manifests
-                "eventsource",
-                "websocket",  // real-time connections
-                "texttrack"   // video subtitles
-                -> route.abort()
-                else -> route.resume()
+            // Set up route blocking for expensive resource types - MUST be inside the lock
+            ctx.route("**/*") { route ->
+                val resourceType = route.request().resourceType()
+                when (resourceType) {
+                    "media",      // video/audio
+                    "manifest",   // app manifests
+                    "eventsource",
+                    "websocket",  // real-time connections
+                    "texttrack"   // video subtitles
+                    -> route.abort()
+                    else -> route.resume()
+                }
             }
+            
+            ctx
         }
 
         return PlaywrightBrowserContext(context, apiMutex)

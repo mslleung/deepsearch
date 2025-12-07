@@ -1,6 +1,6 @@
 package io.deepsearch.domain.browser.playwright
 
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -21,13 +21,11 @@ class PlaywrightBrowserPageTest : KoinTest {
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val browserRuntimePool by inject<IBrowserRuntimePool>()
+    private val browserPool by inject<IBrowserPool>()
 
     @Test
     fun `getting title for example webpage`() = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
 
             page.navigate("https://example.com/")
@@ -39,9 +37,7 @@ class PlaywrightBrowserPageTest : KoinTest {
 
     @Test
     fun `getting description for example webpage`() = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
 
             page.navigate("https://example.com/")
@@ -53,9 +49,7 @@ class PlaywrightBrowserPageTest : KoinTest {
 
     @Test
     fun `getting icons for example webpage`() = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
 
             page.navigate("https://www.otandp.com/body-check/")
@@ -67,9 +61,7 @@ class PlaywrightBrowserPageTest : KoinTest {
 
     @Test
     fun `extracting images with CORS fallback`() = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
 
             // Navigate to a page with CORS-blocked images

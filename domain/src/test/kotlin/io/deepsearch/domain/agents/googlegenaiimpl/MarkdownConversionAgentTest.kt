@@ -2,7 +2,7 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 
 import io.deepsearch.domain.agents.IMarkdownConversionAgent
 import io.deepsearch.domain.agents.MarkdownConversionInput
-import io.deepsearch.domain.browser.IBrowserRuntimePool
+import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -24,7 +24,7 @@ class MarkdownConversionAgentTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IMarkdownConversionAgent>()
-    private val browserRuntimePool by inject<IBrowserRuntimePool>()
+    private val browserPool by inject<IBrowserPool>()
 
     // Test resources helpers
     private fun resourceBytes(name: String): ByteArray =
@@ -43,9 +43,7 @@ class MarkdownConversionAgentTest : KoinTest {
         ]
     )
     fun `converts webpage to markdown`(url: String) = runTest(testCoroutineDispatcher) {
-        browserRuntimePool.acquireRuntime { runtime ->
-            val browser = runtime.createBrowser()
-            val context = browser.createContext()
+        browserPool.withContext { context ->
             val page = context.newPage()
             page.navigate(url)
 
