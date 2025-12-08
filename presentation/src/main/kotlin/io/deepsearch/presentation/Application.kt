@@ -4,6 +4,7 @@ import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import com.google.genai.Client
 import io.deepsearch.domain.config.ApiKeyConfig
+import io.deepsearch.domain.config.DeepSearchBrowserConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.EnvironmentConfig
 import io.deepsearch.domain.config.JwtConfig
@@ -195,6 +196,11 @@ private fun Application.configureDependencyInjection() {
                         publishableKey = environment.config.property("stripe.publishableKey").getString(),
                         webhookSecret = environment.config.property("stripe.webhookSecret").getString(),
                         frontendUrl = environment.config.property("stripe.frontendUrl").getString()
+                    )
+                }
+                single {
+                    DeepSearchBrowserConfig(
+                        url = environment.config.property("deepsearchBrowser.url").getString()
                     )
                 }
                 single {

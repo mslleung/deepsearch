@@ -1,6 +1,7 @@
 package io.deepsearch.presentation
 
 import io.deepsearch.domain.config.ApiKeyConfig
+import io.deepsearch.domain.config.DeepSearchBrowserConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.EnvironmentConfig
 import io.deepsearch.domain.config.PostgresConfig
@@ -105,6 +106,11 @@ private fun Application.configureDependencyInjection() {
                 single {
                     EnvironmentConfig(
                         isDevelopmentMode = environment.config.property("ktor.development").getString().toBoolean()
+                    )
+                }
+                single {
+                    DeepSearchBrowserConfig(
+                        url = environment.config.property("deepsearchBrowser.url").getString()
                     )
                 }
                 single {

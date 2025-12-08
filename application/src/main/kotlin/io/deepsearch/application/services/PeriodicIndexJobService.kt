@@ -64,9 +64,6 @@ class PeriodicIndexJobService(
 
     override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?, userId: UserId): PeriodicIndexJob {
         val normalizedBase = normalize(baseUrl)
-        val existing = jobRepository.findActiveByBaseUrl(normalizedBase)
-        if (existing != null) return existing
-
         val now = Clock.System.now()
         val created = jobRepository.create(
             PeriodicIndexJob(

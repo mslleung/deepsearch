@@ -15,3 +15,5 @@ database:
         database: ${DB_NAME}
         username: ${DB_USERNAME}
         password: ${DB_PASSWORD}
+deepsearchBrowser:
+    url: ${DEEPSEARCH_BROWSER_URL:-http://localhost:8090}

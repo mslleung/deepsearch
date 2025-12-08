@@ -38,3 +38,5 @@ stripe:
     publishableKey: ${STRIPE_PUBLISHABLE_KEY}
     webhookSecret: ${STRIPE_WEBHOOK_SECRET}
     frontendUrl: ${STRIPE_FRONTEND_URL:-http://localhost:3000}
+deepsearchBrowser:
+    url: ${DEEPSEARCH_BROWSER_URL:-http://localhost:8090}
