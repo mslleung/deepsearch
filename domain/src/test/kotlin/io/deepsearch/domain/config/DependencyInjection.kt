@@ -48,6 +48,11 @@ private val domainCommonTestModule = module {
             isDevelopmentMode = true
         )
     }
+    single {
+        DeepSearchBrowserConfig(
+            url = "http://localhost:8090"
+        )
+    }
 
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
 
