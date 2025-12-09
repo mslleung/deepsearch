@@ -156,5 +156,20 @@ class RemoteBrowserPool(
     }
 }
 
+/**
+ * Exception thrown when a remote browser command fails.
+ * 
+ * This is the raw exception from the browser service. It is typically wrapped
+ * by RemoteBrowserPage into more specific exception types:
+ * - ElementOperationException for element-level failures (recoverable)
+ * - PageOperationException for page-level failures (typically fatal)
+ * 
+ * The error code comes from the browser service and can be used for logging/debugging.
+ */
 class RemoteBrowserException(val code: String, message: String) : Exception(message)
+
+/**
+ * Exception thrown when the WebSocket connection to the browser service is lost.
+ * This is always a fatal error that should propagate.
+ */
 class ConnectionLostException(message: String) : Exception(message)

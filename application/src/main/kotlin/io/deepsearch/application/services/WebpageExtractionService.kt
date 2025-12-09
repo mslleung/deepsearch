@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
+import io.deepsearch.domain.browser.ElementOperationException
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.SessionId
@@ -209,9 +210,9 @@ class WebpageExtractionService(
                             cssSelectors = listOf(failedImage.cssSelector)
                         )
                     )
-                } catch (e: Exception) {
-                    logger.warn("Failed to capture screenshot for image: {}", e.message)
-                }
+                } catch (e: ElementOperationException) {
+                    // Element screenshot failed (timeout, not visible, etc.) - skip this image
+                    logger.warn("Failed to capture screenshot for image: {}", e.message)                }
             }
 
             val extractionResults = webpageImageTextExtractionService.extractTextFromImagesWithHashes(allImages, sessionId)
@@ -312,31 +313,21 @@ class WebpageExtractionService(
         val url = webpage.getUrl()
         
         // Filter tables that still exist
+        // Note: elementExistsByCssSelector is a page operation and throws PageOperationException
+        // which should propagate since it indicates a more serious issue
         val existingTables = tables.filter { table ->
-            try {
-                webpage.elementExistsByCssSelector(table.cssSelector)
-            } catch (e: Exception) {
-                logger.debug("Table with CSS selector '{}' was removed, skipping interpretation", 
-                    table.cssSelector)
-                false
-            }
+            webpage.elementExistsByCssSelector(table.cssSelector)
         }
         
         if (existingTables.isEmpty()) {
             return emptyList()
         }
         
-        val tableInputs = existingTables.mapNotNull { table ->
-            try {
-                table.cssSelector to TableInterpretationInput(
-                    tableIdentification = table,
-                    webpage = webpage
-                )
-            } catch (e: Exception) {
-                logger.error("Failed to create input for table at URL: {} with CSS selector '{}': {}", 
-                    url, table.cssSelector, e.message)
-                null
-            }
+        val tableInputs = existingTables.map { table ->
+            table.cssSelector to TableInterpretationInput(
+                tableIdentification = table,
+                webpage = webpage
+            )
         }
         
         val cssSelectors = tableInputs.map { it.first }
