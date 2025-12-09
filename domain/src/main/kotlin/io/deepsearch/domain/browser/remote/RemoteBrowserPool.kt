@@ -52,6 +52,10 @@ class RemoteBrowserPool(
     @Volatile
     private var ws: DefaultClientWebSocketSession? = null
 
+    // Signals when the WebSocket connection is ready
+    @Volatile
+    private var connectionReady = CompletableDeferred<Unit>()
+
     // Pending requests waiting for response, keyed by requestId
     private val pending = ConcurrentHashMap<String, CompletableDeferred<ServerMessage>>()
 
@@ -66,6 +70,7 @@ class RemoteBrowserPool(
                 logger.info("Connecting to browser service...")
                 val session = httpClient.webSocketSession(wsUrl)
                 ws = session
+                connectionReady.complete(Unit)
                 logger.info("Connected")
 
                 for (frame in session.incoming) {
@@ -80,6 +85,7 @@ class RemoteBrowserPool(
 
             // Disconnected - fail all pending requests
             ws = null
+            connectionReady = CompletableDeferred() // Reset for next connection
             val error = ServerMessage.Error("", "DISCONNECTED", "Connection lost")
             pending.values.forEach { it.complete(error) }
             pending.clear()
@@ -89,6 +95,12 @@ class RemoteBrowserPool(
     }
 
     private suspend fun send(msg: ClientMessage): ServerMessage {
+        // Use real time for connection wait since WebSocket connects in real time (Dispatchers.IO)
+        withContext(Dispatchers.Default) {
+            withTimeout(10.seconds) {
+                connectionReady.await()
+            }
+        }
         val session = ws ?: throw ConnectionLostException("Not connected")
         val deferred = CompletableDeferred<ServerMessage>()
         pending[msg.requestId] = deferred

@@ -96,9 +96,9 @@ class WebpageExtractionService(
             }.first()
 
             logger.debug(
-                "Tables: {} media-free (interpreted), {} with media (pending)",
-                results.tableResults.mediaFreeTableReplacements.size,
-                results.tableResults.tablesWithMedia.size
+                "Tables: {} interpreted, {} deferred",
+                results.tableResults.interpretedReplacements.size,
+                results.tableResults.deferredTables.size
             )
 
             // Step 3: Replace icons and images in DOM
@@ -110,15 +110,15 @@ class WebpageExtractionService(
             // Step 5: Remove semantic elements (batched operation)
             removeSemanticElements(webpage, results.semanticElements)
 
-            // Step 6: Interpret tables WITH media (after icon/image replacement)
-            val mediaTableReplacements = if (results.tableResults.tablesWithMedia.isNotEmpty()) {
-                interpretAndGetReplacements(webpage, results.tableResults.tablesWithMedia, sessionId)
+            // Step 6: Interpret deferred tables (after icon/image replacement)
+            val deferredTableReplacements = if (results.tableResults.deferredTables.isNotEmpty()) {
+                interpretAndGetReplacements(webpage, results.tableResults.deferredTables, sessionId)
             } else {
                 emptyList()
             }
 
             // Step 7: Replace all tables in DOM
-            val allTableReplacements = results.tableResults.mediaFreeTableReplacements + mediaTableReplacements
+            val allTableReplacements = results.tableResults.interpretedReplacements + deferredTableReplacements
             webpage.replaceElementsByCssSelectorWithText(allTableReplacements)
 
             // Step 9: Extract final text and build result
@@ -245,16 +245,26 @@ class WebpageExtractionService(
     }
 
     /**
-     * Result of table identification and media-free table interpretation.
+     * Result of table identification and optional immediate interpretation.
+     * 
+     * When only media-free tables exist, they are interpreted immediately in the flow
+     * and returned in [interpretedReplacements].
+     * 
+     * When both media-free and media-containing tables exist, ALL tables are deferred
+     * to be interpreted together after media replacement, returned in [deferredTables].
      */
     private data class TableFlowResult(
-        val mediaFreeTableReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
-        val tablesWithMedia: List<TableIdentification>
+        val interpretedReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
+        val deferredTables: List<TableIdentification>
     )
 
     /**
-     * Identifies tables and interprets media-free tables in one flow.
-     * Tables containing media are returned for later interpretation (after icon/image replacement).
+     * Identifies tables and optionally interprets media-free tables in one flow.
+     * 
+     * Optimization strategy:
+     * - If ONLY media-free tables exist: interpret them immediately in this flow
+     * - If BOTH media-free and media-containing tables exist: defer ALL interpretation
+     *   until after media replacement to batch them together
      */
     private fun identifyAndInterpretMediaFreeTablesFlow(
         webpage: IBrowserPage,
@@ -272,14 +282,21 @@ class WebpageExtractionService(
                 allTables.size, tablesWithoutMedia.size, tablesWithMedia.size
             )
             
-            // Step 3: Interpret media-free tables immediately
-            val mediaFreeReplacements = if (tablesWithoutMedia.isNotEmpty()) {
-                interpretAndGetReplacements(webpage, tablesWithoutMedia, sessionId)
+            // Step 3: Decide interpretation strategy based on table composition
+            val result = if (tablesWithMedia.isEmpty()) {
+                // Only media-free tables exist: interpret immediately in this flow
+                val interpretedReplacements = if (tablesWithoutMedia.isNotEmpty()) {
+                    interpretAndGetReplacements(webpage, tablesWithoutMedia, sessionId)
+                } else {
+                    emptyList()
+                }
+                TableFlowResult(interpretedReplacements, deferredTables = emptyList())
             } else {
-                emptyList()
+                // Both types exist: defer ALL interpretation until after media replacement
+                TableFlowResult(interpretedReplacements = emptyList(), deferredTables = allTables)
             }
             
-            emit(TableFlowResult(mediaFreeReplacements, tablesWithMedia))
+            emit(result)
         }
         logger.debug("Table identification and media-free interpretation took {} ms", duration)
     }
