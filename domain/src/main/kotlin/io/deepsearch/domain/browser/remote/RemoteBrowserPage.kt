@@ -127,6 +127,20 @@ class RemoteBrowserPage(
         )
     }
 
+    override suspend fun captureFullSnapshot(): IBrowserPage.FullPageSnapshot {
+        val r = pageCmdParse<FullPageSnapshotResponse>(PageCommand.CaptureFullSnapshot)
+        return IBrowserPage.FullPageSnapshot(
+            title = r.title,
+            description = r.description,
+            url = r.url,
+            html = r.html,
+            boundingBoxes = r.boundingBoxes.mapValues { (_, b) ->
+                IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom)
+            },
+            mediaExtractionResult = toMediaResult(r.media)
+        )
+    }
+
     override suspend fun getBoundingBoxesByCssSelector(cssSelector: String): Map<String, IBrowserPage.BoundingBox> {
         val r = pageCmdParse<Map<String, BoundingBoxResponse>>(PageCommand.GetBoundingBoxesByCssSelector(cssSelector))
         return r.mapValues { (_, b) -> IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom) }
@@ -194,6 +208,26 @@ class RemoteBrowserPage(
         attributeValue: String
     ) {
         idempotentCmd(PageCommand.InjectAttributeByCssSelector(cssSelector, attributeName, attributeValue))
+    }
+
+    override suspend fun injectAttributesByCssSelectors(injections: List<IBrowserPage.AttributeInjection>) {
+        idempotentCmd(PageCommand.InjectAttributesByCssSelectors(injections.map {
+            AttributeInjection(it.cssSelector, it.attributeName, it.attributeValue)
+        }))
+    }
+
+    override suspend fun getTableInterpretationData(cssSelector: String): IBrowserPage.TableInterpretationData {
+        val r = pageCmdParse<TableInterpretationDataResponse>(PageCommand.GetTableInterpretationData(cssSelector))
+        return IBrowserPage.TableInterpretationData(
+            html = r.html,
+            boundingBoxes = r.boundingBoxes.mapValues { (_, b) ->
+                IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom)
+            }
+        )
+    }
+
+    override suspend fun extractElementsTextContentByCssSelectors(selectors: List<String>): Map<String, String> {
+        return pageCmdParse<Map<String, String>>(PageCommand.ExtractElementsTextContentByCssSelectors(selectors))
     }
 
     override suspend fun replaceElementsByXPathWithText(replacements: List<IBrowserPage.XPathReplacementWithText>) {

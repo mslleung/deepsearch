@@ -94,6 +94,20 @@ sealed class PageCommand {
         val attributeName: String,
         val attributeValue: String
     ) : PageCommand()
+    
+    // ==================== Optimized Composite Commands ====================
+    
+    @Serializable @SerialName("captureFullSnapshot")
+    data object CaptureFullSnapshot : PageCommand()
+    
+    @Serializable @SerialName("injectAttributesByCssSelectors")
+    data class InjectAttributesByCssSelectors(val injections: List<AttributeInjection>) : PageCommand()
+    
+    @Serializable @SerialName("getTableInterpretationData")
+    data class GetTableInterpretationData(val cssSelector: String) : PageCommand()
+    
+    @Serializable @SerialName("extractElementsTextContentByCssSelectors")
+    data class ExtractElementsTextContentByCssSelectors(val selectors: List<String>) : PageCommand()
 }
 
 @Serializable
@@ -101,6 +115,13 @@ data class XPathReplacement(val xpath: String, val text: String? = null)
 
 @Serializable
 data class CssSelectorReplacement(val cssSelector: String, val text: String? = null)
+
+@Serializable
+data class AttributeInjection(
+    val cssSelector: String,
+    val attributeName: String,
+    val attributeValue: String
+)
 
 // ==================== Response Data Types ====================
 
@@ -131,4 +152,20 @@ data class PageSnapshotResponse(
     val html: String,
     val boundingBoxes: Map<String, BoundingBoxResponse>,
     val media: MediaResponse
+)
+
+@Serializable
+data class FullPageSnapshotResponse(
+    val title: String,
+    val description: String?,
+    val url: String,
+    val html: String,
+    val boundingBoxes: Map<String, BoundingBoxResponse>,
+    val media: MediaResponse
+)
+
+@Serializable
+data class TableInterpretationDataResponse(
+    val html: String,
+    val boundingBoxes: Map<String, BoundingBoxResponse>
 )

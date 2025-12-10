@@ -161,9 +161,51 @@ class TableIdentificationAgentGenAiImpl(
             allTableResults.size, programmaticTables.size, response.tables.size
         )
 
-        // Step 5 & 6: Reconstruct CSS selectors and inject into webpage
-        val tableIdentifications = allTableResults.mapNotNull { llmResult ->
-            convertToTableIdentification(llmResult, htmlWithIds, input)
+        // Step 5: Reconstruct CSS selectors for all tables (no browser calls)
+        data class ResolvedTable(
+            val llmResult: LlmTableResult,
+            val cssSelector: String
+        )
+        
+        val resolvedTables = allTableResults.mapNotNull { llmResult ->
+            val cssSelector = cssSelectorConstructionService.constructCssSelectorFromIdentifier(
+                identifier = llmResult.id,
+                htmlWithIdentifiers = htmlWithIds
+            )
+
+            if (cssSelector == null) {
+                logger.warn(
+                    "Skipping table with ID '{}' - could not construct valid CSS selector",
+                    llmResult.id
+                )
+                return@mapNotNull null
+            }
+
+            logger.debug("Constructed CSS selector '{}' for identifier '{}'", cssSelector, llmResult.id)
+            ResolvedTable(llmResult, cssSelector)
+        }
+        
+        // Step 6: Batch inject all identifiers in a single CDP call
+        if (resolvedTables.isNotEmpty()) {
+            val injections = resolvedTables.map { resolved ->
+                IBrowserPage.AttributeInjection(
+                    cssSelector = resolved.cssSelector,
+                    attributeName = "data-ds-id",
+                    attributeValue = resolved.llmResult.id
+                )
+            }
+            logger.debug("Batch injecting {} table identifiers", injections.size)
+            input.webpage.injectAttributesByCssSelectors(injections)
+        }
+        
+        // Convert resolved tables to TableIdentifications
+        val tableIdentifications = resolvedTables.map { resolved ->
+            val containsMedia = detectMediaInTable(resolved.llmResult.id, htmlWithIds, input.snapshot)
+            TableIdentification(
+                cssSelector = "[data-ds-id=\"${resolved.llmResult.id}\"]",
+                auxiliaryInfo = resolved.llmResult.auxiliaryInfo,
+                containsMedia = containsMedia
+            )
         }
 
         logger.debug(
@@ -174,38 +216,6 @@ class TableIdentificationAgentGenAiImpl(
         return TableIdentificationOutput(
             tables = tableIdentifications,
             tokenUsage = tokenUsage
-        )
-    }
-
-    private suspend fun convertToTableIdentification(
-        llmResult: LlmTableResult,
-        htmlWithIds: String,
-        input: TableIdentificationInput
-    ): TableIdentification? {
-        val cssSelector = cssSelectorConstructionService.constructCssSelectorFromIdentifier(
-            identifier = llmResult.id,
-            htmlWithIdentifiers = htmlWithIds
-        )
-
-        if (cssSelector == null) {
-            logger.warn(
-                "Skipping table with ID '{}' - could not construct valid CSS selector",
-                llmResult.id
-            )
-            return null
-        }
-
-        logger.debug("Constructed CSS selector '{}' for identifier '{}'", cssSelector, llmResult.id)
-
-        input.webpage.injectAttributeByCssSelector(cssSelector, "data-ds-id", llmResult.id)
-
-        // Detect if this table contains any media (icons or images) that need interpretation first
-        val containsMedia = detectMediaInTable(llmResult.id, htmlWithIds, input.snapshot)
-
-        return TableIdentification(
-            cssSelector = "[data-ds-id=\"${llmResult.id}\"]",
-            auxiliaryInfo = llmResult.auxiliaryInfo,
-            containsMedia = containsMedia
         )
     }
 

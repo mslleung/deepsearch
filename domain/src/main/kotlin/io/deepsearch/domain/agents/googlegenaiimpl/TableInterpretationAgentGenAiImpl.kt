@@ -92,12 +92,13 @@ class TableInterpretationAgentGenAiImpl(
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
-        // Extract HTML and bounding boxes from the webpage
-        val tableHtml = input.webpage.getElementHtmlByCssSelector(input.tableIdentification.cssSelector)
-        val boundingBoxes = input.webpage.getBoundingBoxesByCssSelector(input.tableIdentification.cssSelector)
+        // Extract HTML and bounding boxes from the webpage in a single CDP call (optimized)
+        val tableData = input.webpage.getTableInterpretationData(input.tableIdentification.cssSelector)
+        val tableHtml = tableData.html
+        val boundingBoxes = tableData.boundingBoxes
 
         logger.debug("Interpreting table to markdown (html length {})", tableHtml.length)
-        logger.debug("Got {} bounding boxes", boundingBoxes.size)
+        logger.debug("Got {} bounding boxes (1 CDP call)", boundingBoxes.size)
 
         // Inject bounding box attributes into HTML
         val htmlWithBoundingBoxes = injectBoundingBoxes(tableHtml, boundingBoxes)

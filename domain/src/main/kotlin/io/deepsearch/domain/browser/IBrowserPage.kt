@@ -206,6 +206,36 @@ interface IBrowserPage {
     )
 
     /**
+     * Full page snapshot including metadata, captured in a single CDP call.
+     * This is the optimized version that reduces CDP round-trips from 5 to 1.
+     */
+    data class FullPageSnapshot(
+        val title: String,
+        val description: String?,
+        val url: String,
+        val html: String,
+        val boundingBoxes: Map<String, BoundingBox>,
+        val mediaExtractionResult: MediaExtractionResult
+    )
+
+    /**
+     * Attribute injection specification for batch operations.
+     */
+    data class AttributeInjection(
+        val cssSelector: String,
+        val attributeName: String,
+        val attributeValue: String
+    )
+
+    /**
+     * Combined HTML and bounding boxes for table interpretation.
+     */
+    data class TableInterpretationData(
+        val html: String,
+        val boundingBoxes: Map<String, BoundingBox>
+    )
+
+    /**
      * Capture a snapshot of the current page state for parallel agent processing.
      * This fetches HTML, bounding boxes, icons, and images in one coordinated operation.
      * More efficient than having each agent fetch data independently.
@@ -213,6 +243,14 @@ interface IBrowserPage {
      * @return PageSnapshot containing all pre-fetched data
      */
     suspend fun captureSnapshot(): PageSnapshot
+
+    /**
+     * Capture a full page snapshot including metadata in a SINGLE CDP call.
+     * This is the optimized version that reduces CDP round-trips from 5 to 1.
+     * 
+     * Returns: title, description, url, html, boundingBoxes, and media extraction results.
+     */
+    suspend fun captureFullSnapshot(): FullPageSnapshot
 
     /**
      * Image screenshot payload and format information.
@@ -293,6 +331,32 @@ interface IBrowserPage {
      * @param attributeValue Value of the attribute to inject
      */
     suspend fun injectAttributeByCssSelector(cssSelector: String, attributeName: String, attributeValue: String)
+
+    /**
+     * Batch inject multiple attributes into elements matching CSS selectors.
+     * Single CDP call for all injections - more efficient than multiple injectAttributeByCssSelector calls.
+     * 
+     * @param injections List of AttributeInjection containing cssSelector, attributeName, and attributeValue
+     */
+    suspend fun injectAttributesByCssSelectors(injections: List<AttributeInjection>)
+
+    /**
+     * Get table interpretation data (HTML + bounding boxes) in a single CDP call.
+     * More efficient than calling getElementHtmlByCssSelector and getBoundingBoxesByCssSelector separately.
+     * 
+     * @param cssSelector CSS selector to match the table element
+     * @return TableInterpretationData containing html and boundingBoxes
+     */
+    suspend fun getTableInterpretationData(cssSelector: String): TableInterpretationData
+
+    /**
+     * Extract text content from multiple elements in a single CDP call.
+     * More efficient than calling extractElementTextContentByCssSelector multiple times.
+     * 
+     * @param selectors List of CSS selectors to match elements
+     * @return Map of CSS selector to extracted text content
+     */
+    suspend fun extractElementsTextContentByCssSelectors(selectors: List<String>): Map<String, String>
 
     /**
      * Close this page and release associated resources.

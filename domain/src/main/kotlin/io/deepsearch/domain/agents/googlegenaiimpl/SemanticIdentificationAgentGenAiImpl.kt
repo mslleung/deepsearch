@@ -179,11 +179,15 @@ class SemanticIdentificationAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
-        // Step 5 & 6: Reconstruct CSS selectors and inject into webpage
-        suspend fun convertToIdentifiedElement(llmResult: LlmSemanticResult?): IdentifiedElement? {
+        // Step 5: Reconstruct CSS selectors for all identified elements
+        data class ResolvedElement(
+            val llmResult: LlmSemanticResult,
+            val cssSelector: String
+        )
+        
+        fun resolveElement(llmResult: LlmSemanticResult?): ResolvedElement? {
             if (llmResult == null) return null
             
-            // Step 5: Reconstruct CSS selector using identifier
             val cssSelector = cssSelectorConstructionService.constructCssSelectorFromIdentifier(
                 identifier = llmResult.id,
                 htmlWithIdentifiers = htmlWithIds
@@ -198,25 +202,53 @@ class SemanticIdentificationAgentGenAiImpl(
             }
 
             logger.debug("Constructed CSS selector '{}' for identifier '{}'", cssSelector, llmResult.id)
-
-            // Step 6: Inject identifier into actual webpage
-            input.webpage.injectAttributeByCssSelector(cssSelector, "data-ds-id", llmResult.id)
-
-            // Return selector that matches the injected identifier
+            return ResolvedElement(llmResult, cssSelector)
+        }
+        
+        // Resolve all elements first (no browser calls)
+        val resolvedHeader = resolveElement(response.header)
+        val resolvedFooter = resolveElement(response.footer)
+        val resolvedNavSidebar = resolveElement(response.navSidebar)
+        val resolvedBreadcrumb = resolveElement(response.breadcrumb)
+        val resolvedCookieBanner = resolveElement(response.cookieBanner)
+        val resolvedAdBanners = response.adBanners.mapNotNull { resolveElement(it) }
+        val resolvedPopups = response.popups.mapNotNull { resolveElement(it) }
+        
+        // Step 6: Batch inject all identifiers in a single CDP call
+        val allResolved = listOfNotNull(
+            resolvedHeader, resolvedFooter, resolvedNavSidebar,
+            resolvedBreadcrumb, resolvedCookieBanner
+        ) + resolvedAdBanners + resolvedPopups
+        
+        if (allResolved.isNotEmpty()) {
+            val injections = allResolved.map { resolved ->
+                IBrowserPage.AttributeInjection(
+                    cssSelector = resolved.cssSelector,
+                    attributeName = "data-ds-id",
+                    attributeValue = resolved.llmResult.id
+                )
+            }
+            logger.debug("Batch injecting {} semantic element identifiers", injections.size)
+            input.webpage.injectAttributesByCssSelectors(injections)
+        }
+        
+        // Convert resolved elements to IdentifiedElements
+        fun toIdentifiedElement(resolved: ResolvedElement?): IdentifiedElement? {
+            if (resolved == null) return null
             return IdentifiedElement(
-                cssSelector = "[data-ds-id=\"${llmResult.id}\"]",
-                note = llmResult.note
+                cssSelector = "[data-ds-id=\"${resolved.llmResult.id}\"]",
+                note = resolved.llmResult.note
             )
         }
 
         val semanticElements = SemanticElements(
-            header = convertToIdentifiedElement(response.header),
-            footer = convertToIdentifiedElement(response.footer),
-            navSidebar = convertToIdentifiedElement(response.navSidebar),
-            breadcrumb = convertToIdentifiedElement(response.breadcrumb),
-            cookieBanner = convertToIdentifiedElement(response.cookieBanner),
-            adBanners = response.adBanners.mapNotNull { convertToIdentifiedElement(it) },
-            popups = response.popups.mapNotNull { convertToIdentifiedElement(it) }
+            header = toIdentifiedElement(resolvedHeader),
+            footer = toIdentifiedElement(resolvedFooter),
+            navSidebar = toIdentifiedElement(resolvedNavSidebar),
+            breadcrumb = toIdentifiedElement(resolvedBreadcrumb),
+            cookieBanner = toIdentifiedElement(resolvedCookieBanner),
+            adBanners = resolvedAdBanners.map { toIdentifiedElement(it)!! },
+            popups = resolvedPopups.map { toIdentifiedElement(it)!! }
         )
 
         logger.debug(

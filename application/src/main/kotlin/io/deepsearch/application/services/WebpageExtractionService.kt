@@ -63,13 +63,21 @@ class WebpageExtractionService(
     override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId): WebpageExtractionResult = coroutineScope {
         val result: WebpageExtractionResult
         val duration = measureTimeMillis {
-            val title = webpage.getTitle()
-            val description = webpage.getDescription()
-
-            // Step 1: Capture page snapshot with all needed data in one coordinated call
-            logger.debug("Capturing page snapshot...")
-            val snapshot = webpage.captureSnapshot()
-            logger.debug("Page snapshot captured: {} icons, {} images",
+            // Step 1: Capture FULL page snapshot (title, description, url, html, boundingBoxes, media) in ONE CDP call
+            // This reduces 5 CDP round-trips to 1 - major latency improvement
+            logger.debug("Capturing full page snapshot (optimized)...")
+            val fullSnapshot = webpage.captureFullSnapshot()
+            val title = fullSnapshot.title
+            val description = fullSnapshot.description
+            val url = fullSnapshot.url
+            
+            // Convert FullPageSnapshot to PageSnapshot for compatibility with existing flows
+            val snapshot = IBrowserPage.PageSnapshot(
+                html = fullSnapshot.html,
+                boundingBoxes = fullSnapshot.boundingBoxes,
+                mediaExtractionResult = fullSnapshot.mediaExtractionResult
+            )
+            logger.debug("Full page snapshot captured: {} icons, {} images",
                 snapshot.mediaExtractionResult.icons.size,
                 snapshot.mediaExtractionResult.images.size)
             
@@ -125,7 +133,7 @@ class WebpageExtractionService(
             // Step 9: Extract final text and build result
             val extractedText = webpage.extractTextContent()
             val markdown = buildString {
-                appendLine("URL: ${webpage.getUrl()}")
+                appendLine("URL: $url")
                 appendLine("Title: $title")
                 if (!description.isNullOrBlank()) {
                     appendLine("Description: $description")
