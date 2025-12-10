@@ -179,19 +179,28 @@ class SemanticIdentificationAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
-        // Step 5: Reconstruct CSS selectors for all identified elements
+        // Step 5: Reconstruct CSS selectors for all identified elements using batch method (single HTML parse)
         data class ResolvedElement(
             val llmResult: LlmSemanticResult,
             val cssSelector: String
         )
-        
+
+        // Collect all identifiers for batch processing
+        val allLlmResults = listOfNotNull(
+            response.header, response.footer, response.navSidebar,
+            response.breadcrumb, response.cookieBanner
+        ) + response.adBanners + response.popups
+
+        val identifiers = allLlmResults.map { it.id }
+        val cssSelectorsMap = cssSelectorConstructionService.constructCssSelectorsFromIdentifiers(
+            identifiers = identifiers,
+            htmlWithIdentifiers = htmlWithIds
+        )
+
         fun resolveElement(llmResult: LlmSemanticResult?): ResolvedElement? {
             if (llmResult == null) return null
-            
-            val cssSelector = cssSelectorConstructionService.constructCssSelectorFromIdentifier(
-                identifier = llmResult.id,
-                htmlWithIdentifiers = htmlWithIds
-            )
+
+            val cssSelector = cssSelectorsMap[llmResult.id]
 
             if (cssSelector == null) {
                 logger.warn(
@@ -205,7 +214,7 @@ class SemanticIdentificationAgentGenAiImpl(
             return ResolvedElement(llmResult, cssSelector)
         }
         
-        // Resolve all elements first (no browser calls)
+        // Resolve all elements (no browser calls, uses pre-computed map)
         val resolvedHeader = resolveElement(response.header)
         val resolvedFooter = resolveElement(response.footer)
         val resolvedNavSidebar = resolveElement(response.navSidebar)

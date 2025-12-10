@@ -25,6 +25,11 @@ class TableIdentificationAgentGenAiImpl(
     private val cssSelectorConstructionService: ICssSelectorConstructionService
 ) : ITableIdentificationAgent {
 
+    companion object {
+        /** Pre-compiled regex for extracting data-ds-id values from CSS selectors */
+        private val MEDIA_ID_REGEX = Regex("""data-ds-id="([^"]+)"""")
+    }
+
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     private val outputSchema: Schema = Schema.builder()
@@ -161,17 +166,20 @@ class TableIdentificationAgentGenAiImpl(
             allTableResults.size, programmaticTables.size, response.tables.size
         )
 
-        // Step 5: Reconstruct CSS selectors for all tables (no browser calls)
+        // Step 5: Reconstruct CSS selectors for all tables using batch method (single HTML parse)
         data class ResolvedTable(
             val llmResult: LlmTableResult,
             val cssSelector: String
         )
-        
+
+        val identifiers = allTableResults.map { it.id }
+        val cssSelectorsMap = cssSelectorConstructionService.constructCssSelectorsFromIdentifiers(
+            identifiers = identifiers,
+            htmlWithIdentifiers = htmlWithIds
+        )
+
         val resolvedTables = allTableResults.mapNotNull { llmResult ->
-            val cssSelector = cssSelectorConstructionService.constructCssSelectorFromIdentifier(
-                identifier = llmResult.id,
-                htmlWithIdentifiers = htmlWithIds
-            )
+            val cssSelector = cssSelectorsMap[llmResult.id]
 
             if (cssSelector == null) {
                 logger.warn(
@@ -198,9 +206,13 @@ class TableIdentificationAgentGenAiImpl(
             input.webpage.injectAttributesByCssSelectors(injections)
         }
         
+        // Pre-parse HTML once and extract media IDs once for media detection
+        val docForMediaDetection = Jsoup.parse(htmlWithIds)
+        val allMediaIds = extractAllMediaIds(input.snapshot)
+
         // Convert resolved tables to TableIdentifications
         val tableIdentifications = resolvedTables.map { resolved ->
-            val containsMedia = detectMediaInTable(resolved.llmResult.id, htmlWithIds, input.snapshot)
+            val containsMedia = detectMediaInTable(resolved.llmResult.id, docForMediaDetection, allMediaIds)
             TableIdentification(
                 cssSelector = "[data-ds-id=\"${resolved.llmResult.id}\"]",
                 auxiliaryInfo = resolved.llmResult.auxiliaryInfo,
@@ -223,35 +235,25 @@ class TableIdentificationAgentGenAiImpl(
      * Detect if a table contains any media elements (icons or images).
      * Extracts CSS selectors from the snapshot's media extraction result.
      * Tables with media cannot be interpreted early - they must wait for media interpretation.
+     *
+     * @param tableId The data-ds-id of the table to check
+     * @param doc Pre-parsed Document to avoid repeated HTML parsing
+     * @param allMediaIds Pre-extracted set of media data-ds-id values
      */
     private fun detectMediaInTable(
         tableId: String,
-        htmlWithIds: String,
-        snapshot: IBrowserPage.PageSnapshot
+        doc: Document,
+        allMediaIds: Set<String>
     ): Boolean {
-        // Collect all media CSS selectors from the snapshot
-        val allMediaSelectors = buildSet {
-            snapshot.mediaExtractionResult.icons.flatMap { it.cssSelectors }.forEach { add(it) }
-            snapshot.mediaExtractionResult.images.flatMap { it.cssSelectors }.forEach { add(it) }
-        }
-        
-        if (allMediaSelectors.isEmpty()) {
+        if (allMediaIds.isEmpty()) {
             return false
         }
 
-        // Parse HTML and find the table element
-        val doc = Jsoup.parse(htmlWithIds)
         val tableElement = doc.select("[data-ds-id=\"$tableId\"]").firstOrNull()
             ?: return false
 
-        // Check if any media selector matches elements inside this table
-        for (mediaSelector in allMediaSelectors) {
-            // Media selectors are in the form [data-ds-id="ds-icon-X"] or [data-ds-id="ds-image-X"]
-            // We need to check if any element with this selector exists as a descendant
-            val mediaIdMatch = Regex("""data-ds-id="([^"]+)"""").find(mediaSelector)
-            val mediaId = mediaIdMatch?.groupValues?.get(1) ?: continue
-
-            // Check if this media element exists within the table's HTML
+        // Check if any media element exists within this table
+        for (mediaId in allMediaIds) {
             val mediaInTable = tableElement.select("[data-ds-id=\"$mediaId\"]").isNotEmpty()
             if (mediaInTable) {
                 logger.debug("Table '{}' contains media '{}'", tableId, mediaId)
@@ -260,6 +262,21 @@ class TableIdentificationAgentGenAiImpl(
         }
 
         return false
+    }
+
+    /**
+     * Extracts all media element IDs from the snapshot's media extraction result.
+     * Uses pre-compiled regex for efficiency.
+     */
+    private fun extractAllMediaIds(snapshot: IBrowserPage.PageSnapshot): Set<String> {
+        val allMediaSelectors = buildSet {
+            snapshot.mediaExtractionResult.icons.flatMap { it.cssSelectors }.forEach { add(it) }
+            snapshot.mediaExtractionResult.images.flatMap { it.cssSelectors }.forEach { add(it) }
+        }
+
+        return allMediaSelectors.mapNotNull { selector ->
+            MEDIA_ID_REGEX.find(selector)?.groupValues?.get(1)
+        }.toSet()
     }
 
     private fun injectStableIdentifiers(cleanedHtml: String, idPrefix: String): String {

@@ -21,6 +21,20 @@ interface ICssSelectorConstructionService {
      * @return A CSS selector that can locate the element in the original webpage, or null if element not found
      */
     fun constructCssSelectorFromIdentifier(identifier: String, htmlWithIdentifiers: String): String?
+
+    /**
+     * Batch version that constructs CSS selectors for multiple identifiers from the same HTML.
+     * This is more efficient than calling [constructCssSelectorFromIdentifier] multiple times
+     * because it parses the HTML only once.
+     *
+     * @param identifiers List of data-ds-id values (e.g., ["ds-table-0", "ds-table-1"])
+     * @param htmlWithIdentifiers The HTML document containing injected data-ds-id attributes
+     * @return A map from identifier to CSS selector (null if element not found for that identifier)
+     */
+    fun constructCssSelectorsFromIdentifiers(
+        identifiers: List<String>,
+        htmlWithIdentifiers: String
+    ): Map<String, String?>
 }
 
 /**
@@ -297,6 +311,76 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
     }
     
     /**
+     * Internal method that constructs a CSS selector from an identifier using a pre-parsed Document.
+     * This allows reuse of the parsed document across multiple identifiers.
+     */
+    private fun constructCssSelectorFromIdentifierInternal(identifier: String, doc: Document): String? {
+        val element = doc.selectFirst("[data-ds-id=\"$identifier\"]")
+
+        if (element == null) {
+            logger.warn("Element with identifier '{}' not found in HTML", identifier)
+            return null
+        }
+
+        // Build a CSS selector based on the element's attributes
+        val tagName = element.tagName()
+        val id = element.attr("id")
+        val classes = element.classNames()
+
+        // Strategy: prefer unique identifiers (id), then classes, then structural position
+        return when {
+            // If element has an ID, use it (should be unique)
+            id.isNotBlank() -> {
+                val idSelector = "#${escapeCssIdentifier(id)}"
+                try {
+                    // Verify it's unique
+                    if (doc.select(idSelector).size == 1) {
+                        idSelector
+                    } else {
+                        // ID is not unique (shouldn't happen but be defensive), fall back to hierarchical
+                        buildHierarchicalSelector(element, doc)
+                    }
+                } catch (e: org.jsoup.select.Selector.SelectorParseException) {
+                    // Jsoup couldn't parse the ID selector, fall back to hierarchical
+                    logger.debug(
+                        "Failed to parse ID selector '{}', falling back to hierarchical: {}",
+                        idSelector, e.message
+                    )
+                    buildHierarchicalSelector(element, doc)
+                }
+            }
+            // If element has classes, try class-based selector
+            classes.isNotEmpty() -> {
+                val filteredClasses = filterJsoupCompatibleClasses(classes)
+                if (filteredClasses.isEmpty()) {
+                    // No Jsoup-compatible classes, use hierarchical selector
+                    buildHierarchicalSelector(element, doc)
+                } else {
+                    val classSelector = "$tagName.${filteredClasses.map { escapeCssIdentifier(it) }.joinToString(".")}"
+                    try {
+                        // Check if class selector is unique
+                        if (doc.select(classSelector).size == 1) {
+                            classSelector
+                        } else {
+                            // Not unique, use hierarchical selector
+                            buildHierarchicalSelector(element, doc)
+                        }
+                    } catch (e: org.jsoup.select.Selector.SelectorParseException) {
+                        // Jsoup couldn't parse the selector, fall back to hierarchical
+                        logger.debug(
+                            "Failed to parse class selector '{}', falling back to hierarchical: {}",
+                            classSelector, e.message
+                        )
+                        buildHierarchicalSelector(element, doc)
+                    }
+                }
+            }
+            // No id or classes, use hierarchical selector
+            else -> buildHierarchicalSelector(element, doc)
+        }
+    }
+
+    /**
      * Constructs a CSS selector from a stable identifier by finding the element in the HTML
      * and building a selector based on its attributes and structure.
      * 
@@ -307,71 +391,43 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
     override fun constructCssSelectorFromIdentifier(identifier: String, htmlWithIdentifiers: String): String? {
         return try {
             val doc = Jsoup.parse(htmlWithIdentifiers)
-            val element = doc.selectFirst("[data-ds-id=\"$identifier\"]")
-            
-            if (element == null) {
-                logger.warn("Element with identifier '{}' not found in HTML", identifier)
-                return null
-            }
-            
-            // Build a CSS selector based on the element's attributes
-            val tagName = element.tagName()
-            val id = element.attr("id")
-            val classes = element.classNames()
-            
-            // Strategy: prefer unique identifiers (id), then classes, then structural position
-            val selector = when {
-                // If element has an ID, use it (should be unique)
-                id.isNotBlank() -> {
-                    val idSelector = "#${escapeCssIdentifier(id)}"
-                    try {
-                        // Verify it's unique
-                        if (doc.select(idSelector).size == 1) {
-                            idSelector
-                        } else {
-                            // ID is not unique (shouldn't happen but be defensive), fall back to hierarchical
-                            buildHierarchicalSelector(element, doc)
-                        }
-                    } catch (e: org.jsoup.select.Selector.SelectorParseException) {
-                        // Jsoup couldn't parse the ID selector, fall back to hierarchical
-                        logger.debug("Failed to parse ID selector '{}', falling back to hierarchical: {}", 
-                            idSelector, e.message)
-                        buildHierarchicalSelector(element, doc)
-                    }
-                }
-                // If element has classes, try class-based selector
-                classes.isNotEmpty() -> {
-                    val filteredClasses = filterJsoupCompatibleClasses(classes)
-                    if (filteredClasses.isEmpty()) {
-                        // No Jsoup-compatible classes, use hierarchical selector
-                        buildHierarchicalSelector(element, doc)
-                    } else {
-                        val classSelector = "$tagName.${filteredClasses.map { escapeCssIdentifier(it) }.joinToString(".")}"
-                        try {
-                            // Check if class selector is unique
-                            if (doc.select(classSelector).size == 1) {
-                                classSelector
-                            } else {
-                                // Not unique, use hierarchical selector
-                                buildHierarchicalSelector(element, doc)
-                            }
-                        } catch (e: org.jsoup.select.Selector.SelectorParseException) {
-                            // Jsoup couldn't parse the selector, fall back to hierarchical
-                            logger.debug("Failed to parse class selector '{}', falling back to hierarchical: {}", 
-                                classSelector, e.message)
-                            buildHierarchicalSelector(element, doc)
-                        }
-                    }
-                }
-                // No id or classes, use hierarchical selector
-                else -> buildHierarchicalSelector(element, doc)
-            }
-            
-//            logger.debug("Constructed selector '{}' for identifier '{}'", selector, identifier)
-            selector
+            constructCssSelectorFromIdentifierInternal(identifier, doc)
         } catch (e: Exception) {
             logger.error("Failed to construct CSS selector from identifier: {}", identifier, e)
             null
+        }
+    }
+
+    /**
+     * Batch version that constructs CSS selectors for multiple identifiers from the same HTML.
+     * This is more efficient than calling [constructCssSelectorFromIdentifier] multiple times
+     * because it parses the HTML only once.
+     *
+     * @param identifiers List of data-ds-id values (e.g., ["ds-table-0", "ds-table-1"])
+     * @param htmlWithIdentifiers The HTML document containing injected data-ds-id attributes
+     * @return A map from identifier to CSS selector (null if element not found for that identifier)
+     */
+    override fun constructCssSelectorsFromIdentifiers(
+        identifiers: List<String>,
+        htmlWithIdentifiers: String
+    ): Map<String, String?> {
+        if (identifiers.isEmpty()) {
+            return emptyMap()
+        }
+
+        return try {
+            val doc = Jsoup.parse(htmlWithIdentifiers)
+            identifiers.associateWith { identifier ->
+                try {
+                    constructCssSelectorFromIdentifierInternal(identifier, doc)
+                } catch (e: Exception) {
+                    logger.error("Failed to construct CSS selector from identifier: {}", identifier, e)
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            logger.error("Failed to parse HTML for batch CSS selector construction", e)
+            identifiers.associateWith { null }
         }
     }
 }
