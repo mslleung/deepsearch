@@ -33,11 +33,11 @@ class SemanticIdentificationAgentTest : KoinTest {
         browserPool.withPage { page ->
             // Navigate to data URL with the example HTML
             page.navigate("https://www.example.com/")
-            val snapshot = page.captureSnapshot()
+            val pageSnapshot = page.capturePageSnapshot()
             
             val input = SemanticIdentificationInput(
                 webpage = page,
-                snapshot = snapshot
+                pageSnapshot = pageSnapshot
             )
             val output = agent.generate(input)
             val hasElements = output.elements.header != null ||
@@ -62,11 +62,11 @@ class SemanticIdentificationAgentTest : KoinTest {
     fun `should identify navigation elements`(url: String) = runTest(testCoroutineDispatcher) {
         browserPool.withPage { page ->
             page.navigate(url)
-            val snapshot = page.captureSnapshot()
+            val pageSnapshot = page.capturePageSnapshot()
 
             val input = SemanticIdentificationInput(
                 webpage = page,
-                snapshot = snapshot
+                pageSnapshot = pageSnapshot
             )
             val output = agent.generate(input)
 
