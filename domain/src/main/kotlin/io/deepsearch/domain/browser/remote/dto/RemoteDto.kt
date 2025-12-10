@@ -108,6 +108,18 @@ sealed class PageCommand {
     
     @Serializable @SerialName("extractElementsTextContentByCssSelectors")
     data class ExtractElementsTextContentByCssSelectors(val selectors: List<String>) : PageCommand()
+    
+    @Serializable @SerialName("elementsExistByCssSelectors")
+    data class ElementsExistByCssSelectors(val selectors: List<String>) : PageCommand()
+    
+    @Serializable @SerialName("getElementsHtmlByCssSelectors")
+    data class GetElementsHtmlByCssSelectors(val selectors: List<String>) : PageCommand()
+    
+    @Serializable @SerialName("getTablesInterpretationData")
+    data class GetTablesInterpretationData(val selectors: List<String>) : PageCommand()
+    
+    @Serializable @SerialName("getVisibleElementsScreenshotsByCssSelectors")
+    data class GetVisibleElementsScreenshotsByCssSelectors(val selectors: List<String>) : PageCommand()
 }
 
 @Serializable
@@ -168,4 +180,14 @@ data class FullPageSnapshotResponse(
 data class TableInterpretationDataResponse(
     val html: String,
     val boundingBoxes: Map<String, BoundingBoxResponse>
+)
+
+@Serializable
+data class TablesInterpretationDataResponse(
+    val data: Map<String, TableInterpretationDataResponse>
+)
+
+@Serializable
+data class VisibleScreenshotsResponse(
+    val screenshots: Map<String, ScreenshotResponse>
 )

@@ -2,13 +2,10 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
-import io.deepsearch.domain.browser.ElementOperationException
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.IDispatcherProvider
-import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.SemanticElements
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import io.deepsearch.domain.models.valueobjects.SessionId
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -60,102 +57,105 @@ class WebpageExtractionService(
      * 5. Remove semantic elements (batched)
      * 6. Extract final text
      */
-    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId): WebpageExtractionResult = coroutineScope {
-        val result: WebpageExtractionResult
-        val duration = measureTimeMillis {
-            // Step 1: Capture FULL page snapshot (title, description, url, html, boundingBoxes, media) in ONE CDP call
-            // This reduces 5 CDP round-trips to 1 - major latency improvement
-            logger.debug("Capturing full page snapshot (optimized)...")
-            val fullSnapshot = webpage.captureFullSnapshot()
-            val title = fullSnapshot.title
-            val description = fullSnapshot.description
-            val url = fullSnapshot.url
-            
-            // Convert FullPageSnapshot to PageSnapshot for compatibility with existing flows
-            val snapshot = IBrowserPage.PageSnapshot(
-                html = fullSnapshot.html,
-                boundingBoxes = fullSnapshot.boundingBoxes,
-                mediaExtractionResult = fullSnapshot.mediaExtractionResult
-            )
-            logger.debug("Full page snapshot captured: {} icons, {} images",
-                snapshot.mediaExtractionResult.icons.size,
-                snapshot.mediaExtractionResult.images.size)
-            
-            // Step 2: Run LLM operations concurrently using Flow
-            // Media-free tables are identified AND interpreted in parallel with other operations
-            val semanticElementsFlow = identifySemanticElementsFlow(webpage, sessionId, snapshot)
-            val iconReplacementsFlow = interpretIconsFlow(snapshot, sessionId)
-            val imageReplacementsFlow = interpretImagesFlow(webpage, snapshot, sessionId)
-            val tablesFlow = identifyAndInterpretMediaFreeTablesFlow(webpage, sessionId, snapshot)
+    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId): WebpageExtractionResult =
+        coroutineScope {
+            val result: WebpageExtractionResult
+            val duration = measureTimeMillis {
+                // Step 1: Capture FULL page snapshot (title, description, url, html, boundingBoxes, media) in ONE CDP call
+                // This reduces 5 CDP round-trips to 1 - major latency improvement
+                logger.debug("Capturing full page snapshot (optimized)...")
+                val fullSnapshot = webpage.captureFullSnapshot()
+                val title = fullSnapshot.title
+                val description = fullSnapshot.description
+                val url = fullSnapshot.url
 
-            data class FlowResults(
-                val semanticElements: SemanticElements,
-                val iconReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
-                val imageResults: ImageReplacementsWithHashes,
-                val tableResults: TableFlowResult
-            )
-            
-            val results = combine(
-                semanticElementsFlow,
-                iconReplacementsFlow,
-                imageReplacementsFlow,
-                tablesFlow
-            ) { semantic, iconRep, imageResults, tableResults ->
-                FlowResults(semantic, iconRep, imageResults, tableResults)
-            }.first()
+                // Convert FullPageSnapshot to PageSnapshot for compatibility with existing flows
+                val snapshot = IBrowserPage.PageSnapshot(
+                    html = fullSnapshot.html,
+                    boundingBoxes = fullSnapshot.boundingBoxes,
+                    mediaExtractionResult = fullSnapshot.mediaExtractionResult
+                )
+                logger.debug(
+                    "Full page snapshot captured: {} icons, {} images",
+                    snapshot.mediaExtractionResult.icons.size,
+                    snapshot.mediaExtractionResult.images.size
+                )
 
-            logger.debug(
-                "Tables: {} interpreted, {} deferred",
-                results.tableResults.interpretedReplacements.size,
-                results.tableResults.deferredTables.size
-            )
+                // Step 2: Run LLM operations concurrently using Flow
+                // Media-free tables are identified AND interpreted in parallel with other operations
+                val semanticElementsFlow = identifySemanticElementsFlow(webpage, sessionId, snapshot)
+                val iconReplacementsFlow = interpretIconsFlow(snapshot, sessionId)
+                val imageReplacementsFlow = interpretImagesFlow(webpage, snapshot, sessionId)
+                val tablesFlow = identifyAndInterpretMediaFreeTablesFlow(webpage, sessionId, snapshot)
 
-            // Step 3: Replace icons and images in DOM
-            webpage.replaceElementsByCssSelectorWithText(results.iconReplacements + results.imageResults.replacements)
+                data class FlowResults(
+                    val semanticElements: SemanticElements,
+                    val iconReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
+                    val imageResults: ImageReplacementsWithHashes,
+                    val tableResults: TableFlowResult
+                )
 
-            // Step 4: Extract popup text (before removal)
-            val popupText = extractPopupText(webpage, results.semanticElements)
+                val results = combine(
+                    semanticElementsFlow,
+                    iconReplacementsFlow,
+                    imageReplacementsFlow,
+                    tablesFlow
+                ) { semantic, iconRep, imageResults, tableResults ->
+                    FlowResults(semantic, iconRep, imageResults, tableResults)
+                }.first()
 
-            // Step 5: Remove semantic elements (batched operation)
-            removeSemanticElements(webpage, results.semanticElements)
+                logger.debug(
+                    "Tables: {} interpreted, {} deferred",
+                    results.tableResults.interpretedReplacements.size,
+                    results.tableResults.deferredTables.size
+                )
 
-            // Step 6: Interpret deferred tables (after icon/image replacement)
-            val deferredTableReplacements = if (results.tableResults.deferredTables.isNotEmpty()) {
-                interpretAndGetReplacements(webpage, results.tableResults.deferredTables, sessionId)
-            } else {
-                emptyList()
+                // Step 3: Replace icons and images in DOM
+                webpage.replaceElementsByCssSelectorWithText(results.iconReplacements + results.imageResults.replacements)
+
+                // Step 4: Extract popup text (before removal)
+                val popupText = extractPopupText(webpage, results.semanticElements)
+
+                // Step 5: Remove semantic elements (batched operation)
+                removeSemanticElements(webpage, results.semanticElements)
+
+                // Step 6: Interpret deferred tables (after icon/image replacement)
+                val deferredTableReplacements = if (results.tableResults.deferredTables.isNotEmpty()) {
+                    interpretAndGetReplacements(webpage, results.tableResults.deferredTables, sessionId)
+                } else {
+                    emptyList()
+                }
+
+                // Step 7: Replace all tables in DOM
+                val allTableReplacements = results.tableResults.interpretedReplacements + deferredTableReplacements
+                webpage.replaceElementsByCssSelectorWithText(allTableReplacements)
+
+                // Step 9: Extract final text and build result
+                val extractedText = webpage.extractTextContent()
+                val markdown = buildString {
+                    appendLine("URL: $url")
+                    appendLine("Title: $title")
+                    if (!description.isNullOrBlank()) {
+                        appendLine("Description: $description")
+                    }
+                    appendLine()
+                    if (!popupText.isNullOrBlank()) {
+                        appendLine(popupText)
+                    }
+                    appendLine()
+                    appendLine(extractedText)
+                }.trim()
+
+                result = WebpageExtractionResult(
+                    markdown = markdown,
+                    title = title,
+                    description = description,
+                    imageHashes = results.imageResults.imageHashes
+                )
             }
-
-            // Step 7: Replace all tables in DOM
-            val allTableReplacements = results.tableResults.interpretedReplacements + deferredTableReplacements
-            webpage.replaceElementsByCssSelectorWithText(allTableReplacements)
-
-            // Step 9: Extract final text and build result
-            val extractedText = webpage.extractTextContent()
-            val markdown = buildString {
-                appendLine("URL: $url")
-                appendLine("Title: $title")
-                if (!description.isNullOrBlank()) {
-                    appendLine("Description: $description")
-                }
-                appendLine()
-                if (!popupText.isNullOrBlank()) {
-                    appendLine(popupText)
-                }
-                appendLine()
-                appendLine(extractedText)
-            }.trim()
-            
-            result = WebpageExtractionResult(
-                markdown = markdown,
-                title = title,
-                description = description,
-                imageHashes = results.imageResults.imageHashes
-            )
+            logger.debug("Webpage extraction took {} ms", duration)
+            result
         }
-        logger.debug("Webpage extraction took {} ms", duration)
-        result
-    }
 
     private fun identifySemanticElementsFlow(
         webpage: IBrowserPage,
@@ -203,27 +203,35 @@ class WebpageExtractionService(
     ) = flow {
         val mediaResult = snapshot.mediaExtractionResult
         val duration = measureTimeMillis {
-            // Process failed images using screenshot fallback
+            // Process failed images using batch screenshot fallback (single CDP call)
             val allImages = mediaResult.images.toMutableList()
-            for (failedImage in mediaResult.failedImages) {
-                if (failedImage.cssSelector.isEmpty()) continue
-                try {
-                    val isVisible = webpage.isElementVisibleByCssSelector(failedImage.cssSelector)
-                    if (!isVisible) continue
-                    val screenshot = webpage.getElementScreenshotByCssSelector(failedImage.cssSelector)
+
+            val failedImageSelectors = mediaResult.failedImages
+                .map { it.cssSelector }
+                .filter { it.isNotEmpty() }
+
+            if (failedImageSelectors.isNotEmpty()) {
+                // Batch operation: get screenshots of all visible failed images in one call
+                val visibleScreenshots = webpage.getVisibleElementsScreenshotsByCssSelectors(failedImageSelectors)
+                logger.debug(
+                    "Captured {} screenshots for {} failed images",
+                    visibleScreenshots.size,
+                    failedImageSelectors.size
+                )
+
+                for ((cssSelector, screenshot) in visibleScreenshots) {
                     allImages.add(
                         IBrowserPage.WebImage(
                             bytes = screenshot.bytes,
                             mimeType = screenshot.mimeType,
-                            cssSelectors = listOf(failedImage.cssSelector)
+                            cssSelectors = listOf(cssSelector)
                         )
                     )
-                } catch (e: ElementOperationException) {
-                    // Element screenshot failed (timeout, not visible, etc.) - skip this image
-                    logger.warn("Failed to capture screenshot for image: {}", e.message)                }
+                }
             }
 
-            val extractionResults = webpageImageTextExtractionService.extractTextFromImagesWithHashes(allImages, sessionId)
+            val extractionResults =
+                webpageImageTextExtractionService.extractTextFromImagesWithHashes(allImages, sessionId)
             val replacements = allImages.zip(extractionResults).flatMap { (image, result) ->
                 val wrappedText = wrapImageTextWithXmlTag(result)
                 image.cssSelectors.map { cssSelector ->
@@ -245,7 +253,7 @@ class WebpageExtractionService(
     private fun wrapImageTextWithXmlTag(result: ImageExtractionResult): String? {
         val text = result.extractedText ?: return null
         val imageId = result.toImageId()
-        
+
         return if (text.contains('\n')) {
             "<image id=\"$imageId\">\n$text\n</image>"
         } else {
@@ -283,14 +291,14 @@ class WebpageExtractionService(
         val duration = measureTimeMillis {
             // Step 1: Identify all tables
             val allTables = tableIdentificationService.identifyTables(webpage, sessionId, snapshot)
-            
+
             // Step 2: Partition into media-free and media-containing
             val (tablesWithMedia, tablesWithoutMedia) = allTables.partition { it.containsMedia }
             logger.debug(
                 "Table identification: {} total, {} media-free, {} with media",
                 allTables.size, tablesWithoutMedia.size, tablesWithMedia.size
             )
-            
+
             // Step 3: Decide interpretation strategy based on table composition
             val result = if (tablesWithMedia.isEmpty()) {
                 // Only media-free tables exist: interpret immediately in this flow
@@ -304,7 +312,7 @@ class WebpageExtractionService(
                 // Both types exist: defer ALL interpretation until after media replacement
                 TableFlowResult(interpretedReplacements = emptyList(), deferredTables = allTables)
             }
-            
+
             emit(result)
         }
         logger.debug("Table identification and media-free interpretation took {} ms", duration)
@@ -318,30 +326,34 @@ class WebpageExtractionService(
         tables: List<TableIdentification>,
         sessionId: SessionId
     ): List<IBrowserPage.CssSelectorReplacementWithText> {
-        val url = webpage.getUrl()
-        
-        // Filter tables that still exist
-        // Note: elementExistsByCssSelector is a page operation and throws PageOperationException
-        // which should propagate since it indicates a more serious issue
-        val existingTables = tables.filter { table ->
-            webpage.elementExistsByCssSelector(table.cssSelector)
+        if (tables.isEmpty()) {
+            return emptyList()
         }
-        
+
+        // Batch check which tables still exist (single CDP call)
+        val allSelectors = tables.map { it.cssSelector }
+        val existenceMap = webpage.elementsExistByCssSelectors(allSelectors)
+
+        // Filter tables that still exist
+        val existingTables = tables.filter { table ->
+            existenceMap[table.cssSelector] == true
+        }
+
         if (existingTables.isEmpty()) {
             return emptyList()
         }
-        
+
         val tableInputs = existingTables.map { table ->
             table.cssSelector to TableInterpretationInput(
                 tableIdentification = table,
                 webpage = webpage
             )
         }
-        
+
         val cssSelectors = tableInputs.map { it.first }
         val inputs = tableInputs.map { it.second }
         val markdowns = tableInterpretationService.interpretTablesBatch(inputs, sessionId)
-        
+
         return cssSelectors.zip(markdowns).map { (cssSelector, markdown) ->
             IBrowserPage.CssSelectorReplacementWithText(cssSelector, markdown)
         }
@@ -351,18 +363,21 @@ class WebpageExtractionService(
         webpage: IBrowserPage,
         semanticElements: SemanticElements
     ): String? {
-        return if (semanticElements.popups.isNotEmpty()) {
-            buildString {
-                semanticElements.popups.forEach { popup ->
-                    val text = webpage.extractElementTextContentByCssSelector(popup.cssSelector)
-                    if (text.isNotBlank()) {
-                        appendLine(text)
-                    }
+        if (semanticElements.popups.isEmpty()) {
+            return null
+        }
+
+        // Use batch operation to extract text from all popups in a single browser call
+        val popupSelectors = semanticElements.popups.map { it.cssSelector }
+        val textBySelector = webpage.extractElementsTextContentByCssSelectors(popupSelectors)
+
+        return buildString {
+            textBySelector.values.forEach { text ->
+                if (text.isNotBlank()) {
+                    appendLine(text)
                 }
             }
-        } else {
-            null
-        }
+        }.takeIf { it.isNotBlank() }
     }
 
     private suspend fun removeSemanticElements(

@@ -230,6 +230,33 @@ class RemoteBrowserPage(
         return pageCmdParse<Map<String, String>>(PageCommand.ExtractElementsTextContentByCssSelectors(selectors))
     }
 
+    override suspend fun elementsExistByCssSelectors(selectors: List<String>): Map<String, Boolean> {
+        return pageCmdParse<Map<String, Boolean>>(PageCommand.ElementsExistByCssSelectors(selectors))
+    }
+
+    override suspend fun getElementsHtmlByCssSelectors(selectors: List<String>): Map<String, String> {
+        return pageCmdParse<Map<String, String>>(PageCommand.GetElementsHtmlByCssSelectors(selectors))
+    }
+
+    override suspend fun getTablesInterpretationData(selectors: List<String>): Map<String, IBrowserPage.TableInterpretationData> {
+        val r = pageCmdParse<TablesInterpretationDataResponse>(PageCommand.GetTablesInterpretationData(selectors))
+        return r.data.mapValues { (_, data) ->
+            IBrowserPage.TableInterpretationData(
+                html = data.html,
+                boundingBoxes = data.boundingBoxes.mapValues { (_, b) ->
+                    IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom)
+                }
+            )
+        }
+    }
+
+    override suspend fun getVisibleElementsScreenshotsByCssSelectors(selectors: List<String>): Map<String, IBrowserPage.Screenshot> {
+        val r = pageCmdParse<VisibleScreenshotsResponse>(PageCommand.GetVisibleElementsScreenshotsByCssSelectors(selectors))
+        return r.screenshots.mapValues { (_, s) ->
+            IBrowserPage.Screenshot(Base64.decode(s.base64), ImageMimeType.fromValue(s.mimeType))
+        }
+    }
+
     override suspend fun replaceElementsByXPathWithText(replacements: List<IBrowserPage.XPathReplacementWithText>) {
         idempotentCmd(PageCommand.ReplaceElementsByXPathWithText(replacements.map { XPathReplacement(it.xpath, it.text) }))
     }

@@ -359,6 +359,43 @@ interface IBrowserPage {
     suspend fun extractElementsTextContentByCssSelectors(selectors: List<String>): Map<String, String>
 
     /**
+     * Check if multiple elements exist by CSS selectors in a single CDP call.
+     * More efficient than calling elementExistsByCssSelector multiple times.
+     * 
+     * @param selectors List of CSS selectors to check
+     * @return Map of CSS selector to existence boolean
+     */
+    suspend fun elementsExistByCssSelectors(selectors: List<String>): Map<String, Boolean>
+
+    /**
+     * Get HTML of multiple elements by CSS selectors in a single CDP call.
+     * More efficient than calling getElementHtmlByCssSelector multiple times.
+     * 
+     * @param selectors List of CSS selectors to fetch HTML for
+     * @return Map of CSS selector to outer HTML (empty string if element not found)
+     */
+    suspend fun getElementsHtmlByCssSelectors(selectors: List<String>): Map<String, String>
+
+    /**
+     * Get table interpretation data (HTML + bounding boxes) for multiple tables in a single CDP call.
+     * More efficient than calling getTableInterpretationData multiple times.
+     * 
+     * @param selectors List of CSS selectors for table elements
+     * @return Map of CSS selector to TableInterpretationData
+     */
+    suspend fun getTablesInterpretationData(selectors: List<String>): Map<String, TableInterpretationData>
+
+    /**
+     * Get screenshots of visible elements by CSS selectors in a single CDP call.
+     * Only returns screenshots for elements that exist and are visible.
+     * More efficient than calling isElementVisibleByCssSelector + getElementScreenshotByCssSelector for each.
+     * 
+     * @param selectors List of CSS selectors to capture
+     * @return Map of CSS selector to Screenshot (only for visible elements)
+     */
+    suspend fun getVisibleElementsScreenshotsByCssSelectors(selectors: List<String>): Map<String, Screenshot>
+
+    /**
      * Close this page and release associated resources.
      */
     suspend fun close()

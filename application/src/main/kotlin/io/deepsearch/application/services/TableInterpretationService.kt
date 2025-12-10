@@ -83,10 +83,16 @@ class TableInterpretationService(
         // Initialize result storage
         val results = MutableList<String?>(inputs.size) { null }
 
-        // Compute hashes for all inputs
+        // Batch fetch HTML for all tables in a single CDP call
+        val selectors = inputs.map { it.tableIdentification.cssSelector }
+        val webpage = inputs.first().webpage
+        val htmlBySelector = webpage.getElementsHtmlByCssSelectors(selectors)
+        logger.debug("Batch fetched HTML for {} tables in single CDP call", selectors.size)
+
+        // Compute hashes for all inputs using batch-fetched HTML
         val hashes = inputs.map { input ->
             val digest = MessageDigest.getInstance("SHA-256")
-            val tableHtml = input.webpage.getElementHtmlByCssSelector(input.tableIdentification.cssSelector)
+            val tableHtml = htmlBySelector[input.tableIdentification.cssSelector] ?: ""
             digest.update(tableHtml.toByteArray())
             digest.digest()
         }
