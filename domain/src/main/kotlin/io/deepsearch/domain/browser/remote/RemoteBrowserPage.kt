@@ -26,6 +26,9 @@ class RemoteBrowserPage(
 ) : IBrowserPage {
 
     private val logger = LoggerFactory.getLogger(this::class.java)
+    
+    /** Tracks the current URL for exception reporting. Updated after successful navigation. */
+    private var currentUrl: String = ""
 
     // ==================== Command Execution Helpers ====================
 
@@ -36,7 +39,9 @@ class RemoteBrowserPage(
         try {
             return execute(command) ?: ""
         } catch (e: RemoteBrowserException) {
-            throw PageOperationException(e.code, e.message ?: "Page operation failed", e)
+            throw PageOperationException(currentUrl, e.code, e.message ?: "Page operation failed", e)
+        } catch (e: ConnectionLostException) {
+            throw PageOperationException(currentUrl, "CONNECTION_LOST", e.message ?: "Connection lost", e)
         }
     }
 
@@ -48,7 +53,9 @@ class RemoteBrowserPage(
             val result = execute(command) ?: ""
             return json.decodeFromString<T>(result)
         } catch (e: RemoteBrowserException) {
-            throw PageOperationException(e.code, e.message ?: "Page operation failed", e)
+            throw PageOperationException(currentUrl, e.code, e.message ?: "Page operation failed", e)
+        } catch (e: ConnectionLostException) {
+            throw PageOperationException(currentUrl, "CONNECTION_LOST", e.message ?: "Connection lost", e)
         }
     }
 
@@ -59,7 +66,9 @@ class RemoteBrowserPage(
         try {
             return execute(command) ?: ""
         } catch (e: RemoteBrowserException) {
-            throw ElementOperationException(e.code, e.message ?: "Element operation failed", e)
+            throw ElementOperationException(currentUrl, e.code, e.message ?: "Element operation failed", e)
+        } catch (e: ConnectionLostException) {
+            throw ElementOperationException(currentUrl, "CONNECTION_LOST", e.message ?: "Connection lost", e)
         }
     }
 
@@ -71,7 +80,9 @@ class RemoteBrowserPage(
             val result = execute(command) ?: ""
             return json.decodeFromString<T>(result)
         } catch (e: RemoteBrowserException) {
-            throw ElementOperationException(e.code, e.message ?: "Element operation failed", e)
+            throw ElementOperationException(currentUrl, e.code, e.message ?: "Element operation failed", e)
+        } catch (e: ConnectionLostException) {
+            throw ElementOperationException(currentUrl, "CONNECTION_LOST", e.message ?: "Connection lost", e)
         }
     }
 
@@ -89,6 +100,8 @@ class RemoteBrowserPage(
     // ==================== Page Operations (throw PageOperationException) ====================
 
     override suspend fun navigate(url: String) {
+        // Set currentUrl before navigation so exceptions include the target URL
+        currentUrl = url
         pageCmd(PageCommand.Navigate(url))
     }
 

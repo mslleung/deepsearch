@@ -1,14 +1,20 @@
 package io.deepsearch.domain.browser
 
+import io.deepsearch.domain.exceptions.UrlProcessingException
+
 /**
  * Base exception for browser operations.
+ * Extends UrlProcessingException so browser failures are handled gracefully
+ * by URL processing pipelines (e.g., PeriodicIndexJobRegistry).
+ * 
  * Contains the error code from the browser service for debugging/logging.
  */
 sealed class BrowserOperationException(
+    url: String,
     val code: String,
     message: String,
     cause: Throwable? = null
-) : Exception(message, cause)
+) : UrlProcessingException(url, message, cause)
 
 /**
  * Exception thrown when an element-level operation fails.
@@ -24,10 +30,11 @@ sealed class BrowserOperationException(
  * Applies to: getElementScreenshot*, getElementHtml*, extractElementTextContent*, click*
  */
 class ElementOperationException(
+    url: String,
     code: String,
     message: String,
     cause: Throwable? = null
-) : BrowserOperationException(code, message, cause)
+) : BrowserOperationException(url, code, message, cause)
 
 /**
  * Exception thrown when a page-level operation fails.
@@ -38,14 +45,15 @@ class ElementOperationException(
  * - Page screenshot failures
  * - Media extraction failures
  * 
- * These failures are typically FATAL for the current operation - the caller
- * should propagate them rather than trying to continue.
+ * These failures are typically FATAL for the current URL - the caller
+ * should record the failure and continue with other URLs.
  * 
  * Applies to: navigate, takeScreenshot*, captureSnapshot, extractMedia, getFullHtml, etc.
  */
 class PageOperationException(
+    url: String,
     code: String,
     message: String,
     cause: Throwable? = null
-) : BrowserOperationException(code, message, cause)
+) : BrowserOperationException(url, code, message, cause)
 

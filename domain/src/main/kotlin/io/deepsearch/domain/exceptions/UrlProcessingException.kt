@@ -1,13 +1,16 @@
 package io.deepsearch.domain.exceptions
 
 /**
- * Base sealed class for all URL processing exceptions.
+ * Base class for all URL processing exceptions.
  * Each subclass represents a specific failure mode with type safety.
  * 
  * The [reason] property stores a user-friendly description of the failure.
  * The exception type itself (class name) is used to categorize the failure.
+ * 
+ * This class is open to allow extension from other packages in the domain module
+ * (e.g., browser exceptions).
  */
-sealed class UrlProcessingException(
+open class UrlProcessingException(
     val url: String,
     val reason: String,
     cause: Throwable? = null
