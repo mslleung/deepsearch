@@ -9,8 +9,8 @@ import kotlinx.serialization.Serializable
 
 data class SemanticIdentificationInput(
     val webpage: IBrowserPage,
-    /** Pre-captured page snapshot containing HTML and bounding boxes. */
-    val snapshot: IBrowserPage.PageSnapshot
+    /** Pre-captured page snapshot containing HTML and bounding boxes (without media). */
+    val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
 ) : IAgent.IAgentInput
 
 @Serializable

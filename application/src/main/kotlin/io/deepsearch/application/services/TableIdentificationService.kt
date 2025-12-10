@@ -15,7 +15,7 @@ interface ITableIdentificationService {
     suspend fun identifyTables(
         webpage: IBrowserPage, 
         sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshot
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): List<TableIdentification>
 }
 
@@ -33,10 +33,10 @@ class TableIdentificationService(
     override suspend fun identifyTables(
         webpage: IBrowserPage, 
         sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshot
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): List<TableIdentification> {
         // Use HTML hash for caching
-        val htmlHash = MessageDigest.getInstance("SHA-256").digest(snapshot.html.toByteArray())
+        val htmlHash = MessageDigest.getInstance("SHA-256").digest(pageSnapshot.html.toByteArray())
 
         val existing = webpageTableRepository.findByHash(htmlHash)
         if (existing != null) {
@@ -46,7 +46,7 @@ class TableIdentificationService(
         val agentOutput = tableIdentificationAgent.generate(
             TableIdentificationInput(
                 webpage = webpage,
-                snapshot = snapshot
+                pageSnapshot = pageSnapshot
             )
         )
 

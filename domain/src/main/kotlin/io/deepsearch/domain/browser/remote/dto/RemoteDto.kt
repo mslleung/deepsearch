@@ -67,6 +67,12 @@ sealed class PageCommand {
     @Serializable @SerialName("extractMedia")
     data object ExtractMedia : PageCommand()
     
+    @Serializable @SerialName("extractIcons")
+    data object ExtractIcons : PageCommand()
+    
+    @Serializable @SerialName("extractImages")
+    data object ExtractImages : PageCommand()
+    
     @Serializable @SerialName("captureSnapshot")
     data object CaptureSnapshot : PageCommand()
     
@@ -100,6 +106,9 @@ sealed class PageCommand {
     @Serializable @SerialName("captureFullSnapshot")
     data object CaptureFullSnapshot : PageCommand()
     
+    @Serializable @SerialName("capturePageSnapshot")
+    data object CapturePageSnapshot : PageCommand()
+    
     @Serializable @SerialName("injectAttributesByCssSelectors")
     data class InjectAttributesByCssSelectors(val injections: List<AttributeInjection>) : PageCommand()
     
@@ -117,9 +126,6 @@ sealed class PageCommand {
     
     @Serializable @SerialName("getTablesInterpretationData")
     data class GetTablesInterpretationData(val selectors: List<String>) : PageCommand()
-    
-    @Serializable @SerialName("getVisibleElementsScreenshotsByCssSelectors")
-    data class GetVisibleElementsScreenshotsByCssSelectors(val selectors: List<String>) : PageCommand()
 }
 
 @Serializable
@@ -157,6 +163,16 @@ data class MediaResponse(
 )
 
 @Serializable
+data class IconsResponse(
+    val icons: List<IconResponse>
+)
+
+@Serializable
+data class ImagesResponse(
+    val images: List<ImageResponse>
+)
+
+@Serializable
 data class BoundingBoxResponse(val left: Double, val top: Double, val right: Double, val bottom: Double)
 
 @Serializable
@@ -177,6 +193,15 @@ data class FullPageSnapshotResponse(
 )
 
 @Serializable
+data class PageSnapshotWithMetadataResponse(
+    val title: String,
+    val description: String?,
+    val url: String,
+    val html: String,
+    val boundingBoxes: Map<String, BoundingBoxResponse>
+)
+
+@Serializable
 data class TableInterpretationDataResponse(
     val html: String,
     val boundingBoxes: Map<String, BoundingBoxResponse>
@@ -185,9 +210,4 @@ data class TableInterpretationDataResponse(
 @Serializable
 data class TablesInterpretationDataResponse(
     val data: Map<String, TableInterpretationDataResponse>
-)
-
-@Serializable
-data class VisibleScreenshotsResponse(
-    val screenshots: Map<String, ScreenshotResponse>
 )

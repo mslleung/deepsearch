@@ -7,8 +7,8 @@ import kotlinx.serialization.Serializable
 
 data class TableIdentificationInput(
     val webpage: IBrowserPage,
-    /** Pre-captured page snapshot containing HTML, bounding boxes, and media. */
-    val snapshot: IBrowserPage.PageSnapshot
+    /** Pre-captured page snapshot containing HTML and bounding boxes (without media). */
+    val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
 ) : IAgent.IAgentInput
 
 @Serializable

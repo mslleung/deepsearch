@@ -20,13 +20,13 @@ interface ISemanticIdentificationService {
      *
      * @param webpage The webpage to analyze
      * @param sessionId Session ID for token tracking
-     * @param snapshot Pre-captured page snapshot containing HTML and bounding boxes
+     * @param pageSnapshot Pre-captured page snapshot containing HTML and bounding boxes
      * @return SemanticElements containing all identified semantic elements grouped by type
      */
     suspend fun identifySemanticElements(
         webpage: IBrowserPage,
         sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshot
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): SemanticElements
 }
 
@@ -41,10 +41,10 @@ class SemanticIdentificationService(
     override suspend fun identifySemanticElements(
         webpage: IBrowserPage,
         sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshot
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): SemanticElements {
         // Use html hash for caching
-        val pageHash = MessageDigest.getInstance("SHA-256").digest(snapshot.html.toByteArray())
+        val pageHash = MessageDigest.getInstance("SHA-256").digest(pageSnapshot.html.toByteArray())
 
         val cached = webpageSemanticElementRepository.findByHash(pageHash)
         if (cached != null) {
@@ -55,7 +55,7 @@ class SemanticIdentificationService(
         val identificationResult = semanticIdentificationAgent.generate(
             SemanticIdentificationInput(
                 webpage = webpage,
-                snapshot = snapshot
+                pageSnapshot = pageSnapshot
             )
         )
 

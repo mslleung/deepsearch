@@ -44,71 +44,88 @@ class WebpageExtractionService(
      * Converts a webpage into text for downstream LLM processing.
      * The extracted text is primed for information retrieval on the current page.
      * 
-     * Optimized flow:
-     * 1. Capture page snapshot (HTML, bounding boxes, icons, images) in one call
-     * 2. Run parallel operations:
-     *    - Semantic identification (uses pre-fetched HTML/bounding boxes)
-     *    - Icon interpretation
-     *    - Image interpretation
-     *    - Table identification (uses pre-fetched HTML/bounding boxes, icon selectors)
-     *    - Icon-free table interpretation (runs in parallel, doesn't need icons replaced first)
-     * 3. Replace icons and images in DOM
-     * 4. Interpret tables WITH icons (after icon replacement)
-     * 5. Remove semantic elements (batched)
-     * 6. Extract final text
+     * Optimized flow - each operation starts as soon as its input is ready:
+     * 
+     * 1. Three parallel pipelines that each start LLM work immediately when browser data arrives:
+     *    - Pipeline A: capturePageSnapshot() -> semantic identification + table identification (fast)
+     *    - Pipeline B: extractIcons() -> icon interpretation (slower)
+     *    - Pipeline C: extractImages() -> image interpretation (slower)
+     *    
+     *    Page snapshot is fast, so semantic/table identification start quickly.
+     *    Icon/image extraction are slower, but their interpretation starts as soon as they're ready.
+     *    Table identification detects media by tag/class, so it doesn't wait for media extraction.
+     *    
+     * 2. After all pipelines complete:
+     *    - Replace icons and images in DOM
+     *    - Interpret tables WITH media (after icon/image replacement)
+     *    - Remove semantic elements
+     *    - Extract final text
      */
     override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId): WebpageExtractionResult =
         coroutineScope {
             val result: WebpageExtractionResult
             val duration = measureTimeMillis {
-                // Step 1: Capture FULL page snapshot (title, description, url, html, boundingBoxes, media) in ONE CDP call
-                // This reduces 5 CDP round-trips to 1 - major latency improvement
-                logger.debug("Capturing full page snapshot (optimized)...")
-                val fullSnapshot = webpage.captureFullSnapshot()
-                val title = fullSnapshot.title
-                val description = fullSnapshot.description
-                val url = fullSnapshot.url
-
-                // Convert FullPageSnapshot to PageSnapshot for compatibility with existing flows
-                val snapshot = IBrowserPage.PageSnapshot(
-                    html = fullSnapshot.html,
-                    boundingBoxes = fullSnapshot.boundingBoxes,
-                    mediaExtractionResult = fullSnapshot.mediaExtractionResult
-                )
-                logger.debug(
-                    "Full page snapshot captured: {} icons, {} images",
-                    snapshot.mediaExtractionResult.icons.size,
-                    snapshot.mediaExtractionResult.images.size
-                )
-
-                // Step 2: Run LLM operations concurrently using Flow
-                // Media-free tables are identified AND interpreted in parallel with other operations
-                val semanticElementsFlow = identifySemanticElementsFlow(webpage, sessionId, snapshot)
-                val iconReplacementsFlow = interpretIconsFlow(snapshot, sessionId)
-                val imageReplacementsFlow = interpretImagesFlow(webpage, snapshot, sessionId)
-                val tablesFlow = identifyAndInterpretMediaFreeTablesFlow(webpage, sessionId, snapshot)
-
-                data class FlowResults(
-                    val semanticElements: SemanticElements,
-                    val iconReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
-                    val imageResults: ImageReplacementsWithHashes,
-                    val tableResults: TableFlowResult
-                )
-
+                // Step 1: Start all browser operations in parallel, then start LLM operations
+                // as soon as their inputs are ready (don't wait for slower operations)
+                // - Page snapshot is fast -> immediately feeds semantic/table identification
+                // - Icon extraction is slower -> feeds icon interpretation when ready
+                // - Image extraction is slower -> feeds image interpretation when ready
+                logger.debug("Starting browser operations in parallel...")
+                
+                // Create flows that chain browser call -> LLM processing
+                // Each flow starts its LLM operation as soon as its browser data is ready
+                val semanticAndTablesFlow = flow {
+                    val pageSnapshot = webpage.capturePageSnapshot()
+                    logger.debug("Page snapshot captured, starting semantic/table identification...")
+                    
+                    // Run semantic and table identification in parallel (both use pageSnapshot)
+                    val semanticFlow = flow { emit(identifySemanticElements(webpage, sessionId, pageSnapshot)) }
+                    val tablesFlow = flow { emit(identifyAndInterpretMediaFreeTables(webpage, sessionId, pageSnapshot)) }
+                    
+                    val combined = combine(semanticFlow, tablesFlow) { semantic, tables ->
+                        semantic to tables
+                    }.first()
+                    
+                    emit(SemanticAndTablesResult(pageSnapshot, combined.first, combined.second))
+                }
+                
+                val iconReplacementsFlow = flow {
+                    val icons = webpage.extractIcons()
+                    logger.debug("Icons extracted ({}), starting interpretation...", icons.size)
+                    emit(interpretIcons(icons, sessionId))
+                }
+                
+                val imageReplacementsFlow = flow {
+                    val images = webpage.extractImages()
+                    logger.debug("Images extracted ({}), starting interpretation...", images.size)
+                    emit(interpretImages(images, sessionId))
+                }
+                
+                // All flows run in parallel - each starts its LLM work as soon as browser data is ready
                 val results = combine(
-                    semanticElementsFlow,
+                    semanticAndTablesFlow,
                     iconReplacementsFlow,
-                    imageReplacementsFlow,
-                    tablesFlow
-                ) { semantic, iconRep, imageResults, tableResults ->
-                    FlowResults(semantic, iconRep, imageResults, tableResults)
+                    imageReplacementsFlow
+                ) { semanticAndTables, iconRep, imageResults ->
+                    FlowResults(
+                        pageSnapshot = semanticAndTables.pageSnapshot,
+                        semanticElements = semanticAndTables.semanticElements,
+                        tableResults = semanticAndTables.tableResults,
+                        iconReplacements = iconRep,
+                        imageResults = imageResults
+                    )
                 }.first()
-
+                
+                val title = results.pageSnapshot.title
+                val description = results.pageSnapshot.description
+                val url = results.pageSnapshot.url
+                
                 logger.debug(
-                    "Tables: {} interpreted, {} deferred",
+                    "All operations complete. Tables: {} interpreted, {} deferred",
                     results.tableResults.interpretedReplacements.size,
                     results.tableResults.deferredTables.size
                 )
+
 
                 // Step 3: Replace icons and images in DOM
                 webpage.replaceElementsByCssSelectorWithText(results.iconReplacements + results.imageResults.replacements)
@@ -157,38 +174,39 @@ class WebpageExtractionService(
             result
         }
 
-    private fun identifySemanticElementsFlow(
+    private suspend fun identifySemanticElements(
         webpage: IBrowserPage,
         sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshot
-    ) = flow {
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
+    ): SemanticElements {
+        val result: SemanticElements
         val duration = measureTimeMillis {
-            val semanticElements = semanticIdentificationService.identifySemanticElements(
+            result = semanticIdentificationService.identifySemanticElements(
                 webpage,
                 sessionId,
-                snapshot
+                pageSnapshot
             )
-            emit(semanticElements)
         }
         logger.debug("Semantic element identification took {} ms", duration)
+        return result
     }
 
-    private fun interpretIconsFlow(
-        snapshot: IBrowserPage.PageSnapshot,
+    private suspend fun interpretIcons(
+        icons: List<IBrowserPage.Icon>,
         sessionId: SessionId
-    ) = flow {
-        val icons = snapshot.mediaExtractionResult.icons
+    ): List<IBrowserPage.CssSelectorReplacementWithText> {
+        val replacements: List<IBrowserPage.CssSelectorReplacementWithText>
         val duration = measureTimeMillis {
             val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons, sessionId)
-            val replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
+            replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
                 icon.cssSelectors.map { cssSelector ->
                     IBrowserPage.CssSelectorReplacementWithText(cssSelector, interpretedText)
                 }
             }
             logger.debug("Number of icon replacements: {}", replacements.size)
-            emit(replacements)
         }
         logger.debug("Icon interpretation took {} ms", duration)
+        return replacements
     }
 
     private data class ImageReplacementsWithHashes(
@@ -196,52 +214,40 @@ class WebpageExtractionService(
         val imageHashes: List<ByteArray>
     )
 
-    private fun interpretImagesFlow(
-        webpage: IBrowserPage,
-        snapshot: IBrowserPage.PageSnapshot,
+    private data class SemanticAndTablesResult(
+        val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
+        val semanticElements: SemanticElements,
+        val tableResults: TableFlowResult
+    )
+
+    private data class FlowResults(
+        val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
+        val semanticElements: SemanticElements,
+        val tableResults: TableFlowResult,
+        val iconReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
+        val imageResults: ImageReplacementsWithHashes
+    )
+
+    private suspend fun interpretImages(
+        images: List<IBrowserPage.WebImage>,
         sessionId: SessionId
-    ) = flow {
-        val mediaResult = snapshot.mediaExtractionResult
+    ): ImageReplacementsWithHashes {
+        val result: ImageReplacementsWithHashes
         val duration = measureTimeMillis {
-            // Process failed images using batch screenshot fallback (single CDP call)
-            val allImages = mediaResult.images.toMutableList()
-
-            val failedImageSelectors = mediaResult.failedImages
-                .map { it.cssSelector }
-                .filter { it.isNotEmpty() }
-
-            if (failedImageSelectors.isNotEmpty()) {
-                // Batch operation: get screenshots of all visible failed images in one call
-                val visibleScreenshots = webpage.getVisibleElementsScreenshotsByCssSelectors(failedImageSelectors)
-                logger.debug(
-                    "Captured {} screenshots for {} failed images",
-                    visibleScreenshots.size,
-                    failedImageSelectors.size
-                )
-
-                for ((cssSelector, screenshot) in visibleScreenshots) {
-                    allImages.add(
-                        IBrowserPage.WebImage(
-                            bytes = screenshot.bytes,
-                            mimeType = screenshot.mimeType,
-                            cssSelectors = listOf(cssSelector)
-                        )
-                    )
-                }
-            }
-
+            // Images already include screenshot fallbacks (handled internally by browser)
             val extractionResults =
-                webpageImageTextExtractionService.extractTextFromImagesWithHashes(allImages, sessionId)
-            val replacements = allImages.zip(extractionResults).flatMap { (image, result) ->
-                val wrappedText = wrapImageTextWithXmlTag(result)
+                webpageImageTextExtractionService.extractTextFromImagesWithHashes(images, sessionId)
+            val replacements = images.zip(extractionResults).flatMap { (image, extractionResult) ->
+                val wrappedText = wrapImageTextWithXmlTag(extractionResult)
                 image.cssSelectors.map { cssSelector ->
                     IBrowserPage.CssSelectorReplacementWithText(cssSelector, wrappedText)
                 }
             }
             val imageHashes = extractionResults.map { it.imageBytesHash }
-            emit(ImageReplacementsWithHashes(replacements, imageHashes))
+            result = ImageReplacementsWithHashes(replacements, imageHashes)
         }
         logger.debug("Image interpretation took {} ms", duration)
+        return result
     }
 
     /**
@@ -279,18 +285,19 @@ class WebpageExtractionService(
      * Identifies tables and optionally interprets media-free tables in one flow.
      * 
      * Optimization strategy:
-     * - If ONLY media-free tables exist: interpret them immediately in this flow
+     * - If ONLY media-free tables exist: interpret them immediately
      * - If BOTH media-free and media-containing tables exist: defer ALL interpretation
      *   until after media replacement to batch them together
      */
-    private fun identifyAndInterpretMediaFreeTablesFlow(
+    private suspend fun identifyAndInterpretMediaFreeTables(
         webpage: IBrowserPage,
         sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshot
-    ) = flow {
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
+    ): TableFlowResult {
+        val result: TableFlowResult
         val duration = measureTimeMillis {
             // Step 1: Identify all tables
-            val allTables = tableIdentificationService.identifyTables(webpage, sessionId, snapshot)
+            val allTables = tableIdentificationService.identifyTables(webpage, sessionId, pageSnapshot)
 
             // Step 2: Partition into media-free and media-containing
             val (tablesWithMedia, tablesWithoutMedia) = allTables.partition { it.containsMedia }
@@ -300,8 +307,8 @@ class WebpageExtractionService(
             )
 
             // Step 3: Decide interpretation strategy based on table composition
-            val result = if (tablesWithMedia.isEmpty()) {
-                // Only media-free tables exist: interpret immediately in this flow
+            result = if (tablesWithMedia.isEmpty()) {
+                // Only media-free tables exist: interpret immediately
                 val interpretedReplacements = if (tablesWithoutMedia.isNotEmpty()) {
                     interpretAndGetReplacements(webpage, tablesWithoutMedia, sessionId)
                 } else {
@@ -312,10 +319,9 @@ class WebpageExtractionService(
                 // Both types exist: defer ALL interpretation until after media replacement
                 TableFlowResult(interpretedReplacements = emptyList(), deferredTables = allTables)
             }
-
-            emit(result)
         }
         logger.debug("Table identification and media-free interpretation took {} ms", duration)
+        return result
     }
 
     /**

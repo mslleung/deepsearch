@@ -219,6 +219,18 @@ interface IBrowserPage {
     )
 
     /**
+     * Page snapshot with metadata but without media extraction.
+     * Used for semantic/table identification which only needs DOM structure.
+     */
+    data class PageSnapshotWithMetadata(
+        val title: String,
+        val description: String?,
+        val url: String,
+        val html: String,
+        val boundingBoxes: Map<String, BoundingBox>
+    )
+
+    /**
      * Attribute injection specification for batch operations.
      */
     data class AttributeInjection(
@@ -251,6 +263,15 @@ interface IBrowserPage {
      * Returns: title, description, url, html, boundingBoxes, and media extraction results.
      */
     suspend fun captureFullSnapshot(): FullPageSnapshot
+
+    /**
+     * Capture a page snapshot with metadata but without media extraction.
+     * This is faster than captureFullSnapshot() and suitable for semantic/table identification
+     * which only needs DOM structure and bounding boxes.
+     * 
+     * Returns: title, description, url, html, boundingBoxes (no media).
+     */
+    suspend fun capturePageSnapshot(): PageSnapshotWithMetadata
 
     /**
      * Image screenshot payload and format information.
@@ -384,16 +405,6 @@ interface IBrowserPage {
      * @return Map of CSS selector to TableInterpretationData
      */
     suspend fun getTablesInterpretationData(selectors: List<String>): Map<String, TableInterpretationData>
-
-    /**
-     * Get screenshots of visible elements by CSS selectors in a single CDP call.
-     * Only returns screenshots for elements that exist and are visible.
-     * More efficient than calling isElementVisibleByCssSelector + getElementScreenshotByCssSelector for each.
-     * 
-     * @param selectors List of CSS selectors to capture
-     * @return Map of CSS selector to Screenshot (only for visible elements)
-     */
-    suspend fun getVisibleElementsScreenshotsByCssSelectors(selectors: List<String>): Map<String, Screenshot>
 
     /**
      * Close this page and release associated resources.

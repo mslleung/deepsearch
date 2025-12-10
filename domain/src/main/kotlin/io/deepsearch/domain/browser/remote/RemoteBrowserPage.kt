@@ -126,8 +126,27 @@ class RemoteBrowserPage(
         return toMediaResult(r)
     }
 
-    override suspend fun extractIcons(): List<IBrowserPage.Icon> = extractMedia().icons
-    override suspend fun extractImages(): List<IBrowserPage.WebImage> = extractMedia().images
+    override suspend fun extractIcons(): List<IBrowserPage.Icon> {
+        val r = pageCmdParse<IconsResponse>(PageCommand.ExtractIcons)
+        return r.icons.map { icon ->
+            IBrowserPage.Icon(
+                bytes = Base64.decode(icon.base64),
+                mimeType = ImageMimeType.fromValue(icon.mimeType),
+                cssSelectors = icon.cssSelectors
+            )
+        }
+    }
+
+    override suspend fun extractImages(): List<IBrowserPage.WebImage> {
+        val r = pageCmdParse<ImagesResponse>(PageCommand.ExtractImages)
+        return r.images.map { image ->
+            IBrowserPage.WebImage(
+                bytes = Base64.decode(image.base64),
+                mimeType = ImageMimeType.fromValue(image.mimeType),
+                cssSelectors = image.cssSelectors
+            )
+        }
+    }
 
     override suspend fun captureSnapshot(): IBrowserPage.PageSnapshot {
         val r = pageCmdParse<PageSnapshotResponse>(PageCommand.CaptureSnapshot)
@@ -151,6 +170,19 @@ class RemoteBrowserPage(
                 IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom)
             },
             mediaExtractionResult = toMediaResult(r.media)
+        )
+    }
+
+    override suspend fun capturePageSnapshot(): IBrowserPage.PageSnapshotWithMetadata {
+        val r = pageCmdParse<PageSnapshotWithMetadataResponse>(PageCommand.CapturePageSnapshot)
+        return IBrowserPage.PageSnapshotWithMetadata(
+            title = r.title,
+            description = r.description,
+            url = r.url,
+            html = r.html,
+            boundingBoxes = r.boundingBoxes.mapValues { (_, b) ->
+                IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom)
+            }
         )
     }
 
@@ -260,13 +292,6 @@ class RemoteBrowserPage(
                     IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom)
                 }
             )
-        }
-    }
-
-    override suspend fun getVisibleElementsScreenshotsByCssSelectors(selectors: List<String>): Map<String, IBrowserPage.Screenshot> {
-        val r = pageCmdParse<VisibleScreenshotsResponse>(PageCommand.GetVisibleElementsScreenshotsByCssSelectors(selectors))
-        return r.screenshots.mapValues { (_, s) ->
-            IBrowserPage.Screenshot(Base64.decode(s.base64), ImageMimeType.fromValue(s.mimeType))
         }
     }
 
