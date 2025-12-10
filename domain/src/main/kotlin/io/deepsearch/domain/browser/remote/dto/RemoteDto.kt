@@ -3,63 +3,6 @@ package io.deepsearch.domain.browser.remote.dto
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-// ==================== Client → Server ====================
-
-@Serializable
-sealed class ClientMessage {
-    abstract val requestId: String
-    
-    @Serializable
-    @SerialName("acquire")
-    data class Acquire(override val requestId: String) : ClientMessage()
-    
-    @Serializable
-    @SerialName("release")
-    data class Release(override val requestId: String, val sessionId: String) : ClientMessage()
-    
-    @Serializable
-    @SerialName("command")
-    data class Command(
-        override val requestId: String,
-        val sessionId: String,
-        val command: PageCommand
-    ) : ClientMessage()
-}
-
-// ==================== Server → Client ====================
-
-@Serializable
-sealed class ServerMessage {
-    abstract val requestId: String
-    
-    @Serializable
-    @SerialName("acquired")
-    data class Acquired(
-        override val requestId: String,
-        val sessionId: String
-    ) : ServerMessage()
-    
-    @Serializable
-    @SerialName("released")
-    data class Released(override val requestId: String) : ServerMessage()
-    
-    @Serializable
-    @SerialName("result")
-    data class Result(
-        override val requestId: String,
-        val success: Boolean,
-        val data: String? = null
-    ) : ServerMessage()
-    
-    @Serializable
-    @SerialName("error")
-    data class Error(
-        override val requestId: String,
-        val code: String,
-        val message: String
-    ) : ServerMessage()
-}
-
 // ==================== Page Commands ====================
 
 @Serializable

@@ -6,31 +6,34 @@ import io.deepsearch.domain.browser.remote.dto.*
 import io.deepsearch.domain.config.DeepSearchBrowserConfig
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.ktor.client.*
+import io.ktor.client.call.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.*
-import io.ktor.client.plugins.websocket.*
-import io.ktor.websocket.*
+import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Browser pool with a single persistent WebSocket connection.
+ * Browser pool using REST API to communicate with deepsearch-browser service.
  *
- * - Connects on init, reconnects in background if lost
- * - All requests use requestId for correlation
- * - withPage() acquires session, uses it, releases it
+ * - Acquires sessions via POST /sessions
+ * - Sends commands via POST /sessions/{id}/command
+ * - Releases sessions via DELETE /sessions/{id}
  */
 class RemoteBrowserPool(
     config: DeepSearchBrowserConfig,
     applicationCoroutineScope: IApplicationCoroutineScope
 ) : IBrowserPool {
 
-    private val wsUrl = config.url.replace("http://", "ws://").replace("https://", "wss://") + "/ws"
+    private val baseUrl = config.url.trimEnd('/')
     private val scope: CoroutineScope = applicationCoroutineScope.scope
     private val logger = LoggerFactory.getLogger(this::class.java)
 
@@ -42,111 +45,91 @@ class RemoteBrowserPool(
     }
 
     private val httpClient = HttpClient(OkHttp) {
-        install(WebSockets) { pingInterval = 20.seconds }
+        install(ContentNegotiation) {
+            json(json)
+        }
         install(HttpTimeout) {
             connectTimeoutMillis = 10_000
+            requestTimeoutMillis = 300_000
             socketTimeoutMillis = 300_000
         }
     }
 
-    @Volatile
-    private var ws: DefaultClientWebSocketSession? = null
-
-    // Signals when the WebSocket connection is ready
-    @Volatile
-    private var connectionReady = CompletableDeferred<Unit>()
-
-    // Pending requests waiting for response, keyed by requestId
-    private val pending = ConcurrentHashMap<String, CompletableDeferred<ServerMessage>>()
-
     init {
-        logger.info("RemoteBrowserPool connecting to: {}", wsUrl)
-        scope.launch { connectionLoop() }
-    }
-
-    private suspend fun connectionLoop() {
-        while (true) {
-            try {
-                logger.info("Connecting to browser service...")
-                val session = httpClient.webSocketSession(wsUrl)
-                ws = session
-                connectionReady.complete(Unit)
-                logger.info("Connected")
-
-                for (frame in session.incoming) {
-                    if (frame is Frame.Text) {
-                        val msg = json.decodeFromString<ServerMessage>(frame.readText())
-                        pending.remove(msg.requestId)?.complete(msg)
-                    }
-                }
-            } catch (e: Exception) {
-                logger.warn("WebSocket error: {}", e.message)
-            }
-
-            // Disconnected - fail all pending requests
-            ws = null
-            connectionReady = CompletableDeferred() // Reset for next connection
-            val error = ServerMessage.Error("", "DISCONNECTED", "Connection lost")
-            pending.values.forEach { it.complete(error) }
-            pending.clear()
-
-            delay(1000)
-        }
-    }
-
-    private suspend fun send(msg: ClientMessage): ServerMessage {
-        // Use real time for connection wait since WebSocket connects in real time (Dispatchers.IO)
-        withContext(Dispatchers.Default) {
-            withTimeout(10.seconds) {
-                connectionReady.await()
-            }
-        }
-        val session = ws ?: throw ConnectionLostException("Not connected")
-        val deferred = CompletableDeferred<ServerMessage>()
-        pending[msg.requestId] = deferred
-
-        try {
-            session.send(Frame.Text(json.encodeToString(msg)))
-            return deferred.await()
-        } catch (e: Exception) {
-            pending.remove(msg.requestId)
-            throw ConnectionLostException("Send failed: ${e.message}")
-        }
+        logger.info("RemoteBrowserPool connecting to: {}", baseUrl)
     }
 
     override suspend fun <T> withPage(block: suspend (IBrowserPage) -> T): T {
         // Acquire session
-        val acquireResponse = send(ClientMessage.Acquire(UUID.randomUUID().toString()))
-        val sessionId = when (acquireResponse) {
-            is ServerMessage.Acquired -> acquireResponse.sessionId
-            is ServerMessage.Error -> throw RemoteBrowserException(acquireResponse.code, acquireResponse.message)
-            else -> throw RemoteBrowserException("UNEXPECTED", "Unexpected response: $acquireResponse")
+        val acquireResponse = try {
+            httpClient.post("$baseUrl/sessions") {
+                contentType(ContentType.Application.Json)
+            }
+        } catch (e: Exception) {
+            throw ConnectionLostException("Failed to acquire session: ${e.message}")
         }
+
+        if (!acquireResponse.status.isSuccess()) {
+            val errorBody = acquireResponse.bodyAsText()
+            throw RemoteBrowserException("ACQUIRE_FAILED", "Failed to acquire session: $errorBody")
+        }
+
+        val sessionInfo = acquireResponse.body<AcquireResponse>()
+        val sessionId = sessionInfo.sessionId
 
         logger.debug("Acquired session: {}", sessionId)
 
         val page = RemoteBrowserPage(sessionId, json) { command ->
-            val response = send(ClientMessage.Command(UUID.randomUUID().toString(), sessionId, command))
-            when (response) {
-                is ServerMessage.Result -> if (response.success) response.data else throw RemoteBrowserException(
-                    "COMMAND_FAILED",
-                    "Command failed"
-                )
-
-                is ServerMessage.Error -> throw RemoteBrowserException(response.code, response.message)
-                else -> throw RemoteBrowserException("UNEXPECTED", "Unexpected response")
-            }
+            sendCommand(sessionId, command)
         }
 
         return try {
             block(page)
         } finally {
             try {
-                send(ClientMessage.Release(UUID.randomUUID().toString(), sessionId))
+                releaseSession(sessionId)
                 logger.debug("Released session: {}", sessionId)
             } catch (e: Exception) {
                 logger.warn("Failed to release session {}: {}", sessionId, e.message)
             }
+        }
+    }
+
+    private suspend fun sendCommand(sessionId: String, command: PageCommand): String {
+        val response = try {
+            httpClient.post("$baseUrl/sessions/$sessionId/command") {
+                contentType(ContentType.Application.Json)
+                setBody(command)
+            }
+        } catch (e: Exception) {
+            throw ConnectionLostException("Command failed: ${e.message}")
+        }
+
+        if (!response.status.isSuccess()) {
+            if (response.status == HttpStatusCode.NotFound) {
+                throw RemoteBrowserException("SESSION_NOT_FOUND", "Session expired or not found")
+            }
+            val errorBody = response.bodyAsText()
+            throw RemoteBrowserException("COMMAND_FAILED", "Command failed: $errorBody")
+        }
+
+        val result = response.body<CommandResponse>()
+        
+        if (!result.success) {
+            throw RemoteBrowserException(
+                result.error?.code ?: "COMMAND_FAILED",
+                result.error?.message ?: "Command failed"
+            )
+        }
+
+        return result.data ?: ""
+    }
+
+    private suspend fun releaseSession(sessionId: String) {
+        try {
+            httpClient.delete("$baseUrl/sessions/$sessionId")
+        } catch (e: Exception) {
+            logger.warn("Error releasing session: {}", e.message)
         }
     }
 
@@ -155,6 +138,27 @@ class RemoteBrowserPool(
         httpClient.close()
     }
 }
+
+// ==================== Response DTOs ====================
+
+@Serializable
+private data class AcquireResponse(
+    val sessionId: String,
+    val clientId: String
+)
+
+@Serializable
+private data class CommandResponse(
+    val success: Boolean,
+    val data: String? = null,
+    val error: ErrorInfo? = null
+)
+
+@Serializable
+private data class ErrorInfo(
+    val code: String,
+    val message: String
+)
 
 /**
  * Exception thrown when a remote browser command fails.
@@ -169,7 +173,7 @@ class RemoteBrowserPool(
 class RemoteBrowserException(val code: String, message: String) : Exception(message)
 
 /**
- * Exception thrown when the WebSocket connection to the browser service is lost.
+ * Exception thrown when the connection to the browser service is lost.
  * This is always a fatal error that should propagate.
  */
 class ConnectionLostException(message: String) : Exception(message)
