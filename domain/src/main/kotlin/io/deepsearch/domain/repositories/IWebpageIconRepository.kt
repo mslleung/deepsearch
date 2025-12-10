@@ -6,4 +6,10 @@ interface IWebpageIconRepository {
     suspend fun upsert(icon: WebpageIcon)
     suspend fun batchUpsert(icons: List<WebpageIcon>)
     suspend fun findByHash(imageBytesHash: ByteArray): WebpageIcon?
+    
+    /**
+     * Batch lookup for multiple icon hashes.
+     * Returns icons that exist in the cache, in no particular order.
+     */
+    suspend fun findByHashes(imageHashes: List<ByteArray>): List<WebpageIcon>
 }

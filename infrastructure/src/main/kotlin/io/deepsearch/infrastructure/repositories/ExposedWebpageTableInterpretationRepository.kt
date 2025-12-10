@@ -7,8 +7,10 @@ import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.r2dbc.batchUpsert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.upsert
@@ -63,6 +65,16 @@ class ExposedWebpageTableInterpretationRepository(
             .where { webpageTableInterpretationTable.tableDataHash eq hashBase64 }
             .map { mapRowToWebpageTableInterpretation(it) }
             .singleOrNull()
+    }
+
+    override suspend fun findByHashes(tableDataHashes: List<ByteArray>): List<WebpageTableInterpretation> = transactionService.withTransaction {
+        if (tableDataHashes.isEmpty()) return@withTransaction emptyList()
+        
+        val hashesBase64 = tableDataHashes.map { Base64.encode(it) }
+        webpageTableInterpretationTable.selectAll()
+            .where { webpageTableInterpretationTable.tableDataHash inList hashesBase64 }
+            .map { mapRowToWebpageTableInterpretation(it) }
+            .toList()
     }
 
     private fun mapRowToWebpageTableInterpretation(row: ResultRow): WebpageTableInterpretation {

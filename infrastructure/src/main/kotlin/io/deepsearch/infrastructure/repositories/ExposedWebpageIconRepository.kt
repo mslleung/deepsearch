@@ -7,8 +7,10 @@ import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.r2dbc.batchUpsert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.upsert
@@ -62,6 +64,16 @@ class ExposedWebpageIconRepository(
             .where { webpageIconTable.imageBytesHash eq hashBase64 }
             .map { mapRowToWebpageIcon(it) }
             .singleOrNull()
+    }
+
+    override suspend fun findByHashes(imageHashes: List<ByteArray>): List<WebpageIcon> = transactionService.withTransaction {
+        if (imageHashes.isEmpty()) return@withTransaction emptyList()
+        
+        val hashesBase64 = imageHashes.map { Base64.encode(it) }
+        webpageIconTable.selectAll()
+            .where { webpageIconTable.imageBytesHash inList hashesBase64 }
+            .map { mapRowToWebpageIcon(it) }
+            .toList()
     }
 
     private fun mapRowToWebpageIcon(row: ResultRow): WebpageIcon {

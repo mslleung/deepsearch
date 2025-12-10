@@ -89,17 +89,18 @@ class WebpageImageTextExtractionService(
             return emptyList()
         }
 
-        // Check cache for all images
-        val cachedResults = mutableMapOf<String, String?>()
-        val uncachedImages = mutableListOf<IBrowserPage.WebImage>()
+        // Batch cache lookup (single DB query instead of N queries)
+        val imageHashes = images.map { it.bytesHash }
+        val cachedImages = webpageImageRepository.findByHashes(imageHashes)
+        val cachedResults = cachedImages.associate { image ->
+            Base64.encode(image.imageBytesHash) to image.extractedText?.takeIf { it.isNotBlank() }
+        }.toMutableMap()
         
-        images.forEach { image ->
-            val existing = webpageImageRepository.findByHash(image.bytesHash)
-            if (existing != null) {
-                cachedResults[Base64.encode(image.bytesHash)] = existing.extractedText?.takeIf { it.isNotBlank() }
-            } else {
-                uncachedImages.add(image)
-            }
+        logger.debug("Found {} cached results for {} images", cachedResults.size, images.size)
+
+        // Find uncached images by checking which hashes are not in cached results
+        val uncachedImages = images.filter { image ->
+            !cachedResults.containsKey(Base64.encode(image.bytesHash))
         }
 
         // Process uncached images

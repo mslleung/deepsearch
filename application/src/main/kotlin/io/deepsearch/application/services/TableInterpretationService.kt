@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
+import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 interface ITableInterpretationService {
@@ -97,19 +98,24 @@ class TableInterpretationService(
             digest.digest()
         }
 
-        // Check cache and populate results where cached
+        // Batch cache lookup (single DB query instead of N queries)
+        val cachedInterpretations = webpageTableInterpretationRepository.findByHashes(hashes)
+        val cachedByHash = cachedInterpretations.associateBy { Base64.encode(it.tableDataHash) }
+        
+        logger.debug("Found {} cached interpretations for {} tables", cachedByHash.size, inputs.size)
+
+        // Populate results from cache and collect uncached entries
+        val uncachedEntries = mutableListOf<Triple<Int, TableInterpretationInput, ByteArray>>()
+        
         for (index in inputs.indices) {
-            val cached = webpageTableInterpretationRepository.findByHash(hashes[index])
+            val hashKey = Base64.encode(hashes[index])
+            val cached = cachedByHash[hashKey]
             if (cached != null) {
-                logger.debug("Cache hit for table {}", index)
                 results[index] = cached.markdown
+            } else {
+                uncachedEntries.add(Triple(index, inputs[index], hashes[index]))
             }
         }
-
-        // Collect uncached inputs that need interpretation
-        val uncachedEntries = inputs.indices
-            .filter { results[it] == null }
-            .map { index -> Triple(index, inputs[index], hashes[index]) }
 
         // Generate interpretations for uncached inputs in parallel
         val newInterpretations = coroutineScope {

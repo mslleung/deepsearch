@@ -40,7 +40,8 @@ class WebpageIconInterpretationService(
      * Use an LLM to interpret multiple icons in batch and return textual representations.
      * Returns null for icons that cannot be interpreted into any meaningful text.
      * Efficiently processes multiple icons by:
-     * - Checking cache first for all icons
+     * - Pre-computing hashes once for all icons
+     * - Batch cache lookup (single DB query)
      * - Batching uncached icons for LLM processing
      * - Using multi-icon agent that processes multiple icons per LLM call
      * Results are cached to avoid reprocessing the same icons.
@@ -51,28 +52,32 @@ class WebpageIconInterpretationService(
             return emptyList()
         }
 
-        // Check cache for all icons
-        val cachedResults = mutableMapOf<String, String?>()
-        val uncachedIcons = mutableListOf<IBrowserPage.Icon>()
+        // Pre-compute all hashes once (previously computed 3x per icon)
+        val iconHashes = icons.map { icon ->
+            MessageDigest.getInstance("SHA-256").digest(icon.bytes)
+        }
+        val hashToBase64 = iconHashes.associateWith { Base64.encode(it) }
+
+        // Batch cache lookup (single DB query instead of N queries)
+        val cachedIcons = webpageIconRepository.findByHashes(iconHashes)
+        val cachedResults = cachedIcons.associate { icon ->
+            Base64.encode(icon.imageBytesHash) to icon.label?.takeIf { it.isNotBlank() }
+        }.toMutableMap()
         
-        icons.forEach { icon ->
-            val bytesHash = MessageDigest.getInstance("SHA-256").digest(icon.bytes)
-            val existing = webpageIconRepository.findByHash(bytesHash)
-            if (existing != null) {
-                logger.debug("Found cached result for icon: {}", existing.label)
-                cachedResults[Base64.encode(bytesHash)] = existing.label?.takeIf { it.isNotBlank() }
-            } else {
-                uncachedIcons.add(icon)
-            }
+        logger.debug("Found {} cached results for {} icons", cachedResults.size, icons.size)
+
+        // Find uncached icons by checking which hashes are not in cached results
+        val uncachedIconsWithHashes = icons.zip(iconHashes).filter { (_, hash) ->
+            !cachedResults.containsKey(hashToBase64[hash])
         }
 
         // Process uncached icons
-        if (uncachedIcons.isNotEmpty()) {
-            logger.debug("Processing {} uncached icons", uncachedIcons.size)
+        if (uncachedIconsWithHashes.isNotEmpty()) {
+            logger.debug("Processing {} uncached icons", uncachedIconsWithHashes.size)
             
             val interpreterAgentOutput = multiIconInterpreterAgent.generate(
                 MultiIconInterpreterInput(
-                    icons = uncachedIcons.map { icon ->
+                    icons = uncachedIconsWithHashes.map { (icon, _) ->
                         MultiIconInterpreterInput.IconItem(
                             bytes = icon.bytes,
                             mimeType = icon.mimeType
@@ -91,23 +96,21 @@ class WebpageIconInterpretationService(
                 totalTokens = interpreterAgentOutput.tokenUsage.totalTokens
             )
 
-            // Cache results
-            val iconsToCache = uncachedIcons.mapIndexed { index, icon ->
-                val bytesHash = MessageDigest.getInstance("SHA-256").digest(icon.bytes)
+            // Cache results using pre-computed hashes
+            val iconsToCache = uncachedIconsWithHashes.mapIndexed { index, (_, hash) ->
                 val label = interpreterAgentOutput.interpretations[index].label?.takeIf { it.isNotBlank() }
-                cachedResults[Base64.encode(bytesHash)] = label
+                cachedResults[hashToBase64[hash]!!] = label
                 WebpageIcon(
-                    imageBytesHash = bytesHash,
+                    imageBytesHash = hash,
                     label = label
                 )
             }
             webpageIconRepository.batchUpsert(iconsToCache)
         }
 
-        // Return results in original order
-        return icons.map { icon -> 
-            val bytesHash = MessageDigest.getInstance("SHA-256").digest(icon.bytes)
-            cachedResults[Base64.encode(bytesHash)]
+        // Return results in original order using pre-computed hashes
+        return iconHashes.map { hash -> 
+            cachedResults[hashToBase64[hash]]
         }
     }
 }
