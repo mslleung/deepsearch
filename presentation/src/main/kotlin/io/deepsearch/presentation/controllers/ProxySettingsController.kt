@@ -1,24 +1,24 @@
 package io.deepsearch.presentation.controllers
 
+import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IProxySettingsService
-import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.ProxyRuleId
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.proxy.ProxyType
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
-import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import kotlinx.serialization.Serializable
 import kotlin.time.ExperimentalTime
 
 class ProxySettingsController(
-    private val proxySettingsService: IProxySettingsService
+    private val proxySettingsService: IProxySettingsService,
+    private val apiKeyService: IApiKeyService
 ) {
     suspend fun listRules(call: ApplicationCall) {
-        val userId = getUserIdFromPrincipal(call)
+        val userId = getUserIdFromApiKey(call)
         if (userId == null) {
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
             return
@@ -32,7 +32,7 @@ class ProxySettingsController(
 
     @OptIn(ExperimentalTime::class)
     suspend fun createRule(call: ApplicationCall) {
-        val userId = getUserIdFromPrincipal(call)
+        val userId = getUserIdFromApiKey(call)
         if (userId == null) {
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
             return
@@ -40,83 +40,53 @@ class ProxySettingsController(
 
         val request = call.receive<CreateProxyRuleRequest>()
         
-        // Validate proxy type
-        val proxyType = try {
-            ProxyType.valueOf(request.proxyType.uppercase())
-        } catch (e: IllegalArgumentException) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid proxy type: ${request.proxyType}"))
-            return
-        }
+        // Validate proxy type - throws IllegalArgumentException which StatusPages handles
+        val proxyType = parseProxyType(request.proxyType)
 
-        try {
-            val rule = proxySettingsService.createRule(
-                userId = userId,
-                urlPattern = request.urlPattern,
-                proxyType = proxyType,
-                customProxyUrl = request.customProxyUrl
-            )
-            call.respond(HttpStatusCode.Created, rule.toResponse())
-        } catch (e: IllegalArgumentException) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
-        } catch (e: IllegalStateException) {
-            call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
-        }
+        val rule = proxySettingsService.createRule(
+            userId = userId,
+            urlPattern = request.urlPattern,
+            proxyType = proxyType,
+            customProxyUrl = request.customProxyUrl
+        )
+        call.respond(HttpStatusCode.Created, rule.toResponse())
     }
 
     @OptIn(ExperimentalTime::class)
     suspend fun updateRule(call: ApplicationCall) {
-        val userId = getUserIdFromPrincipal(call)
+        val userId = getUserIdFromApiKey(call)
         if (userId == null) {
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
             return
         }
 
         val ruleId = call.parameters["id"]?.toLongOrNull()
-        if (ruleId == null) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid rule ID"))
-            return
-        }
+            ?: throw IllegalArgumentException("Invalid rule ID")
 
         val request = call.receive<UpdateProxyRuleRequest>()
         
-        // Validate proxy type if provided
-        val proxyType = request.proxyType?.let { 
-            try {
-                ProxyType.valueOf(it.uppercase())
-            } catch (e: IllegalArgumentException) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid proxy type: $it"))
-                return
-            }
-        }
+        // Validate proxy type if provided - throws IllegalArgumentException which StatusPages handles
+        val proxyType = request.proxyType?.let { parseProxyType(it) }
 
-        try {
-            val rule = proxySettingsService.updateRule(
-                userId = userId,
-                ruleId = ProxyRuleId(ruleId),
-                urlPattern = request.urlPattern,
-                proxyType = proxyType,
-                customProxyUrl = request.customProxyUrl
-            )
-            call.respond(HttpStatusCode.OK, rule.toResponse())
-        } catch (e: IllegalArgumentException) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
-        } catch (e: IllegalAccessError) {
-            call.respond(HttpStatusCode.Forbidden, mapOf("error" to e.message))
-        }
+        val rule = proxySettingsService.updateRule(
+            userId = userId,
+            ruleId = ProxyRuleId(ruleId),
+            urlPattern = request.urlPattern,
+            proxyType = proxyType,
+            customProxyUrl = request.customProxyUrl
+        )
+        call.respond(HttpStatusCode.OK, rule.toResponse())
     }
 
     suspend fun deleteRule(call: ApplicationCall) {
-        val userId = getUserIdFromPrincipal(call)
+        val userId = getUserIdFromApiKey(call)
         if (userId == null) {
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
             return
         }
 
         val ruleId = call.parameters["id"]?.toLongOrNull()
-        if (ruleId == null) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid rule ID"))
-            return
-        }
+            ?: throw IllegalArgumentException("Invalid rule ID")
 
         val deleted = proxySettingsService.deleteRule(userId, ProxyRuleId(ruleId))
         if (deleted) {
@@ -126,10 +96,31 @@ class ProxySettingsController(
         }
     }
 
-    private fun getUserIdFromPrincipal(call: ApplicationCall): UserId? {
-        val principal = call.principal<JWTPrincipal>()
-        val userIdValue = principal?.payload?.getClaim(JwtConfig.CLAIM_USER_ID)?.asInt() ?: return null
-        return UserId(userIdValue)
+    /**
+     * Parses proxy type string to enum.
+     * @throws IllegalArgumentException if proxy type is invalid (handled by StatusPages)
+     */
+    private fun parseProxyType(proxyType: String): ProxyType {
+        return try {
+            ProxyType.valueOf(proxyType.uppercase())
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid proxy type: $proxyType")
+        }
+    }
+
+    /**
+     * Extract user ID from API key in bearer token.
+     * Returns null if API key is missing or invalid.
+     */
+    private suspend fun getUserIdFromApiKey(call: ApplicationCall): UserId? {
+        val principal = call.principal<UserIdPrincipal>()
+        val rawApiKey = principal?.name ?: return null
+
+        val isValid = apiKeyService.validateApiKey(rawApiKey)
+        if (!isValid) return null
+
+        val apiKey = apiKeyService.getApiKeyByRawKey(rawApiKey) ?: return null
+        return apiKey.userId
     }
 }
 
@@ -175,4 +166,3 @@ private fun io.deepsearch.domain.proxy.ProxyRule.toResponse(): ProxyRuleResponse
         updatedAt = updatedAt.toEpochMilliseconds()
     )
 }
-

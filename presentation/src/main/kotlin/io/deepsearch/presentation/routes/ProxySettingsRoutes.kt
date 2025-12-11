@@ -10,8 +10,8 @@ import org.koin.ktor.plugin.scope
 
 fun Application.configureProxySettingsRoutes() {
     routing {
-        rateLimit(RateLimitProviders.WEB_APP) {
-            authenticate("auth-jwt") {
+        rateLimit(RateLimitProviders.API_KEY_GENERAL) {
+            authenticate("api-key") {
                 route("/api/proxy-rules") {
                     get {
                         val controller = call.scope.get<ProxySettingsController>()
@@ -37,4 +37,3 @@ fun Application.configureProxySettingsRoutes() {
         }
     }
 }
-
