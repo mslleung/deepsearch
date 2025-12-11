@@ -204,7 +204,7 @@ class CacheOnlySearchOrchestrator(
             }
 
             // Step 4: Complete session
-            querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer)
+            querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer, imageIds)
 
             val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
             emit(

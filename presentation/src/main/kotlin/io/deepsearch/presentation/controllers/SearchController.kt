@@ -93,10 +93,18 @@ class SearchController(
         // Consume usage after successful search
         subscriptionPlanService.consumeUsage(apiKey.userId)
 
+        // Fetch images if there are any referenced in the answer
+        val images = if (sessionDetail.imageIds.isNotEmpty()) {
+            fetchImagesByIds(sessionDetail.imageIds)
+        } else {
+            emptyMap()
+        }
+
         // Convert to DTO and respond
         val responseDto = sessionDetail.session.toDetailDto(
             sessionDetail.urlAccesses,
-            sessionDetail.cachedWebpages
+            sessionDetail.cachedWebpages,
+            images
         )
         call.respond(HttpStatusCode.OK, responseDto)
     }

@@ -96,7 +96,11 @@ fun QuerySession.toSummaryDto(urlCount: Int): QuerySessionSummaryDto {
 }
 
 @OptIn(ExperimentalTime::class)
-fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>, cachedWebpages: List<io.deepsearch.domain.models.entities.WebpageMarkdown> = emptyList()): QuerySessionDetailDto {
+fun QuerySession.toDetailDto(
+    urlAccesses: List<UrlAccess>, 
+    cachedWebpages: List<io.deepsearch.domain.models.entities.WebpageMarkdown> = emptyList(),
+    images: Map<String, ImageDto> = emptyMap()
+): QuerySessionDetailDto {
     val status = finishReason?.name ?: "IN_PROGRESS"
     val modeString = when (searchMode) {
         SearchMode.LIVE_CRAWLING -> "live-crawling"
@@ -156,6 +160,7 @@ fun QuerySession.toDetailDto(urlAccesses: List<UrlAccess>, cachedWebpages: List<
                 exceptionMessage = (urlAccess as? FailedUrlAccess)?.message
             )
         },
+        images = images,
         durationMs = durationMs,
         createdAt = createdAt.toEpochMilliseconds(),
         updatedAt = updatedAt.toEpochMilliseconds()

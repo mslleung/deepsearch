@@ -26,6 +26,7 @@ class QuerySession(
     var searchBudget: SearchBudget,
     var finishReason: FinishReason?,
     var answer: String?,
+    var imageIds: List<String> = emptyList(), // Image IDs referenced in the answer (format: "img-xxx")
     var durationMs: Long?,
     val createdAt: Instant,
     var updatedAt: Instant,
@@ -41,6 +42,7 @@ class QuerySession(
         searchBudget = SearchBudget(),
         finishReason = null,
         answer = null,
+        imageIds = emptyList(),
         durationMs = null,
         createdAt = Clock.System.now(),
         updatedAt = Clock.System.now(),
@@ -62,10 +64,11 @@ class QuerySession(
 
     /**
      * Complete the session with a final answer.
-     * This sets the answer, finish reason, and transitions to FINISHED state.
+     * This sets the answer, finish reason, image IDs, and transitions to FINISHED state.
      */
-    fun completeWithAnswer(answer: String, finishReason: FinishReason) {
+    fun completeWithAnswer(answer: String, finishReason: FinishReason, imageIds: List<String> = emptyList()) {
         this.answer = answer
+        this.imageIds = imageIds
         finish(finishReason)
     }
 }

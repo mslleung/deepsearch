@@ -15,6 +15,7 @@ import io.deepsearch.infrastructure.services.ITransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
@@ -45,6 +46,7 @@ class ExposedQuerySessionRepository(
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
             it[answer] = session.answer
+            it[imageIds] = Json.encodeToString(session.imageIds)
             it[durationMs] = session.durationMs
             it[createdAtEpochMs] = session.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
@@ -73,6 +75,7 @@ class ExposedQuerySessionRepository(
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
             it[answer] = session.answer
+            it[imageIds] = Json.encodeToString(session.imageIds)
             it[durationMs] = session.durationMs
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
             it[version] = session.version + 1
@@ -144,6 +147,13 @@ class ExposedQuerySessionRepository(
     }
 
     private fun mapRowToQuerySession(row: ResultRow): QuerySession {
+        val imageIdsJson = row[querySessionTable.imageIds]
+        val imageIds: List<String> = try {
+            Json.decodeFromString(imageIdsJson)
+        } catch (e: Exception) {
+            emptyList()
+        }
+        
         return QuerySession(
             id = QuerySessionId(row[querySessionTable.id]),
             query = row[querySessionTable.query],
@@ -156,6 +166,7 @@ class ExposedQuerySessionRepository(
             ),
             finishReason = row[querySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
             answer = row[querySessionTable.answer],
+            imageIds = imageIds,
             durationMs = row[querySessionTable.durationMs],
             createdAt = Instant.fromEpochMilliseconds(row[querySessionTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[querySessionTable.updatedAtEpochMs]),

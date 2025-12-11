@@ -22,7 +22,8 @@ import kotlin.time.Duration.Companion.milliseconds
 data class QuerySessionDetail(
     val session: QuerySession,
     val urlAccesses: List<UrlAccess>,
-    val cachedWebpages: List<WebpageMarkdown>
+    val cachedWebpages: List<WebpageMarkdown>,
+    val imageIds: List<String> = emptyList() // Image IDs referenced in the answer (format: "img-xxx")
 )
 
 /**
@@ -35,11 +36,12 @@ interface IQuerySessionService {
 
     /**
      * Complete the session with a final answer.
-     * This sets the answer, finish reason, and transitions to FINISHED state.
+     * This sets the answer, finish reason, image IDs, and transitions to FINISHED state.
      */
     suspend fun completeSessionAnswerComplete(
         sessionId: QuerySessionId,
-        answer: String
+        answer: String,
+        imageIds: List<String> = emptyList()
     )
 
     /**
@@ -54,7 +56,8 @@ interface IQuerySessionService {
     suspend fun completeSessionBudgetExceeded(
         sessionId: QuerySessionId,
         answer: String,
-        budget: SearchBudget
+        budget: SearchBudget,
+        imageIds: List<String> = emptyList()
     )
 
     /**
@@ -62,7 +65,8 @@ interface IQuerySessionService {
      */
     suspend fun completeSessionLinksExhausted(
         sessionId: QuerySessionId,
-        answer: String
+        answer: String,
+        imageIds: List<String> = emptyList()
     )
 
     suspend fun hardTimeout(sessionId: QuerySessionId, error: String)
@@ -135,15 +139,17 @@ class QuerySessionService(
 
     override suspend fun completeSessionAnswerComplete(
         sessionId: QuerySessionId,
-        answer: String
+        answer: String,
+        imageIds: List<String>
     ) {
         val session = getSessionOrThrow(sessionId)
-        session.completeWithAnswer(answer, FinishReason.ANSWER_COMPLETE)
+        session.completeWithAnswer(answer, FinishReason.ANSWER_COMPLETE, imageIds)
         querySessionRepository.update(session)
         logger.info(
-            "[{}] Session completed: {} chars, answer complete",
+            "[{}] Session completed: {} chars, {} images, answer complete",
             sessionId.value,
-            answer.length
+            answer.length,
+            imageIds.size
         )
     }
 
@@ -160,7 +166,8 @@ class QuerySessionService(
     override suspend fun completeSessionBudgetExceeded(
         sessionId: QuerySessionId, 
         answer: String, 
-        budget: SearchBudget
+        budget: SearchBudget,
+        imageIds: List<String>
     ) {
         val session = getSessionOrThrow(sessionId)
 
@@ -170,36 +177,40 @@ class QuerySessionService(
 
         if (isTimeBudgetExceeded) {
             val session = getSessionOrThrow(sessionId)
-            session.completeWithAnswer(answer, FinishReason.TIME_BUDGET_EXCEEDED)
+            session.completeWithAnswer(answer, FinishReason.TIME_BUDGET_EXCEEDED, imageIds)
             querySessionRepository.update(session)
             logger.info(
-                "[{}] Session completed: {} chars, time budget exceeded",
+                "[{}] Session completed: {} chars, {} images, time budget exceeded",
                 sessionId.value,
-                answer.length
+                answer.length,
+                imageIds.size
             )
         } else if (isMaxLinksBudgetExceeded) {
             val session = getSessionOrThrow(sessionId)
-            session.completeWithAnswer(answer, FinishReason.MAX_LINKS_BUDGET_EXCEEDED)
+            session.completeWithAnswer(answer, FinishReason.MAX_LINKS_BUDGET_EXCEEDED, imageIds)
             querySessionRepository.update(session)
             logger.info(
-                "[{}] Session completed: {} chars, max links budget exceeded",
+                "[{}] Session completed: {} chars, {} images, max links budget exceeded",
                 sessionId.value,
-                answer.length
+                answer.length,
+                imageIds.size
             )
         }
     }
 
     override suspend fun completeSessionLinksExhausted(
         sessionId: QuerySessionId, 
-        answer: String
+        answer: String,
+        imageIds: List<String>
     ) {
         val session = getSessionOrThrow(sessionId)
-        session.completeWithAnswer(answer, FinishReason.LINKS_EXHAUSTED)
+        session.completeWithAnswer(answer, FinishReason.LINKS_EXHAUSTED, imageIds)
         querySessionRepository.update(session)
         logger.info(
-            "[{}] Session completed: {} chars, links exhausted",
+            "[{}] Session completed: {} chars, {} images, links exhausted",
             sessionId.value,
-            answer.length
+            answer.length,
+            imageIds.size
         )
     }
 
@@ -248,7 +259,8 @@ class QuerySessionService(
         return QuerySessionDetail(
             session = session,
             urlAccesses = urlAccesses,
-            cachedWebpages = cachedWebpages
+            cachedWebpages = cachedWebpages,
+            imageIds = session.imageIds
         )
     }
 

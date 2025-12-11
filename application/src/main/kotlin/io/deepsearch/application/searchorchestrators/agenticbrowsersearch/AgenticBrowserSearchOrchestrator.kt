@@ -796,14 +796,15 @@ class AgenticBrowserSearchOrchestrator(
                     }
 
                     when (finishReason) {
-                        "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer)
+                        "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer, imageIds)
                         "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(
                             sessionId,
                             fullAnswer,
-                            budget
+                            budget,
+                            imageIds
                         )
 
-                        else -> querySessionService.completeSessionLinksExhausted(sessionId, fullAnswer)
+                        else -> querySessionService.completeSessionLinksExhausted(sessionId, fullAnswer, imageIds)
                     }
 
                     // Fetch full session detail for the completed event

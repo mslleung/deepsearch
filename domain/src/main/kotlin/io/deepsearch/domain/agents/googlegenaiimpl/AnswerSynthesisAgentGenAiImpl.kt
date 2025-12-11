@@ -77,7 +77,7 @@ class AnswerSynthesisAgentGenAiImpl(
         Image References:
         - Sources may contain <image id="img-xxx">description</image> tags representing images
         - If an image is relevant to your answer, include its ID in the imageIds array
-        - Only include images that add value to the answer (e.g., product images, diagrams, charts)
+        - Only include images that add absolute value to the answer (e.g., product images, diagrams, charts)
         - Do not include decorative or irrelevant images
         
         Expected Output Shape:
@@ -253,7 +253,7 @@ class AnswerSynthesisAgentGenAiImpl(
 
     /**
      * Extract the new portion of the answer from accumulated JSON.
-     * The JSON format is: {"answer": "...text..."} or {"answer":"...text..."}
+     * The JSON format is: {"answer": "...text...", "imageIds": [...]}
      */
     private fun extractAnswerDelta(accumulatedJson: String, previousLength: Int): String {
         // Find the start of the answer value - handle both with and without space after colon
@@ -273,18 +273,33 @@ class AnswerSynthesisAgentGenAiImpl(
         val contentStart = startIdx + prefixLength
         if (contentStart >= accumulatedJson.length) return ""
 
-        // Get the content after the prefix, handling potential incomplete JSON
+        // Get the content after the prefix
         var content = accumulatedJson.substring(contentStart)
 
-        // Remove trailing incomplete JSON (closing quotes/braces if present)
-        // Handle various possible endings: "}, ", "} , "\n}, etc.
-        val closingIdx = content.lastIndexOf("\"")
-        if (closingIdx > 0) {
-            // Check if this quote is followed by } (end of JSON object)
-            val afterQuote = content.substring(closingIdx + 1).trim()
-            if (afterQuote.isEmpty() || afterQuote.startsWith("}")) {
-                content = content.substring(0, closingIdx)
+        // Find the closing quote of the answer field by looking for the pattern: ",[whitespace]"imageIds"
+        // or "}[whitespace]} (end of object without imageIds field)
+        // We need to find the first unescaped quote that is followed by either a comma or closing brace
+        var closingIdx = -1
+        var i = 0
+        while (i < content.length) {
+            if (content[i] == '\\') {
+                // Skip escaped character
+                i += 2
+                continue
             }
+            if (content[i] == '"') {
+                // Found a potential closing quote, check what follows
+                val remaining = content.substring(i + 1).trimStart()
+                if (remaining.startsWith(",") || remaining.startsWith("}")) {
+                    closingIdx = i
+                    break
+                }
+            }
+            i++
+        }
+        
+        if (closingIdx > 0) {
+            content = content.substring(0, closingIdx)
         }
 
         // Unescape JSON string escape sequences for the new content
