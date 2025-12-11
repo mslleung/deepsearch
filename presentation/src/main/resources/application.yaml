@@ -40,3 +40,7 @@ stripe:
     frontendUrl: ${STRIPE_FRONTEND_URL:http://localhost:3000}
 deepsearchBrowser:
     url: ${DEEPSEARCH_BROWSER_URL:http://localhost:8090}
+proxyrack:
+    endpoint: ${PROXYRACK_ENDPOINT}
+    username: ${PROXYRACK_USERNAME}
+    apiKey: ${PROXYRACK_API_KEY}

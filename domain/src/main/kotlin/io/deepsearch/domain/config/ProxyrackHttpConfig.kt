@@ -24,6 +24,6 @@ data class ProxyrackHttpConfig(
      * Format: http://username:apiKey@endpoint
      */
     fun toProxyUrl(): String {
-        return "http://$username:$apiKey@$endpoint"
+        return "https://$username:$apiKey@$endpoint"
     }
 }

@@ -5,6 +5,7 @@ import io.deepsearch.domain.config.DeepSearchBrowserConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.EnvironmentConfig
 import io.deepsearch.domain.config.PostgresConfig
+import io.deepsearch.domain.config.ProxyrackHttpConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.presentation.admin.config.adminPresentationModule
 import io.deepsearch.presentation.admin.routes.*
@@ -111,6 +112,13 @@ private fun Application.configureDependencyInjection() {
                 single {
                     DeepSearchBrowserConfig(
                         url = environment.config.property("deepsearchBrowser.url").getString()
+                    )
+                }
+                single {
+                    ProxyrackHttpConfig(
+                        endpoint = environment.config.property("proxyrack.endpoint").getString(),
+                        username = environment.config.property("proxyrack.username").getString(),
+                        apiKey = environment.config.property("proxyrack.apiKey").getString()
                     )
                 }
                 single {
