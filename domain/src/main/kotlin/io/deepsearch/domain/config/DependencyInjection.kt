@@ -24,6 +24,8 @@ import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
+import io.deepsearch.domain.http.IProxyAwareHttpClientFactory
+import io.deepsearch.domain.http.ProxyAwareHttpClientFactory
 import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -52,6 +54,9 @@ val domainModule = module {
     
     // Adaptive rate limiter (singleton to maintain state across requests per domain)
     singleOf(::AdaptiveRateLimiter) bind IAdaptiveRateLimiter::class
+    
+    // Proxy-aware HTTP client factory for making proxied requests
+    singleOf(::ProxyAwareHttpClientFactory) bind IProxyAwareHttpClientFactory::class
 
     // Singleton domain agents (used by singleton application services)
     singleOf(::FileSearchQueryAgentGenAiImpl) bind IFileSearchQueryAgent::class

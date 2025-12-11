@@ -23,13 +23,12 @@ class SitemapLinkDiscoveryLockRegistry : ISitemapLinkDiscoveryLockRegistry {
      */
     override suspend fun <T> withKeyLock(key: String, block: suspend () -> T): T {
         val mutex = mutexes.computeIfAbsent(key) { Mutex() }
-        return mutex.withLock {
-            try {
-                block()
-            } finally {
-                if (!mutex.isLocked) {
-                    mutexes.remove(key, mutex)
-                }
+        return try {
+            mutex.withLock { block() }
+        } finally {
+            // Cleanup after releasing the lock - check if mutex is idle
+            if (!mutex.isLocked) {
+                mutexes.remove(key, mutex)
             }
         }
     }

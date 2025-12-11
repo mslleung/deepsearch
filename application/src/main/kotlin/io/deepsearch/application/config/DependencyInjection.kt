@@ -62,5 +62,6 @@ val applicationModule = module {
         scopedOf(::SearchService) bind ISearchService::class
         scopedOf(::QuerySessionService) bind IQuerySessionService::class
         scopedOf(::PaymentService) bind IPaymentService::class
+        scopedOf(::ProxySettingsService) bind IProxySettingsService::class
     }
 }

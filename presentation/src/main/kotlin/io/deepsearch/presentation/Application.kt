@@ -75,6 +75,7 @@ fun Application.module() {
     configureUsageRoutes()
     configureQuerySessionRoutes()
     configurePaymentRoutes()
+    configureProxySettingsRoutes()
 
     // API routes (requires api key)
     configureSearchRoutes()

@@ -18,5 +18,6 @@ val presentationModule = module {
         scopedOf(::UsageController)
         scopedOf(::QuerySessionController)
         scopedOf(::PaymentController)
+        scopedOf(::ProxySettingsController)
     }
 } 

@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.config
 
+import io.deepsearch.domain.proxy.IProxyRuleRepository
 import io.deepsearch.domain.repositories.*
 import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
 import io.deepsearch.infrastructure.database.*
@@ -41,6 +42,8 @@ val infrastructureModule = module {
     singleOf(::SitemapCacheTable)
     singleOf(::LlmTokenUsageTable)
     singleOf(::PeriodicIndexConfigTable)
+    singleOf(::ProxyRuleTable)
+    
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
@@ -62,5 +65,6 @@ val infrastructureModule = module {
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class
         scopedOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
+        scopedOf(::ExposedProxyRuleRepository) bind IProxyRuleRepository::class
     }
 }

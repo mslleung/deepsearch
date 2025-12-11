@@ -5,6 +5,7 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.browser.remote.dto.*
 import io.deepsearch.domain.config.DeepSearchBrowserConfig
 import io.deepsearch.domain.config.IApplicationCoroutineScope
+import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.okhttp.*
@@ -16,10 +17,8 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Browser pool using REST API to communicate with deepsearch-browser service.
@@ -59,11 +58,18 @@ class RemoteBrowserPool(
         logger.info("RemoteBrowserPool connecting to: {}", baseUrl)
     }
 
-    override suspend fun <T> withPage(block: suspend (IBrowserPage) -> T): T {
-        // Acquire session
+    override suspend fun <T> withPage(
+        proxyConfig: ProxyConfiguration,
+        block: suspend (IBrowserPage) -> T
+    ): T {
+        // Convert domain ProxyConfiguration to API ProxyConfigDto
+        val proxyDto = proxyConfig.toDto()
+        
+        // Acquire session with proxy configuration
         val acquireResponse = try {
             httpClient.post("$baseUrl/sessions") {
                 contentType(ContentType.Application.Json)
+                setBody(AcquireRequest(proxy = proxyDto))
             }
         } catch (e: Exception) {
             throw ConnectionLostException("Failed to acquire session: ${e.message}")
@@ -77,7 +83,7 @@ class RemoteBrowserPool(
         val sessionInfo = acquireResponse.body<AcquireResponse>()
         val sessionId = sessionInfo.sessionId
 
-        logger.debug("Acquired session: {}", sessionId)
+        logger.debug("Acquired session: {} with proxy: {}", sessionId, proxyConfig::class.simpleName)
 
         val page = RemoteBrowserPage(sessionId, json) { command ->
             sendCommand(sessionId, command)
@@ -92,6 +98,17 @@ class RemoteBrowserPool(
             } catch (e: Exception) {
                 logger.warn("Failed to release session {}: {}", sessionId, e.message)
             }
+        }
+    }
+    
+    /**
+     * Convert domain ProxyConfiguration to API DTO.
+     */
+    private fun ProxyConfiguration.toDto(): ProxyConfigDto? {
+        return when (this) {
+            is ProxyConfiguration.None -> null
+            is ProxyConfiguration.Custom -> ProxyConfigDto(type = "CUSTOM", customUrl = this.proxyUrl)
+            is ProxyConfiguration.Included -> ProxyConfigDto(type = "INCLUDED", customUrl = null)
         }
     }
 
@@ -139,7 +156,18 @@ class RemoteBrowserPool(
     }
 }
 
-// ==================== Response DTOs ====================
+// ==================== Request/Response DTOs ====================
+
+@Serializable
+private data class AcquireRequest(
+    val proxy: ProxyConfigDto? = null
+)
+
+@Serializable
+private data class ProxyConfigDto(
+    val type: String = "NONE",
+    val customUrl: String? = null
+)
 
 @Serializable
 private data class AcquireResponse(
