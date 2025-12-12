@@ -29,6 +29,8 @@ jsoup-version = "1.21.2"
 jbcrypt-version = "0.4"
 jwt-version = "4.5.0"
 stripe-version = "31.0.0"
+jib-version = "3.4.4"
+shadow-version = "9.1.0"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor-version" }
@@ -91,3 +93,5 @@ stripe = { module = "com.stripe:stripe-java", version.ref = "stripe-version" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin-version" }
 ktor = { id = "io.ktor.plugin", version.ref = "ktor-version" }
 kotlin-plugin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin-version" }
+jib = { id = "com.google.cloud.tools.jib", version.ref = "jib-version" }
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow-version" }

@@ -1,0 +1,38 @@
+services:
+  deepsearch-browser:
+    # Use Jib-built image from GCR (replace YOUR_PROJECT with your GCP project ID)
+    # To use local Dockerfile instead: comment out 'image' and uncomment 'build' section
+    image: gcr.io/${GCP_PROJECT:-YOUR_PROJECT}/deepsearch-browser:latest
+    # build:
+    #   context: ../deepsearch-browser
+    #   dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    shm_size: '2gb'  # Required for Chrome to avoid SharedMemory errors
+    environment:
+      - PROXYRACK_ENDPOINT=${PROXYRACK_ENDPOINT:-}
+      - PROXYRACK_USERNAME=${PROXYRACK_USERNAME:-}
+      - PROXYRACK_API_KEY=${PROXYRACK_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  deepsearch:
+    # Use Jib-built image from GCR (replace YOUR_PROJECT with your GCP project ID)
+    # To use local Dockerfile instead: comment out 'image' and uncomment 'build' section
+    image: gcr.io/${GCP_PROJECT:-YOUR_PROJECT}/deepsearch:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      deepsearch-browser:
+        condition: service_healthy
+    environment:
+      - DEEPSEARCH_BROWSER_URL=http://deepsearch-browser:8090
+    env_file:
+      - .env

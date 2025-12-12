@@ -2,9 +2,12 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.ktor)
     alias(libs.plugins.kotlin.plugin.serialization)
+    alias(libs.plugins.jib)
+    alias(libs.plugins.shadow)
 }
 
 group = "io.deepsearch"
+version = "1.0.0"
 
 application {
     mainClass = "io.ktor.server.netty.EngineMain"
@@ -70,6 +73,36 @@ tasks.test {
     useJUnitPlatform()
 }
 
+// --- Shadow JAR configuration for Docker builds ---
 tasks.shadowJar {
     isZip64 = true
+    archiveBaseName.set("deepsearch")
+    archiveClassifier.set("all")
+    archiveVersion.set("")
+    mergeServiceFiles()
+    
+    manifest {
+        attributes["Main-Class"] = "io.ktor.server.netty.EngineMain"
+    }
+}
+
+// --- Jib container image configuration ---
+val gcpProject = findProperty("gcp.project")?.toString() ?: "YOUR_PROJECT"
+
+jib {
+    from {
+        image = "eclipse-temurin:23-jre-alpine"  // Lightweight JRE image (~100MB)
+    }
+    to {
+        image = "gcr.io/$gcpProject/deepsearch"
+        tags = setOf("latest", version.toString())
+    }
+    container {
+        mainClass = "io.ktor.server.netty.EngineMain"
+        ports = listOf("8080")
+        jvmFlags = listOf(
+            "-XX:+UseContainerSupport",
+            "-XX:MaxRAMPercentage=75.0"
+        )
+    }
 }
