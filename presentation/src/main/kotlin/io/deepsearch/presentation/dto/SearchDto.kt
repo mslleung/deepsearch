@@ -1,5 +1,6 @@
 package io.deepsearch.presentation.dto
 
+import io.deepsearch.domain.models.valueobjects.LanguagePattern
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import kotlinx.serialization.Serializable
 
@@ -8,7 +9,8 @@ data class SearchRequest(
     val query: String,
     val url: String,
     val maxCacheAge: Long? = null,
-    val mode: String? = null  // "live-crawling" or "cache-only", defaults to "live-crawling"
+    val mode: String? = null,  // "live-crawling" or "cache-only", defaults to "live-crawling"
+    val languagePattern: String? = null  // e.g., "/en-us/" or "?lang=en"
 ) {
     /**
      * Parse the mode string to SearchMode enum.
@@ -20,6 +22,19 @@ data class SearchRequest(
             "live-crawling" -> SearchMode.LIVE_CRAWLING
             null -> SearchMode.LIVE_CRAWLING
             else -> throw IllegalArgumentException("Invalid mode: '$mode'. Valid modes are: 'live-crawling', 'cache-only'")
+        }
+    }
+    
+    /**
+     * Validate the language pattern if provided.
+     * Throws IllegalArgumentException if the pattern is invalid.
+     */
+    fun validateLanguagePattern() {
+        languagePattern?.let { pattern ->
+            val error = LanguagePattern.validate(pattern)
+            if (error != null) {
+                throw IllegalArgumentException(error)
+            }
         }
     }
 }

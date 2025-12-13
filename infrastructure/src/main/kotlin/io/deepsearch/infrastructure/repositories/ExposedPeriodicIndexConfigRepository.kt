@@ -32,6 +32,7 @@ class ExposedPeriodicIndexConfigRepository(
             it[updatedAt] = config.updatedAt
             it[lastRunAt] = config.lastRunAt
             it[version] = config.version
+            it[languagePattern] = config.languagePattern
         }[periodicIndexConfigTable.id]
 
         PeriodicIndexConfig(
@@ -45,7 +46,8 @@ class ExposedPeriodicIndexConfigRepository(
             createdAt = config.createdAt,
             updatedAt = config.updatedAt,
             lastRunAt = config.lastRunAt,
-            version = config.version
+            version = config.version,
+            languagePattern = config.languagePattern
         )
     }
 
@@ -61,6 +63,7 @@ class ExposedPeriodicIndexConfigRepository(
             it[updatedAt] = config.updatedAt
             it[lastRunAt] = config.lastRunAt
             it[version] = config.version + 1
+            it[languagePattern] = config.languagePattern
         }
         if (rows > 0) {
             config.apply { version += 1 }
@@ -115,7 +118,8 @@ class ExposedPeriodicIndexConfigRepository(
             createdAt = row[periodicIndexConfigTable.createdAt],
             updatedAt = row[periodicIndexConfigTable.updatedAt],
             lastRunAt = row[periodicIndexConfigTable.lastRunAt],
-            version = row[periodicIndexConfigTable.version]
+            version = row[periodicIndexConfigTable.version],
+            languagePattern = row[periodicIndexConfigTable.languagePattern]
         )
     }
 }

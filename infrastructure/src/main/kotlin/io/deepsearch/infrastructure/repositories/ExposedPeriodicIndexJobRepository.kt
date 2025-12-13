@@ -38,6 +38,7 @@ class ExposedPeriodicIndexJobRepository(
             it[createdAtMs] = job.createdAt.toEpochMilliseconds()
             it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
             it[version] = job.version
+            it[languagePattern] = job.languagePattern
         }[periodicIndexJobTable.id]
 
         job.id = id
@@ -181,7 +182,8 @@ class ExposedPeriodicIndexJobRepository(
         updatedAt = Instant.fromEpochMilliseconds(row[periodicIndexJobTable.updatedAtMs]),
         processedCount = row[periodicIndexJobTable.processedCount],
         state = PeriodicIndexJobState.valueOf(row[periodicIndexJobTable.state]),
-        version = row[periodicIndexJobTable.version]
+        version = row[periodicIndexJobTable.version],
+        languagePattern = row[periodicIndexJobTable.languagePattern]
     )
 }
 

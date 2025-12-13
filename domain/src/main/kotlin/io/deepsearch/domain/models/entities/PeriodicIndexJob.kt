@@ -21,7 +21,15 @@ class PeriodicIndexJob(
     var updatedAt: Instant = Clock.System.now(),
     var processedCount: Int = 0,
     var state: PeriodicIndexJobState = PeriodicIndexJobState.IN_PROGRESS,
-    var version: Long = 0
+    var version: Long = 0,
+    /**
+     * Language filter pattern for URL filtering during crawling.
+     * Can be either:
+     * - Path pattern: `/en-us/` - matches URLs with this path segment
+     * - Query pattern: `?lang=en` - matches URLs with this query parameter
+     * Null means no language filtering (crawl all languages).
+     */
+    val languagePattern: String? = null
 ) {
 
     fun incrementProcessed() {

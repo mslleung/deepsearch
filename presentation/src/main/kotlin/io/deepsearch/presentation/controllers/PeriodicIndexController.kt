@@ -7,6 +7,7 @@ import io.deepsearch.application.services.IUserSubscriptionService
 import io.deepsearch.domain.models.entities.PeriodicIndexConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexPeriod
 import io.deepsearch.domain.models.entities.SubscriptionPlan
+import io.deepsearch.domain.models.valueobjects.LanguagePattern
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.UrlAccess
 import io.deepsearch.domain.models.valueobjects.UserId
@@ -88,6 +89,7 @@ class PeriodicIndexController(
             sitemapUrl = request.sitemapUrl,
             periodDays = request.periodDays,
             maxUrlCount = request.maxUrlCount,
+            languagePattern = request.languagePattern,
             maxAllowedConfigs = maxAllowed
         )
         call.respond(HttpStatusCode.Created, config.toResponse())
@@ -126,7 +128,8 @@ class PeriodicIndexController(
             url = request.url,
             sitemapUrl = request.sitemapUrl,
             periodDays = request.periodDays,
-            maxUrlCount = request.maxUrlCount
+            maxUrlCount = request.maxUrlCount,
+            languagePattern = request.languagePattern
         )
         call.respond(HttpStatusCode.OK, config.toResponse())
     }
@@ -351,6 +354,14 @@ class PeriodicIndexController(
 
         if (request.maxUrlCount !in PeriodicIndexConfig.MIN_MAX_URL_COUNT..PeriodicIndexConfig.MAX_MAX_URL_COUNT) {
             return "Max URL count must be between ${PeriodicIndexConfig.MIN_MAX_URL_COUNT} and ${PeriodicIndexConfig.MAX_MAX_URL_COUNT}"
+        }
+        
+        // Validate language pattern if provided
+        request.languagePattern?.let { pattern ->
+            val validationError = LanguagePattern.validate(pattern)
+            if (validationError != null) {
+                return validationError
+            }
         }
 
         return null

@@ -41,7 +41,15 @@ class PeriodicIndexConfig(
     val createdAt: Long = Clock.System.now().toEpochMilliseconds(),
     var updatedAt: Long = Clock.System.now().toEpochMilliseconds(),
     var lastRunAt: Long? = null,
-    var version: Long = 0
+    var version: Long = 0,
+    /**
+     * Language filter pattern for URL filtering during crawling.
+     * Can be either:
+     * - Path pattern: `/en-us/` - matches URLs with this path segment
+     * - Query pattern: `?lang=en` - matches URLs with this query parameter
+     * Null means no language filtering (crawl all languages).
+     */
+    var languagePattern: String? = null
 ) {
     var periodDays: Int? = periodDays
         private set
@@ -92,7 +100,13 @@ class PeriodicIndexConfig(
         return next <= currentTimeMs
     }
 
-    fun updateConfig(newUrl: String, newSitemapUrl: String?, newPeriodDays: Int?, newMaxUrlCount: Int = maxUrlCount) {
+    fun updateConfig(
+        newUrl: String, 
+        newSitemapUrl: String?, 
+        newPeriodDays: Int?, 
+        newMaxUrlCount: Int = maxUrlCount,
+        newLanguagePattern: String? = languagePattern
+    ) {
         PeriodicIndexPeriod.requireValidPeriodDays(newPeriodDays)
         require(newMaxUrlCount in MIN_MAX_URL_COUNT..MAX_MAX_URL_COUNT) {
             "maxUrlCount must be between $MIN_MAX_URL_COUNT and $MAX_MAX_URL_COUNT"
@@ -101,6 +115,7 @@ class PeriodicIndexConfig(
         sitemapUrl = newSitemapUrl
         periodDays = newPeriodDays
         maxUrlCount = newMaxUrlCount
+        languagePattern = newLanguagePattern
         updatedAt = Clock.System.now().toEpochMilliseconds()
     }
 

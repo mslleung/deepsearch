@@ -7,6 +7,7 @@ import io.deepsearch.domain.ext.pathDepth
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.*
+import io.deepsearch.domain.models.valueobjects.LanguagePattern
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.domain.services.INormalizeUrlService
@@ -80,6 +81,15 @@ class PeriodicIndexJobRegistry(
     }
 
     private fun normalize(url: String): String = normalizeUrlService.normalize(url) ?: url
+    
+    /**
+     * Check if a URL matches the language filter for a job.
+     * Returns true if the URL should be processed, false if it should be skipped.
+     */
+    private fun matchesLanguageFilter(url: String, job: PeriodicIndexJob): Boolean {
+        val pattern = job.languagePattern?.let { LanguagePattern.parse(it) } ?: return true
+        return pattern.matches(url, job.baseUrl)
+    }
 
     private suspend fun runPeriodicIndex(job: PeriodicIndexJob, flow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>) {
         val jobId: Long = requireNotNull(job.id) { "Job must have an id" }
@@ -372,7 +382,10 @@ class PeriodicIndexJobRegistry(
                                     is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                         logger.debug("[{}] Initial URL discovered {} links", jobId, event.discoveredLinks.size)
                                         event.discoveredLinks
-                                            .filter { link -> normalize(link.url).startsWith(job.baseUrl) }
+                                            .filter { link -> 
+                                                val url = normalize(link.url)
+                                                url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
+                                            }
                                             .sortedBy { it.pathDepth() }
                                             .forEach { link -> initialDiscoveredLinksChannel.send(link) }
                                         // Check if all URLs are processed to close the channel
@@ -456,7 +469,10 @@ class PeriodicIndexJobRegistry(
                                     is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                         logger.debug("[{}] Serper link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
                                         event.discoveredLinks
-                                            .filter { discovered -> normalize(discovered.url).startsWith(job.baseUrl) }
+                                            .filter { discovered -> 
+                                                val url = normalize(discovered.url)
+                                                url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
+                                            }
                                             .sortedBy { it.pathDepth() }
                                             .forEach { discovered -> serperDiscoveredLinksChannel.send(discovered) }
                                     }
@@ -536,7 +552,10 @@ class PeriodicIndexJobRegistry(
                                     is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                         logger.debug("[{}] Sitemap link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
                                         event.discoveredLinks
-                                            .filter { discovered -> normalize(discovered.url).startsWith(job.baseUrl) }
+                                            .filter { discovered -> 
+                                                val url = normalize(discovered.url)
+                                                url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
+                                            }
                                             .sortedBy { it.pathDepth() }
                                             .forEach { discovered -> sitemapDiscoveredLinksChannel.send(discovered) }
                                     }
@@ -598,6 +617,9 @@ class PeriodicIndexJobRegistry(
                 val normalizedUrl = normalize(link.url)
                 if (!normalizedUrl.startsWith(job.baseUrl)) {
                     false
+                } else if (!matchesLanguageFilter(normalizedUrl, job)) {
+                    logger.debug("[{}] Recursive link filtered by language pattern: {}", jobId, normalizedUrl)
+                    false
                 } else {
                     // Use atomic add() which returns true only if element was NOT already present
                     val isNew = seenUrls.add(normalizedUrl)
@@ -653,7 +675,9 @@ class PeriodicIndexJobRegistry(
 
                                         val newDiscoveredLinks = event.discoveredLinks.filter { discovered ->
                                             val normalizedDiscovered = normalize(discovered.url)
-                                            normalizedDiscovered.startsWith(job.baseUrl) && !seenUrls.contains(normalizedDiscovered)
+                                            normalizedDiscovered.startsWith(job.baseUrl) && 
+                                                matchesLanguageFilter(normalizedDiscovered, job) &&
+                                                !seenUrls.contains(normalizedDiscovered)
                                         }
                                         
                                         // Send all discovered links BEFORE removing from in-flight set
@@ -732,7 +756,10 @@ class PeriodicIndexJobRegistry(
         try {
             val query = SearchQuery(query = job.baseUrl, url = job.baseUrl)
             val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(query)
-                .filter { normalize(it.url).startsWith(job.baseUrl) }
+                .filter { 
+                    val url = normalize(it.url)
+                    url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
+                }
                 .distinctBy { normalize(it.url) }
                 .sortedBy { it.pathDepth() }
                 .take(50)
@@ -750,7 +777,10 @@ class PeriodicIndexJobRegistry(
         val sitemapUrl = job.sitemapUrl ?: return@flow
         try {
             val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
-                .filter { normalize(it.url).startsWith(job.baseUrl) }
+                .filter { 
+                    val url = normalize(it.url)
+                    url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
+                }
                 .sortedBy { it.pathDepth() }
             logger.debug("[{}] Sitemap discovered {} links", jobId, sitemapLinks.size)
             sitemapLinks.forEach { link -> emit(link) }

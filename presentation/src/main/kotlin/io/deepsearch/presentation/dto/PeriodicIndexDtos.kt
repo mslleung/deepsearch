@@ -12,7 +12,8 @@ data class PeriodicIndexConfigRequest(
     val url: String,
     val sitemapUrl: String? = null,
     val periodDays: Int?, // null means one-off
-    val maxUrlCount: Int = PeriodicIndexConfig.DEFAULT_MAX_URL_COUNT
+    val maxUrlCount: Int = PeriodicIndexConfig.DEFAULT_MAX_URL_COUNT,
+    val languagePattern: String? = null  // e.g., "/en-us/" or "?lang=en"
 )
 
 @Serializable
@@ -24,7 +25,8 @@ data class PeriodicIndexConfigResponse(
     val maxUrlCount: Int,
     val enabled: Boolean,
     val lastRunAt: Long?,
-    val nextRunAt: Long?
+    val nextRunAt: Long?,
+    val languagePattern: String?
 )
 
 @Serializable
@@ -65,7 +67,8 @@ fun PeriodicIndexConfig.toResponse(): PeriodicIndexConfigResponse {
         maxUrlCount = maxUrlCount,
         enabled = enabled,
         lastRunAt = lastRunAt,
-        nextRunAt = nextRunAt
+        nextRunAt = nextRunAt,
+        languagePattern = languagePattern
     )
 }
 

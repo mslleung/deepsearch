@@ -14,6 +14,7 @@ class PeriodicIndexConfigTable : Table("periodic_index_configs") {
     val updatedAt = long("updated_at")
     val lastRunAt = long("last_run_at").nullable()
     val version = long("version").default(0)
+    val languagePattern = varchar("language_pattern", length = 64).nullable()
 
     override val primaryKey = PrimaryKey(id)
     

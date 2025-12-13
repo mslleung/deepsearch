@@ -18,8 +18,8 @@ interface IPeriodicIndexService {
     suspend fun listConfigs(userId: UserId): List<PeriodicIndexConfig>
     suspend fun getConfig(configId: Long): PeriodicIndexConfig?
     suspend fun getConfigCount(userId: UserId): Int
-    suspend fun createConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int, maxAllowedConfigs: Int): PeriodicIndexConfig
-    suspend fun updateConfig(configId: Long, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int): PeriodicIndexConfig
+    suspend fun createConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int, languagePattern: String?, maxAllowedConfigs: Int): PeriodicIndexConfig
+    suspend fun updateConfig(configId: Long, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int, languagePattern: String?): PeriodicIndexConfig
     suspend fun deleteConfig(configId: Long)
     suspend fun enableConfig(configId: Long): PeriodicIndexConfig
     suspend fun disableConfig(configId: Long): PeriodicIndexConfig
@@ -60,6 +60,7 @@ class PeriodicIndexService(
         sitemapUrl: String?, 
         periodDays: Int?, 
         maxUrlCount: Int,
+        languagePattern: String?,
         maxAllowedConfigs: Int
     ): PeriodicIndexConfig {
         // Check limit
@@ -73,7 +74,8 @@ class PeriodicIndexService(
             url = url,
             sitemapUrl = sitemapUrl,
             periodDays = periodDays,
-            maxUrlCount = maxUrlCount
+            maxUrlCount = maxUrlCount,
+            languagePattern = languagePattern
         )
         return periodicIndexConfigRepository.create(newConfig)
     }
@@ -83,12 +85,13 @@ class PeriodicIndexService(
         url: String, 
         sitemapUrl: String?, 
         periodDays: Int?, 
-        maxUrlCount: Int
+        maxUrlCount: Int,
+        languagePattern: String?
     ): PeriodicIndexConfig {
         val existing = periodicIndexConfigRepository.findById(configId)
             ?: throw IllegalArgumentException("Config not found: $configId")
         
-        existing.updateConfig(url, sitemapUrl, periodDays, maxUrlCount)
+        existing.updateConfig(url, sitemapUrl, periodDays, maxUrlCount, languagePattern)
         if (!existing.enabled) {
             existing.enable() // Re-enable if it was disabled
         }
@@ -127,11 +130,12 @@ class PeriodicIndexService(
         val config = periodicIndexConfigRepository.findById(configId)
             ?: throw IllegalArgumentException("No periodic index configuration found: $configId")
 
-        // Start the job with the sitemap URL from config
+        // Start the job with the sitemap URL and language pattern from config
         val job = periodicIndexJobService.start(
             baseUrl = config.url,
             maxUrlCount = config.maxUrlCount,
             sitemapUrl = config.sitemapUrl,
+            languagePattern = config.languagePattern,
             userId = config.userId
         )
 
@@ -163,11 +167,12 @@ class PeriodicIndexService(
         
         for (config in dueConfigs) {
             try {
-                // Start job with sitemap URL from config
+                // Start job with sitemap URL and language pattern from config
                 periodicIndexJobService.start(
                     baseUrl = config.url,
                     maxUrlCount = config.maxUrlCount,
                     sitemapUrl = config.sitemapUrl,
+                    languagePattern = config.languagePattern,
                     userId = config.userId
                 )
 

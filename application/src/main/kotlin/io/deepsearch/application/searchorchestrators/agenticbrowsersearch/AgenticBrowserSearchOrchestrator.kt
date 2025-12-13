@@ -27,6 +27,7 @@ import io.deepsearch.domain.ext.chunkedWithTimeout
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
+import io.deepsearch.domain.models.valueobjects.LanguagePattern
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
@@ -322,6 +323,12 @@ class AgenticBrowserSearchOrchestrator(
         return linkSource
             .filter { link ->
                 val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                // Apply language filter if configured
+                val languagePattern = searchQuery.parsedLanguagePattern
+                if (languagePattern != null && !languagePattern.matches(normalizedUrl, searchQuery.url)) {
+                    logger.debug("[{}] Link filtered by language pattern: {}", sessionId.value, normalizedUrl)
+                    return@filter false
+                }
                 // Use atomic add() which returns true only if element was NOT already present
                 seenUrls.add(normalizedUrl)
             }
@@ -426,6 +433,12 @@ class AgenticBrowserSearchOrchestrator(
             .takeWhile { !querySessionService.isBudgetExceeded(sessionId, budget) }
             .filter { link ->
                 val url = normalizeUrlService.normalize(link.url) ?: link.url
+                // Apply language filter if configured
+                val languagePattern = searchQuery.parsedLanguagePattern
+                if (languagePattern != null && !languagePattern.matches(url, searchQuery.url)) {
+                    logger.debug("[{}] Link filtered by language pattern: {}", sessionId.value, url)
+                    return@filter false
+                }
                 // Use atomic add() which returns true only if element was NOT already present
                 seenUrls.add(url)
             }
@@ -469,10 +482,13 @@ class AgenticBrowserSearchOrchestrator(
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                         inFlight.remove(event.url)
-                                        val newLinks = event.discoveredLinks.filter {
-                                            !seenUrls.contains(
-                                                normalizeUrlService.normalize(it.url) ?: it.url
-                                            )
+                                        val languagePattern = searchQuery.parsedLanguagePattern
+                                        val newLinks = event.discoveredLinks.filter { discoveredLink ->
+                                            val discoveredUrl = normalizeUrlService.normalize(discoveredLink.url) ?: discoveredLink.url
+                                            // Check language filter
+                                            val matchesLanguage = languagePattern == null || 
+                                                languagePattern.matches(discoveredUrl, searchQuery.url)
+                                            matchesLanguage && !seenUrls.contains(discoveredUrl)
                                         }
                                         newLinks.forEach { recursiveChannel.send(it) }
                                         if (initialChannel.isClosedForSend && serperChannel.isClosedForSend && hybridChannel.isClosedForSend && fileSearchChannel.isClosedForSend && inFlight.isEmpty() && newLinks.isEmpty()) {

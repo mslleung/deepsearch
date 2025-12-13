@@ -46,7 +46,7 @@ interface IPeriodicIndexJobService {
         val failedUrls: List<FailedUrlInfo> = emptyList()
     )
 
-    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, userId: UserId): PeriodicIndexJob
+    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, languagePattern: String? = null, userId: UserId): PeriodicIndexJob
     suspend fun stop(jobId: Long)
     suspend fun findById(jobId: Long): PeriodicIndexJob?
     suspend fun list(state: PeriodicIndexJobState? = null): List<PeriodicIndexJob>
@@ -62,7 +62,7 @@ class PeriodicIndexJobService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?, userId: UserId): PeriodicIndexJob {
+    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?, languagePattern: String?, userId: UserId): PeriodicIndexJob {
         val normalizedBase = normalize(baseUrl)
         val now = Clock.System.now()
         val created = jobRepository.create(
@@ -75,7 +75,8 @@ class PeriodicIndexJobService(
                 createdAt = now,
                 updatedAt = now,
                 processedCount = 0,
-                state = PeriodicIndexJobState.IN_PROGRESS
+                state = PeriodicIndexJobState.IN_PROGRESS,
+                languagePattern = languagePattern
             )
         )
         registry.ensureRunning(created)

@@ -76,6 +76,17 @@ class SearchController(
                 return
             }
         }
+        
+        // Validate language pattern
+        try {
+            request.validateLanguagePattern()
+        } catch (e: IllegalArgumentException) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to e.message)
+            )
+            return
+        }
 
         // Parse and validate mode
         val searchMode = request.toSearchMode()
@@ -87,7 +98,8 @@ class SearchController(
             request.maxCacheAge,
             searchMode,
             apiKey.id!!,
-            apiKey.userId
+            apiKey.userId,
+            request.languagePattern
         )
 
         // Consume usage after successful search
@@ -179,6 +191,7 @@ class SearchController(
             val url = call.request.queryParameters["url"]
             val maxCacheAge = call.request.queryParameters["maxCacheAge"]?.toLongOrNull()
             val modeParam = call.request.queryParameters["mode"]
+            val languagePattern = call.request.queryParameters["languagePattern"]
 
             if (query.isNullOrBlank() || url.isNullOrBlank()) {
                 sse.send(
@@ -215,9 +228,10 @@ class SearchController(
                 return
             }
 
-            // Parse mode
+            // Parse mode and validate language pattern
+            val searchRequest = SearchRequest(query, url, maxCacheAge, modeParam, languagePattern)
             val searchMode = try {
-                SearchRequest(query, url, maxCacheAge, modeParam).toSearchMode()
+                searchRequest.toSearchMode()
             } catch (e: IllegalArgumentException) {
                 sse.send(
                     ServerSentEvent(
@@ -227,6 +241,26 @@ class SearchController(
                                 "",
                                 "BadRequest",
                                 e.message ?: "Invalid mode",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
+                return
+            }
+            
+            // Validate language pattern
+            try {
+                searchRequest.validateLanguagePattern()
+            } catch (e: IllegalArgumentException) {
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "BadRequest",
+                                e.message ?: "Invalid language pattern",
                                 System.currentTimeMillis()
                             )
                         )
@@ -244,7 +278,8 @@ class SearchController(
                 url,
                 maxCacheAge,
                 searchMode,
-                apiKey.id!!
+                apiKey.id!!,
+                languagePattern
             )
 
             eventFlow.collect { event ->

@@ -28,7 +28,8 @@ interface ISearchService {
         maxCacheAge: Long? = null,
         mode: SearchMode = SearchMode.LIVE_CRAWLING,
         apiKeyId: ApiKeyId,
-        userId: UserId
+        userId: UserId,
+        languagePattern: String? = null
     ): QuerySessionDetail
 
     /**
@@ -43,7 +44,8 @@ interface ISearchService {
         url: String,
         maxCacheAge: Long? = null,
         mode: SearchMode = SearchMode.LIVE_CRAWLING,
-        apiKeyId: ApiKeyId
+        apiKeyId: ApiKeyId,
+        languagePattern: String? = null
     ): Flow<SearchEvent>
 }
 
@@ -61,11 +63,12 @@ class SearchService(
         maxCacheAge: Long?,
         mode: SearchMode,
         apiKeyId: ApiKeyId,
-        userId: UserId
+        userId: UserId,
+        languagePattern: String?
     ): QuerySessionDetail {
-        val searchQuery = SearchQuery(query, url)
+        val searchQuery = SearchQuery(query, url, languagePattern)
         
-        logger.debug("Executing {} search for query: {}", mode, query)
+        logger.debug("Executing {} search for query: {} with language pattern: {}", mode, query, languagePattern)
         
         val orchestrator = when (mode) {
             SearchMode.LIVE_CRAWLING -> agenticBrowserSearchOrchestrator
@@ -95,11 +98,12 @@ class SearchService(
         url: String,
         maxCacheAge: Long?,
         mode: SearchMode,
-        apiKeyId: ApiKeyId
+        apiKeyId: ApiKeyId,
+        languagePattern: String?
     ): Flow<SearchEvent> {
-        val searchQuery = SearchQuery(query, url)
+        val searchQuery = SearchQuery(query, url, languagePattern)
         
-        logger.debug("Starting streaming {} search for query: {}", mode, query)
+        logger.debug("Starting streaming {} search for query: {} with language pattern: {}", mode, query, languagePattern)
         
         val orchestrator = when (mode) {
             SearchMode.LIVE_CRAWLING -> agenticBrowserSearchOrchestrator

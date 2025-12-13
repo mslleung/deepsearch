@@ -16,6 +16,7 @@ class PeriodicIndexJobTable(
     val createdAtMs = long("created_at_ms")
     val updatedAtMs = long("updated_at_ms")
     val version = long("version").default(0)
+    val languagePattern = varchar("language_pattern", length = 64).nullable()
 
     init {
         index(false, baseUrl)
