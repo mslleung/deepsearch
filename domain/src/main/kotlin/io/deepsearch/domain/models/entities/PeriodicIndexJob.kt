@@ -51,6 +51,7 @@ class PeriodicIndexJob(
     }
 
     fun markCompleted() {
+        if (state == PeriodicIndexJobState.COMPLETED) return
         state = PeriodicIndexJobState.COMPLETED
         updatedAt = Clock.System.now()
     }
