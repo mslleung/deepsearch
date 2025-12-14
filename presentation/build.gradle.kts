@@ -101,6 +101,7 @@ jib {
         jvmFlags = listOf(
             "-XX:+UseContainerSupport",
             "-XX:MaxRAMPercentage=75.0",
+            "--enable-native-access=ALL-UNNAMED"
         )
     }
 }
