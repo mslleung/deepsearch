@@ -89,7 +89,7 @@ tasks.shadowJar {
 // --- Jib container image configuration ---
 jib {
     from {
-        image = "eclipse-temurin:24-jre-alpine"  // Lightweight JRE image (~100MB)
+        image = "eclipse-temurin:24-jre"  // Standard JRE image (glibc-based, compatible with Netty native)
     }
     to {
         image = "deepsearch"
@@ -100,7 +100,7 @@ jib {
         ports = listOf("8080")
         jvmFlags = listOf(
             "-XX:+UseContainerSupport",
-            "-XX:MaxRAMPercentage=75.0"
+            "-XX:MaxRAMPercentage=75.0",
         )
     }
 }
