@@ -229,21 +229,27 @@ class PeriodicIndexJobRegistry(
                 seenUrls = seenUrls,
                 initialDiscoveredLinksChannel = initialDiscoveredLinksChannel,
                 urlTracker = urlTracker,
-                carriedOverUrls = carriedOverUrls
+                carriedOverUrls = carriedOverUrls,
+                eventFlow = eventFlow,
+                processedCount = processedCount
             ),
             processSerperSearchLinksFlow(
                 jobId = jobId,
                 job = job,
                 seenUrls = seenUrls,
                 serperDiscoveredLinksChannel = serperDiscoveredLinksChannel,
-                urlTracker = urlTracker
+                urlTracker = urlTracker,
+                eventFlow = eventFlow,
+                processedCount = processedCount
             ),
             processSitemapLinksFlow(
                 jobId = jobId,
                 job = job,
                 seenUrls = seenUrls,
                 sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel,
-                urlTracker = urlTracker
+                urlTracker = urlTracker,
+                eventFlow = eventFlow,
+                processedCount = processedCount
             ),
             processRecursiveDiscoveredLinksFlow(
                 jobId = jobId,
@@ -253,7 +259,9 @@ class PeriodicIndexJobRegistry(
                 serperDiscoveredLinksChannel = serperDiscoveredLinksChannel,
                 sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel,
                 recursiveDiscoveredLinksChannel = recursiveDiscoveredLinksChannel,
-                urlTracker = urlTracker
+                urlTracker = urlTracker,
+                eventFlow = eventFlow,
+                processedCount = processedCount
             )
         )
             .flowOn(dispatchers.io)
@@ -322,7 +330,9 @@ class PeriodicIndexJobRegistry(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
         urlTracker: UrlTracker,
-        carriedOverUrls: Set<String>
+        carriedOverUrls: Set<String>,
+        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
+        processedCount: AtomicInteger
     ): Flow<PeriodicIndexStepResult> {
         // Combine base URL with carried-over URLs (base URL first for priority)
         val allInitialUrls = listOf(job.baseUrl) + carriedOverUrls.filter { it != job.baseUrl }
@@ -346,6 +356,22 @@ class PeriodicIndexJobRegistry(
                     }
 
                     urlTracker.startProcessing(normalizedUrl)
+                    eventFlow.emit(
+                        IPeriodicIndexJobService.PeriodicIndexEvent(
+                            jobId = jobId,
+                            baseUrl = job.baseUrl,
+                            url = normalizedUrl,
+                            processedCount = processedCount.get(),
+                            maxUrlCount = job.maxUrlCount,
+                            cachedHit = null,
+                            totalQueued = 0,
+                            state = job.state,
+                            message = null,
+                            processedUrls = urlTracker.getProcessedUrls(),
+                            processingUrls = urlTracker.getProcessingUrls(),
+                            failedUrls = urlTracker.getFailedUrls()
+                        )
+                    )
                     val sessionId = PeriodicIndexSessionId(jobId)
                     
                     // Use adaptive rate limiter to respect website rate limits
@@ -425,7 +451,9 @@ class PeriodicIndexJobRegistry(
         job: PeriodicIndexJob,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         serperDiscoveredLinksChannel: Channel<WebpageLink>,
-        urlTracker: UrlTracker
+        urlTracker: UrlTracker,
+        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
+        processedCount: AtomicInteger
     ): Flow<PeriodicIndexStepResult> {
         return createSerperSearchLinkFlow(jobId, job)
             .filter { link ->
@@ -441,6 +469,22 @@ class PeriodicIndexJobRegistry(
                 flow {
                     val normalizedUrl = normalize(link.url)
                     urlTracker.startProcessing(normalizedUrl)
+                    eventFlow.emit(
+                        IPeriodicIndexJobService.PeriodicIndexEvent(
+                            jobId = jobId,
+                            baseUrl = job.baseUrl,
+                            url = normalizedUrl,
+                            processedCount = processedCount.get(),
+                            maxUrlCount = job.maxUrlCount,
+                            cachedHit = null,
+                            totalQueued = 0,
+                            state = job.state,
+                            message = null,
+                            processedUrls = urlTracker.getProcessedUrls(),
+                            processingUrls = urlTracker.getProcessingUrls(),
+                            failedUrls = urlTracker.getFailedUrls()
+                        )
+                    )
                     val sessionId = PeriodicIndexSessionId(jobId)
                     
                     // Use adaptive rate limiter to respect website rate limits
@@ -508,7 +552,9 @@ class PeriodicIndexJobRegistry(
         job: PeriodicIndexJob,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
-        urlTracker: UrlTracker
+        urlTracker: UrlTracker,
+        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
+        processedCount: AtomicInteger
     ): Flow<PeriodicIndexStepResult> {
         return createSitemapLinkFlow(jobId, job)
             .filter { link ->
@@ -524,6 +570,22 @@ class PeriodicIndexJobRegistry(
                 flow {
                     val normalizedUrl = normalize(link.url)
                     urlTracker.startProcessing(normalizedUrl)
+                    eventFlow.emit(
+                        IPeriodicIndexJobService.PeriodicIndexEvent(
+                            jobId = jobId,
+                            baseUrl = job.baseUrl,
+                            url = normalizedUrl,
+                            processedCount = processedCount.get(),
+                            maxUrlCount = job.maxUrlCount,
+                            cachedHit = null,
+                            totalQueued = 0,
+                            state = job.state,
+                            message = null,
+                            processedUrls = urlTracker.getProcessedUrls(),
+                            processingUrls = urlTracker.getProcessingUrls(),
+                            failedUrls = urlTracker.getFailedUrls()
+                        )
+                    )
                     val sessionId = PeriodicIndexSessionId(jobId)
                     
                     // Use adaptive rate limiter to respect website rate limits
@@ -595,7 +657,9 @@ class PeriodicIndexJobRegistry(
         serperDiscoveredLinksChannel: Channel<WebpageLink>,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
-        urlTracker: UrlTracker
+        urlTracker: UrlTracker,
+        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
+        processedCount: AtomicInteger
     ): Flow<PeriodicIndexStepResult> {
         val inFlightLinkDiscoveryProcessing = ConcurrentHashMap.newKeySet<String>()
 
@@ -635,6 +699,22 @@ class PeriodicIndexJobRegistry(
                     val sessionId = PeriodicIndexSessionId(jobId)
                     inFlightLinkDiscoveryProcessing.add(normalizedUrl)
                     urlTracker.startProcessing(normalizedUrl)
+                    eventFlow.emit(
+                        IPeriodicIndexJobService.PeriodicIndexEvent(
+                            jobId = jobId,
+                            baseUrl = job.baseUrl,
+                            url = normalizedUrl,
+                            processedCount = processedCount.get(),
+                            maxUrlCount = job.maxUrlCount,
+                            cachedHit = null,
+                            totalQueued = 0,
+                            state = job.state,
+                            message = null,
+                            processedUrls = urlTracker.getProcessedUrls(),
+                            processingUrls = urlTracker.getProcessingUrls(),
+                            failedUrls = urlTracker.getFailedUrls()
+                        )
+                    )
 
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
