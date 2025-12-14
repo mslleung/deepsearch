@@ -71,6 +71,8 @@ class RemoteBrowserPool(
                 contentType(ContentType.Application.Json)
                 setBody(AcquireRequest(proxy = proxyDto))
             }
+        } catch (e: CancellationException) {
+            throw e // Preserve cooperative cancellation
         } catch (e: Exception) {
             throw ConnectionLostException("Failed to acquire session: ${e.message}")
         }
@@ -118,6 +120,8 @@ class RemoteBrowserPool(
                 contentType(ContentType.Application.Json)
                 setBody(command)
             }
+        } catch (e: CancellationException) {
+            throw e // Preserve cooperative cancellation
         } catch (e: Exception) {
             throw ConnectionLostException("Command failed: ${e.message}")
         }

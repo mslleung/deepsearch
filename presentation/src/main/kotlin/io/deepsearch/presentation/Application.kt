@@ -70,6 +70,9 @@ fun Application.module() {
     configureSSE()
     configureRequestValidation()
 
+    // health check (no auth required)
+    configureHealthRoutes()
+
     // web app routes (requires jwt auth)
     configureAuthRoutes()
     configureApiKeyRoutes()
