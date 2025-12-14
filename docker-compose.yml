@@ -5,8 +5,5 @@ services:
     container_name: deepsearch
     ports:
       - "8080:8080"
-    environment:
-      # URL for browser service (adjust based on how deepsearch-browser is running)
-      - DEEPSEARCH_BROWSER_URL=${DEEPSEARCH_BROWSER_URL}
     env_file:
       - .env
