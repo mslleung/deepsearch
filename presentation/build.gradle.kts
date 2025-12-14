@@ -87,14 +87,12 @@ tasks.shadowJar {
 }
 
 // --- Jib container image configuration ---
-val gcpProject = findProperty("gcp.project")?.toString() ?: "YOUR_PROJECT"
-
 jib {
     from {
-        image = "eclipse-temurin:23-jre-alpine"  // Lightweight JRE image (~100MB)
+        image = "eclipse-temurin:24-jre-alpine"  // Lightweight JRE image (~100MB)
     }
     to {
-        image = "gcr.io/$gcpProject/deepsearch"
+        image = "deepsearch"
         tags = setOf("latest", version.toString())
     }
     container {
