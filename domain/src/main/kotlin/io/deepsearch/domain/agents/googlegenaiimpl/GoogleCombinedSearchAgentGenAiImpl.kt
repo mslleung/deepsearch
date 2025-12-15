@@ -8,6 +8,7 @@ import com.google.genai.types.Tool
 import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.withRateLimitRetry
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -53,15 +54,17 @@ class GoogleCombinedSearchAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = client.models.generateContent(
-            modelId,
-            userPrompt,
-            GenerateContentConfig.builder()
-                .temperature(0.2F)
-                .tools(listOf(searchTool, urlContextTool))
-                .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                .build()
-        )
+        val response = withRateLimitRetry(this::class.simpleName!!) {
+            client.models.generateContent(
+                modelId,
+                userPrompt,
+                GenerateContentConfig.builder()
+                    .temperature(0.2F)
+                    .tools(listOf(searchTool, urlContextTool))
+                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                    .build()
+            )
+        }
         
         // Extract token usage
         response.usageMetadata().ifPresent { metadata ->

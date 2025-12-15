@@ -9,6 +9,7 @@ import io.deepsearch.domain.agents.FileSearchQueryInput
 import io.deepsearch.domain.agents.FileSearchQueryOutput
 import io.deepsearch.domain.agents.IFileSearchQueryAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.withRateLimitRetry
 import io.deepsearch.domain.models.valueobjects.FileSearchChunk
 import io.deepsearch.domain.models.valueobjects.GeminiFileMetadata
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
@@ -59,15 +60,17 @@ class FileSearchQueryAgentGenAiImpl(
             .fileSearch(fileSearchBuilder.build())
             .build()
 
-        val response = client.models.generateContent(
-            modelId,
-            query,
-            GenerateContentConfig.builder()
-                .temperature(0F)
-                .tools(listOf(fileSearchTool))
-                .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                .build()
-        )
+        val response = withRateLimitRetry(this::class.simpleName!!) {
+            client.models.generateContent(
+                modelId,
+                query,
+                GenerateContentConfig.builder()
+                    .temperature(0F)
+                    .tools(listOf(fileSearchTool))
+                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                    .build()
+            )
+        }
 
         // Extract token usage
         response.usageMetadata().ifPresent { metadata ->

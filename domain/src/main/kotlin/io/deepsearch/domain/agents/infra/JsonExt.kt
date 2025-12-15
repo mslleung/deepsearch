@@ -4,6 +4,8 @@ import com.google.genai.errors.ClientException
 import io.deepsearch.domain.exceptions.LlmDeserializationException
 import io.deepsearch.domain.exceptions.LlmRateLimitException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
@@ -54,6 +56,160 @@ internal fun parseRetryDelayOrDefault(message: String?, attempt: Int): Long {
 @PublishedApi
 internal fun isRateLimitException(e: Exception): Boolean {
     return e is ClientException && e.message?.contains("429") == true
+}
+
+/**
+ * Wraps any Gemini API call with rate limit retry handling.
+ * 
+ * This is a simpler version of [retryLlmCall] for API calls that don't require
+ * JSON deserialization (e.g., tool-based agents, embeddings, file operations).
+ * 
+ * Rate limit handling:
+ * - Detects 429 errors from Google GenAI ClientException
+ * - Parses retry delay from error message ("Please retry in X.Xs")
+ * - Falls back to exponential backoff if parsing fails
+ * - Max rate limit retries: 3
+ * 
+ * @param operationName Name of the operation (for logging)
+ * @param block The suspend function to execute with retry handling
+ * @return The result of the block
+ * @throws LlmRateLimitException if all rate limit retries are exhausted
+ */
+suspend fun <T> withRateLimitRetry(
+    operationName: String,
+    block: suspend () -> T
+): T {
+    val logger = LoggerFactory.getLogger("io.deepsearch.domain.agents.infra.JsonExt")
+    var rateLimitAttempt = 0
+    
+    while (true) {
+        try {
+            return block()
+        } catch (e: Exception) {
+            if (isRateLimitException(e)) {
+                rateLimitAttempt++
+                if (rateLimitAttempt > MAX_RATE_LIMIT_RETRIES) {
+                    logger.error("[{}] Rate limit retries exhausted after {} attempts", operationName, MAX_RATE_LIMIT_RETRIES)
+                    throw LlmRateLimitException(MAX_RATE_LIMIT_RETRIES, e)
+                }
+                
+                val delayMs = parseRetryDelayOrDefault(e.message, rateLimitAttempt - 1)
+                logger.warn(
+                    "[{}] Rate limited (429) on attempt {}/{}. Waiting {}ms before retry.",
+                    operationName, rateLimitAttempt, MAX_RATE_LIMIT_RETRIES, delayMs
+                )
+                delay(delayMs)
+                // Continue to next iteration
+            } else {
+                throw e
+            }
+        }
+    }
+}
+
+/**
+ * Wraps a streaming Gemini API call with rate limit retry handling.
+ * 
+ * If a 429 error occurs during stream iteration, the entire stream is restarted
+ * from the beginning after waiting for the appropriate delay.
+ * 
+ * Rate limit handling:
+ * - Detects 429 errors from Google GenAI ClientException
+ * - Parses retry delay from error message ("Please retry in X.Xs")
+ * - Falls back to exponential backoff if parsing fails
+ * - Max rate limit retries: 3
+ * 
+ * @param operationName Name of the operation (for logging)
+ * @param streamFactory Factory function that creates the stream to iterate
+ * @param processItem Function to process each item from the stream
+ * @throws LlmRateLimitException if all rate limit retries are exhausted
+ */
+suspend fun <T, R> withStreamingRateLimitRetry(
+    operationName: String,
+    streamFactory: suspend () -> Iterable<T>,
+    processItem: suspend (T) -> R?
+): List<R> {
+    val logger = LoggerFactory.getLogger("io.deepsearch.domain.agents.infra.JsonExt")
+    var rateLimitAttempt = 0
+    
+    while (true) {
+        try {
+            val results = mutableListOf<R>()
+            val stream = streamFactory()
+            for (item in stream) {
+                val result = processItem(item)
+                if (result != null) {
+                    results.add(result)
+                }
+            }
+            return results
+        } catch (e: Exception) {
+            if (isRateLimitException(e)) {
+                rateLimitAttempt++
+                if (rateLimitAttempt > MAX_RATE_LIMIT_RETRIES) {
+                    logger.error("[{}] Rate limit retries exhausted after {} attempts", operationName, MAX_RATE_LIMIT_RETRIES)
+                    throw LlmRateLimitException(MAX_RATE_LIMIT_RETRIES, e)
+                }
+                
+                val delayMs = parseRetryDelayOrDefault(e.message, rateLimitAttempt - 1)
+                logger.warn(
+                    "[{}] Rate limited (429) during streaming on attempt {}/{}. Restarting stream after {}ms.",
+                    operationName, rateLimitAttempt, MAX_RATE_LIMIT_RETRIES, delayMs
+                )
+                delay(delayMs)
+                // Continue to next iteration - stream will be recreated
+            } else {
+                throw e
+            }
+        }
+    }
+}
+
+/**
+ * Wraps a streaming Gemini API call that emits to a Flow with rate limit retry handling.
+ * 
+ * If a 429 error occurs during stream iteration, the entire stream is restarted
+ * from the beginning after waiting for the appropriate delay.
+ * 
+ * @param operationName Name of the operation (for logging)
+ * @param streamFactory Factory function that creates the stream to iterate
+ * @return A Flow that emits processed items with rate limit retry handling
+ * @throws LlmRateLimitException if all rate limit retries are exhausted
+ */
+fun <T> flowWithRateLimitRetry(
+    operationName: String,
+    streamFactory: suspend () -> Iterable<T>
+): Flow<T> = flow {
+    val logger = LoggerFactory.getLogger("io.deepsearch.domain.agents.infra.JsonExt")
+    var rateLimitAttempt = 0
+    
+    while (true) {
+        try {
+            val stream = streamFactory()
+            for (item in stream) {
+                emit(item)
+            }
+            return@flow // Successfully completed
+        } catch (e: Exception) {
+            if (isRateLimitException(e)) {
+                rateLimitAttempt++
+                if (rateLimitAttempt > MAX_RATE_LIMIT_RETRIES) {
+                    logger.error("[{}] Rate limit retries exhausted after {} attempts", operationName, MAX_RATE_LIMIT_RETRIES)
+                    throw LlmRateLimitException(MAX_RATE_LIMIT_RETRIES, e)
+                }
+                
+                val delayMs = parseRetryDelayOrDefault(e.message, rateLimitAttempt - 1)
+                logger.warn(
+                    "[{}] Rate limited (429) during streaming on attempt {}/{}. Restarting stream after {}ms.",
+                    operationName, rateLimitAttempt, MAX_RATE_LIMIT_RETRIES, delayMs
+                )
+                delay(delayMs)
+                // Continue to next iteration - stream will be recreated
+            } else {
+                throw e
+            }
+        }
+    }
 }
 
 /**

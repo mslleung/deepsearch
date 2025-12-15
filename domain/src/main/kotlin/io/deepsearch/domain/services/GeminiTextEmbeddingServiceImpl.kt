@@ -2,6 +2,7 @@ package io.deepsearch.domain.services
 
 import com.google.genai.Client
 import com.google.genai.types.EmbedContentConfig
+import io.deepsearch.domain.agents.infra.withRateLimitRetry
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -100,7 +101,9 @@ class GeminiTextEmbeddingServiceImpl(
             .outputDimensionality(1536)
             .build()
 
-        val response = client.models.embedContent(modelName, text, config)
+        val response = withRateLimitRetry(this::class.simpleName!!) {
+            client.models.embedContent(modelName, text, config)
+        }
 
         // Estimate token count (embedding responses may not have full usageMetadata)
         // The token count is typically just the input tokens

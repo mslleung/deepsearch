@@ -10,6 +10,7 @@ import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.AnswerSynthesisOutput
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.flowWithRateLimitRetry
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.flow.Flow
@@ -205,14 +206,19 @@ class AnswerSynthesisAgentGenAiImpl(
             .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
             .build()
 
-        val responseStream = client.models.generateContentStream(modelId, userPrompt, config)
-
         var accumulatedJson = ""
         var lastAnswerLength = 0
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        for (response in responseStream) {
-            val chunkText = response.text() ?: continue
+        // Use flowWithRateLimitRetry to handle 429 errors by restarting the stream
+        flowWithRateLimitRetry(this@AnswerSynthesisAgentGenAiImpl::class.simpleName!!) {
+            // Reset state on each retry attempt
+            accumulatedJson = ""
+            lastAnswerLength = 0
+            tokenUsage = TokenUsageMetrics.empty(modelId)
+            client.models.generateContentStream(modelId, userPrompt, config)
+        }.collect { response ->
+            val chunkText = response.text() ?: return@collect
             accumulatedJson += chunkText
             logger.trace("Accumulated JSON so far ({} chars): {}", accumulatedJson.length, 
                 accumulatedJson.take(200).replace("\n", "\\n"))

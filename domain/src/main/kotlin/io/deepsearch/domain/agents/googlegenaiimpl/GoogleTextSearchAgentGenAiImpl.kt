@@ -8,6 +8,7 @@ import com.google.genai.types.Tool
 import io.deepsearch.domain.agents.GoogleTextSearchOutput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.withRateLimitRetry
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
@@ -61,15 +62,17 @@ class GoogleTextSearchAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = client.models.generateContent(
-            modelId,
-            userPrompt,
-            GenerateContentConfig.builder()
-                .temperature(0.2F)
-                .tools(listOf(searchTool))
-                .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                .build()
-        )
+        val response = withRateLimitRetry(this::class.simpleName!!) {
+            client.models.generateContent(
+                modelId,
+                userPrompt,
+                GenerateContentConfig.builder()
+                    .temperature(0.2F)
+                    .tools(listOf(searchTool))
+                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                    .build()
+            )
+        }
         
         // Extract token usage
         response.usageMetadata().ifPresent { metadata ->

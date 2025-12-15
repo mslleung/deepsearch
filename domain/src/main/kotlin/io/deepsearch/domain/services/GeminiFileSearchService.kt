@@ -7,6 +7,7 @@ import com.google.genai.types.UploadToFileSearchStoreConfig
 import com.google.genai.types.UploadToFileSearchStoreOperation
 import io.deepsearch.domain.agents.FileSearchQueryInput
 import io.deepsearch.domain.agents.IFileSearchQueryAgent
+import io.deepsearch.domain.agents.infra.withRateLimitRetry
 import io.deepsearch.domain.config.DefaultDispatcherProvider
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.FileSearchResult
@@ -148,7 +149,9 @@ class GeminiFileSearchService(
         val targetDisplayName = domainToDisplayName(domain)
         logger.debug("Looking for file search store with displayName: {}", targetDisplayName)
 
-        val pager = client.fileSearchStores.list(null)
+        val pager = withRateLimitRetry("${this@GeminiFileSearchService::class.simpleName}.findStore") {
+            client.fileSearchStores.list(null)
+        }
 
         for (store in pager) {
             val storeDisplayName = store.displayName().orElse(null) ?: continue
@@ -178,11 +181,13 @@ class GeminiFileSearchService(
         logger.info("Creating new file search store for domain: {}", domain)
         val displayName = domainToDisplayName(domain)
 
-        val store = client.fileSearchStores.create(
-            CreateFileSearchStoreConfig.builder()
-                .displayName(displayName)
-                .build()
-        )
+        val store = withRateLimitRetry("${this@GeminiFileSearchService::class.simpleName}.createStore") {
+            client.fileSearchStores.create(
+                CreateFileSearchStoreConfig.builder()
+                    .displayName(displayName)
+                    .build()
+            )
+        }
 
         val storeName = store.name().orElseThrow {
             IllegalStateException("Created store does not have a name")
@@ -239,15 +244,17 @@ class GeminiFileSearchService(
         )
 
         // Upload via SDK - returns UploadToFileSearchStoreOperation
-        val operation = client.fileSearchStores.uploadToFileSearchStore(
-            storeName,
-            fileBytes,
-            UploadToFileSearchStoreConfig.builder()
-                .displayName(displayName)
-                .mimeType(mimeType)
-                .customMetadata(customMetadata)
-                .build()
-        )
+        val operation = withRateLimitRetry("${this@GeminiFileSearchService::class.simpleName}.uploadFile") {
+            client.fileSearchStores.uploadToFileSearchStore(
+                storeName,
+                fileBytes,
+                UploadToFileSearchStoreConfig.builder()
+                    .displayName(displayName)
+                    .mimeType(mimeType)
+                    .customMetadata(customMetadata)
+                    .build()
+            )
+        }
 
         // Poll for completion using typed operation object
         val documentName = pollUploadOperation(operation)
@@ -295,7 +302,9 @@ class GeminiFileSearchService(
         logger.info("Deleting file {} from store {}", fileName, storeName)
 
         try {
-            client.fileSearchStores.documents.delete(fileName, null)
+            withRateLimitRetry("${this@GeminiFileSearchService::class.simpleName}.deleteFile") {
+                client.fileSearchStores.documents.delete(fileName, null)
+            }
             logger.debug("File deleted: {}", fileName)
         } catch (e: Exception) {
             logger.warn("Failed to delete file: {}", e.message)
@@ -311,7 +320,9 @@ class GeminiFileSearchService(
     private suspend fun listFilesFromSdk(storeName: String): List<GeminiFileInfo> = withContext(dispatcherProvider.io) {
         logger.debug("Listing files in store: {}", storeName)
 
-        val pager = client.fileSearchStores.documents.list(storeName, null)
+        val pager = withRateLimitRetry("${this@GeminiFileSearchService::class.simpleName}.listFiles") {
+            client.fileSearchStores.documents.list(storeName, null)
+        }
 
         val results = mutableListOf<GeminiFileInfo>()
         for (doc in pager) {
@@ -385,7 +396,9 @@ class GeminiFileSearchService(
                 logger.debug("Polling upload operation {}: attempt {}", operationName, attempt + 1)
 
                 // Refresh the operation status using typed operation object
-                currentOperation = client.operations.get(currentOperation, null)
+                currentOperation = withRateLimitRetry("${this@GeminiFileSearchService::class.simpleName}.pollOperation") {
+                    client.operations.get(currentOperation, null)
+                }
             }
 
             throw RuntimeException("Upload operation timed out: $operationName")
