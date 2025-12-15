@@ -51,7 +51,6 @@ class ImageClassificationAgentGenAiImpl(
                 "text" to Schema.builder()
                     .type("STRING")
                     .description("text representation of the image")
-                    .nullable(true)
                     .build(),
                 "containsTable" to Schema.builder()
                     .type("BOOLEAN")
@@ -65,10 +64,6 @@ class ImageClassificationAgentGenAiImpl(
     private val systemInstruction = """
         You are given an image found in a webpage. Your task is to classify it and extract text.
         
-        Images on webpages can serve two purposes:
-        1. ILLUSTRATIVE: decorative images, icons, logos, photographs used for visual appeal, backgrounds, avatars
-        2. INFORMATIONAL: images containing meaningful text, data, charts, diagrams, or tables
-        
         Classification guidelines:
         - Use ILLUSTRATIVE for: photos of people/places/objects, decorative graphics, icons, logos, avatars, background images
         - Use INFORMATIONAL for: screenshots with text, infographics, charts, tables, diagrams with labels, images with significant readable text
@@ -78,7 +73,8 @@ class ImageClassificationAgentGenAiImpl(
         - Set containsTable to false
         
         Instructions for INFORMATIONAL images:
-        - Extract all text present in the image, with reasonable line breaks
+        - Extract all text present in the image
+        - In quoted strings, the only allowed escape sequences are \\, \n, and \". Instead of \u escapes, use UTF-8.
         - Identify if the image contains a table (data arranged in rows and columns)
         - Set containsTable to true if you see tabular data, false otherwise
         - If containsTable is true, you don't need to format the table specially - just note that it exists
@@ -86,7 +82,7 @@ class ImageClassificationAgentGenAiImpl(
         Expected output shape:
         {
             "imageType": "ILLUSTRATIVE" | "INFORMATIONAL",
-            "text": string | null,
+            "text": string,
             "containsTable": boolean
         }
     """.trimIndent()
@@ -94,7 +90,7 @@ class ImageClassificationAgentGenAiImpl(
     @Serializable
     private data class SingleImageClassificationResponse(
         val imageType: String,
-        val text: String?,
+        val text: String,
         val containsTable: Boolean
     )
 
@@ -196,7 +192,7 @@ class ImageClassificationAgentGenAiImpl(
                 modelId,
                 listOf(Content.fromParts(*(contentParts.toTypedArray()))),
                 GenerateContentConfig.builder()
-                    .temperature(0.0F)
+                    .temperature(1.0F)
                     .responseSchema(outputSchema)
                     .responseMimeType("application/json")
                     .thinkingConfig(
@@ -224,7 +220,7 @@ class ImageClassificationAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
-        val extractedText = response.text?.takeIf { it.isNotBlank() }?.trim()
+        val extractedText = response.text.takeIf { it.isNotBlank() }?.trim()
         
         // Parse imageType from response, defaulting to INFORMATIONAL if unrecognized
         val imageType = when (response.imageType.uppercase()) {

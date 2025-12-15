@@ -34,7 +34,8 @@ class WebpageExtractionServiceTest : KoinTest {
             "https://www.otandp.com/body-check/",
             "https://www.otandp.com/about/history",
             "https://sleekflow.io/pricing",
-            "https://sleekflow.io/fair-use-policy"
+            "https://sleekflow.io/fair-use-policy",
+            "https://sleekflow.io/ticketing"
         ]
     )
     fun `extract webpage text`(url: String) = runTest(testCoroutineDispatcher) {

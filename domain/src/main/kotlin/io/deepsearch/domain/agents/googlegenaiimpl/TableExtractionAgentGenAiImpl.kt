@@ -50,7 +50,6 @@ class TableExtractionAgentGenAiImpl(
                 "text" to Schema.builder()
                     .type("STRING")
                     .description("text representation of the image with tables in HTML format")
-                    .nullable(true)
                     .build()
             )
         )
@@ -61,7 +60,7 @@ class TableExtractionAgentGenAiImpl(
         You are given an image that contains a table. Your task is to extract all content including the table.
         
         Instructions:
-        - Extract all text present in the image, with reasonable line breaks
+        - Extract all text present in the image
         - When you see data arranged in table format, you must convert it to HTML table format using <table>, <tr>, <td> tags
         - For table merged cells, use colspan/rowspan attributes (e.g., <td colspan="2">)
         - Make sure the table dimension correctly reflects what is seen in the image
@@ -105,13 +104,13 @@ class TableExtractionAgentGenAiImpl(
         
         Expected output shape:
         {
-            "text": string | null
+            "text": string
         }
     """.trimIndent()
 
     @Serializable
     private data class SingleTableExtractionResponse(
-        val text: String?
+        val text: String
     )
 
     override suspend fun generate(input: TableExtractionInput): TableExtractionOutput {
@@ -208,7 +207,7 @@ class TableExtractionAgentGenAiImpl(
                 modelId,
                 listOf(Content.fromParts(*(contentParts.toTypedArray()))),
                 GenerateContentConfig.builder()
-                    .temperature(0.0F)
+                    .temperature(1.0F)
                     .responseSchema(outputSchema)
                     .responseMimeType("application/json")
                     .thinkingConfig(
@@ -237,7 +236,7 @@ class TableExtractionAgentGenAiImpl(
         }
 
         // Transform HTML tables to markdown
-        val extractedText = response.text?.let { rawText ->
+        val extractedText = response.text.let { rawText ->
             if (rawText.isNotBlank()) {
                 transformHTMLTablesToMarkdown(rawText).trim()
             } else {

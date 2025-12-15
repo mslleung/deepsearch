@@ -28,23 +28,22 @@ class TableInterpretationAgentGenAiImpl(
         .description("Markdown representation of a tabular element with optional additional context")
         .properties(
             mapOf(
+                "additionalInfo" to Schema.builder()
+                    .type("STRING")
+                    .description("Optional additional context, notes, or clarifications about the table that cannot be represented in the markdown structure (e.g., badges, labels, footnotes, ambiguities).")
+                    .build(),
                 "markdown" to Schema.builder()
                     .type("STRING")
                     .description("The table expressed in GitHub-flavored Markdown. Contains ONLY the markdown table itself, without any additional commentary or notes.")
                     .build(),
-                "additionalInfo" to Schema.builder()
-                    .type("STRING")
-                    .nullable(true)
-                    .description("Optional additional context, notes, or clarifications about the table that cannot be represented in the markdown structure (e.g., badges, labels, footnotes, ambiguities).")
-                    .build(),
             )
         )
-        .required(listOf("markdown"))
+        .required(listOf("additionalInfo", "markdown"))
         .build()
 
     private val systemInstruction = """
         You are given the HTML markup for a table-like region from a webpage and an auxiliary info describing 
-        the table. Convert this table into clean, faithful GitHub-flavored Markdown.
+        the table. Convert this table into clean, faithful GitHub-flavored Markdown with additional information.
         
         Each element in the HTML has been augmented with a ds-bounding-box attribute containing spatial coordinates
         in the format ds-bounding-box="left top right bottom". These coordinates are relative to the table element's top-left corner
@@ -67,28 +66,29 @@ class TableInterpretationAgentGenAiImpl(
         - Normalize whitespace; remove decorative or layout-only characters.
         - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
         - If the HTML do not look like a table, interpret and coerce the data into tabular markdown format while preserving semantic meaning.
+        - Provide the answer once
 
         The output must strictly conform to JSON structured output with 2 fields:
+        - "additionalInfo": Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements).
         - "markdown": The table as a GitHub-flavored Markdown table.
-        - "additionalInfo": Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements). Use null if there is nothing to add.
 
         Example output:
         {
-          "markdown": "| Feature | Free | Pro AI | Premium AI | Enterprise AI |\n|---|---|---|---|---|\n| **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |\n| **Price** | Free | Starting from US$ 99/month | Starting from US$ 299/month | Let's talk |\n| **Call to Action** | Try Free Forever | Start for Free | Start for Free | Book a Demo |\n| **Key features** | 50 monthly active contacts | Up to 2,000 monthly active contacts | Up to 12,000 monthly active contacts | Custom number of monthly active contacts |\n| | Includes 3 user accounts | Includes 3 user accounts | Includes 10 user accounts | Custom number of user accounts |\n| | Test all core features without affecting your live business using the | Unlimited Broadcast | Analytics dashboards | Salesforce & custom integrations |\n| | | Unlimited Flow Builder usage | Webhook & API calls | Dedicated Customer success manager |\n| | | Unlimited contact storage | Role-based access control | PII masking |\n| | | Team Inbox | Advanced AI Agents with integrations | |\n| | | AI Agent | | |",
           "additionalInfo": "*   **Pro AI** includes \"Free Onboarding Support\".\n*   **Premium AI** includes \"Free Onboarding Support\" and is marked as \"Most Popular\".\n*   **Enterprise AI** includes \"🌟 AI Solution Engineer Support\"."
+          "markdown": "| Feature | Free | Pro AI | Premium AI | Enterprise AI |\n|---|---|---|---|---|\n| **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |\n| **Price** | Free | Starting from US$ 99/month | Starting from US$ 299/month | Let's talk |\n| **Call to Action** | Try Free Forever | Start for Free | Start for Free | Book a Demo |\n| **Key features** | 50 monthly active contacts | Up to 2,000 monthly active contacts | Up to 12,000 monthly active contacts | Custom number of monthly active contacts |\n| | Includes 3 user accounts | Includes 3 user accounts | Includes 10 user accounts | Custom number of user accounts |\n| | Test all core features without affecting your live business using the | Unlimited Broadcast | Analytics dashboards | Salesforce & custom integrations |\n| | | Unlimited Flow Builder usage | Webhook & API calls | Dedicated Customer success manager |\n| | | Unlimited contact storage | Role-based access control | PII masking |\n| | | Team Inbox | Advanced AI Agents with integrations | |\n| | | AI Agent | | |",
         }
 
         Output structure:
         {
-          "markdown": string,
-          "additionalInfo": string | null
+          "additionalInfo": string,
+          "markdown": string
         }
     """.trimIndent()
 
     @Serializable
     private data class TableInterpretationResponse(
+        val additionalInfo: String,
         val markdown: String,
-        val additionalInfo: String? = null,
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
@@ -111,6 +111,7 @@ class TableInterpretationAgentGenAiImpl(
         val userPrompt = buildString {
             appendLine("Auxiliary Info: ${input.tableIdentification.auxiliaryInfo}")
             appendLine(cleanedHtml)
+            appendLine("Please generate the response in JSON structured output")
         }
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
@@ -121,7 +122,7 @@ class TableInterpretationAgentGenAiImpl(
                 modelId,
                 userPrompt,
                 GenerateContentConfig.builder()
-                    .temperature(0F)
+                    .temperature(1.0F)
                     .responseSchema(outputSchema)
                     .responseMimeType("application/json")
                     .thinkingConfig(
@@ -151,7 +152,8 @@ class TableInterpretationAgentGenAiImpl(
         val combinedMarkdown = combineMarkdownWithAdditionalInfo(response.markdown, response.additionalInfo)
         
         logger.debug("Table interpretation complete: {} chars markdown, {} chars additionalInfo", 
-            response.markdown.length, response.additionalInfo?.length ?: 0)
+            response.markdown.length, response.additionalInfo.length
+        )
         return TableInterpretationOutput(
             markdown = combinedMarkdown,
             tokenUsage = tokenUsage
@@ -172,7 +174,7 @@ class TableInterpretationAgentGenAiImpl(
             val root = doc.body().children().firstOrNull() ?: return html
 
             // Pre-compile regex for performance
-            val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)\]""")
+            val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)]""")
 
             // Tags relevant for table interpretation (structure and cell boundaries)
             // Includes semantic table elements and divs for CSS-based tables
