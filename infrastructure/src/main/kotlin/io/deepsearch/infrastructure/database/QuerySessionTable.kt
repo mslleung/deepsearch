@@ -16,7 +16,7 @@ class QuerySessionTable(
     val budgetTimeLimitMs = long("budget_time_limit_ms")
     val budgetMaxLinks = integer("budget_max_links")
     val answer = text("answer").nullable()
-    val answerFound = bool("answer_found").nullable() // Whether a meaningful answer was found
+    val answerFound = bool("answer_found") // Whether a meaningful answer was found
     val imageIds = text("image_ids").default("[]") // JSON array of image IDs
     val durationMs = long("duration_ms").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")

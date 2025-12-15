@@ -24,7 +24,7 @@ data class QuerySessionSummaryDto(
     val url: String,
     val mode: String, // "live-crawling" or "cache-only"
     val status: String, // finishReason or "IN_PROGRESS"
-    val answerFound: Boolean?, // Whether a meaningful answer was found (null = not yet determined)
+    val answerFound: Boolean, // Whether a meaningful answer was found
     val createdAt: Long,
     val updatedAt: Long,
     val durationMs: Long?,
@@ -55,7 +55,7 @@ data class QuerySessionDetailDto(
     val url: String,
     val mode: String, // "live-crawling" or "cache-only"
     val status: String,
-    val answerFound: Boolean?, // Whether a meaningful answer was found (null = not yet determined)
+    val answerFound: Boolean, // Whether a meaningful answer was found
     val answer: String?,
     val contentSources: List<ContentSourceDto>,
     val answerSources: List<String>,

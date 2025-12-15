@@ -26,7 +26,7 @@ class QuerySession(
     var searchBudget: SearchBudget,
     var finishReason: FinishReason?,
     var answer: String?,
-    var answerFound: Boolean? = null, // Whether a meaningful answer was found (null = not yet determined)
+    var answerFound: Boolean, // Whether a meaningful answer was found
     var imageIds: List<String> = emptyList(), // Image IDs referenced in the answer (format: "img-xxx")
     var durationMs: Long?,
     val createdAt: Instant,
@@ -43,7 +43,7 @@ class QuerySession(
         searchBudget = SearchBudget(),
         finishReason = null,
         answer = null,
-        answerFound = null,
+        answerFound = false,
         imageIds = emptyList(),
         durationMs = null,
         createdAt = Clock.System.now(),
