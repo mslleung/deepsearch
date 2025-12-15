@@ -780,7 +780,6 @@ class AgenticBrowserSearchOrchestrator(
     ) {
         // Stream the answer and emit chunks
         var fullAnswer = ""
-        var imageIds = emptyList<String>()
         answerSynthesisAgent.generateStream(
             AnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist)
         ).collect { item ->
@@ -797,8 +796,9 @@ class AgenticBrowserSearchOrchestrator(
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
-                    // Capture image IDs from answer synthesis
-                    imageIds = item.imageIds
+                    // Capture answerFound and image IDs from answer synthesis
+                    val answerFound = item.answerFound
+                    val imageIds = item.imageIds
 
                     val answerSources = accumulator.currentShortlist.map { it.url }
                     if (answerSources.isNotEmpty()) {
@@ -812,15 +812,16 @@ class AgenticBrowserSearchOrchestrator(
                     }
 
                     when (finishReason) {
-                        "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer, imageIds)
+                        "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer, answerFound, imageIds)
                         "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(
                             sessionId,
                             fullAnswer,
+                            answerFound,
                             budget,
                             imageIds
                         )
 
-                        else -> querySessionService.completeSessionLinksExhausted(sessionId, fullAnswer, imageIds)
+                        else -> querySessionService.completeSessionLinksExhausted(sessionId, fullAnswer, answerFound, imageIds)
                     }
 
                     // Fetch full session detail for the completed event

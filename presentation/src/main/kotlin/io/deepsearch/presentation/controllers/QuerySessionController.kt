@@ -6,7 +6,9 @@ import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IWebpageImageRepository
+import io.deepsearch.presentation.dto.DomainStatDto
 import io.deepsearch.presentation.dto.ImageDto
+import io.deepsearch.presentation.dto.QuerySessionAnalyticsDto
 import io.deepsearch.presentation.dto.QuerySessionListResponse
 import io.deepsearch.presentation.dto.toDetailDto
 import io.deepsearch.presentation.dto.toSummaryDto
@@ -34,6 +36,11 @@ class QuerySessionController(
 
         val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 1
         val pageSize = call.request.queryParameters["pageSize"]?.toIntOrNull() ?: 20
+        val search = call.request.queryParameters["search"]?.takeIf { it.isNotBlank() }
+        val domain = call.request.queryParameters["domain"]?.takeIf { it.isNotBlank() }
+        val status = call.request.queryParameters["status"]?.takeIf { it.isNotBlank() }
+        val sortBy = call.request.queryParameters["sortBy"] ?: "createdAt"
+        val sortOrder = call.request.queryParameters["sortOrder"] ?: "desc"
 
         if (page < 1 || pageSize < 1 || pageSize > 100) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid pagination parameters"))
@@ -41,8 +48,23 @@ class QuerySessionController(
         }
 
         val offset = (page - 1) * pageSize
-        val sessions = querySessionService.getSessionsByUserId(userId, offset, pageSize)
-        val totalCount = querySessionService.countSessionsByUserId(userId).toInt()
+        
+        // Use filtered query if any filters are present
+        val hasFilters = search != null || domain != null || status != null
+        
+        val sessions = if (hasFilters || sortBy != "createdAt" || sortOrder != "desc") {
+            querySessionService.getSessionsWithFilters(
+                userId, search, domain, status, sortBy, sortOrder, offset, pageSize
+            )
+        } else {
+            querySessionService.getSessionsByUserId(userId, offset, pageSize)
+        }
+        
+        val totalCount = if (hasFilters) {
+            querySessionService.countSessionsWithFilters(userId, search, domain, status).toInt()
+        } else {
+            querySessionService.countSessionsByUserId(userId).toInt()
+        }
 
         // Get URL count for each session
         val sessionsWithUrlCount = sessions.map { session ->
@@ -55,6 +77,36 @@ class QuerySessionController(
             page = page,
             pageSize = pageSize,
             totalCount = totalCount
+        )
+
+        call.respond(HttpStatusCode.OK, response)
+    }
+    
+    suspend fun getQuerySessionAnalytics(call: ApplicationCall) {
+        val userId = getUserIdFromJwt(call)
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
+            return
+        }
+
+        val analytics = querySessionService.getAnalytics(userId)
+        
+        val response = QuerySessionAnalyticsDto(
+            totalSessions = analytics.totalSessions,
+            avgLiveSearchTimeMs = analytics.avgLiveSearchTimeMs,
+            avgStaticSearchTimeMs = analytics.avgStaticSearchTimeMs,
+            successRate = analytics.successRate,
+            answerFoundRate = analytics.answerFoundRate,
+            avgUrlsPerSession = analytics.avgUrlsPerSession,
+            domainStats = analytics.domainStats.map { stat ->
+                DomainStatDto(
+                    domain = stat.domain,
+                    sessionCount = stat.sessionCount,
+                    avgSearchTimeMs = stat.avgSearchTimeMs,
+                    successRate = stat.successRate,
+                    answerFoundRate = stat.answerFoundRate
+                )
+            }
         )
 
         call.respond(HttpStatusCode.OK, response)

@@ -53,5 +53,52 @@ interface IQuerySessionRepository {
      * Count total query sessions for a user.
      */
     suspend fun countByUserId(userId: UserId): Long
+    
+    /**
+     * Find query sessions by user ID with search, filtering, and sorting.
+     * @param userId The user ID to fetch sessions for
+     * @param search Optional search term to filter by query, URL, or status
+     * @param domain Optional domain to filter by (extracted from URL)
+     * @param status Optional status to filter by
+     * @param sortBy Field to sort by: "createdAt", "duration", "urlCount", "domain"
+     * @param sortOrder Sort order: "asc" or "desc"
+     * @param offset Pagination offset
+     * @param limit Maximum number of results
+     * @return List of matching query sessions
+     */
+    suspend fun findByUserIdWithFilters(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?,
+        sortBy: String,
+        sortOrder: String,
+        offset: Int,
+        limit: Int
+    ): List<QuerySession>
+    
+    /**
+     * Count query sessions by user ID with search and filtering (for pagination).
+     */
+    suspend fun countByUserIdWithFilters(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?
+    ): Long
+    
+    /**
+     * Get all unique domains searched by a user.
+     * @param userId The user ID
+     * @return List of unique domains extracted from session URLs
+     */
+    suspend fun getDistinctDomainsByUserId(userId: UserId): List<String>
+    
+    /**
+     * Get all sessions for a user (for analytics calculation).
+     * @param userId The user ID
+     * @return List of all query sessions for the user
+     */
+    suspend fun findAllByUserId(userId: UserId): List<QuerySession>
 }
 

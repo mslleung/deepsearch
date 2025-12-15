@@ -115,7 +115,7 @@ class CacheOnlySearchOrchestrator(
             // Check if we have any content (webpages or file search)
             if (validWebpages.isEmpty() && (fileSearchResult == null || fileSearchResult.markdown.isBlank())) {
                 logger.info("[{}] No cached content found for query", sessionId.value)
-                querySessionService.completeSessionLinksExhausted(sessionId, "No relevant content found in cache.")
+                querySessionService.completeSessionLinksExhausted(sessionId, "No relevant content found in cache.", answerFound = false)
 
                 val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
                 emit(
@@ -175,6 +175,7 @@ class CacheOnlySearchOrchestrator(
 
             // Step 3: Synthesize answer with streaming
             var fullAnswer = ""
+            var answerFound = false
             var imageIds = emptyList<String>()
             answerSynthesisAgent.generateStream(
                 AnswerSynthesisInput(searchQuery.query, shortlistOutput.updatedShortlist)
@@ -191,7 +192,8 @@ class CacheOnlySearchOrchestrator(
                             item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                             item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                         )
-                        // Capture image IDs from answer synthesis
+                        // Capture answerFound and image IDs from answer synthesis
+                        answerFound = item.answerFound
                         imageIds = item.imageIds
                     }
                 }
@@ -204,7 +206,7 @@ class CacheOnlySearchOrchestrator(
             }
 
             // Step 4: Complete session
-            querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer, imageIds)
+            querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer, answerFound, imageIds)
 
             val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
             emit(

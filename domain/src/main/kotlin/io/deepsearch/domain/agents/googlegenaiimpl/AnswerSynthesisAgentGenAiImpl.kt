@@ -30,12 +30,16 @@ class AnswerSynthesisAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Comprehensive answer to the query with referenced images")
+        .description("Comprehensive answer to the query with referenced images and answer found indicator")
         .properties(
             mapOf(
                 "answer" to Schema.builder()
                     .type("STRING")
                     .description("Comprehensive answer to the search query based on shortlisted sources")
+                    .build(),
+                "answerFound" to Schema.builder()
+                    .type("BOOLEAN")
+                    .description("Whether a meaningful answer to the query was found in the sources. True if the sources contain relevant information that addresses the query, false if insufficient or no relevant information was found.")
                     .build(),
                 "imageIds" to Schema.builder()
                     .type("ARRAY")
@@ -44,7 +48,7 @@ class AnswerSynthesisAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("answer"))
+        .required(listOf("answer", "answerFound"))
         .build()
 
     private val systemInstruction = """
@@ -74,6 +78,15 @@ class AnswerSynthesisAgentGenAiImpl(
         - Only provide what can be substantiated by the sources
         - Do not speculate or fill gaps with external knowledge
         
+        Answer Found Determination:
+        - Set answerFound to TRUE if:
+          - The sources contain meaningful information that directly or partially addresses the query
+          - You were able to provide substantive facts, data, or explanations
+        - Set answerFound to FALSE if:
+          - The sources do not contain relevant information to answer the query
+          - You had to respond with "No information found" or similar
+          - The answer is essentially "I don't know" or "information not available"
+        
         Image References:
         - Sources may contain <image id="img-xxx">description</image> tags representing images
         - If an image is relevant to your answer, include its ID in the imageIds array
@@ -83,6 +96,7 @@ class AnswerSynthesisAgentGenAiImpl(
         Expected Output Shape:
         {
             "answer": "your comprehensive answer text",
+            "answerFound": boolean,  // true if meaningful answer found, false otherwise
             "imageIds": ["img-xxx", "img-yyy"]  // optional, only include if relevant images exist
         }
     """.trimIndent()
@@ -90,6 +104,7 @@ class AnswerSynthesisAgentGenAiImpl(
     @Serializable
     private data class SynthesisResponse(
         val answer: String,
+        val answerFound: Boolean,
         val imageIds: List<String> = emptyList()
     )
 
@@ -107,6 +122,7 @@ class AnswerSynthesisAgentGenAiImpl(
             logger.warn("No shortlisted sources provided, returning default message")
             return AnswerSynthesisOutput(
                 answer = "No information found to answer the query.",
+                answerFound = false,
                 tokenUsage = tokenUsage
             )
         }
@@ -146,12 +162,14 @@ class AnswerSynthesisAgentGenAiImpl(
         }
 
         logger.debug(
-            "Answer synthesis complete: {} chars",
-            response.answer.length
+            "Answer synthesis complete: {} chars, answerFound: {}",
+            response.answer.length,
+            response.answerFound
         )
 
         return AnswerSynthesisOutput(
             answer = response.answer,
+            answerFound = response.answerFound,
             imageIds = response.imageIds,
             tokenUsage = tokenUsage
         )
@@ -169,7 +187,7 @@ class AnswerSynthesisAgentGenAiImpl(
         if (input.shortlistedSources.isEmpty()) {
             logger.warn("No shortlisted sources provided, emitting default message")
             emit(AnswerStreamItem.Chunk("No information found to answer the query."))
-            emit(AnswerStreamItem.Complete(TokenUsageMetrics.empty(modelId)))
+            emit(AnswerStreamItem.Complete(TokenUsageMetrics.empty(modelId), answerFound = false))
             return@flow
         }
 
@@ -225,11 +243,22 @@ class AnswerSynthesisAgentGenAiImpl(
             }
         }
 
-        // Extract imageIds from the complete JSON
+        // Extract answerFound and imageIds from the complete JSON
+        val answerFound = extractAnswerFound(accumulatedJson)
         val imageIds = extractImageIds(accumulatedJson)
         
-        logger.debug("Streaming answer synthesis complete: {} chars total, {} images", lastAnswerLength, imageIds.size)
-        emit(AnswerStreamItem.Complete(tokenUsage, imageIds))
+        logger.debug("Streaming answer synthesis complete: {} chars total, answerFound: {}, {} images", lastAnswerLength, answerFound, imageIds.size)
+        emit(AnswerStreamItem.Complete(tokenUsage, answerFound, imageIds))
+    }
+
+    /**
+     * Extract answerFound boolean from accumulated JSON.
+     * The JSON format is: {"answer": "...", "answerFound": true, ...}
+     */
+    private fun extractAnswerFound(json: String): Boolean {
+        val regex = """"answerFound"\s*:\s*(true|false)""".toRegex(RegexOption.IGNORE_CASE)
+        val match = regex.find(json) ?: return false
+        return match.groupValues[1].equals("true", ignoreCase = true)
     }
 
     /**

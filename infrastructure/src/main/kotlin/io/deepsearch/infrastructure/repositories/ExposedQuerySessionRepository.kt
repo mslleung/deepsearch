@@ -17,14 +17,20 @@ import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.like
+import org.jetbrains.exposed.v1.core.lowerCase
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.update
+import java.net.URI
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -46,6 +52,7 @@ class ExposedQuerySessionRepository(
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
             it[answer] = session.answer
+            it[answerFound] = session.answerFound
             it[imageIds] = Json.encodeToString(session.imageIds)
             it[durationMs] = session.durationMs
             it[createdAtEpochMs] = session.createdAt.toEpochMilliseconds()
@@ -75,6 +82,7 @@ class ExposedQuerySessionRepository(
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
             it[answer] = session.answer
+            it[answerFound] = session.answerFound
             it[imageIds] = Json.encodeToString(session.imageIds)
             it[durationMs] = session.durationMs
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
@@ -146,6 +154,117 @@ class ExposedQuerySessionRepository(
         results.size.toLong()
     }
 
+    override suspend fun findByUserIdWithFilters(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?,
+        sortBy: String,
+        sortOrder: String,
+        offset: Int,
+        limit: Int
+    ): List<QuerySession> = transactionService.withTransaction {
+        val baseQuery = querySessionTable
+            .join(apiKeyTable, JoinType.INNER, querySessionTable.apiKeyId, apiKeyTable.id)
+            .selectAll()
+            .where { 
+                buildFilterCondition(userId, search, domain, status)
+            }
+
+        // Apply sorting
+        val sortColumn = when (sortBy) {
+            "duration" -> querySessionTable.durationMs
+            "domain" -> querySessionTable.url
+            else -> querySessionTable.createdAtEpochMs
+        }
+        val order = if (sortOrder.equals("asc", ignoreCase = true)) SortOrder.ASC else SortOrder.DESC
+
+        baseQuery
+            .orderBy(sortColumn to order)
+            .limit(limit)
+            .offset(offset.toLong())
+            .map { mapRowToQuerySession(it) }
+            .toList()
+    }
+
+    override suspend fun countByUserIdWithFilters(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?
+    ): Long = transactionService.withTransaction {
+        val results = querySessionTable
+            .join(apiKeyTable, JoinType.INNER, querySessionTable.apiKeyId, apiKeyTable.id)
+            .selectAll()
+            .where { 
+                buildFilterCondition(userId, search, domain, status)
+            }
+            .map { it }
+            .toList()
+        results.size.toLong()
+    }
+
+    override suspend fun getDistinctDomainsByUserId(userId: UserId): List<String> = transactionService.withTransaction {
+        querySessionTable
+            .join(apiKeyTable, JoinType.INNER, querySessionTable.apiKeyId, apiKeyTable.id)
+            .selectAll()
+            .where { apiKeyTable.userId eq userId.value }
+            .map { row -> extractDomain(row[querySessionTable.url]) }
+            .toList()
+            .distinct()
+            .sorted()
+    }
+
+    override suspend fun findAllByUserId(userId: UserId): List<QuerySession> = transactionService.withTransaction {
+        querySessionTable
+            .join(apiKeyTable, JoinType.INNER, querySessionTable.apiKeyId, apiKeyTable.id)
+            .selectAll()
+            .where { apiKeyTable.userId eq userId.value }
+            .map { mapRowToQuerySession(it) }
+            .toList()
+    }
+
+    private fun buildFilterCondition(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?
+    ): Op<Boolean> {
+        var condition: Op<Boolean> = apiKeyTable.userId eq userId.value
+
+        // Search filter (query, URL, or status)
+        if (!search.isNullOrBlank()) {
+            val searchPattern = "%${search.lowercase()}%"
+            condition = condition and (
+                (querySessionTable.query.lowerCase() like searchPattern) or
+                (querySessionTable.url.lowerCase() like searchPattern) or
+                (querySessionTable.finishReason.lowerCase() like searchPattern)
+            )
+        }
+
+        // Domain filter
+        if (!domain.isNullOrBlank()) {
+            // Match URLs containing the domain
+            condition = condition and (querySessionTable.url like "%$domain%")
+        }
+
+        // Status filter
+        if (!status.isNullOrBlank()) {
+            condition = condition and (querySessionTable.finishReason eq status)
+        }
+
+        return condition
+    }
+
+    private fun extractDomain(url: String): String {
+        return try {
+            val uri = URI(url)
+            uri.host?.lowercase() ?: url
+        } catch (e: Exception) {
+            url
+        }
+    }
+
     private fun mapRowToQuerySession(row: ResultRow): QuerySession {
         val imageIdsJson = row[querySessionTable.imageIds]
         val imageIds: List<String> = try {
@@ -166,6 +285,7 @@ class ExposedQuerySessionRepository(
             ),
             finishReason = row[querySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
             answer = row[querySessionTable.answer],
+            answerFound = row[querySessionTable.answerFound],
             imageIds = imageIds,
             durationMs = row[querySessionTable.durationMs],
             createdAt = Instant.fromEpochMilliseconds(row[querySessionTable.createdAtEpochMs]),

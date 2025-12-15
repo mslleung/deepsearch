@@ -24,6 +24,7 @@ data class QuerySessionSummaryDto(
     val url: String,
     val mode: String, // "live-crawling" or "cache-only"
     val status: String, // finishReason or "IN_PROGRESS"
+    val answerFound: Boolean?, // Whether a meaningful answer was found (null = not yet determined)
     val createdAt: Long,
     val updatedAt: Long,
     val durationMs: Long?,
@@ -54,6 +55,7 @@ data class QuerySessionDetailDto(
     val url: String,
     val mode: String, // "live-crawling" or "cache-only"
     val status: String,
+    val answerFound: Boolean?, // Whether a meaningful answer was found (null = not yet determined)
     val answer: String?,
     val contentSources: List<ContentSourceDto>,
     val answerSources: List<String>,
@@ -88,6 +90,7 @@ fun QuerySession.toSummaryDto(urlCount: Int): QuerySessionSummaryDto {
         url = url,
         mode = modeString,
         status = status,
+        answerFound = answerFound,
         createdAt = createdAt.toEpochMilliseconds(),
         updatedAt = updatedAt.toEpochMilliseconds(),
         durationMs = durationMs,
@@ -143,6 +146,7 @@ fun QuerySession.toDetailDto(
         url = url,
         mode = modeString,
         status = status,
+        answerFound = answerFound,
         answer = answer,
         contentSources = contentSources,
         answerSources = answerSources,
@@ -166,4 +170,26 @@ fun QuerySession.toDetailDto(
         updatedAt = updatedAt.toEpochMilliseconds()
     )
 }
+
+// Analytics DTOs
+
+@Serializable
+data class QuerySessionAnalyticsDto(
+    val totalSessions: Int,
+    val avgLiveSearchTimeMs: Long?,
+    val avgStaticSearchTimeMs: Long?,
+    val successRate: Double,           // % with ANSWER_COMPLETE finish reason
+    val answerFoundRate: Double,       // % where answerFound = true
+    val avgUrlsPerSession: Double,
+    val domainStats: List<DomainStatDto>
+)
+
+@Serializable
+data class DomainStatDto(
+    val domain: String,
+    val sessionCount: Int,
+    val avgSearchTimeMs: Long?,
+    val successRate: Double,
+    val answerFoundRate: Double
+)
 

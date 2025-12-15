@@ -17,6 +17,11 @@ fun Application.configureQuerySessionRoutes() {
                         val controller = call.scope.get<QuerySessionController>()
                         controller.getQuerySessions(call)
                     }
+                    
+                    get("/analytics") {
+                        val controller = call.scope.get<QuerySessionController>()
+                        controller.getQuerySessionAnalytics(call)
+                    }
 
                     get("/{id}") {
                         val controller = call.scope.get<QuerySessionController>()

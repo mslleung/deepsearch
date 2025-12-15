@@ -13,6 +13,7 @@ import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.net.URI
 import java.util.UUID
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -27,6 +28,30 @@ data class QuerySessionDetail(
 )
 
 /**
+ * Analytics data for query sessions.
+ */
+data class QuerySessionAnalytics(
+    val totalSessions: Int,
+    val avgLiveSearchTimeMs: Long?,
+    val avgStaticSearchTimeMs: Long?,
+    val successRate: Double,           // % with ANSWER_COMPLETE finish reason
+    val answerFoundRate: Double,       // % where answerFound = true
+    val avgUrlsPerSession: Double,
+    val domainStats: List<DomainStat>
+)
+
+/**
+ * Statistics for a specific domain.
+ */
+data class DomainStat(
+    val domain: String,
+    val sessionCount: Int,
+    val avgSearchTimeMs: Long?,
+    val successRate: Double,
+    val answerFoundRate: Double
+)
+
+/**
  * Application-level coordinator for `QuerySession` persistence and lifecycle orchestration.
  * Business rules live inside the `QuerySession` entity.
  */
@@ -36,11 +61,12 @@ interface IQuerySessionService {
 
     /**
      * Complete the session with a final answer.
-     * This sets the answer, finish reason, image IDs, and transitions to FINISHED state.
+     * This sets the answer, finish reason, answerFound flag, image IDs, and transitions to FINISHED state.
      */
     suspend fun completeSessionAnswerComplete(
         sessionId: QuerySessionId,
         answer: String,
+        answerFound: Boolean,
         imageIds: List<String> = emptyList()
     )
 
@@ -56,6 +82,7 @@ interface IQuerySessionService {
     suspend fun completeSessionBudgetExceeded(
         sessionId: QuerySessionId,
         answer: String,
+        answerFound: Boolean,
         budget: SearchBudget,
         imageIds: List<String> = emptyList()
     )
@@ -66,6 +93,7 @@ interface IQuerySessionService {
     suspend fun completeSessionLinksExhausted(
         sessionId: QuerySessionId,
         answer: String,
+        answerFound: Boolean,
         imageIds: List<String> = emptyList()
     )
 
@@ -108,6 +136,35 @@ interface IQuerySessionService {
      * @throws IllegalArgumentException if session not found
      */
     suspend fun getSessionDetailInternal(sessionId: QuerySessionId): QuerySessionDetail
+    
+    /**
+     * Get query sessions with search, filtering, and sorting.
+     */
+    suspend fun getSessionsWithFilters(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?,
+        sortBy: String,
+        sortOrder: String,
+        offset: Int,
+        limit: Int
+    ): List<QuerySession>
+    
+    /**
+     * Count sessions with filters (for pagination).
+     */
+    suspend fun countSessionsWithFilters(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?
+    ): Long
+    
+    /**
+     * Get analytics for a user's query sessions.
+     */
+    suspend fun getAnalytics(userId: UserId): QuerySessionAnalytics
 }
 
 /**
@@ -140,16 +197,18 @@ class QuerySessionService(
     override suspend fun completeSessionAnswerComplete(
         sessionId: QuerySessionId,
         answer: String,
+        answerFound: Boolean,
         imageIds: List<String>
     ) {
         val session = getSessionOrThrow(sessionId)
-        session.completeWithAnswer(answer, FinishReason.ANSWER_COMPLETE, imageIds)
+        session.completeWithAnswer(answer, FinishReason.ANSWER_COMPLETE, answerFound, imageIds)
         querySessionRepository.update(session)
         logger.info(
-            "[{}] Session completed: {} chars, {} images, answer complete",
+            "[{}] Session completed: {} chars, {} images, answerFound={}, answer complete",
             sessionId.value,
             answer.length,
-            imageIds.size
+            imageIds.size,
+            answerFound
         )
     }
 
@@ -166,6 +225,7 @@ class QuerySessionService(
     override suspend fun completeSessionBudgetExceeded(
         sessionId: QuerySessionId, 
         answer: String, 
+        answerFound: Boolean,
         budget: SearchBudget,
         imageIds: List<String>
     ) {
@@ -177,23 +237,25 @@ class QuerySessionService(
 
         if (isTimeBudgetExceeded) {
             val session = getSessionOrThrow(sessionId)
-            session.completeWithAnswer(answer, FinishReason.TIME_BUDGET_EXCEEDED, imageIds)
+            session.completeWithAnswer(answer, FinishReason.TIME_BUDGET_EXCEEDED, answerFound, imageIds)
             querySessionRepository.update(session)
             logger.info(
-                "[{}] Session completed: {} chars, {} images, time budget exceeded",
+                "[{}] Session completed: {} chars, {} images, answerFound={}, time budget exceeded",
                 sessionId.value,
                 answer.length,
-                imageIds.size
+                imageIds.size,
+                answerFound
             )
         } else if (isMaxLinksBudgetExceeded) {
             val session = getSessionOrThrow(sessionId)
-            session.completeWithAnswer(answer, FinishReason.MAX_LINKS_BUDGET_EXCEEDED, imageIds)
+            session.completeWithAnswer(answer, FinishReason.MAX_LINKS_BUDGET_EXCEEDED, answerFound, imageIds)
             querySessionRepository.update(session)
             logger.info(
-                "[{}] Session completed: {} chars, {} images, max links budget exceeded",
+                "[{}] Session completed: {} chars, {} images, answerFound={}, max links budget exceeded",
                 sessionId.value,
                 answer.length,
-                imageIds.size
+                imageIds.size,
+                answerFound
             )
         }
     }
@@ -201,16 +263,18 @@ class QuerySessionService(
     override suspend fun completeSessionLinksExhausted(
         sessionId: QuerySessionId, 
         answer: String,
+        answerFound: Boolean,
         imageIds: List<String>
     ) {
         val session = getSessionOrThrow(sessionId)
-        session.completeWithAnswer(answer, FinishReason.LINKS_EXHAUSTED, imageIds)
+        session.completeWithAnswer(answer, FinishReason.LINKS_EXHAUSTED, answerFound, imageIds)
         querySessionRepository.update(session)
         logger.info(
-            "[{}] Session completed: {} chars, {} images, links exhausted",
+            "[{}] Session completed: {} chars, {} images, answerFound={}, links exhausted",
             sessionId.value,
             answer.length,
-            imageIds.size
+            imageIds.size,
+            answerFound
         )
     }
 
@@ -262,6 +326,128 @@ class QuerySessionService(
             cachedWebpages = cachedWebpages,
             imageIds = session.imageIds
         )
+    }
+
+    override suspend fun getSessionsWithFilters(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?,
+        sortBy: String,
+        sortOrder: String,
+        offset: Int,
+        limit: Int
+    ): List<QuerySession> {
+        return querySessionRepository.findByUserIdWithFilters(
+            userId, search, domain, status, sortBy, sortOrder, offset, limit
+        )
+    }
+    
+    override suspend fun countSessionsWithFilters(
+        userId: UserId,
+        search: String?,
+        domain: String?,
+        status: String?
+    ): Long {
+        return querySessionRepository.countByUserIdWithFilters(userId, search, domain, status)
+    }
+    
+    override suspend fun getAnalytics(userId: UserId): QuerySessionAnalytics {
+        val allSessions = querySessionRepository.findAllByUserId(userId)
+        
+        if (allSessions.isEmpty()) {
+            return QuerySessionAnalytics(
+                totalSessions = 0,
+                avgLiveSearchTimeMs = null,
+                avgStaticSearchTimeMs = null,
+                successRate = 0.0,
+                answerFoundRate = 0.0,
+                avgUrlsPerSession = 0.0,
+                domainStats = emptyList()
+            )
+        }
+        
+        // Split by search mode
+        val liveSessions = allSessions.filter { it.searchMode == SearchMode.LIVE_CRAWLING }
+        val staticSessions = allSessions.filter { it.searchMode == SearchMode.CACHE_ONLY }
+        
+        // Calculate average durations
+        val avgLiveSearchTimeMs = liveSessions
+            .mapNotNull { it.durationMs }
+            .takeIf { it.isNotEmpty() }
+            ?.average()
+            ?.toLong()
+            
+        val avgStaticSearchTimeMs = staticSessions
+            .mapNotNull { it.durationMs }
+            .takeIf { it.isNotEmpty() }
+            ?.average()
+            ?.toLong()
+        
+        // Success rate (ANSWER_COMPLETE)
+        val completedSessions = allSessions.filter { it.finishReason != null }
+        val successRate = if (completedSessions.isNotEmpty()) {
+            completedSessions.count { it.finishReason == FinishReason.ANSWER_COMPLETE }.toDouble() / completedSessions.size
+        } else 0.0
+        
+        // Answer found rate
+        val sessionsWithAnswerFound = allSessions.filter { it.answerFound != null }
+        val answerFoundRate = if (sessionsWithAnswerFound.isNotEmpty()) {
+            sessionsWithAnswerFound.count { it.answerFound == true }.toDouble() / sessionsWithAnswerFound.size
+        } else 0.0
+        
+        // Average URLs per session
+        val urlCounts = allSessions.map { session ->
+            urlAccessService.getUrlAccessesBySession(session.id).size
+        }
+        val avgUrlsPerSession = if (urlCounts.isNotEmpty()) urlCounts.average() else 0.0
+        
+        // Group by domain
+        val sessionsByDomain = allSessions.groupBy { extractDomain(it.url) }
+        val domainStats = sessionsByDomain.map { (domain, sessions) ->
+            val domainCompletedSessions = sessions.filter { it.finishReason != null }
+            val domainSuccessRate = if (domainCompletedSessions.isNotEmpty()) {
+                domainCompletedSessions.count { it.finishReason == FinishReason.ANSWER_COMPLETE }.toDouble() / domainCompletedSessions.size
+            } else 0.0
+            
+            val domainSessionsWithAnswerFound = sessions.filter { it.answerFound != null }
+            val domainAnswerFoundRate = if (domainSessionsWithAnswerFound.isNotEmpty()) {
+                domainSessionsWithAnswerFound.count { it.answerFound == true }.toDouble() / domainSessionsWithAnswerFound.size
+            } else 0.0
+            
+            val avgSearchTimeMs = sessions
+                .mapNotNull { it.durationMs }
+                .takeIf { it.isNotEmpty() }
+                ?.average()
+                ?.toLong()
+            
+            DomainStat(
+                domain = domain,
+                sessionCount = sessions.size,
+                avgSearchTimeMs = avgSearchTimeMs,
+                successRate = domainSuccessRate,
+                answerFoundRate = domainAnswerFoundRate
+            )
+        }.sortedByDescending { it.sessionCount }
+        
+        return QuerySessionAnalytics(
+            totalSessions = allSessions.size,
+            avgLiveSearchTimeMs = avgLiveSearchTimeMs,
+            avgStaticSearchTimeMs = avgStaticSearchTimeMs,
+            successRate = successRate,
+            answerFoundRate = answerFoundRate,
+            avgUrlsPerSession = avgUrlsPerSession,
+            domainStats = domainStats
+        )
+    }
+    
+    private fun extractDomain(url: String): String {
+        return try {
+            val uri = URI(url)
+            uri.host?.lowercase() ?: url
+        } catch (e: Exception) {
+            url
+        }
     }
 
     private suspend fun getSessionOrThrow(sessionId: QuerySessionId): QuerySession {

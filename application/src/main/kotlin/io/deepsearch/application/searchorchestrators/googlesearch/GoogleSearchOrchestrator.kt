@@ -97,8 +97,8 @@ class GoogleSearchOrchestrator(
                 urlContextOutput.tokenUsage.totalTokens
             )
 
-            // 4) Complete session
-            querySessionService.completeSessionAnswerComplete(sessionId, urlContextOutput.content)
+            // 4) Complete session (Google URL context search always produces an answer)
+            querySessionService.completeSessionAnswerComplete(sessionId, urlContextOutput.content, answerFound = true)
 
             val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
             emit(
