@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.infrastructure.database.PeriodicIndexJobTable
@@ -39,6 +40,7 @@ class ExposedPeriodicIndexJobRepository(
             it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
             it[version] = job.version
             it[languagePattern] = job.languagePattern
+            it[ocrLanguage] = job.ocrLanguage.code
         }[periodicIndexJobTable.id]
 
         job.id = id
@@ -183,7 +185,8 @@ class ExposedPeriodicIndexJobRepository(
         processedCount = row[periodicIndexJobTable.processedCount],
         state = PeriodicIndexJobState.valueOf(row[periodicIndexJobTable.state]),
         version = row[periodicIndexJobTable.version],
-        languagePattern = row[periodicIndexJobTable.languagePattern]
+        languagePattern = row[periodicIndexJobTable.languagePattern],
+        ocrLanguage = OcrLanguage.fromCodeOrDefault(row[periodicIndexJobTable.ocrLanguage])
     )
 }
 

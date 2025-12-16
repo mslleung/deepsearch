@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.onCompletion
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.IUrlContentProcessingService.*
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SessionId
@@ -48,7 +49,8 @@ interface IUrlContentProcessingService {
         url: String,
         query: String,
         maxCacheAge: Long? = null,
-        sessionId: QuerySessionId
+        sessionId: QuerySessionId,
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
     ): Flow<UrlProcessingEvent>
 
     /**
@@ -58,7 +60,8 @@ interface IUrlContentProcessingService {
      */
     fun processUrlAsFlow(
         url: String,
-        sessionId: PeriodicIndexSessionId
+        sessionId: PeriodicIndexSessionId,
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
     ): Flow<UrlProcessingEvent>
 }
 
@@ -81,13 +84,15 @@ class UrlContentProcessingService(
         url: String,
         query: String,
         maxCacheAge: Long?,
-        sessionId: QuerySessionId
+        sessionId: QuerySessionId,
+        ocrLanguage: OcrLanguage
     ): Flow<UrlProcessingEvent> {
         return processInternalAsFlow(
             url = url,
             query = query,
             maxCacheAge = maxCacheAge,
             sessionId = sessionId,
+            ocrLanguage = ocrLanguage,
             discoverLinks = { html ->
                 webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url, sessionId)
             },
@@ -100,7 +105,8 @@ class UrlContentProcessingService(
 
     override fun processUrlAsFlow(
         url: String,
-        sessionId: PeriodicIndexSessionId
+        sessionId: PeriodicIndexSessionId,
+        ocrLanguage: OcrLanguage
     ): Flow<UrlProcessingEvent> {
         // max cache age is set to 0 so the cache will always expire, this is because periodic index should forcefully refresh everything
         // For periodic index, we use a generic query for file search
@@ -109,6 +115,7 @@ class UrlContentProcessingService(
             query = "Extract all relevant content",
             maxCacheAge = 0,
             sessionId = sessionId,
+            ocrLanguage = ocrLanguage,
             discoverLinks = { html ->
                 webpageLinkDiscoveryService.discoverAllLinks(html, url)
             },
@@ -128,6 +135,7 @@ class UrlContentProcessingService(
         query: String,
         maxCacheAge: Long?,
         sessionId: SessionId,
+        ocrLanguage: OcrLanguage,
         discoverLinks: suspend (html: String) -> List<WebpageLink>,
         discoverLinksForFile: suspend (markdown: String, fileBytes: ByteArray, mimeType: String, sourceUrl: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
@@ -154,7 +162,7 @@ class UrlContentProcessingService(
                 when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
                     is ContentTypeResult.Html -> {
                         logger.debug("Detected HTML content for: {}", normalizedUrl)
-                        processHtmlUrlAsFlow(normalizedUrl, sessionId, discoverLinks)
+                        processHtmlUrlAsFlow(normalizedUrl, sessionId, ocrLanguage, discoverLinks)
                             .collect { event -> emit(event) }
                     }
 
@@ -242,6 +250,7 @@ class UrlContentProcessingService(
     private fun processHtmlUrlAsFlow(
         normalizedUrl: String,
         sessionId: SessionId,
+        ocrLanguage: OcrLanguage,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
         browserPool.withPage { page ->
@@ -259,7 +268,7 @@ class UrlContentProcessingService(
                 try {
                     // Extract webpage content - this internally stores images in their own
                     // committed transactions via webpageImageRepository.batchUpsert()
-                    val extractionResult = webpageExtractionService.extractWebpage(page, sessionId)
+                    val extractionResult = webpageExtractionService.extractWebpage(page, sessionId, ocrLanguage)
                     logger.debug(
                         "Markdown extraction complete for {}: {} chars",
                         normalizedUrl,

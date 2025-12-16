@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.models.entities.PeriodicIndexConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.SubscriptionPlan
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IPeriodicIndexConfigRepository
 import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
@@ -18,8 +19,8 @@ interface IPeriodicIndexService {
     suspend fun listConfigs(userId: UserId): List<PeriodicIndexConfig>
     suspend fun getConfig(configId: Long): PeriodicIndexConfig?
     suspend fun getConfigCount(userId: UserId): Int
-    suspend fun createConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int, languagePattern: String?, maxAllowedConfigs: Int): PeriodicIndexConfig
-    suspend fun updateConfig(configId: Long, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int, languagePattern: String?): PeriodicIndexConfig
+    suspend fun createConfig(userId: UserId, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int, languagePattern: String?, ocrLanguage: OcrLanguage, maxAllowedConfigs: Int): PeriodicIndexConfig
+    suspend fun updateConfig(configId: Long, url: String, sitemapUrl: String?, periodDays: Int?, maxUrlCount: Int, languagePattern: String?, ocrLanguage: OcrLanguage): PeriodicIndexConfig
     suspend fun deleteConfig(configId: Long)
     suspend fun enableConfig(configId: Long): PeriodicIndexConfig
     suspend fun disableConfig(configId: Long): PeriodicIndexConfig
@@ -61,6 +62,7 @@ class PeriodicIndexService(
         periodDays: Int?, 
         maxUrlCount: Int,
         languagePattern: String?,
+        ocrLanguage: OcrLanguage,
         maxAllowedConfigs: Int
     ): PeriodicIndexConfig {
         // Check limit
@@ -75,7 +77,8 @@ class PeriodicIndexService(
             sitemapUrl = sitemapUrl,
             periodDays = periodDays,
             maxUrlCount = maxUrlCount,
-            languagePattern = languagePattern
+            languagePattern = languagePattern,
+            ocrLanguage = ocrLanguage
         )
         return periodicIndexConfigRepository.create(newConfig)
     }
@@ -86,12 +89,13 @@ class PeriodicIndexService(
         sitemapUrl: String?, 
         periodDays: Int?, 
         maxUrlCount: Int,
-        languagePattern: String?
+        languagePattern: String?,
+        ocrLanguage: OcrLanguage
     ): PeriodicIndexConfig {
         val existing = periodicIndexConfigRepository.findById(configId)
             ?: throw IllegalArgumentException("Config not found: $configId")
         
-        existing.updateConfig(url, sitemapUrl, periodDays, maxUrlCount, languagePattern)
+        existing.updateConfig(url, sitemapUrl, periodDays, maxUrlCount, languagePattern, ocrLanguage)
         if (!existing.enabled) {
             existing.enable() // Re-enable if it was disabled
         }
@@ -130,12 +134,13 @@ class PeriodicIndexService(
         val config = periodicIndexConfigRepository.findById(configId)
             ?: throw IllegalArgumentException("No periodic index configuration found: $configId")
 
-        // Start the job with the sitemap URL and language pattern from config
+        // Start the job with the sitemap URL, language pattern, and OCR language from config
         val job = periodicIndexJobService.start(
             baseUrl = config.url,
             maxUrlCount = config.maxUrlCount,
             sitemapUrl = config.sitemapUrl,
             languagePattern = config.languagePattern,
+            ocrLanguage = config.ocrLanguage,
             userId = config.userId
         )
 
@@ -167,12 +172,13 @@ class PeriodicIndexService(
         
         for (config in dueConfigs) {
             try {
-                // Start job with sitemap URL and language pattern from config
+                // Start job with sitemap URL, language pattern, and OCR language from config
                 periodicIndexJobService.start(
                     baseUrl = config.url,
                     maxUrlCount = config.maxUrlCount,
                     sitemapUrl = config.sitemapUrl,
                     languagePattern = config.languagePattern,
+                    ocrLanguage = config.ocrLanguage,
                     userId = config.userId
                 )
 

@@ -250,7 +250,7 @@ class AgenticBrowserSearchOrchestrator(
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
                 eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
 
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId)
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId, searchQuery.ocrLanguage)
                     .filter { event ->
                         val eventUrl = normalizeUrlService.normalize(event.url) ?: event.url
                         // Use atomic add() which returns true only if element was NOT already present
@@ -343,7 +343,8 @@ class AgenticBrowserSearchOrchestrator(
                             normalizedUrl,
                             searchQuery.query,
                             maxCacheAge,
-                            sessionId
+                            sessionId,
+                            searchQuery.ocrLanguage
                         )
                             .catch { e ->
                                 when (e) {
@@ -450,7 +451,7 @@ class AgenticBrowserSearchOrchestrator(
 
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(url) {
-                        urlContentProcessingService.processUrlAsFlow(url, searchQuery.query, maxCacheAge, sessionId)
+                        urlContentProcessingService.processUrlAsFlow(url, searchQuery.query, maxCacheAge, sessionId, searchQuery.ocrLanguage)
                             .catch { e ->
                                 when (e) {
                                     is CancellationException -> throw e

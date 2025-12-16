@@ -1,5 +1,6 @@
 package io.deepsearch.domain.models.entities
 
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -29,7 +30,12 @@ class PeriodicIndexJob(
      * - Query pattern: `?lang=en` - matches URLs with this query parameter
      * Null means no language filtering (crawl all languages).
      */
-    val languagePattern: String? = null
+    val languagePattern: String? = null,
+    /**
+     * OCR language for Tesseract text extraction from images.
+     * Defaults to English.
+     */
+    val ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
 ) {
 
     fun incrementProcessed() {

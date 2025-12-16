@@ -87,6 +87,17 @@ class SearchController(
             )
             return
         }
+        
+        // Validate OCR language
+        try {
+            request.validateOcrLanguage()
+        } catch (e: IllegalArgumentException) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf("error" to e.message)
+            )
+            return
+        }
 
         // Parse and validate mode
         val searchMode = request.toSearchMode()
@@ -99,7 +110,8 @@ class SearchController(
             searchMode,
             apiKey.id!!,
             apiKey.userId,
-            request.languagePattern
+            request.languagePattern,
+            request.toOcrLanguage()
         )
 
         // Consume usage after successful search
@@ -192,6 +204,7 @@ class SearchController(
             val maxCacheAge = call.request.queryParameters["maxCacheAge"]?.toLongOrNull()
             val modeParam = call.request.queryParameters["mode"]
             val languagePattern = call.request.queryParameters["languagePattern"]
+            val ocrLanguageParam = call.request.queryParameters["ocrLanguage"]
 
             if (query.isNullOrBlank() || url.isNullOrBlank()) {
                 sse.send(
@@ -229,7 +242,7 @@ class SearchController(
             }
 
             // Parse mode and validate language pattern
-            val searchRequest = SearchRequest(query, url, maxCacheAge, modeParam, languagePattern)
+            val searchRequest = SearchRequest(query, url, maxCacheAge, modeParam, languagePattern, ocrLanguageParam)
             val searchMode = try {
                 searchRequest.toSearchMode()
             } catch (e: IllegalArgumentException) {
@@ -268,6 +281,26 @@ class SearchController(
                 )
                 return
             }
+            
+            // Validate OCR language
+            try {
+                searchRequest.validateOcrLanguage()
+            } catch (e: IllegalArgumentException) {
+                sse.send(
+                    ServerSentEvent(
+                        Json.encodeToString(
+                            SearchEventDto.serializer(),
+                            SearchEventDto.SessionErrorDto(
+                                "",
+                                "BadRequest",
+                                e.message ?: "Invalid OCR language",
+                                System.currentTimeMillis()
+                            )
+                        )
+                    )
+                )
+                return
+            }
 
             apiKeyService.incrementApiKeyUsage(rawApiKey)
             subscriptionPlanService.consumeUsage(apiKey.userId)
@@ -279,7 +312,8 @@ class SearchController(
                 maxCacheAge,
                 searchMode,
                 apiKey.id!!,
-                languagePattern
+                languagePattern,
+                searchRequest.toOcrLanguage()
             )
 
             eventFlow.collect { event ->

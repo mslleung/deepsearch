@@ -1,6 +1,7 @@
 package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.PeriodicIndexConfig
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IPeriodicIndexConfigRepository
 import io.deepsearch.infrastructure.database.PeriodicIndexConfigTable
@@ -33,6 +34,7 @@ class ExposedPeriodicIndexConfigRepository(
             it[lastRunAt] = config.lastRunAt
             it[version] = config.version
             it[languagePattern] = config.languagePattern
+            it[ocrLanguage] = config.ocrLanguage.code
         }[periodicIndexConfigTable.id]
 
         PeriodicIndexConfig(
@@ -47,7 +49,8 @@ class ExposedPeriodicIndexConfigRepository(
             updatedAt = config.updatedAt,
             lastRunAt = config.lastRunAt,
             version = config.version,
-            languagePattern = config.languagePattern
+            languagePattern = config.languagePattern,
+            ocrLanguage = config.ocrLanguage
         )
     }
 
@@ -64,6 +67,7 @@ class ExposedPeriodicIndexConfigRepository(
             it[lastRunAt] = config.lastRunAt
             it[version] = config.version + 1
             it[languagePattern] = config.languagePattern
+            it[ocrLanguage] = config.ocrLanguage.code
         }
         if (rows > 0) {
             config.apply { version += 1 }
@@ -119,7 +123,8 @@ class ExposedPeriodicIndexConfigRepository(
             updatedAt = row[periodicIndexConfigTable.updatedAt],
             lastRunAt = row[periodicIndexConfigTable.lastRunAt],
             version = row[periodicIndexConfigTable.version],
-            languagePattern = row[periodicIndexConfigTable.languagePattern]
+            languagePattern = row[periodicIndexConfigTable.languagePattern],
+            ocrLanguage = OcrLanguage.fromCodeOrDefault(row[periodicIndexConfigTable.ocrLanguage])
         )
     }
 }

@@ -8,11 +8,13 @@ import java.net.URI
  * @param query The search query text
  * @param url The base URL to search within
  * @param languagePattern Optional language filter pattern (e.g., "/en-us/" or "?lang=en")
+ * @param ocrLanguage OCR language for Tesseract text extraction from images
  */
 data class SearchQuery(
     val query: String, 
     val url: String,
-    val languagePattern: String? = null
+    val languagePattern: String? = null,
+    val ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
 ) {
     
     /**

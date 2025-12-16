@@ -1,5 +1,6 @@
 package io.deepsearch.domain.models.entities
 
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
@@ -49,7 +50,12 @@ class PeriodicIndexConfig(
      * - Query pattern: `?lang=en` - matches URLs with this query parameter
      * Null means no language filtering (crawl all languages).
      */
-    var languagePattern: String? = null
+    var languagePattern: String? = null,
+    /**
+     * OCR language for Tesseract text extraction from images.
+     * Defaults to English.
+     */
+    var ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
 ) {
     var periodDays: Int? = periodDays
         private set
@@ -105,7 +111,8 @@ class PeriodicIndexConfig(
         newSitemapUrl: String?, 
         newPeriodDays: Int?, 
         newMaxUrlCount: Int = maxUrlCount,
-        newLanguagePattern: String? = languagePattern
+        newLanguagePattern: String? = languagePattern,
+        newOcrLanguage: OcrLanguage = ocrLanguage
     ) {
         PeriodicIndexPeriod.requireValidPeriodDays(newPeriodDays)
         require(newMaxUrlCount in MIN_MAX_URL_COUNT..MAX_MAX_URL_COUNT) {
@@ -116,6 +123,7 @@ class PeriodicIndexConfig(
         periodDays = newPeriodDays
         maxUrlCount = newMaxUrlCount
         languagePattern = newLanguagePattern
+        ocrLanguage = newOcrLanguage
         updatedAt = Clock.System.now().toEpochMilliseconds()
     }
 

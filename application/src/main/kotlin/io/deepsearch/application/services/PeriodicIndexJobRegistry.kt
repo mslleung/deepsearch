@@ -376,7 +376,7 @@ class PeriodicIndexJobRegistry(
                     
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage)
                             .catch { e ->
                                 if (e is CancellationException) throw e
                                 if (e is UrlProcessingException) {
@@ -489,7 +489,7 @@ class PeriodicIndexJobRegistry(
                     
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage)
                             .catch { e ->
                                 if (e is CancellationException) throw e
                                 if (e is UrlProcessingException) {
@@ -590,7 +590,7 @@ class PeriodicIndexJobRegistry(
                     
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage)
                             .catch { e ->
                                 if (e is CancellationException) throw e
                                 if (e is UrlProcessingException) {
@@ -718,7 +718,7 @@ class PeriodicIndexJobRegistry(
 
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage)
                             .catch { e ->
                                 when (e) {
                                     is CancellationException -> throw e

@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.models.valueobjects.SessionId
 import kotlinx.coroutines.coroutineScope
@@ -25,7 +26,7 @@ data class WebpageExtractionResult(
 )
 
 interface IWebpageExtractionService {
-    suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId): WebpageExtractionResult
+    suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT): WebpageExtractionResult
 }
 
 class WebpageExtractionService(
@@ -61,7 +62,7 @@ class WebpageExtractionService(
      *    - Remove semantic elements
      *    - Extract final text
      */
-    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId): WebpageExtractionResult =
+    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId, ocrLanguage: OcrLanguage): WebpageExtractionResult =
         coroutineScope {
             val result: WebpageExtractionResult
             val duration = measureTimeMillis {
@@ -98,7 +99,7 @@ class WebpageExtractionService(
                 val imageReplacementsFlow = flow {
                     val images = webpage.extractImages()
                     logger.debug("Images extracted ({}), starting interpretation...", images.size)
-                    emit(interpretImages(images, sessionId))
+                    emit(interpretImages(images, sessionId, ocrLanguage))
                 }
                 
                 // All flows run in parallel - each starts its LLM work as soon as browser data is ready
@@ -230,13 +231,14 @@ class WebpageExtractionService(
 
     private suspend fun interpretImages(
         images: List<IBrowserPage.WebImage>,
-        sessionId: SessionId
+        sessionId: SessionId,
+        ocrLanguage: OcrLanguage
     ): ImageReplacementsWithHashes {
         val result: ImageReplacementsWithHashes
         val duration = measureTimeMillis {
             // Images already include screenshot fallbacks (handled internally by browser)
             val extractionResults =
-                webpageImageTextExtractionService.extractTextFromImagesWithHashes(images, sessionId)
+                webpageImageTextExtractionService.extractTextFromImagesWithHashes(images, sessionId, ocrLanguage)
             val replacements = images.zip(extractionResults).flatMap { (image, extractionResult) ->
                 val wrappedText = wrapImageTextWithXmlTag(extractionResult)
                 image.cssSelectors.map { cssSelector ->

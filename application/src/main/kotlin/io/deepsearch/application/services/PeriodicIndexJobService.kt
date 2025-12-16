@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.domain.services.INormalizeUrlService
@@ -46,7 +47,7 @@ interface IPeriodicIndexJobService {
         val failedUrls: List<FailedUrlInfo> = emptyList()
     )
 
-    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, languagePattern: String? = null, userId: UserId): PeriodicIndexJob
+    suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, languagePattern: String? = null, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT, userId: UserId): PeriodicIndexJob
     suspend fun stop(jobId: Long)
     suspend fun findById(jobId: Long): PeriodicIndexJob?
     suspend fun list(state: PeriodicIndexJobState? = null): List<PeriodicIndexJob>
@@ -62,7 +63,7 @@ class PeriodicIndexJobService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?, languagePattern: String?, userId: UserId): PeriodicIndexJob {
+    override suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String?, languagePattern: String?, ocrLanguage: OcrLanguage, userId: UserId): PeriodicIndexJob {
         val normalizedBase = normalize(baseUrl)
         val now = Clock.System.now()
         val created = jobRepository.create(
@@ -76,7 +77,8 @@ class PeriodicIndexJobService(
                 updatedAt = now,
                 processedCount = 0,
                 state = PeriodicIndexJobState.IN_PROGRESS,
-                languagePattern = languagePattern
+                languagePattern = languagePattern,
+                ocrLanguage = ocrLanguage
             )
         )
         registry.ensureRunning(created)

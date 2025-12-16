@@ -6,6 +6,7 @@ import io.deepsearch.domain.agents.ImageClassificationInput
 import io.deepsearch.domain.agents.TableExtractionInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageImage
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
@@ -38,13 +39,13 @@ data class ImageExtractionResult(
 }
 
 interface IWebpageImageTextExtractionService {
-    suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: SessionId): String?
-    suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: SessionId): List<String?>
+    suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: SessionId, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT): String?
+    suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: SessionId, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT): List<String?>
     
     /**
      * Extract text from images and return results with image hashes for XML tag generation.
      */
-    suspend fun extractTextFromImagesWithHashes(images: List<IBrowserPage.WebImage>, sessionId: SessionId): List<ImageExtractionResult>
+    suspend fun extractTextFromImagesWithHashes(images: List<IBrowserPage.WebImage>, sessionId: SessionId, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT): List<ImageExtractionResult>
 }
 
 class WebpageImageTextExtractionService(
@@ -63,8 +64,8 @@ class WebpageImageTextExtractionService(
      * If text is detected, uses LLM to extract it with proper formatting (including tables).
      * Results are cached to avoid reprocessing the same image.
      */
-    override suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: SessionId): String? {
-        return extractTextFromImages(listOf(image), sessionId).firstOrNull()
+    override suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: SessionId, ocrLanguage: OcrLanguage): String? {
+        return extractTextFromImages(listOf(image), sessionId, ocrLanguage).firstOrNull()
     }
 
     /**
@@ -76,14 +77,15 @@ class WebpageImageTextExtractionService(
      * Results are cached to avoid reprocessing the same images.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: SessionId): List<String?> {
-        return extractTextFromImagesWithHashes(images, sessionId).map { it.extractedText }
+    override suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: SessionId, ocrLanguage: OcrLanguage): List<String?> {
+        return extractTextFromImagesWithHashes(images, sessionId, ocrLanguage).map { it.extractedText }
     }
 
     @OptIn(ExperimentalTime::class)
     override suspend fun extractTextFromImagesWithHashes(
         images: List<IBrowserPage.WebImage>,
-        sessionId: SessionId
+        sessionId: SessionId,
+        ocrLanguage: OcrLanguage
     ): List<ImageExtractionResult> {
         if (images.isEmpty()) {
             return emptyList()
@@ -112,7 +114,7 @@ class WebpageImageTextExtractionService(
             
             coroutineScope {
                 val ocrResults = uncachedImages.map { image ->
-                    async { image to !ocrService.extractText(image.bytes, image.mimeType).isEmpty() }
+                    async { image to !ocrService.extractText(image.bytes, image.mimeType, ocrLanguage).isEmpty() }
                 }.awaitAll()
 
                 val imagesToCacheWithoutText = mutableListOf<WebpageImage>()

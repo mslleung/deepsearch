@@ -4,6 +4,7 @@ import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgent
 import io.deepsearch.application.searchorchestrators.cacheonlysearch.ICacheOnlySearchOrchestrator
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -29,7 +30,8 @@ interface ISearchService {
         mode: SearchMode = SearchMode.LIVE_CRAWLING,
         apiKeyId: ApiKeyId,
         userId: UserId,
-        languagePattern: String? = null
+        languagePattern: String? = null,
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
     ): QuerySessionDetail
 
     /**
@@ -45,7 +47,8 @@ interface ISearchService {
         maxCacheAge: Long? = null,
         mode: SearchMode = SearchMode.LIVE_CRAWLING,
         apiKeyId: ApiKeyId,
-        languagePattern: String? = null
+        languagePattern: String? = null,
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
     ): Flow<SearchEvent>
 }
 
@@ -64,11 +67,12 @@ class SearchService(
         mode: SearchMode,
         apiKeyId: ApiKeyId,
         userId: UserId,
-        languagePattern: String?
+        languagePattern: String?,
+        ocrLanguage: OcrLanguage
     ): QuerySessionDetail {
-        val searchQuery = SearchQuery(query, url, languagePattern)
+        val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage)
         
-        logger.debug("Executing {} search for query: {} with language pattern: {}", mode, query, languagePattern)
+        logger.debug("Executing {} search for query: {} with language pattern: {} and OCR language: {}", mode, query, languagePattern, ocrLanguage)
         
         val orchestrator = when (mode) {
             SearchMode.LIVE_CRAWLING -> agenticBrowserSearchOrchestrator
@@ -99,11 +103,12 @@ class SearchService(
         maxCacheAge: Long?,
         mode: SearchMode,
         apiKeyId: ApiKeyId,
-        languagePattern: String?
+        languagePattern: String?,
+        ocrLanguage: OcrLanguage
     ): Flow<SearchEvent> {
-        val searchQuery = SearchQuery(query, url, languagePattern)
+        val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage)
         
-        logger.debug("Starting streaming {} search for query: {} with language pattern: {}", mode, query, languagePattern)
+        logger.debug("Starting streaming {} search for query: {} with language pattern: {} and OCR language: {}", mode, query, languagePattern, ocrLanguage)
         
         val orchestrator = when (mode) {
             SearchMode.LIVE_CRAWLING -> agenticBrowserSearchOrchestrator

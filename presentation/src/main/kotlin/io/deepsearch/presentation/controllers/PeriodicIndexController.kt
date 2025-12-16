@@ -8,6 +8,7 @@ import io.deepsearch.domain.models.entities.PeriodicIndexConfig
 import io.deepsearch.domain.models.entities.PeriodicIndexPeriod
 import io.deepsearch.domain.models.entities.SubscriptionPlan
 import io.deepsearch.domain.models.valueobjects.LanguagePattern
+import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.UrlAccess
 import io.deepsearch.domain.models.valueobjects.UserId
@@ -90,6 +91,7 @@ class PeriodicIndexController(
             periodDays = request.periodDays,
             maxUrlCount = request.maxUrlCount,
             languagePattern = request.languagePattern,
+            ocrLanguage = OcrLanguage.fromCodeOrDefault(request.ocrLanguage),
             maxAllowedConfigs = maxAllowed
         )
         call.respond(HttpStatusCode.Created, config.toResponse())
@@ -129,7 +131,8 @@ class PeriodicIndexController(
             sitemapUrl = request.sitemapUrl,
             periodDays = request.periodDays,
             maxUrlCount = request.maxUrlCount,
-            languagePattern = request.languagePattern
+            languagePattern = request.languagePattern,
+            ocrLanguage = OcrLanguage.fromCodeOrDefault(request.ocrLanguage)
         )
         call.respond(HttpStatusCode.OK, config.toResponse())
     }
@@ -359,6 +362,14 @@ class PeriodicIndexController(
         // Validate language pattern if provided
         request.languagePattern?.let { pattern ->
             val validationError = LanguagePattern.validate(pattern)
+            if (validationError != null) {
+                return validationError
+            }
+        }
+        
+        // Validate OCR language if provided
+        request.ocrLanguage?.let { code ->
+            val validationError = OcrLanguage.validate(code)
             if (validationError != null) {
                 return validationError
             }
