@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.models.valueobjects.ProxyRuleId
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.proxy.IProxyRuleRepository
+import io.deepsearch.domain.proxy.IProxyTestService
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.proxy.ProxyRule
 import io.deepsearch.domain.proxy.ProxyType
@@ -84,7 +85,8 @@ interface IProxySettingsService {
 
 @OptIn(ExperimentalTime::class)
 class ProxySettingsService(
-    private val proxyRuleRepository: IProxyRuleRepository
+    private val proxyRuleRepository: IProxyRuleRepository,
+    private val proxyTestService: IProxyTestService
 ) : IProxySettingsService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -115,6 +117,17 @@ class ProxySettingsService(
         val existingRule = proxyRuleRepository.findByUserIdAndUrlPattern(userId, urlPattern)
         if (existingRule != null) {
             throw IllegalArgumentException("A rule with this URL pattern already exists")
+        }
+
+        // Validate custom proxy is reachable
+        if (proxyType == ProxyType.CUSTOM && customProxyUrl != null) {
+            val testResult = proxyTestService.testProxy(customProxyUrl)
+            if (!testResult.success) {
+                throw IllegalArgumentException(
+                    "Proxy connection test failed: ${testResult.errorMessage ?: "Unknown error"}"
+                )
+            }
+            logger.info("Proxy test passed. External IP: {}", testResult.externalIp)
         }
 
         val rule = ProxyRule(
@@ -167,6 +180,22 @@ class ProxySettingsService(
             if (existingRule != null) {
                 throw IllegalArgumentException("A rule with this URL pattern already exists")
             }
+        }
+
+        // Validate custom proxy if switching to CUSTOM type or updating proxy URL
+        val effectiveProxyType = proxyType ?: rule.proxyType
+        val effectiveProxyUrl = customProxyUrl ?: rule.customProxyUrl
+        val isChangingToCustom = proxyType == ProxyType.CUSTOM && rule.proxyType != ProxyType.CUSTOM
+        val isUpdatingCustomUrl = rule.proxyType == ProxyType.CUSTOM && customProxyUrl != null && customProxyUrl != rule.customProxyUrl
+
+        if ((isChangingToCustom || isUpdatingCustomUrl) && effectiveProxyType == ProxyType.CUSTOM && effectiveProxyUrl != null) {
+            val testResult = proxyTestService.testProxy(effectiveProxyUrl)
+            if (!testResult.success) {
+                throw IllegalArgumentException(
+                    "Proxy connection test failed: ${testResult.errorMessage ?: "Unknown error"}"
+                )
+            }
+            logger.info("Proxy test passed. External IP: {}", testResult.externalIp)
         }
 
         rule.update(

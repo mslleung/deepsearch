@@ -59,11 +59,15 @@ class TableIdentificationAgentGenAiImpl(
                                     "id" to Schema.builder().type("STRING")
                                         .description("The data-ds-id value of the table root element (e.g., 'ds-table-0', 'ds-table-5').")
                                         .build(),
-                                    "auxiliaryInfo" to Schema.builder().type("STRING")
-                                        .description("The auxiliary info for the table.").build()
+                                    "description" to Schema.builder().type("STRING")
+                                        .description("A brief description of the table's purpose or content based on the webpage context.")
+                                        .build(),
+                                    "columnHeaders" to Schema.builder().type("STRING")
+                                        .description("The column headers of the table, comma-separated.")
+                                        .build()
                                 )
                             )
-                            .required(listOf("id", "auxiliaryInfo"))
+                            .required(listOf("id", "description", "columnHeaders"))
                             .build()
                     )
                     .build()
@@ -83,16 +87,17 @@ class TableIdentificationAgentGenAiImpl(
         - Always target the root containers instead of individual rows and columns, a typical webpage should have a limited number of tables/grids
         - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
         - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
-        - Additionally, generate a brief auxiliaryInfo based on the webpage context, it should contain:
-          - The table's description
-          - The column headers
+        - Additionally, provide:
+          - description: A brief description of the table's purpose or content based on the webpage context
+          - columnHeaders: The column headers of the table, comma-separated
 
         Expected output shape:
         {
             "tables": [
                 {
                     "id": "string",
-                    "auxiliaryInfo": "string"
+                    "description": "string",
+                    "columnHeaders": "string"
                 }
             ]
         }
@@ -106,7 +111,8 @@ class TableIdentificationAgentGenAiImpl(
     @Serializable
     private data class LlmTableResult(
         val id: String,
-        val auxiliaryInfo: String
+        val description: String,
+        val columnHeaders: String
     )
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput {
@@ -223,9 +229,13 @@ class TableIdentificationAgentGenAiImpl(
         // Convert resolved tables to TableIdentifications
         val tableIdentifications = resolvedTables.map { resolved ->
             val containsMedia = detectMediaInTable(resolved.llmResult.id, docForMediaDetection)
+            val auxiliaryInfo = combineAuxiliaryInfo(
+                resolved.llmResult.description,
+                resolved.llmResult.columnHeaders
+            )
             TableIdentification(
                 cssSelector = "[data-ds-id=\"${resolved.llmResult.id}\"]",
-                auxiliaryInfo = resolved.llmResult.auxiliaryInfo,
+                auxiliaryInfo = auxiliaryInfo,
                 containsMedia = containsMedia
             )
         }
@@ -268,6 +278,22 @@ class TableIdentificationAgentGenAiImpl(
         return hasMedia
     }
 
+    /**
+     * Combines description and column headers into a single auxiliaryInfo string.
+     * The format is "Description: {description} | Columns: {columnHeaders}" with handling
+     * for cases where one or both fields might be empty.
+     */
+    private fun combineAuxiliaryInfo(description: String, columnHeaders: String): String {
+        val parts = mutableListOf<String>()
+        if (description.isNotBlank()) {
+            parts.add("Description: $description")
+        }
+        if (columnHeaders.isNotBlank()) {
+            parts.add("Columns: $columnHeaders")
+        }
+        return parts.joinToString(" | ")
+    }
+
     private fun injectStableIdentifiers(cleanedHtml: String, idPrefix: String): String {
         val doc: Document = Jsoup.parse(cleanedHtml)
 
@@ -289,13 +315,18 @@ class TableIdentificationAgentGenAiImpl(
             val id = element.attr("data-ds-id")
             val caption = element.select("caption").text()
             val summary = element.attr("summary")
-            val auxiliaryInfo = when {
+            val description = when {
                 caption.isNotBlank() -> caption
                 summary.isNotBlank() -> summary
                 else -> ""
             }
+            // Extract column headers from <th> elements
+            val headerElements = element.select("th")
+            val columnHeaders = headerElements.map { it.text().trim() }
+                .filter { it.isNotBlank() }
+                .joinToString(", ")
 
-            tables.add(LlmTableResult(id, auxiliaryInfo))
+            tables.add(LlmTableResult(id, description, columnHeaders))
             element.remove()
         }
 

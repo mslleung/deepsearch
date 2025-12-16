@@ -4,6 +4,7 @@ import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IProxySettingsService
 import io.deepsearch.domain.models.valueobjects.ProxyRuleId
 import io.deepsearch.domain.models.valueobjects.UserId
+import io.deepsearch.domain.proxy.IProxyTestService
 import io.deepsearch.domain.proxy.ProxyType
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -15,7 +16,8 @@ import kotlin.time.ExperimentalTime
 
 class ProxySettingsController(
     private val proxySettingsService: IProxySettingsService,
-    private val apiKeyService: IApiKeyService
+    private val apiKeyService: IApiKeyService,
+    private val proxyTestService: IProxyTestService
 ) {
     suspend fun listRules(call: ApplicationCall) {
         val userId = getUserIdFromApiKey(call)
@@ -97,6 +99,29 @@ class ProxySettingsController(
     }
 
     /**
+     * Test a proxy connection.
+     * Requires authentication to prevent abuse.
+     */
+    suspend fun testProxy(call: ApplicationCall) {
+        val userId = getUserIdFromApiKey(call)
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized"))
+            return
+        }
+
+        val request = call.receive<TestProxyRequest>()
+        
+        val result = proxyTestService.testProxy(request.proxyUrl)
+        
+        call.respond(HttpStatusCode.OK, TestProxyResponse(
+            success = result.success,
+            externalIp = result.externalIp,
+            latencyMs = result.latencyMs,
+            error = result.errorMessage
+        ))
+    }
+
+    /**
      * Parses proxy type string to enum.
      * @throws IllegalArgumentException if proxy type is invalid (handled by StatusPages)
      */
@@ -153,6 +178,19 @@ data class ProxyRuleResponse(
 @Serializable
 data class ProxyRulesListResponse(
     val rules: List<ProxyRuleResponse>
+)
+
+@Serializable
+data class TestProxyRequest(
+    val proxyUrl: String
+)
+
+@Serializable
+data class TestProxyResponse(
+    val success: Boolean,
+    val externalIp: String? = null,
+    val latencyMs: Long? = null,
+    val error: String? = null
 )
 
 @OptIn(ExperimentalTime::class)

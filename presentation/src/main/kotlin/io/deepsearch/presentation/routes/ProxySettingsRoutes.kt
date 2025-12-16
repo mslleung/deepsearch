@@ -23,6 +23,11 @@ fun Application.configureProxySettingsRoutes() {
                         controller.createRule(call)
                     }
 
+                    post("/test") {
+                        val controller = call.scope.get<ProxySettingsController>()
+                        controller.testProxy(call)
+                    }
+
                     put("/{id}") {
                         val controller = call.scope.get<ProxySettingsController>()
                         controller.updateRule(call)
