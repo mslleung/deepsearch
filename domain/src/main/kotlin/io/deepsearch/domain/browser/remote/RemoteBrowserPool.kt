@@ -147,10 +147,12 @@ class RemoteBrowserPool(
     }
 
     private suspend fun releaseSession(sessionId: String) {
-        try {
-            httpClient.delete("$baseUrl/sessions/$sessionId")
-        } catch (e: Exception) {
-            logger.warn("Error releasing session: {}", e.message)
+        withContext(NonCancellable) {
+            try {
+                httpClient.delete("$baseUrl/sessions/$sessionId")
+            } catch (e: Exception) {
+                logger.warn("Error releasing session: {}", e.message)
+            }
         }
     }
 

@@ -3,6 +3,8 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.models.entities.LlmTokenUsage
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.ILlmTokenUsageRepository
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.UUID
@@ -23,7 +25,7 @@ interface ILlmTokenUsageService {
      * @param totalTokens Total tokens used
      */
     suspend fun recordTokenUsage(
-        sessionId: SessionId?,
+        sessionId: SessionId,
         agentName: String,
         modelName: String,
         promptTokens: Int,
@@ -44,7 +46,7 @@ class LlmTokenUsageService(
 
     @OptIn(ExperimentalTime::class)
     override suspend fun recordTokenUsage(
-        sessionId: SessionId?,
+        sessionId: SessionId,
         agentName: String,
         modelName: String,
         promptTokens: Int,
@@ -63,7 +65,7 @@ class LlmTokenUsageService(
         )
 
         // Persist to database if session ID is available
-        if (sessionId != null) {
+        withContext(NonCancellable) {
             try {
                 val usage = LlmTokenUsage(
                     id = UUID.randomUUID().toString(),
@@ -80,8 +82,6 @@ class LlmTokenUsageService(
                 logger.error("Failed to persist token usage for session {}: {}", sessionId.value, e.message, e)
                 // Don't throw - token tracking should not break the main flow
             }
-        } else {
-            logger.debug("No session ID provided - token usage logged but not persisted")
         }
     }
 }
