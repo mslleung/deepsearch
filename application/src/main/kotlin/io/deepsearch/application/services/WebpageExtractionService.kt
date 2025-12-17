@@ -29,7 +29,37 @@ data class WebpageExtractionResult(
     val imageHashes: List<ByteArray> = emptyList()
 )
 
+/**
+ * Captured data from browser operations.
+ * Once captured, the browser can be released while extraction continues.
+ */
+data class BrowserCaptures(
+    val snapshot: IBrowserPage.PageSnapshotWithMetadata,
+    val icons: List<IBrowserPage.Icon>,
+    val images: List<IBrowserPage.WebImage>
+)
+
 interface IWebpageExtractionService {
+    /**
+     * Captures all required browser data in parallel.
+     * After this returns, the browser can be released.
+     */
+    suspend fun captureBrowserData(webpage: IBrowserPage): BrowserCaptures
+    
+    /**
+     * Extracts webpage content from pre-captured browser data.
+     * No browser access needed - can be called after browser is released.
+     */
+    suspend fun extractFromCaptures(
+        captures: BrowserCaptures,
+        sessionId: SessionId,
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
+    ): WebpageExtractionResult
+    
+    /**
+     * Convenience method that captures and extracts in one call.
+     * Browser is held for the entire duration.
+     */
     suspend fun extractWebpage(
         webpage: IBrowserPage,
         sessionId: SessionId,
@@ -70,54 +100,57 @@ class WebpageExtractionService(
         transform: suspend (T) -> R
     ): Deferred<R> = async { transform(upstream.await()) }
 
+    // ========== Browser Data Capture ==========
+    
     /**
-     * Converts a webpage into text for downstream LLM processing.
-     * 
-     * Pipelined flow with early browser release:
-     * 
-     *   capturePageSnapshot() ──┬──> identifySemanticElements()
-     *                           └──> identifyTables()
-     *   extractIcons() ────────────> interpretIcons()
-     *   extractImages() ───────────> interpretImages()
-     *   
-     * All browser operations run in parallel for maximum speed.
-     * The snapshot HTML doesn't contain data-ds-id attributes (injected by
-     * icon/image extraction), but we re-inject them into the Jsoup document
-     * during DOM processing using the CSS selectors from extraction results.
-     *   
-     * >>> BROWSER RELEASED when all browser ops complete <<<
-     *   
-     *   [All LLM results] ─────────> DOM processing (Jsoup)
+     * Captures all required browser data in parallel.
+     * After this returns, the browser can be safely released.
      */
-    override suspend fun extractWebpage(
-        webpage: IBrowserPage,
-        sessionId: SessionId,
-        ocrLanguage: OcrLanguage
-    ): WebpageExtractionResult = coroutineScope {
-        logger.debug("Starting pipelined extraction...")
-
-        // ===== Browser Captures (all parallel) =====
-        val snapshotDeferred = async { webpage.capturePageSnapshot() }
-        val iconsDeferred = async { webpage.extractIcons() }
-        val imagesDeferred = async { webpage.extractImages() }
-
-        // ===== LLM Operations (pipelined from captures) =====
-        val semantic = pipeFrom(snapshotDeferred) { doIdentifySemanticElements(sessionId, it) }
-        val tableId = pipeFrom(snapshotDeferred) { doIdentifyTables(sessionId, it) }
-        val iconRepl = pipeFrom(iconsDeferred) { doInterpretIcons(it, sessionId) }
-        val imageRepl = pipeFrom(imagesDeferred) { doInterpretImages(it, sessionId, ocrLanguage) }
-
-        // ===== Wait for Browser Release Point =====
+    override suspend fun captureBrowserData(webpage: IBrowserPage): BrowserCaptures = coroutineScope {
+        logger.debug("Capturing browser data...")
+        
         val snapshot: IBrowserPage.PageSnapshotWithMetadata
         val icons: List<IBrowserPage.Icon>
         val images: List<IBrowserPage.WebImage>
-        val browserDuration = measureTimeMillis {
+        
+        val duration = measureTimeMillis {
+            val snapshotDeferred = async { webpage.capturePageSnapshot() }
+            val iconsDeferred = async { webpage.extractIcons() }
+            val imagesDeferred = async { webpage.extractImages() }
+            
             snapshot = snapshotDeferred.await()
             icons = iconsDeferred.await()
             images = imagesDeferred.await()
         }
-        logger.debug("Browser captures complete in {} ms - browser can be released", browserDuration)
-        // >>> BROWSER CAN BE RELEASED HERE <<<
+        
+        logger.debug("Browser data captured in {} ms: {} icons, {} images", duration, icons.size, images.size)
+        BrowserCaptures(snapshot, icons, images)
+    }
+
+    /**
+     * Extracts webpage content from pre-captured browser data.
+     * 
+     * Pipelined flow - LLM operations start immediately:
+     * 
+     *   snapshot ──┬──> identifySemanticElements()
+     *              └──> identifyTables()
+     *   icons ────────> interpretIcons()
+     *   images ───────> interpretImages()
+     *   
+     *   [All LLM results] ─────────> DOM processing (Jsoup)
+     */
+    override suspend fun extractFromCaptures(
+        captures: BrowserCaptures,
+        sessionId: SessionId,
+        ocrLanguage: OcrLanguage
+    ): WebpageExtractionResult = coroutineScope {
+        logger.debug("Starting extraction from captures...")
+
+        // ===== LLM Operations (all start immediately, run in parallel) =====
+        val semantic = async { doIdentifySemanticElements(sessionId, captures.snapshot) }
+        val tableId = async { doIdentifyTables(sessionId, captures.snapshot) }
+        val iconRepl = async { doInterpretIcons(captures.icons, sessionId) }
+        val imageRepl = async { doInterpretImages(captures.images, sessionId, ocrLanguage) }
 
         // ===== Await LLM Results =====
         val llmDuration = measureTimeMillis { awaitAll(semantic, tableId, iconRepl, imageRepl) }
@@ -137,14 +170,28 @@ class WebpageExtractionService(
             llmResults.imageReplacements.size
         )
 
-        // ===== Phase 4: DOM Processing (Jsoup) =====
+        // ===== DOM Processing (Jsoup) =====
         val result: WebpageExtractionResult
         val jsoupDuration = measureTimeMillis {
-            result = processDom(snapshot, llmResults, sessionId)
+            result = processDom(captures.snapshot, llmResults, sessionId)
         }
         logger.debug("DOM processing complete in {} ms", jsoupDuration)
 
         result
+    }
+    
+    /**
+     * Convenience method that captures and extracts in one call.
+     * Browser is held for the entire duration (use captureBrowserData + extractFromCaptures
+     * for early browser release).
+     */
+    override suspend fun extractWebpage(
+        webpage: IBrowserPage,
+        sessionId: SessionId,
+        ocrLanguage: OcrLanguage
+    ): WebpageExtractionResult {
+        val captures = captureBrowserData(webpage)
+        return extractFromCaptures(captures, sessionId, ocrLanguage)
     }
 
     // ========== Browser Capture Operations ==========
