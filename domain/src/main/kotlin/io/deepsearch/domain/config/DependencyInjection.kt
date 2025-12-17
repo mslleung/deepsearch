@@ -28,6 +28,8 @@ import io.deepsearch.domain.services.JsoupDomService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
+import io.deepsearch.domain.services.GeminiBatchServiceImpl
+import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.domain.http.IProxyAwareHttpClientFactory
 import io.deepsearch.domain.http.ProxyAwareHttpClientFactory
 import io.deepsearch.domain.proxy.IProxyTestService
@@ -59,6 +61,9 @@ val domainModule = module {
     singleOf(::BoundingBoxDerivationService) bind IBoundingBoxDerivationService::class
     singleOf(::JsoupDomService) bind IJsoupDomService::class
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
+    
+    // Gemini Batch API service (stub implementation until SDK supports batch API)
+    singleOf(::GeminiBatchServiceImpl) bind IGeminiBatchService::class
     
     // Adaptive rate limiter (singleton to maintain state across requests per domain)
     singleOf(::AdaptiveRateLimiter) bind IAdaptiveRateLimiter::class

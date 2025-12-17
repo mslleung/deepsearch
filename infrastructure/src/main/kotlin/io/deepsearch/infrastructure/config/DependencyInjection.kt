@@ -43,6 +43,8 @@ val infrastructureModule = module {
     singleOf(::LlmTokenUsageTable)
     singleOf(::PeriodicIndexConfigTable)
     singleOf(::ProxyRuleTable)
+    singleOf(::BatchPeriodicIndexJobTable)
+    singleOf(::BatchUrlStateTable)
     
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
@@ -58,6 +60,8 @@ val infrastructureModule = module {
     singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
     singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
     singleOf(::ExposedUrlAccessRepository) bind IUrlAccessRepository::class
+    singleOf(::ExposedBatchPeriodicIndexJobRepository) bind IBatchPeriodicIndexJobRepository::class
+    singleOf(::ExposedBatchUrlStateRepository) bind IBatchUrlStateRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {

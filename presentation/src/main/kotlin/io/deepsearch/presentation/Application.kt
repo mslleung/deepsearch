@@ -85,6 +85,7 @@ fun Application.module() {
     configureSearchRoutes()
     configurePeriodicIndexJobRoutes()
     configurePeriodicIndexRoutes()
+    configureBatchPeriodicIndexRoutes()
 }
 
 private fun Application.configureCallId() {

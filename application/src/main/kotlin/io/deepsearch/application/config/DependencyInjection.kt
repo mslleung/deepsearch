@@ -46,6 +46,10 @@ val applicationModule = module {
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
     singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
+    
+    // Batch periodic index services (uses Gemini Batch API for cost-effective processing)
+    singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
+    singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 
     singleOf(::PeriodicIndexScheduler) { createdAtStart() }
 

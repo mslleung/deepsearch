@@ -15,6 +15,7 @@ val presentationModule = module {
         scopedOf(::SearchController)
         scopedOf(::PeriodicIndexJobController)
         scopedOf(::PeriodicIndexController)
+        scopedOf(::BatchPeriodicIndexController)
         scopedOf(::UsageController)
         scopedOf(::QuerySessionController)
         scopedOf(::PaymentController)

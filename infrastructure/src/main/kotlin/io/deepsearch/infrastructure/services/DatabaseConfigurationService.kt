@@ -48,6 +48,8 @@ class DatabaseConfigurationService(
     private val urlAccessTable: UrlAccessTable,
     private val llmTokenUsageTable: LlmTokenUsageTable,
     private val periodicIndexConfigTable: PeriodicIndexConfigTable,
+    private val batchPeriodicIndexJobTable: BatchPeriodicIndexJobTable,
+    private val batchUrlStateTable: BatchUrlStateTable,
 ) : IDatabaseConfigurationService {
 
     private val logger = LoggerFactory.getLogger(DatabaseConfigurationService::class.java)
@@ -127,6 +129,8 @@ class DatabaseConfigurationService(
                     urlAccessTable,
                     llmTokenUsageTable,
                     periodicIndexConfigTable,
+                    batchPeriodicIndexJobTable,
+                    batchUrlStateTable,
                 )
 
                 // Create HNSW index for efficient vector similarity search on webpage embeddings
