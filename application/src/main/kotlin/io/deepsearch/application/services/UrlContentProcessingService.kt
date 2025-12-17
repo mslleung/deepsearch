@@ -253,88 +253,75 @@ class UrlContentProcessingService(
         ocrLanguage: OcrLanguage,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
-        // ===== Browser Phase: Capture data then release browser =====
-        // Use data class to capture both values from withPage block
-        data class CapturedData(val html: String, val captures: BrowserCaptures)
-        
-        val capturedData = browserPool.withPage { page ->
+        browserPool.withPage { page ->
             page.navigate(normalizedUrl)
-            val html = page.getFullHtml()
-            val captures = webpageExtractionService.captureBrowserData(page)
-            CapturedData(html, captures)
-            // Browser is released when this block exits
-        }
-        
-        val extractedHtml = capturedData.html
-        val browserCaptures = capturedData.captures
-        logger.debug("Browser released for {}, continuing with extraction", normalizedUrl)
+            val extractedHtml = page.getFullHtml()
 
-        // ===== Post-Browser Phase: LLM + Jsoup processing =====
-        // Create separate flows for each operation - these are cancellation-aware
-        val linkDiscoveryFlow = flow {
-            val discoveredLinks = discoverLinks(extractedHtml)
-            logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
-            emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
-        }
-
-        val markdownExtractionFlow = flow {
-            try {
-                // Extract webpage content from captured data (no browser needed)
-                val extractionResult = webpageExtractionService.extractFromCaptures(
-                    browserCaptures, sessionId, ocrLanguage
-                )
-                logger.debug(
-                    "Markdown extraction complete for {}: {} chars",
-                    normalizedUrl,
-                    extractionResult.markdown.length
-                )
-
-                // Cache the webpage content (has its own transaction)
-                webpageCacheService.cacheWebpage(
-                    url = normalizedUrl,
-                    title = extractionResult.title,
-                    description = extractionResult.description,
-                    markdown = extractionResult.markdown,
-                    html = extractedHtml,
-                    httpStatus = 200,
-                    httpReason = "OK",
-                    mimeType = "text/html",
-                    sessionId = sessionId
-                )
-
-                // Update URL-to-image linkages in a separate transaction
-                // Images are already committed by extractFromCaptures(), so FK constraints are satisfied
-                if (extractionResult.imageHashes.isNotEmpty()) {
-                    webpageImageLinkageRepository.upsertLinkages(
-                        normalizedUrl,
-                        extractionResult.imageHashes
-                    )
-                }
-
-                emit(
-                    UrlProcessingEvent.MarkdownExtractionComplete(
-                        normalizedUrl,
-                        extractionResult.markdown,
-                        extractionResult.title,
-                        extractionResult.description,
-                        wasCached = false
-                    )
-                )
-            } catch (e: Exception) {
-                // Wrap markdown extraction failures
-                throw MarkdownExtractionException(normalizedUrl, e)
+            // Create separate flows for each operation - these are cancellation-aware
+            val linkDiscoveryFlow = flow {
+                val discoveredLinks = discoverLinks(extractedHtml)
+                logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
+                emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
             }
-        }
 
-        // Merge both flows - they emit independently as each completes
-        // When this flow is cancelled, merge stops collecting immediately and propagates cancellation
-        merge(linkDiscoveryFlow, markdownExtractionFlow)
-            .onCompletion { cause ->
-                if (cause != null) {
-                    logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)
+            val markdownExtractionFlow = flow {
+                try {
+                    // Extract webpage content - this internally stores images in their own
+                    // committed transactions via webpageImageRepository.batchUpsert()
+                    val extractionResult = webpageExtractionService.extractWebpage(page, sessionId, ocrLanguage)
+                    logger.debug(
+                        "Markdown extraction complete for {}: {} chars",
+                        normalizedUrl,
+                        extractionResult.markdown.length
+                    )
+
+                    // Cache the webpage content (has its own transaction)
+                    webpageCacheService.cacheWebpage(
+                        url = normalizedUrl,
+                        title = extractionResult.title,
+                        description = extractionResult.description,
+                        markdown = extractionResult.markdown,
+                        html = extractedHtml,
+                        httpStatus = 200,
+                        httpReason = "OK",
+                        mimeType = "text/html",
+                        sessionId = sessionId
+                    )
+
+                    // Update URL-to-image linkages in a separate transaction
+                    // Images are already committed by extractWebpage(), so FK constraints are satisfied
+                    if (extractionResult.imageHashes.isNotEmpty()) {
+                        webpageImageLinkageRepository.upsertLinkages(
+                            normalizedUrl,
+                            extractionResult.imageHashes
+                        )
+                    }
+
+                    emit(
+                        UrlProcessingEvent.MarkdownExtractionComplete(
+                            normalizedUrl,
+                            extractionResult.markdown,
+                            extractionResult.title,
+                            extractionResult.description,
+                            wasCached = false
+                        )
+                    )
+                } catch (e: Exception) {
+                    // Wrap markdown extraction failures
+                    throw MarkdownExtractionException(normalizedUrl, e)
                 }
             }
-            .collect { event -> send(event) }
+
+            // Merge both flows - they emit independently as each completes
+            // When this flow is cancelled, merge stops collecting immediately and propagates cancellation
+            merge(linkDiscoveryFlow, markdownExtractionFlow)
+                .onCompletion { cause ->
+                    if (cause != null) {
+                        logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)
+                    }
+                }
+                .collect { event -> send(event) }
+        }
     }
 
     /**
