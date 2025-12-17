@@ -18,13 +18,14 @@ interface ISemanticIdentificationService {
      * Identifies all semantic elements (navigation elements + popups) on a webpage.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
      *
-     * @param webpage The webpage to analyze
+     * Only requires the pre-captured page snapshot - no live browser needed.
+     * The browser can be released before semantic identification begins.
+     *
      * @param sessionId Session ID for token tracking
      * @param pageSnapshot Pre-captured page snapshot containing HTML and bounding boxes
      * @return SemanticElements containing all identified semantic elements grouped by type
      */
     suspend fun identifySemanticElements(
-        webpage: IBrowserPage,
         sessionId: SessionId,
         pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): SemanticElements
@@ -39,7 +40,6 @@ class SemanticIdentificationService(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     override suspend fun identifySemanticElements(
-        webpage: IBrowserPage,
         sessionId: SessionId,
         pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): SemanticElements {
@@ -54,7 +54,6 @@ class SemanticIdentificationService(
 
         val identificationResult = semanticIdentificationAgent.generate(
             SemanticIdentificationInput(
-                webpage = webpage,
                 pageSnapshot = pageSnapshot
             )
         )

@@ -14,6 +14,7 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
+import org.jsoup.nodes.TextNode
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -92,13 +93,12 @@ class TableInterpretationAgentGenAiImpl(
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
-        // Extract HTML and bounding boxes from the webpage in a single CDP call (optimized)
-        val tableData = input.webpage.getTableInterpretationData(input.tableIdentification.cssSelector)
-        val tableHtml = tableData.html
-        val boundingBoxes = tableData.boundingBoxes
+        // Use pre-computed HTML and bounding boxes (derived from page snapshot)
+        val tableHtml = input.tableHtml
+        val boundingBoxes = input.boundingBoxes
 
         logger.debug("Interpreting table to markdown (html length {})", tableHtml.length)
-        logger.debug("Got {} bounding boxes (1 CDP call)", boundingBoxes.size)
+        logger.debug("Using {} pre-computed bounding boxes", boundingBoxes.size)
 
         // Inject bounding box attributes into HTML
         val htmlWithBoundingBoxes = injectBoundingBoxes(tableHtml, boundingBoxes)
@@ -278,11 +278,26 @@ class TableInterpretationAgentGenAiImpl(
             element.unwrap()
         }
 
-        // Step 1: Remove noise elements
+        // Step 1a: Replace unreplaced svg/img with placeholder text
+        // If icon/image replacement worked, these elements wouldn't exist anymore
+        // (they'd be <span> or <image> tags). If they're still svg/img, the
+        // replacement failed and we should keep a placeholder for the LLM.
+        doc.select("svg").forEach { element ->
+            val altText = element.attr("aria-label").ifBlank { 
+                element.selectFirst("title")?.text() ?: "[icon]" 
+            }
+            element.replaceWith(TextNode(altText))
+        }
+        doc.select("img").forEach { element ->
+            val altText = element.attr("alt").ifBlank { "[image]" }
+            element.replaceWith(TextNode(altText))
+        }
+
+        // Step 1b: Remove noise elements (no longer includes svg/img - handled above)
         doc.select(
-            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
+            "script, style, noscript, template, canvas, meta, link, iframe, object, embed, " +
                     "head, title, base, " +
-                    "img, video, audio, source, track, picture, " +
+                    "video, audio, source, track, picture, " +
                     "form, input, select, textarea, label, fieldset, legend, " +
                     "nav, footer, header, aside"
         ).remove()

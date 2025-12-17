@@ -8,7 +8,10 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class IdentifiedElement(
+    /** CSS selector for initial lookup (may be position-based). */
     val cssSelector: String,
+    /** Stable data-ds-id value for subsequent operations (e.g., "ds-semantic-5"). */
+    val dataId: String,
     val note: String
 )
 

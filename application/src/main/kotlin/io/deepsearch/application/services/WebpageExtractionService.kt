@@ -3,14 +3,18 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.models.valueobjects.SessionId
+import io.deepsearch.domain.services.CssSelectorReplacement
+import io.deepsearch.domain.services.IBoundingBoxDerivationService
+import io.deepsearch.domain.services.IJsoupDomService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flow
+import org.jsoup.Jsoup
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.system.measureTimeMillis
@@ -22,11 +26,15 @@ data class WebpageExtractionResult(
     val markdown: String,
     val title: String?,
     val description: String?,
-    val imageHashes: List<ByteArray> = emptyList() // Image hashes for URL-image linkage tracking
+    val imageHashes: List<ByteArray> = emptyList()
 )
 
 interface IWebpageExtractionService {
-    suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT): WebpageExtractionResult
+    suspend fun extractWebpage(
+        webpage: IBrowserPage,
+        sessionId: SessionId,
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
+    ): WebpageExtractionResult
 }
 
 class WebpageExtractionService(
@@ -35,228 +43,275 @@ class WebpageExtractionService(
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
     private val semanticIdentificationService: ISemanticIdentificationService,
-    private val popupContainerIdentificationService: IPopupContainerIdentificationService,
-    private val dispatchers: IDispatcherProvider
+    private val boundingBoxDerivationService: IBoundingBoxDerivationService,
+    private val jsoupDomService: IJsoupDomService
 ) : IWebpageExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    /**
-     * Converts a webpage into text for downstream LLM processing.
-     * The extracted text is primed for information retrieval on the current page.
-     * 
-     * Optimized flow - each operation starts as soon as its input is ready:
-     * 
-     * 1. Three parallel pipelines that each start LLM work immediately when browser data arrives:
-     *    - Pipeline A: capturePageSnapshot() -> semantic identification + table identification (fast)
-     *    - Pipeline B: extractIcons() -> icon interpretation (slower)
-     *    - Pipeline C: extractImages() -> image interpretation (slower)
-     *    
-     *    Page snapshot is fast, so semantic/table identification start quickly.
-     *    Icon/image extraction are slower, but their interpretation starts as soon as they're ready.
-     *    Table identification detects media by tag/class, so it doesn't wait for media extraction.
-     *    
-     * 2. After all pipelines complete:
-     *    - Replace icons and images in DOM
-     *    - Interpret tables WITH media (after icon/image replacement)
-     *    - Remove semantic elements
-     *    - Extract final text
-     */
-    override suspend fun extractWebpage(webpage: IBrowserPage, sessionId: SessionId, ocrLanguage: OcrLanguage): WebpageExtractionResult =
-        coroutineScope {
-            val result: WebpageExtractionResult
-            val duration = measureTimeMillis {
-                // Step 1: Start all browser operations in parallel, then start LLM operations
-                // as soon as their inputs are ready (don't wait for slower operations)
-                // - Page snapshot is fast -> immediately feeds semantic/table identification
-                // - Icon extraction is slower -> feeds icon interpretation when ready
-                // - Image extraction is slower -> feeds image interpretation when ready
-                logger.debug("Starting browser operations in parallel...")
-                
-                // Create flows that chain browser call -> LLM processing
-                // Each flow starts its LLM operation as soon as its browser data is ready
-                val semanticAndTablesFlow = flow {
-                    val pageSnapshot = webpage.capturePageSnapshot()
-                    logger.debug("Page snapshot captured, starting semantic/table identification...")
-                    
-                    // Run semantic and table identification in parallel (both use pageSnapshot)
-                    val semanticFlow = flow { emit(identifySemanticElements(webpage, sessionId, pageSnapshot)) }
-                    val tablesFlow = flow { emit(identifyAndInterpretMediaFreeTables(webpage, sessionId, pageSnapshot)) }
-                    
-                    val combined = combine(semanticFlow, tablesFlow) { semantic, tables ->
-                        semantic to tables
-                    }.first()
-                    
-                    emit(SemanticAndTablesResult(pageSnapshot, combined.first, combined.second))
-                }
-                
-                val iconReplacementsFlow = flow {
-                    val icons = webpage.extractIcons()
-                    logger.debug("Icons extracted ({}), starting interpretation...", icons.size)
-                    emit(interpretIcons(icons, sessionId))
-                }
-                
-                val imageReplacementsFlow = flow {
-                    val images = webpage.extractImages()
-                    logger.debug("Images extracted ({}), starting interpretation...", images.size)
-                    emit(interpretImages(images, sessionId, ocrLanguage))
-                }
-                
-                // All flows run in parallel - each starts its LLM work as soon as browser data is ready
-                val results = combine(
-                    semanticAndTablesFlow,
-                    iconReplacementsFlow,
-                    imageReplacementsFlow
-                ) { semanticAndTables, iconRep, imageResults ->
-                    FlowResults(
-                        pageSnapshot = semanticAndTables.pageSnapshot,
-                        semanticElements = semanticAndTables.semanticElements,
-                        tableResults = semanticAndTables.tableResults,
-                        iconReplacements = iconRep,
-                        imageResults = imageResults
-                    )
-                }.first()
-                
-                val title = results.pageSnapshot.title
-                val description = results.pageSnapshot.description
-                val url = results.pageSnapshot.url
-                
-                logger.debug(
-                    "All operations complete. Tables: {} interpreted, {} deferred",
-                    results.tableResults.interpretedReplacements.size,
-                    results.tableResults.deferredTables.size
-                )
+    // ========== Data Classes for Pipeline Stages ==========
 
-
-                // Step 3: Replace icons and images in DOM
-                webpage.replaceElementsByCssSelectorWithText(results.iconReplacements + results.imageResults.replacements)
-
-                // Step 4: Extract popup text (before removal)
-                val popupText = extractPopupText(webpage, results.semanticElements)
-
-                // Step 5: Remove semantic elements (batched operation)
-                removeSemanticElements(webpage, results.semanticElements)
-
-                // Step 6: Interpret deferred tables (after icon/image replacement)
-                val deferredTableReplacements = if (results.tableResults.deferredTables.isNotEmpty()) {
-                    interpretAndGetReplacements(webpage, results.tableResults.deferredTables, sessionId)
-                } else {
-                    emptyList()
-                }
-
-                // Step 7: Replace all tables in DOM
-                val allTableReplacements = results.tableResults.interpretedReplacements + deferredTableReplacements
-                webpage.replaceElementsByCssSelectorWithText(allTableReplacements)
-
-                // Step 9: Extract final text and build result
-                val extractedText = webpage.extractTextContent()
-                val markdown = buildString {
-                    appendLine("URL: $url")
-                    appendLine("Title: $title")
-                    if (!description.isNullOrBlank()) {
-                        appendLine("Description: $description")
-                    }
-                    appendLine()
-                    if (!popupText.isNullOrBlank()) {
-                        appendLine(popupText)
-                    }
-                    appendLine()
-                    appendLine(extractedText)
-                }.trim()
-
-                result = WebpageExtractionResult(
-                    markdown = markdown,
-                    title = title,
-                    description = description,
-                    imageHashes = results.imageResults.imageHashes
-                )
-            }
-            logger.debug("Webpage extraction took {} ms", duration)
-            result
-        }
-
-    private suspend fun identifySemanticElements(
-        webpage: IBrowserPage,
-        sessionId: SessionId,
-        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
-    ): SemanticElements {
-        val result: SemanticElements
-        val duration = measureTimeMillis {
-            result = semanticIdentificationService.identifySemanticElements(
-                webpage,
-                sessionId,
-                pageSnapshot
-            )
-        }
-        logger.debug("Semantic element identification took {} ms", duration)
-        return result
-    }
-
-    private suspend fun interpretIcons(
-        icons: List<IBrowserPage.Icon>,
-        sessionId: SessionId
-    ): List<IBrowserPage.CssSelectorReplacementWithText> {
-        val replacements: List<IBrowserPage.CssSelectorReplacementWithText>
-        val duration = measureTimeMillis {
-            val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons, sessionId)
-            replacements = icons.zip(interpretedTexts).flatMap { (icon, interpretedText) ->
-                icon.cssSelectors.map { cssSelector ->
-                    IBrowserPage.CssSelectorReplacementWithText(cssSelector, interpretedText)
-                }
-            }
-            logger.debug("Number of icon replacements: {}", replacements.size)
-        }
-        logger.debug("Icon interpretation took {} ms", duration)
-        return replacements
-    }
-
-    private data class ImageReplacementsWithHashes(
-        val replacements: List<IBrowserPage.CssSelectorReplacementWithText>,
+    private data class LlmResults(
+        val semanticElements: SemanticElements,
+        val tableIdentifications: List<TableIdentification>,
+        val iconReplacements: List<CssSelectorReplacement>,
+        val imageReplacements: List<CssSelectorReplacement>,
         val imageHashes: List<ByteArray>
     )
 
-    private data class SemanticAndTablesResult(
-        val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
-        val semanticElements: SemanticElements,
-        val tableResults: TableFlowResult
-    )
+    // ========== Pipeline Extension for Flow Composition ==========
 
-    private data class FlowResults(
-        val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
-        val semanticElements: SemanticElements,
-        val tableResults: TableFlowResult,
-        val iconReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
-        val imageResults: ImageReplacementsWithHashes
-    )
+    /**
+     * Chains a transformation onto a Deferred, creating a new pipelined async.
+     * The transformation starts as soon as the upstream value is available.
+     */
+    private fun <T, R> CoroutineScope.pipeFrom(
+        upstream: Deferred<T>,
+        transform: suspend (T) -> R
+    ): Deferred<R> = async { transform(upstream.await()) }
 
-    private suspend fun interpretImages(
-        images: List<IBrowserPage.WebImage>,
+    /**
+     * Converts a webpage into text for downstream LLM processing.
+     * 
+     * Pipelined flow with early browser release:
+     * 
+     *   capturePageSnapshot() ──┬──> identifySemanticElements()
+     *                           └──> identifyTables()
+     *   extractIcons() ────────────> interpretIcons()
+     *   extractImages() ───────────> interpretImages()
+     *   
+     * All browser operations run in parallel for maximum speed.
+     * The snapshot HTML doesn't contain data-ds-id attributes (injected by
+     * icon/image extraction), but we re-inject them into the Jsoup document
+     * during DOM processing using the CSS selectors from extraction results.
+     *   
+     * >>> BROWSER RELEASED when all browser ops complete <<<
+     *   
+     *   [All LLM results] ─────────> DOM processing (Jsoup)
+     */
+    override suspend fun extractWebpage(
+        webpage: IBrowserPage,
         sessionId: SessionId,
         ocrLanguage: OcrLanguage
-    ): ImageReplacementsWithHashes {
-        val result: ImageReplacementsWithHashes
-        val duration = measureTimeMillis {
-            // Images already include screenshot fallbacks (handled internally by browser)
-            val extractionResults =
-                webpageImageTextExtractionService.extractTextFromImagesWithHashes(images, sessionId, ocrLanguage)
-            val replacements = images.zip(extractionResults).flatMap { (image, extractionResult) ->
-                val wrappedText = wrapImageTextWithXmlTag(extractionResult)
-                image.cssSelectors.map { cssSelector ->
-                    IBrowserPage.CssSelectorReplacementWithText(cssSelector, wrappedText)
-                }
-            }
-            val imageHashes = extractionResults.map { it.imageBytesHash }
-            result = ImageReplacementsWithHashes(replacements, imageHashes)
+    ): WebpageExtractionResult = coroutineScope {
+        logger.debug("Starting pipelined extraction...")
+
+        // ===== Browser Captures (all parallel) =====
+        val snapshotDeferred = async { webpage.capturePageSnapshot() }
+        val iconsDeferred = async { webpage.extractIcons() }
+        val imagesDeferred = async { webpage.extractImages() }
+
+        // ===== LLM Operations (pipelined from captures) =====
+        val semantic = pipeFrom(snapshotDeferred) { doIdentifySemanticElements(sessionId, it) }
+        val tableId = pipeFrom(snapshotDeferred) { doIdentifyTables(sessionId, it) }
+        val iconRepl = pipeFrom(iconsDeferred) { doInterpretIcons(it, sessionId) }
+        val imageRepl = pipeFrom(imagesDeferred) { doInterpretImages(it, sessionId, ocrLanguage) }
+
+        // ===== Wait for Browser Release Point =====
+        val snapshot: IBrowserPage.PageSnapshotWithMetadata
+        val icons: List<IBrowserPage.Icon>
+        val images: List<IBrowserPage.WebImage>
+        val browserDuration = measureTimeMillis {
+            snapshot = snapshotDeferred.await()
+            icons = iconsDeferred.await()
+            images = imagesDeferred.await()
         }
-        logger.debug("Image interpretation took {} ms", duration)
+        logger.debug("Browser captures complete in {} ms - browser can be released", browserDuration)
+        // >>> BROWSER CAN BE RELEASED HERE <<<
+
+        // ===== Await LLM Results =====
+        val llmDuration = measureTimeMillis { awaitAll(semantic, tableId, iconRepl, imageRepl) }
+        val llmResults = LlmResults(
+            semanticElements = semantic.await(),
+            tableIdentifications = tableId.await(),
+            iconReplacements = iconRepl.await().replacements,
+            imageReplacements = imageRepl.await().replacements,
+            imageHashes = imageRepl.await().hashes
+        )
+        logger.debug(
+            "LLM operations complete in {} ms: {} semantic, {} tables, {} icons, {} images",
+            llmDuration,
+            countSemanticElements(llmResults.semanticElements),
+            llmResults.tableIdentifications.size,
+            llmResults.iconReplacements.size,
+            llmResults.imageReplacements.size
+        )
+
+        // ===== Phase 4: DOM Processing (Jsoup) =====
+        val result: WebpageExtractionResult
+        val jsoupDuration = measureTimeMillis {
+            result = processDom(snapshot, llmResults, sessionId)
+        }
+        logger.debug("DOM processing complete in {} ms", jsoupDuration)
+
+        result
+    }
+
+    // ========== Browser Capture Operations ==========
+
+    private suspend fun doIdentifySemanticElements(
+        sessionId: SessionId,
+        snapshot: IBrowserPage.PageSnapshotWithMetadata
+    ): SemanticElements {
+        val result: SemanticElements
+        val duration = measureTimeMillis {
+            result = semanticIdentificationService.identifySemanticElements(sessionId, snapshot)
+        }
+        logger.debug("Semantic identification took {} ms", duration)
         return result
     }
 
+    private suspend fun doIdentifyTables(
+        sessionId: SessionId,
+        snapshot: IBrowserPage.PageSnapshotWithMetadata
+    ): List<TableIdentification> {
+        val result: List<TableIdentification>
+        val duration = measureTimeMillis {
+            result = tableIdentificationService.identifyTables(sessionId, snapshot)
+        }
+        logger.debug("Table identification took {} ms, found {} tables", duration, result.size)
+        return result
+    }
+
+    private data class IconInterpretationResult(
+        val replacements: List<CssSelectorReplacement>
+    )
+
+    private suspend fun doInterpretIcons(
+        icons: List<IBrowserPage.Icon>,
+        sessionId: SessionId
+    ): IconInterpretationResult {
+        val result: IconInterpretationResult
+        val duration = measureTimeMillis {
+            val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons, sessionId)
+            val replacements = icons.zip(interpretedTexts).flatMap { (icon, text) ->
+                icon.cssSelectors.map { CssSelectorReplacement(it, text) }
+            }
+            result = IconInterpretationResult(replacements)
+        }
+        logger.debug("Icon interpretation took {} ms, {} replacements", duration, result.replacements.size)
+        return result
+    }
+
+    private data class ImageInterpretationResult(
+        val replacements: List<CssSelectorReplacement>,
+        val hashes: List<ByteArray>
+    )
+
+    private suspend fun doInterpretImages(
+        images: List<IBrowserPage.WebImage>,
+        sessionId: SessionId,
+        ocrLanguage: OcrLanguage
+    ): ImageInterpretationResult {
+        val result: ImageInterpretationResult
+        val duration = measureTimeMillis {
+            val extractionResults = webpageImageTextExtractionService.extractTextFromImagesWithHashes(
+                images, sessionId, ocrLanguage
+            )
+            val replacements = images.zip(extractionResults).flatMap { (image, extraction) ->
+                val wrappedText = wrapImageTextWithXmlTag(extraction)
+                image.cssSelectors.map { CssSelectorReplacement(it, wrappedText) }
+            }
+            result = ImageInterpretationResult(
+                replacements = replacements,
+                hashes = extractionResults.map { it.imageBytesHash }
+            )
+        }
+        logger.debug("Image interpretation took {} ms, {} replacements", duration, result.replacements.size)
+        return result
+    }
+
+    // ========== DOM Processing ==========
+
+    private suspend fun processDom(
+        snapshot: IBrowserPage.PageSnapshotWithMetadata,
+        llmResults: LlmResults,
+        sessionId: SessionId
+    ): WebpageExtractionResult {
+        val jsoupDoc = Jsoup.parse(snapshot.html)
+
+        // ===== Step 1: Inject all identifiers into Jsoup document =====
+        // This restores the original behavior where data-ds-id attributes were
+        // injected into the browser DOM for stable subsequent operations.
+        
+        // Inject media identifiers (icons + images)
+        jsoupDomService.injectMediaIdentifiers(jsoupDoc)
+        
+        // Inject semantic element identifiers using CSS selectors from agents
+        val semanticInjections = collectSemanticInjections(llmResults.semanticElements)
+        jsoupDomService.injectIdentifiers(jsoupDoc, semanticInjections)
+        
+        // Inject table identifiers using CSS selectors from agents
+        val tableInjections = llmResults.tableIdentifications.map { it.cssSelector to it.dataId }
+        jsoupDomService.injectIdentifiers(jsoupDoc, tableInjections)
+        
+        // ===== Step 2: Apply media replacements (icons + images) =====
+        val mediaReplacements = llmResults.iconReplacements + llmResults.imageReplacements
+        jsoupDomService.replaceElementsWithText(jsoupDoc, mediaReplacements)
+
+        // ===== Step 3: Extract popup text before removal =====
+        // Use stable data-ds-id selectors instead of position-based CSS selectors
+        val popupText = llmResults.semanticElements.popups
+            .map { "[data-ds-id=\"${it.dataId}\"]" }
+            .let { jsoupDomService.extractElementsText(jsoupDoc, it) }
+            .values
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+            .takeIf { it.isNotBlank() }
+
+        // ===== Step 4: Remove semantic elements =====
+        // Use stable data-ds-id selectors instead of position-based CSS selectors
+        jsoupDomService.removeElements(jsoupDoc, collectSemanticDataIdSelectors(llmResults.semanticElements))
+
+        // ===== Step 5: Interpret and replace tables =====
+        // Tables use data-ds-id selectors which remain stable after semantic removal
+        val tableReplacements = interpretTablesWithDerivedData(
+            llmResults.tableIdentifications,
+            snapshot.html,
+            snapshot.boundingBoxes,
+            jsoupDoc,
+            sessionId
+        )
+        jsoupDomService.replaceElementsWithText(jsoupDoc, tableReplacements)
+
+        // ===== Step 6: Extract final text =====
+        val extractedText = jsoupDomService.extractTextContent(jsoupDoc)
+
+        // Build markdown
+        val markdown = buildMarkdown(
+            url = snapshot.url,
+            title = snapshot.title,
+            description = snapshot.description,
+            popupText = popupText,
+            extractedText = extractedText
+        )
+
+        return WebpageExtractionResult(
+            markdown = markdown,
+            title = snapshot.title,
+            description = snapshot.description,
+            imageHashes = llmResults.imageHashes
+        )
+    }
+
+    private fun buildMarkdown(
+        url: String,
+        title: String?,
+        description: String?,
+        popupText: String?,
+        extractedText: String
+    ): String = buildString {
+        appendLine("URL: $url")
+        appendLine("Title: $title")
+        if (!description.isNullOrBlank()) appendLine("Description: $description")
+        appendLine()
+        if (!popupText.isNullOrBlank()) appendLine(popupText)
+        appendLine()
+        appendLine(extractedText)
+    }.trim()
+
     /**
      * Wraps extracted image text in XML tags with an image ID.
-     * Format:
-     * - Single line: <image id="img-xxx">interpreted text</image>
-     * - Multi-line: <image id="img-xxx">\ninterpreted text\n</image>
      */
     private fun wrapImageTextWithXmlTag(result: ImageExtractionResult): String? {
         val text = result.extractedText ?: return null
@@ -270,145 +325,105 @@ class WebpageExtractionService(
     }
 
     /**
-     * Result of table identification and optional immediate interpretation.
-     * 
-     * When only media-free tables exist, they are interpreted immediately in the flow
-     * and returned in [interpretedReplacements].
-     * 
-     * When both media-free and media-containing tables exist, ALL tables are deferred
-     * to be interpreted together after media replacement, returned in [deferredTables].
+     * Interprets tables using pre-computed data derived from the page snapshot.
+     * Uses Jsoup document for HTML extraction (after media replacement).
      */
-    private data class TableFlowResult(
-        val interpretedReplacements: List<IBrowserPage.CssSelectorReplacementWithText>,
-        val deferredTables: List<TableIdentification>
-    )
-
-    /**
-     * Identifies tables and optionally interprets media-free tables in one flow.
-     * 
-     * Optimization strategy:
-     * - If ONLY media-free tables exist: interpret them immediately
-     * - If BOTH media-free and media-containing tables exist: defer ALL interpretation
-     *   until after media replacement to batch them together
-     */
-    private suspend fun identifyAndInterpretMediaFreeTables(
-        webpage: IBrowserPage,
-        sessionId: SessionId,
-        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
-    ): TableFlowResult {
-        val result: TableFlowResult
-        val duration = measureTimeMillis {
-            // Step 1: Identify all tables
-            val allTables = tableIdentificationService.identifyTables(webpage, sessionId, pageSnapshot)
-
-            // Step 2: Partition into media-free and media-containing
-            val (tablesWithMedia, tablesWithoutMedia) = allTables.partition { it.containsMedia }
-            logger.debug(
-                "Table identification: {} total, {} media-free, {} with media",
-                allTables.size, tablesWithoutMedia.size, tablesWithMedia.size
-            )
-
-            // Step 3: Decide interpretation strategy based on table composition
-            result = if (tablesWithMedia.isEmpty()) {
-                // Only media-free tables exist: interpret immediately
-                val interpretedReplacements = if (tablesWithoutMedia.isNotEmpty()) {
-                    interpretAndGetReplacements(webpage, tablesWithoutMedia, sessionId)
-                } else {
-                    emptyList()
-                }
-                TableFlowResult(interpretedReplacements, deferredTables = emptyList())
-            } else {
-                // Both types exist: defer ALL interpretation until after media replacement
-                TableFlowResult(interpretedReplacements = emptyList(), deferredTables = allTables)
-            }
-        }
-        logger.debug("Table identification and media-free interpretation took {} ms", duration)
-        return result
-    }
-
-    /**
-     * Interpret tables and return replacements without applying them.
-     */
-    private suspend fun interpretAndGetReplacements(
-        webpage: IBrowserPage,
+    private suspend fun interpretTablesWithDerivedData(
         tables: List<TableIdentification>,
+        originalHtml: String,
+        pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
+        jsoupDoc: org.jsoup.nodes.Document,
         sessionId: SessionId
-    ): List<IBrowserPage.CssSelectorReplacementWithText> {
+    ): List<CssSelectorReplacement> {
         if (tables.isEmpty()) {
             return emptyList()
         }
 
-        // Batch check which tables still exist (single CDP call)
-        val allSelectors = tables.map { it.cssSelector }
-        val existenceMap = webpage.elementsExistByCssSelectors(allSelectors)
+        // Derive bounding boxes for all tables from page snapshot
+        val derivedDataMap = boundingBoxDerivationService.deriveElementsBoundingBoxes(
+            cssSelectors = tables.map { it.cssSelector },
+            html = originalHtml,
+            pageBoundingBoxes = pageBoundingBoxes
+        )
 
-        // Filter tables that still exist
-        val existingTables = tables.filter { table ->
-            existenceMap[table.cssSelector] == true
-        }
+        // Build table interpretation inputs using:
+        // - HTML from Jsoup doc using data-ds-id selectors (stable after semantic removal)
+        // - Bounding boxes derived from page snapshot
+        val tableInputs = tables.mapNotNull { table ->
+            val derivedData = derivedDataMap[table.cssSelector]
 
-        if (existingTables.isEmpty()) {
-            return emptyList()
-        }
+            // Use stable data-ds-id selector (identifiers were injected earlier)
+            val dataIdSelector = "[data-ds-id=\"${table.dataId}\"]"
+            val currentHtml = jsoupDomService.getElementHtml(jsoupDoc, dataIdSelector)
+            if (currentHtml == null) {
+                // Table was likely removed with a semantic element - this is expected
+                logger.debug("Table element not found (may have been removed with semantic element): {}", table.dataId)
+                return@mapNotNull null
+            }
 
-        val tableInputs = existingTables.map { table ->
-            table.cssSelector to TableInterpretationInput(
+            // Use derived bounding boxes, or empty if not available
+            val boundingBoxes = derivedData?.boundingBoxes ?: emptyMap()
+
+            TableInterpretationInput(
                 tableIdentification = table,
-                webpage = webpage
+                tableHtml = currentHtml,
+                boundingBoxes = boundingBoxes
             )
         }
 
-        val cssSelectors = tableInputs.map { it.first }
-        val inputs = tableInputs.map { it.second }
-        val markdowns = tableInterpretationService.interpretTablesBatch(inputs, sessionId)
+        if (tableInputs.isEmpty()) {
+            return emptyList()
+        }
 
-        return cssSelectors.zip(markdowns).map { (cssSelector, markdown) ->
-            IBrowserPage.CssSelectorReplacementWithText(cssSelector, markdown)
+        // Interpret all tables in batch
+        val markdowns = tableInterpretationService.interpretTablesBatch(tableInputs, sessionId)
+
+        // Return replacements using stable data-ds-id selectors
+        return tableInputs.zip(markdowns).map { (input, markdown) ->
+            CssSelectorReplacement("[data-ds-id=\"${input.tableIdentification.dataId}\"]", markdown)
         }
     }
 
-    private suspend fun extractPopupText(
-        webpage: IBrowserPage,
-        semanticElements: SemanticElements
-    ): String? {
-        if (semanticElements.popups.isEmpty()) {
-            return null
+    /**
+     * Collects (cssSelector, dataId) pairs for injecting identifiers into Jsoup document.
+     */
+    private fun collectSemanticInjections(semanticElements: SemanticElements): List<Pair<String, String>> {
+        return buildList {
+            semanticElements.header?.let { add(it.cssSelector to it.dataId) }
+            semanticElements.footer?.let { add(it.cssSelector to it.dataId) }
+            semanticElements.navSidebar?.let { add(it.cssSelector to it.dataId) }
+            semanticElements.breadcrumb?.let { add(it.cssSelector to it.dataId) }
+            semanticElements.cookieBanner?.let { add(it.cssSelector to it.dataId) }
+            addAll(semanticElements.adBanners.map { it.cssSelector to it.dataId })
+            addAll(semanticElements.popups.map { it.cssSelector to it.dataId })
         }
-
-        // Use batch operation to extract text from all popups in a single browser call
-        val popupSelectors = semanticElements.popups.map { it.cssSelector }
-        val textBySelector = webpage.extractElementsTextContentByCssSelectors(popupSelectors)
-
-        return buildString {
-            textBySelector.values.forEach { text ->
-                if (text.isNotBlank()) {
-                    appendLine(text)
-                }
-            }
-        }.takeIf { it.isNotBlank() }
+    }
+    
+    /**
+     * Collects stable data-ds-id selectors for removing semantic elements.
+     * These selectors remain valid regardless of DOM structure changes.
+     */
+    private fun collectSemanticDataIdSelectors(semanticElements: SemanticElements): List<String> {
+        return buildList {
+            semanticElements.header?.let { add("[data-ds-id=\"${it.dataId}\"]") }
+            semanticElements.footer?.let { add("[data-ds-id=\"${it.dataId}\"]") }
+            semanticElements.navSidebar?.let { add("[data-ds-id=\"${it.dataId}\"]") }
+            semanticElements.breadcrumb?.let { add("[data-ds-id=\"${it.dataId}\"]") }
+            semanticElements.cookieBanner?.let { add("[data-ds-id=\"${it.dataId}\"]") }
+            addAll(semanticElements.adBanners.map { "[data-ds-id=\"${it.dataId}\"]" })
+            addAll(semanticElements.popups.map { "[data-ds-id=\"${it.dataId}\"]" })
+        }
     }
 
-    private suspend fun removeSemanticElements(
-        webpage: IBrowserPage,
-        semanticElements: SemanticElements
-    ) {
-        // Collect all selectors to remove in a single batch operation
-        val selectorsToRemove = buildList {
-            semanticElements.header?.let { add(it.cssSelector) }
-            semanticElements.footer?.let { add(it.cssSelector) }
-            semanticElements.navSidebar?.let { add(it.cssSelector) }
-            semanticElements.breadcrumb?.let { add(it.cssSelector) }
-            semanticElements.cookieBanner?.let { add(it.cssSelector) }
-            addAll(semanticElements.adBanners.map { it.cssSelector })
-            addAll(semanticElements.popups.map { it.cssSelector })
-        }
-
-        if (selectorsToRemove.isEmpty()) {
-            logger.debug("No semantic elements to remove")
-            return
-        }
-
-        logger.debug("Removing {} semantic elements in batch", selectorsToRemove.size)
-        webpage.removeElementsByCssSelectors(selectorsToRemove)
+    private fun countSemanticElements(elements: SemanticElements): Int {
+        var count = 0
+        if (elements.header != null) count++
+        if (elements.footer != null) count++
+        if (elements.navSidebar != null) count++
+        if (elements.breadcrumb != null) count++
+        if (elements.cookieBanner != null) count++
+        count += elements.adBanners.size
+        count += elements.popups.size
+        return count
     }
 }

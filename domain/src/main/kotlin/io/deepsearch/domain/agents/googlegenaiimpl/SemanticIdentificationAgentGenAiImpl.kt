@@ -223,29 +223,13 @@ class SemanticIdentificationAgentGenAiImpl(
         val resolvedAdBanners = response.adBanners.mapNotNull { resolveElement(it) }
         val resolvedPopups = response.popups.mapNotNull { resolveElement(it) }
         
-        // Step 6: Batch inject all identifiers in a single CDP call
-        val allResolved = listOfNotNull(
-            resolvedHeader, resolvedFooter, resolvedNavSidebar,
-            resolvedBreadcrumb, resolvedCookieBanner
-        ) + resolvedAdBanners + resolvedPopups
-        
-        if (allResolved.isNotEmpty()) {
-            val injections = allResolved.map { resolved ->
-                IBrowserPage.AttributeInjection(
-                    cssSelector = resolved.cssSelector,
-                    attributeName = "data-ds-id",
-                    attributeValue = resolved.llmResult.id
-                )
-            }
-            logger.debug("Batch injecting {} semantic element identifiers", injections.size)
-            input.webpage.injectAttributesByCssSelectors(injections)
-        }
-        
-        // Convert resolved elements to IdentifiedElements
+        // Convert resolved elements to IdentifiedElements with both cssSelector and dataId
+        // The cssSelector is used for initial injection, dataId for subsequent operations
         fun toIdentifiedElement(resolved: ResolvedElement?): IdentifiedElement? {
             if (resolved == null) return null
             return IdentifiedElement(
-                cssSelector = "[data-ds-id=\"${resolved.llmResult.id}\"]",
+                cssSelector = resolved.cssSelector,
+                dataId = resolved.llmResult.id,
                 note = resolved.llmResult.note
             )
         }

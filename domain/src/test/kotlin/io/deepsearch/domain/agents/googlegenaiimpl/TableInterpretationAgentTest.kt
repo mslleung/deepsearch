@@ -6,6 +6,7 @@ import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
+import io.deepsearch.domain.services.IBoundingBoxDerivationService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -26,6 +27,7 @@ class TableInterpretationAgentTest : KoinTest {
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val tableIdentificationAgent by inject<ITableIdentificationAgent>()
     private val tableInterpretationAgent by inject<ITableInterpretationAgent>()
+    private val boundingBoxDerivationService by inject<IBoundingBoxDerivationService>()
     private val browserPool by inject<IBrowserPool>()
 
     @ParameterizedTest
@@ -39,18 +41,30 @@ class TableInterpretationAgentTest : KoinTest {
         browserPool.withPage { page ->
             page.navigate(url)
             val pageSnapshot = page.capturePageSnapshot()
+
+            // Identify tables (no longer requires browser reference)
             val idOutput = tableIdentificationAgent.generate(
                 TableIdentificationInput(
-                    webpage = page,
                     pageSnapshot = pageSnapshot
                 )
             )
 
             idOutput.tables.forEach { table ->
+                // Derive bounding boxes from page snapshot
+                val derivedData = boundingBoxDerivationService.deriveElementBoundingBoxes(
+                    cssSelector = table.cssSelector,
+                    html = pageSnapshot.html,
+                    pageBoundingBoxes = pageSnapshot.boundingBoxes
+                )
+
+                // Get table HTML from page (in real usage, this comes from Jsoup after media replacement)
+                val tableHtml = page.getElementHtmlByCssSelector(table.cssSelector)
+
                 val md = tableInterpretationAgent.generate(
                     TableInterpretationInput(
                         tableIdentification = table,
-                        webpage = page
+                        tableHtml = tableHtml,
+                        boundingBoxes = derivedData?.boundingBoxes ?: emptyMap()
                     )
                 ).markdown
 
@@ -62,5 +76,3 @@ class TableInterpretationAgentTest : KoinTest {
         }
     }
 }
-
-

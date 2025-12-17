@@ -210,23 +210,11 @@ class TableIdentificationAgentGenAiImpl(
             ResolvedTable(llmResult, cssSelector)
         }
         
-        // Step 6: Batch inject all identifiers in a single CDP call
-        if (resolvedTables.isNotEmpty()) {
-            val injections = resolvedTables.map { resolved ->
-                IBrowserPage.AttributeInjection(
-                    cssSelector = resolved.cssSelector,
-                    attributeName = "data-ds-id",
-                    attributeValue = resolved.llmResult.id
-                )
-            }
-            logger.debug("Batch injecting {} table identifiers", injections.size)
-            input.webpage.injectAttributesByCssSelectors(injections)
-        }
-        
         // Pre-parse HTML once for media detection
         val docForMediaDetection = Jsoup.parse(htmlWithIds)
 
-        // Convert resolved tables to TableIdentifications
+        // Convert resolved tables to TableIdentifications with both cssSelector and dataId
+        // The cssSelector is used for initial injection, dataId for subsequent operations
         val tableIdentifications = resolvedTables.map { resolved ->
             val containsMedia = detectMediaInTable(resolved.llmResult.id, docForMediaDetection)
             val auxiliaryInfo = combineAuxiliaryInfo(
@@ -234,7 +222,8 @@ class TableIdentificationAgentGenAiImpl(
                 resolved.llmResult.columnHeaders
             )
             TableIdentification(
-                cssSelector = "[data-ds-id=\"${resolved.llmResult.id}\"]",
+                cssSelector = resolved.cssSelector,
+                dataId = resolved.llmResult.id,
                 auxiliaryInfo = auxiliaryInfo,
                 containsMedia = containsMedia
             )

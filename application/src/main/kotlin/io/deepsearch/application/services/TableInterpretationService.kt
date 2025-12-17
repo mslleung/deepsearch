@@ -30,13 +30,15 @@ class TableInterpretationService(
     /**
      * Interprets a table using an LLM agent and returns markdown.
      * Results are cached in the repository to avoid repeated calls with the same input.
+     * 
+     * The input now contains pre-computed tableHtml derived from the page snapshot,
+     * eliminating the need for browser access during interpretation.
      */
     @OptIn(ExperimentalTime::class)
     override suspend fun interpretTable(input: TableInterpretationInput, sessionId: SessionId): String {
-        // Create a hash from all input parameters that affect the interpretation
+        // Create a hash from the pre-computed table HTML
         val digest = MessageDigest.getInstance("SHA-256")
-        val tableHtml = input.webpage.getElementHtmlByCssSelector(input.tableIdentification.cssSelector)
-        digest.update(tableHtml.toByteArray())
+        digest.update(input.tableHtml.toByteArray())
         val dataHash = digest.digest()
 
         val existing = webpageTableInterpretationRepository.findByHash(dataHash)
@@ -73,7 +75,10 @@ class TableInterpretationService(
      * Interprets multiple tables in batch, leveraging caching and batch upsert
      * to reduce concurrent upsert issues.
      * 
-     * @param inputs List of table interpretation inputs
+     * The inputs now contain pre-computed tableHtml derived from the page snapshot,
+     * eliminating the need for browser access during interpretation.
+     * 
+     * @param inputs List of table interpretation inputs with pre-computed data
      * @param sessionId Query session ID for token tracking
      * @return List of markdown strings in the same order as inputs
      */
@@ -84,19 +89,13 @@ class TableInterpretationService(
         // Initialize result storage
         val results = MutableList<String?>(inputs.size) { null }
 
-        // Batch fetch HTML for all tables in a single CDP call
-        val selectors = inputs.map { it.tableIdentification.cssSelector }
-        val webpage = inputs.first().webpage
-        val htmlBySelector = webpage.getElementsHtmlByCssSelectors(selectors)
-        logger.debug("Batch fetched HTML for {} tables in single CDP call", selectors.size)
-
-        // Compute hashes for all inputs using batch-fetched HTML
+        // Compute hashes using pre-computed table HTML (no browser access needed)
         val hashes = inputs.map { input ->
             val digest = MessageDigest.getInstance("SHA-256")
-            val tableHtml = htmlBySelector[input.tableIdentification.cssSelector] ?: ""
-            digest.update(tableHtml.toByteArray())
+            digest.update(input.tableHtml.toByteArray())
             digest.digest()
         }
+        logger.debug("Computing hashes for {} tables using pre-fetched HTML", inputs.size)
 
         // Batch cache lookup (single DB query instead of N queries)
         val cachedInterpretations = webpageTableInterpretationRepository.findByHashes(hashes)

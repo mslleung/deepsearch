@@ -21,7 +21,7 @@ class TestLlmTokenUsageService : ILlmTokenUsageService {
     private val callCount = AtomicInteger(0)
     
     override suspend fun recordTokenUsage(
-        sessionId: SessionId?,
+        sessionId: SessionId,
         agentName: String,
         modelName: String,
         promptTokens: Int,
@@ -39,7 +39,7 @@ class TestLlmTokenUsageService : ILlmTokenUsageService {
             "LLM Token Usage - Agent: {}, Model: {}, Session: {}, Prompt: {}, Output: {}, Total: {}",
             agentName,
             modelName,
-            sessionId?.value ?: "N/A",
+            sessionId.value,
             promptTokens,
             outputTokens,
             totalTokens

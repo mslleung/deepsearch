@@ -11,16 +11,20 @@ import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.ratelimit.AdaptiveRateLimiter
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.services.ApiKeyCryptoService
+import io.deepsearch.domain.services.BoundingBoxDerivationService
 import io.deepsearch.domain.services.CssSelectorConstructionService
 import io.deepsearch.domain.services.GeminiFileSearchService
 import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
+import io.deepsearch.domain.services.IBoundingBoxDerivationService
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IGeminiFileSearchService
+import io.deepsearch.domain.services.IJsoupDomService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
 import io.deepsearch.domain.services.ITextEmbeddingService
+import io.deepsearch.domain.services.JsoupDomService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
@@ -52,6 +56,8 @@ val domainModule = module {
     singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
+    singleOf(::BoundingBoxDerivationService) bind IBoundingBoxDerivationService::class
+    singleOf(::JsoupDomService) bind IJsoupDomService::class
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
     
     // Adaptive rate limiter (singleton to maintain state across requests per domain)

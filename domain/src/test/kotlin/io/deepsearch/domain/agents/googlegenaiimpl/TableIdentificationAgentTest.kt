@@ -41,8 +41,8 @@ class TableIdentificationAgentTest : KoinTest {
             page.navigate(url)
             val pageSnapshot = page.capturePageSnapshot()
 
+            // TableIdentificationInput no longer requires browser reference
             val input = TableIdentificationInput(
-                webpage = page,
                 pageSnapshot = pageSnapshot
             )
             val output = agent.generate(input)

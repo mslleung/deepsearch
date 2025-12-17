@@ -12,8 +12,13 @@ import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
 interface ITableIdentificationService {
+    /**
+     * Identifies tables in webpage HTML using an LLM agent.
+     * 
+     * Only requires the pre-captured page snapshot - no live browser needed.
+     * The browser can be released before table identification begins.
+     */
     suspend fun identifyTables(
-        webpage: IBrowserPage, 
         sessionId: SessionId,
         pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): List<TableIdentification>
@@ -31,7 +36,6 @@ class TableIdentificationService(
      */
     @OptIn(ExperimentalTime::class)
     override suspend fun identifyTables(
-        webpage: IBrowserPage, 
         sessionId: SessionId,
         pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): List<TableIdentification> {
@@ -45,7 +49,6 @@ class TableIdentificationService(
 
         val agentOutput = tableIdentificationAgent.generate(
             TableIdentificationInput(
-                webpage = webpage,
                 pageSnapshot = pageSnapshot
             )
         )

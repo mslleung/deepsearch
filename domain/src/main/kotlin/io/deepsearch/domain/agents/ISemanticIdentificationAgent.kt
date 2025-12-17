@@ -7,8 +7,13 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
 
+/**
+ * Input for semantic element identification.
+ * 
+ * Only requires the pre-captured page snapshot - no live browser needed.
+ * The browser can be released before semantic identification begins.
+ */
 data class SemanticIdentificationInput(
-    val webpage: IBrowserPage,
     /** Pre-captured page snapshot containing HTML and bounding boxes (without media). */
     val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
 ) : IAgent.IAgentInput

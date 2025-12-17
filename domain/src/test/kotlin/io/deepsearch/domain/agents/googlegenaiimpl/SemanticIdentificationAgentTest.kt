@@ -4,7 +4,6 @@ import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -35,8 +34,8 @@ class SemanticIdentificationAgentTest : KoinTest {
             page.navigate("https://www.example.com/")
             val pageSnapshot = page.capturePageSnapshot()
             
+            // SemanticIdentificationInput no longer requires browser reference
             val input = SemanticIdentificationInput(
-                webpage = page,
                 pageSnapshot = pageSnapshot
             )
             val output = agent.generate(input)
@@ -64,8 +63,8 @@ class SemanticIdentificationAgentTest : KoinTest {
             page.navigate(url)
             val pageSnapshot = page.capturePageSnapshot()
 
+            // SemanticIdentificationInput no longer requires browser reference
             val input = SemanticIdentificationInput(
-                webpage = page,
                 pageSnapshot = pageSnapshot
             )
             val output = agent.generate(input)
@@ -81,4 +80,3 @@ class SemanticIdentificationAgentTest : KoinTest {
         }
     }
 }
-
