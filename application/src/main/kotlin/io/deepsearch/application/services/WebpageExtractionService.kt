@@ -116,8 +116,8 @@ class WebpageExtractionService(
             icons = iconsDeferred.await()
             images = imagesDeferred.await()
         }
-        logger.debug("Browser captures complete in {} ms - browser can be released", browserDuration)
-        // >>> BROWSER CAN BE RELEASED HERE <<<
+        logger.debug("Browser captures complete in {} ms - releasing browser", browserDuration)
+        webpage.close()
 
         // ===== Await LLM Results =====
         val llmDuration = measureTimeMillis { awaitAll(semantic, tableId, iconRepl, imageRepl) }

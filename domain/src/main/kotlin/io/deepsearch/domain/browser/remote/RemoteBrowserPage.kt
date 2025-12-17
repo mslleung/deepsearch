@@ -22,6 +22,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 class RemoteBrowserPage(
     private val sessionId: String,
     private val json: Json,
+    private val onClose: suspend () -> Unit,
     private val execute: suspend (PageCommand) -> String?
 ) : IBrowserPage {
 
@@ -309,7 +310,7 @@ class RemoteBrowserPage(
     }
 
     override suspend fun close() {
-        logger.debug("RemoteBrowserPage.close() - session release handled by pool")
+        onClose()
     }
 
     private fun toMediaResult(r: MediaResponse) = IBrowserPage.MediaExtractionResult(

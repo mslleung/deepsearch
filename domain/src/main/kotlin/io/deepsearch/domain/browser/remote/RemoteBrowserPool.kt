@@ -19,6 +19,7 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Browser pool using REST API to communicate with deepsearch-browser service.
@@ -87,18 +88,30 @@ class RemoteBrowserPool(
 
         logger.debug("Acquired session: {} with proxy: {}", sessionId, proxyConfig::class.simpleName)
 
-        val page = RemoteBrowserPage(sessionId, json) { command ->
-            sendCommand(sessionId, command)
-        }
+        val released = AtomicBoolean(false)
+
+        val page = RemoteBrowserPage(
+            sessionId = sessionId,
+            json = json,
+            onClose = {
+                if (released.compareAndSet(false, true)) {
+                    releaseSession(sessionId)
+                    logger.debug("Released session via close(): {}", sessionId)
+                }
+            },
+            execute = { command -> sendCommand(sessionId, command) }
+        )
 
         return try {
             block(page)
         } finally {
-            try {
-                releaseSession(sessionId)
-                logger.debug("Released session: {}", sessionId)
-            } catch (e: Exception) {
-                logger.warn("Failed to release session {}: {}", sessionId, e.message)
+            if (released.compareAndSet(false, true)) {
+                try {
+                    releaseSession(sessionId)
+                    logger.debug("Released session via finally: {}", sessionId)
+                } catch (e: Exception) {
+                    logger.warn("Failed to release session {}: {}", sessionId, e.message)
+                }
             }
         }
     }
