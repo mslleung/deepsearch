@@ -457,62 +457,28 @@ class TableIdentificationAgentGenAiImpl(
         )
     }
 
-    override fun parseBatchResponse(responseText: String, htmlWithIds: String): List<TableIdentification> {
-        return try {
-            val response = batchJson.decodeFromString<TableIdentificationResponse>(responseText)
-            
-            // Build CSS selectors for all tables
-            val identifiers = response.tables.map { it.id }
-            val cssSelectorsMap = cssSelectorConstructionService.constructCssSelectorsFromIdentifiers(
-                identifiers = identifiers,
-                htmlWithIdentifiers = htmlWithIds
-            )
-
-            // Pre-parse HTML for media detection
-            val docForMediaDetection = Jsoup.parse(htmlWithIds)
-
-            response.tables.mapNotNull { llmResult ->
-                val cssSelector = cssSelectorsMap[llmResult.id]
-                if (cssSelector == null) {
-                    logger.warn("Skipping table '{}' - could not construct CSS selector", llmResult.id)
-                    return@mapNotNull null
-                }
-
-                val containsMedia = detectMediaInTable(llmResult.id, docForMediaDetection)
-                val auxiliaryInfo = combineAuxiliaryInfo(llmResult.description, llmResult.columnHeaders)
-
-                TableIdentification(
-                    cssSelector = cssSelector,
-                    dataId = llmResult.id,
-                    auxiliaryInfo = auxiliaryInfo,
-                    containsMedia = containsMedia
-                )
-            }
-        } catch (e: Exception) {
-            logger.warn("Failed to parse batch response: {}", e.message)
-            emptyList()
-        }
-    }
-
-    /**
-     * Parse batch response and merge with programmatic tables.
-     * Use this when you have the metadata from prepareBatchRequest.
-     */
-    fun parseBatchResponseWithProgrammaticTables(
+    override fun parseBatchResponse(
         responseText: String,
         htmlWithIds: String,
-        programmaticTablesJson: String?
+        metadata: Map<String, String>?
     ): List<TableIdentification> {
         return try {
             val response = batchJson.decodeFromString<TableIdentificationResponse>(responseText)
             
-            // Merge programmatic tables with LLM results
-            val programmaticTables = programmaticTablesJson?.let {
+            // Merge programmatic tables (from metadata) with LLM results
+            val programmaticTables = metadata?.get("programmaticTables")?.let {
                 batchJson.decodeFromString<List<LlmTableResult>>(it)
             } ?: emptyList()
             
             val allTableResults = programmaticTables + response.tables
-
+            
+            if (programmaticTables.isNotEmpty()) {
+                logger.debug(
+                    "Batch parsing: {} programmatic + {} LLM = {} total tables",
+                    programmaticTables.size, response.tables.size, allTableResults.size
+                )
+            }
+            
             // Build CSS selectors for all tables
             val identifiers = allTableResults.map { it.id }
             val cssSelectorsMap = cssSelectorConstructionService.constructCssSelectorsFromIdentifiers(
@@ -545,4 +511,5 @@ class TableIdentificationAgentGenAiImpl(
             emptyList()
         }
     }
+
 }

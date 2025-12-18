@@ -405,7 +405,11 @@ class ContentLlmBatchHandler(
                         return@forEachIndexed
                     }
 
-                    val tableIdentifications = tableIdentificationService.parseBatchResponse(result.generatedText!!, pending.htmlWithIds)
+                    val tableIdentifications = tableIdentificationService.parseBatchResponse(
+                        result.generatedText!!,
+                        pending.htmlWithIds,
+                        pending.request.metadata
+                    )
 
                     // Cache the result
                     val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed

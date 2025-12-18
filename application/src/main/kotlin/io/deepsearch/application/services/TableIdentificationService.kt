@@ -56,9 +56,14 @@ interface ITableIdentificationService {
      * 
      * @param responseText JSON response from batch API
      * @param htmlWithIds HTML with injected IDs (from TableIdentificationBatchPreparation.htmlWithIdsMap)
+     * @param metadata Optional metadata from the batch request (contains programmaticTables for merging)
      * @return List of TableIdentification
      */
-    fun parseBatchResponse(responseText: String, htmlWithIds: String): List<TableIdentification>
+    fun parseBatchResponse(
+        responseText: String,
+        htmlWithIds: String,
+        metadata: Map<String, String>? = null
+    ): List<TableIdentification>
     
     /**
      * Cache table identification result.
@@ -123,8 +128,12 @@ class TableIdentificationService(
         )
     }
 
-    override fun parseBatchResponse(responseText: String, htmlWithIds: String): List<TableIdentification> {
-        return tableIdentificationAgent.parseBatchResponse(responseText, htmlWithIds)
+    override fun parseBatchResponse(
+        responseText: String,
+        htmlWithIds: String,
+        metadata: Map<String, String>?
+    ): List<TableIdentification> {
+        return tableIdentificationAgent.parseBatchResponse(responseText, htmlWithIds, metadata)
     }
 
     @OptIn(ExperimentalTime::class)

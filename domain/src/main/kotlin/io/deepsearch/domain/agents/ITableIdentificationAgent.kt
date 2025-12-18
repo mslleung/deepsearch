@@ -54,6 +54,14 @@ interface ITableIdentificationAgent : IAgent<TableIdentificationInput, TableIden
     /**
      * Parse a batch response into table identifications.
      * Used by batch processing to parse responses with the same logic as interactive mode.
+     * 
+     * @param responseText JSON response from batch API
+     * @param htmlWithIds HTML with injected IDs for CSS selector construction
+     * @param metadata Optional metadata from the batch request (contains programmaticTables for merging)
      */
-    fun parseBatchResponse(responseText: String, htmlWithIds: String): List<TableIdentification>
+    fun parseBatchResponse(
+        responseText: String,
+        htmlWithIds: String,
+        metadata: Map<String, String>? = null
+    ): List<TableIdentification>
 }
