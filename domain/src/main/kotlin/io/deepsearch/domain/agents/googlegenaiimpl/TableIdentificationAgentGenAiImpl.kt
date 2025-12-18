@@ -92,7 +92,7 @@ class TableIdentificationAgentGenAiImpl(
         - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
         - Additionally, provide:
           - description: A brief description of the table's purpose or content based on the webpage context
-          - columnHeaders: The column headers of the table, comma-separated
+          - columnHeaders: The column headers of the table, comma-separated (e.g. "The columns of the table are Basic plan, Premium plan and Enterprise plan.")
 
         Expected output shape:
         {

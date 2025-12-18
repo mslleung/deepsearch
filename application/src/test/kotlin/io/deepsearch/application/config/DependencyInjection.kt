@@ -75,8 +75,6 @@ import io.deepsearch.application.services.UsageService
 import io.deepsearch.application.services.UserSubscriptionService
 import io.deepsearch.domain.config.domainBenchmarkTestModule
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.services.GeminiBatchServiceImpl
-import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.infrastructure.config.infrastructureBenchmarkTestModule
 import io.deepsearch.infrastructure.config.infrastructureTestModule
 import org.koin.core.module.dsl.createdAtStart
@@ -133,7 +131,6 @@ private val applicationCommonTestModule = module {
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
     
     // Batch periodic index services
-    singleOf(::GeminiBatchServiceImpl) bind IGeminiBatchService::class
     singleOf(::BatchEventEmitter)
     singleOf(::CrawlAndExtractHandler)
     singleOf(::ContentLlmBatchHandler)

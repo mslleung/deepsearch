@@ -27,6 +27,14 @@ import io.deepsearch.domain.services.JsoupDomService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
 import io.deepsearch.domain.services.SerperService
+import io.deepsearch.domain.services.GeminiBatchServiceImpl
+import io.deepsearch.domain.services.IGeminiBatchService
+import io.deepsearch.domain.http.IProxyAwareHttpClientFactory
+import io.deepsearch.domain.http.ProxyAwareHttpClientFactory
+import io.deepsearch.domain.proxy.IProxyTestService
+import io.deepsearch.domain.proxy.ProxyTestService
+import io.deepsearch.domain.services.GeminiFileSearchService
+import io.deepsearch.domain.services.IGeminiFileSearchService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.scopedOf
@@ -102,6 +110,10 @@ private val domainCommonTestModule = module {
     singleOf(::SerperService) bind ISerperService::class
     singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
     singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
+    singleOf(::GeminiBatchServiceImpl) bind IGeminiBatchService::class
+    singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
+    singleOf(::ProxyAwareHttpClientFactory) bind IProxyAwareHttpClientFactory::class
+    singleOf(::ProxyTestService) bind IProxyTestService::class
 }
 
 val domainTestModule = module {
