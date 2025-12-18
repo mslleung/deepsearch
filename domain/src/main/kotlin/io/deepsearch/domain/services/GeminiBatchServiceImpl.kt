@@ -57,31 +57,46 @@ class GeminiBatchServiceImpl(
     }
 
     /**
-     * Estimate the total size of batch requests in bytes.
-     * Used to determine whether to use inline or file-based approach.
+     * Calculate the exact size of batch requests in bytes by serializing to JSON.
+     * Returns a pair of (totalSizeBytes, serializedJsonLines) so we can reuse
+     * the serialized content if file-based approach is needed.
      */
-    private fun estimateBatchSizeBytes(requests: List<BatchContentRequest>): Long {
-        return requests.sumOf { request ->
-            // System instruction
-            val systemSize = (request.systemInstruction?.length ?: 0).toLong()
-            // User prompt (main content)
-            val promptSize = request.userPrompt.length.toLong()
-            // Image data (base64 encoded)
-            val imageSize = (request.imageData?.length ?: 0).toLong()
-            // Overhead for JSON structure, metadata, config, etc.
-            val overhead = 500L
-            
-            systemSize + promptSize + imageSize + overhead
+    private fun calculateBatchSize(requests: List<BatchContentRequest>): Pair<Long, List<String>> {
+        val jsonLines = requests.map { request ->
+            val jsonObject = buildJsonLineRequest(request)
+            Json.encodeToString(JsonObject.serializer(), jsonObject)
         }
+        val totalSize = jsonLines.sumOf { it.length.toLong() + 1L } // +1 for newline
+        return totalSize to jsonLines
     }
 
     /**
-     * Estimate the total size of embedding batch requests in bytes.
+     * Calculate the exact size of embedding batch requests in bytes by serializing to JSON.
+     * Returns a pair of (totalSizeBytes, serializedJsonLines) so we can reuse
+     * the serialized content if file-based approach is needed.
      */
-    private fun estimateEmbeddingBatchSizeBytes(requests: List<BatchEmbeddingRequest>): Long {
-        return requests.sumOf { request ->
-            request.text.length.toLong() + 200L // overhead
+    private fun calculateEmbeddingBatchSize(requests: List<BatchEmbeddingRequest>): Pair<Long, List<String>> {
+        val jsonLines = requests.map { request ->
+            val jsonObject = buildJsonObject {
+                put("key", request.requestId)
+                putJsonObject("request") {
+                    putJsonObject("content") {
+                        putJsonArray("parts") {
+                            add(buildJsonObject {
+                                put("text", request.text)
+                            })
+                        }
+                    }
+                    putJsonObject("config") {
+                        put("task_type", request.taskType)
+                        put("output_dimensionality", request.outputDimensionality)
+                    }
+                }
+            }
+            Json.encodeToString(JsonObject.serializer(), jsonObject)
         }
+        val totalSize = jsonLines.sumOf { it.length.toLong() + 1L } // +1 for newline
+        return totalSize to jsonLines
     }
 
     // ==================== File-Based Batch Methods ====================
@@ -149,24 +164,23 @@ class GeminiBatchServiceImpl(
     /**
      * Create a content batch using file-based upload for large batches.
      * 
-     * @param requests The batch content requests
+     * @param modelId The model ID to use for the batch
+     * @param serializedJsonLines Pre-serialized JSON lines (one per request)
      * @return The batch job ID
      */
-    private suspend fun createContentBatchWithFile(requests: List<BatchContentRequest>): String {
-        val modelId = requests.first().modelId
+    private suspend fun createContentBatchWithFile(modelId: String, serializedJsonLines: List<String>): String {
         val timestamp = System.currentTimeMillis()
         
-        logger.info("Creating file-based content batch with {} requests (model: {})", requests.size, modelId)
+        logger.info("Creating file-based content batch with {} requests (model: {})", serializedJsonLines.size, modelId)
         
         // Create temp file for JSONL content
         val tempFile = createTempFile(prefix = "batch-requests-$timestamp", suffix = ".jsonl")
         
         try {
-            // Write JSONL content
+            // Write pre-serialized JSONL content
             tempFile.bufferedWriter().use { writer ->
-                requests.forEach { request ->
-                    val jsonLine = buildJsonLineRequest(request)
-                    writer.write(Json.encodeToString(JsonObject.serializer(), jsonLine))
+                serializedJsonLines.forEach { jsonLine ->
+                    writer.write(jsonLine)
                     writer.newLine()
                 }
             }
@@ -263,25 +277,27 @@ class GeminiBatchServiceImpl(
             throw IllegalArgumentException("Cannot create batch with empty requests")
         }
 
-        val estimatedSize = estimateBatchSizeBytes(requests)
-        val estimatedSizeMB = estimatedSize / (1024.0 * 1024.0)
+        // Calculate exact size by serializing to JSON
+        val (exactSize, serializedLines) = calculateBatchSize(requests)
+        val exactSizeMB = exactSize / (1024.0 * 1024.0)
         
         logger.info(
-            "Creating content batch with {} requests (estimated size: {:.2f} MB)", 
+            "Creating content batch with {} requests (exact size: {:.2f} MB)", 
             requests.size, 
-            estimatedSizeMB
+            exactSizeMB
         )
 
-        // Choose inline or file-based approach based on estimated size
-        return if (estimatedSize < MAX_INLINE_SIZE_BYTES) {
+        // Choose inline or file-based approach based on exact size
+        return if (exactSize < MAX_INLINE_SIZE_BYTES) {
             logger.debug("Using inline approach (under {}MB limit)", MAX_INLINE_SIZE_BYTES / (1024 * 1024))
             createContentBatchInline(requests)
         } else {
-            logger.info("Using file-based approach (estimated {}MB exceeds {}MB limit)", 
-                String.format("%.2f", estimatedSizeMB),
+            logger.info("Using file-based approach ({:.2f}MB exceeds {}MB limit)", 
+                exactSizeMB,
                 MAX_INLINE_SIZE_BYTES / (1024 * 1024)
             )
-            createContentBatchWithFile(requests)
+            // Reuse the already-serialized JSON lines
+            createContentBatchWithFile(requests.first().modelId, serializedLines)
         }
     }
 
@@ -290,25 +306,27 @@ class GeminiBatchServiceImpl(
             throw IllegalArgumentException("Cannot create embedding batch with empty requests")
         }
 
-        val estimatedSize = estimateEmbeddingBatchSizeBytes(requests)
-        val estimatedSizeMB = estimatedSize / (1024.0 * 1024.0)
+        // Calculate exact size by serializing to JSON
+        val (exactSize, serializedLines) = calculateEmbeddingBatchSize(requests)
+        val exactSizeMB = exactSize / (1024.0 * 1024.0)
         
         logger.info(
-            "Creating embedding batch with {} requests (estimated size: {:.2f} MB)", 
+            "Creating embedding batch with {} requests (exact size: {:.2f} MB)", 
             requests.size, 
-            estimatedSizeMB
+            exactSizeMB
         )
 
-        // Choose inline or file-based approach based on estimated size
-        return if (estimatedSize < MAX_INLINE_SIZE_BYTES) {
+        // Choose inline or file-based approach based on exact size
+        return if (exactSize < MAX_INLINE_SIZE_BYTES) {
             logger.debug("Using inline approach for embeddings (under {}MB limit)", MAX_INLINE_SIZE_BYTES / (1024 * 1024))
             createEmbeddingBatchInline(requests)
         } else {
-            logger.info("Using file-based approach for embeddings (estimated {}MB exceeds {}MB limit)", 
-                String.format("%.2f", estimatedSizeMB),
+            logger.info("Using file-based approach for embeddings ({:.2f}MB exceeds {}MB limit)", 
+                exactSizeMB,
                 MAX_INLINE_SIZE_BYTES / (1024 * 1024)
             )
-            createEmbeddingBatchWithFile(requests)
+            // Reuse the already-serialized JSON lines
+            createEmbeddingBatchWithFile(requests.first().modelId, serializedLines)
         }
     }
 
@@ -365,39 +383,23 @@ class GeminiBatchServiceImpl(
     /**
      * Create an embedding batch using file-based upload for large batches.
      * 
-     * Note: For embeddings, the JSONL format is slightly different.
-     * Each line contains: {"key": "request-id", "request": {"content": {...}, "config": {...}}}
+     * @param modelId The model ID to use for the batch
+     * @param serializedJsonLines Pre-serialized JSON lines (one per request)
+     * @return The batch job ID
      */
-    private suspend fun createEmbeddingBatchWithFile(requests: List<BatchEmbeddingRequest>): String {
-        val modelId = requests.first().modelId
+    private suspend fun createEmbeddingBatchWithFile(modelId: String, serializedJsonLines: List<String>): String {
         val timestamp = System.currentTimeMillis()
         
-        logger.info("Creating file-based embedding batch with {} requests (model: {})", requests.size, modelId)
+        logger.info("Creating file-based embedding batch with {} requests (model: {})", serializedJsonLines.size, modelId)
         
         // Create temp file for JSONL content
         val tempFile = createTempFile(prefix = "batch-embedding-requests-$timestamp", suffix = ".jsonl")
         
         try {
-            // Write JSONL content
+            // Write pre-serialized JSONL content
             tempFile.bufferedWriter().use { writer ->
-                requests.forEach { request ->
-                    val jsonLine = buildJsonObject {
-                        put("key", request.requestId)
-                        putJsonObject("request") {
-                            putJsonObject("content") {
-                                putJsonArray("parts") {
-                                    add(buildJsonObject {
-                                        put("text", request.text)
-                                    })
-                                }
-                            }
-                            putJsonObject("config") {
-                                put("task_type", request.taskType)
-                                put("output_dimensionality", request.outputDimensionality)
-                            }
-                        }
-                    }
-                    writer.write(Json.encodeToString(JsonObject.serializer(), jsonLine))
+                serializedJsonLines.forEach { jsonLine ->
+                    writer.write(jsonLine)
                     writer.newLine()
                 }
             }
