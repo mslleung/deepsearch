@@ -2,6 +2,7 @@ package io.deepsearch.infrastructure.config
 
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.PostgresConfig
+import io.deepsearch.domain.proxy.IProxyRuleRepository
 import io.deepsearch.domain.repositories.*
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
@@ -9,6 +10,7 @@ import io.deepsearch.infrastructure.services.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.createdAtStart
+import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -53,6 +55,9 @@ private val infrastructureCommonTestModule = module {
     singleOf(::PeriodicIndexConfigTable)
     singleOf(::SitemapCacheTable)
     singleOf(::LlmTokenUsageTable)
+    singleOf(::ProxyRuleTable)
+    singleOf(::BatchPeriodicIndexJobTable)
+    singleOf(::BatchUrlStateTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -70,6 +75,9 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ExposedLlmTokenUsageRepository) bind ILlmTokenUsageRepository::class
     singleOf(::ExposedPeriodicIndexConfigRepository) bind IPeriodicIndexConfigRepository::class
     singleOf(::ExposedPeriodicIndexJobRepository) bind IPeriodicIndexJobRepository::class
+    singleOf(::ExposedProxyRuleRepository) bind IProxyRuleRepository::class
+    singleOf(::ExposedBatchPeriodicIndexJobRepository) bind IBatchPeriodicIndexJobRepository::class
+    singleOf(::ExposedBatchUrlStateRepository) bind IBatchUrlStateRepository::class
 }
 
 val infrastructureTestModule = module {

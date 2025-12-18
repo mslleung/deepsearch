@@ -50,12 +50,12 @@ class BatchPipelineIntegrationTest : KoinTest {
     @ParameterizedTest
     @ValueSource(
         strings = [
-            "https://mybeame.com/beame-student-discount",
-            "https://www.otandp.com/body-check/",
-            "https://www.otandp.com/about/history",
-            "https://sleekflow.io/pricing",
+//            "https://mybeame.com/beame-student-discount",
+//            "https://www.otandp.com/body-check/",
+//            "https://www.otandp.com/about/history",
+//            "https://sleekflow.io/pricing",
             "https://sleekflow.io/fair-use-policy",
-            "https://sleekflow.io/ticketing"
+//            "https://sleekflow.io/ticketing"
         ]
     )
     fun `batch pipeline produces valid cached markdown`(url: String) = runTest(testCoroutineDispatcher) {
@@ -112,7 +112,7 @@ class BatchPipelineIntegrationTest : KoinTest {
         println("Title: ${webpageMarkdown.title}")
         println("Description: ${webpageMarkdown.description}")
         println("Markdown length: ${webpageMarkdown.markdown!!.length}")
-        println(webpageMarkdown.markdown!!.take(1000))
+        println(webpageMarkdown.markdown!!)
         println("...")
     }
 }

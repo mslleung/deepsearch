@@ -9,6 +9,8 @@ import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchO
 import io.deepsearch.application.services.*
 import io.deepsearch.application.services.batch.*
 import io.deepsearch.domain.config.domainModule
+import io.deepsearch.domain.services.GeminiBatchServiceImpl
+import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.infrastructure.config.infrastructureModule
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -49,6 +51,7 @@ val applicationModule = module {
     singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
     
     // Batch periodic index services (uses Gemini Batch API for cost-effective processing)
+    singleOf(::GeminiBatchServiceImpl) bind IGeminiBatchService::class
     singleOf(::BatchEventEmitter)
     singleOf(::CrawlAndExtractHandler)
     singleOf(::ContentLlmBatchHandler)
