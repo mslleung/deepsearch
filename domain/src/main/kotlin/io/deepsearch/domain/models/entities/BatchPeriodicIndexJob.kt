@@ -11,14 +11,14 @@ import kotlin.time.Instant
  * Batch jobs go through 4 stages with async Gemini batch processing.
  */
 enum class BatchPeriodicIndexJobState {
-    /** Stage 1: Combined crawling + browser extraction (single browser visit per URL) */
+    /** Stage 1: Browser-based crawling + extraction (single browser visit per URL) */
     CRAWL_AND_EXTRACT,
-    /** Stage 2: Waiting for Gemini batch job (semantic identification, table identification, icons/images) */
-    BATCHING_CONTENT_LLM,
-    /** Stage 3: Waiting for Gemini batch job (table interpretation) */
-    BATCHING_FINAL_LLM,
-    /** Stage 4: Writing cache and embeddings to DB */
-    WRITING_CACHE,
+    /** Stage 2: LLM batch for semantic identification, table identification, icons/images */
+    CONTENT_LLM_BATCH,
+    /** Stage 3: LLM batch for table interpretation */
+    LLM_TABLE_INTERPRETATION,
+    /** Stage 4: Finalize markdown and generate embeddings */
+    FINALIZE_AND_CACHE_EMBEDDING,
     /** Successfully completed all stages */
     COMPLETED,
     /** Failed due to an error */
@@ -34,10 +34,10 @@ enum class BatchPeriodicIndexJobState {
  * Unlike interactive periodic index jobs, batch jobs can take up to 24+ hours to complete.
  * 
  * The job progresses through 4 stages:
- * 1. CRAWL_AND_EXTRACT - Combined link discovery + browser extraction (single visit per URL)
- * 2. BATCHING_CONTENT_LLM - Async batch LLM for semantic/table/icon identification
- * 3. BATCHING_FINAL_LLM - Async batch LLM for table interpretation
- * 4. WRITING_CACHE - Write markdown/embeddings to cache
+ * 1. CRAWL_AND_EXTRACT - Browser-based crawl + extraction (single visit per URL)
+ * 2. CONTENT_LLM_BATCH - LLM batch for semantic/table/icon identification
+ * 3. LLM_TABLE_INTERPRETATION - LLM batch for table interpretation
+ * 4. FINALIZE_AND_CACHE_EMBEDDING - Finalize markdown and generate embeddings
  * 
  * State is persisted at each stage for resumption after server restarts.
  */
@@ -106,9 +106,9 @@ class BatchPeriodicIndexJob(
      */
     fun currentStage(): Int = when (state) {
         BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> 1
-        BatchPeriodicIndexJobState.BATCHING_CONTENT_LLM -> 2
-        BatchPeriodicIndexJobState.BATCHING_FINAL_LLM -> 3
-        BatchPeriodicIndexJobState.WRITING_CACHE -> 4
+        BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> 2
+        BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> 3
+        BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> 4
         BatchPeriodicIndexJobState.COMPLETED -> 4
         BatchPeriodicIndexJobState.FAILED, BatchPeriodicIndexJobState.STOPPED -> currentStageFromProgress()
     }
@@ -125,9 +125,9 @@ class BatchPeriodicIndexJob(
      */
     fun stageDescription(): String = when (state) {
         BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> "Crawling & extracting webpages"
-        BatchPeriodicIndexJobState.BATCHING_CONTENT_LLM -> "Processing with Gemini (content analysis)"
-        BatchPeriodicIndexJobState.BATCHING_FINAL_LLM -> "Processing with Gemini (table interpretation)"
-        BatchPeriodicIndexJobState.WRITING_CACHE -> "Saving results"
+        BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> "Processing with Gemini (content analysis)"
+        BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> "Processing with Gemini (table interpretation)"
+        BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> "Finalizing and caching"
         BatchPeriodicIndexJobState.COMPLETED -> "Completed"
         BatchPeriodicIndexJobState.FAILED -> "Failed: ${errorMessage ?: "Unknown error"}"
         BatchPeriodicIndexJobState.STOPPED -> "Stopped"
@@ -138,10 +138,10 @@ class BatchPeriodicIndexJob(
      */
     fun advanceToNextStage() {
         state = when (state) {
-            BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> BatchPeriodicIndexJobState.BATCHING_CONTENT_LLM
-            BatchPeriodicIndexJobState.BATCHING_CONTENT_LLM -> BatchPeriodicIndexJobState.BATCHING_FINAL_LLM
-            BatchPeriodicIndexJobState.BATCHING_FINAL_LLM -> BatchPeriodicIndexJobState.WRITING_CACHE
-            BatchPeriodicIndexJobState.WRITING_CACHE -> BatchPeriodicIndexJobState.COMPLETED
+            BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> BatchPeriodicIndexJobState.CONTENT_LLM_BATCH
+            BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION
+            BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING
+            BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> BatchPeriodicIndexJobState.COMPLETED
             else -> state // No transition for terminal states
         }
         updatedAt = Clock.System.now()
@@ -213,7 +213,7 @@ class BatchPeriodicIndexJob(
      * Check if the job is waiting for a Gemini batch to complete.
      */
     fun isWaitingForBatch(): Boolean = state in listOf(
-        BatchPeriodicIndexJobState.BATCHING_CONTENT_LLM,
-        BatchPeriodicIndexJobState.BATCHING_FINAL_LLM
+        BatchPeriodicIndexJobState.CONTENT_LLM_BATCH,
+        BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION
     ) && geminiBatchJobId != null
 }

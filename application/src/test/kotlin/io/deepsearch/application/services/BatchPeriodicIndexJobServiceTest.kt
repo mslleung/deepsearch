@@ -1,10 +1,11 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.services.batch.BatchPeriodicIndexEvent
+import io.deepsearch.application.services.batch.IBatchPeriodicIndexOrchestrator
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
 import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
 import io.deepsearch.domain.models.entities.BatchUrlState
-import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.BatchUrlStageCounts
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
@@ -16,7 +17,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 /**

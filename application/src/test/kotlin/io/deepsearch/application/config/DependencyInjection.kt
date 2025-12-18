@@ -9,10 +9,15 @@ import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchO
 import io.deepsearch.application.services.ApiKeyService
 import io.deepsearch.application.services.AuthService
 import io.deepsearch.application.services.BatchPeriodicIndexJobService
-import io.deepsearch.application.services.BatchPeriodicIndexOrchestrator
+import io.deepsearch.application.services.batch.BatchEventEmitter
+import io.deepsearch.application.services.batch.BatchPeriodicIndexOrchestrator
+import io.deepsearch.application.services.batch.ContentLlmBatchHandler
+import io.deepsearch.application.services.batch.CrawlAndExtractHandler
+import io.deepsearch.application.services.batch.FinalizeAndCacheHandler
+import io.deepsearch.application.services.batch.IBatchPeriodicIndexOrchestrator
+import io.deepsearch.application.services.batch.TableInterpretationBatchHandler
 import io.deepsearch.application.services.FileSearchService
 import io.deepsearch.application.services.IBatchPeriodicIndexJobService
-import io.deepsearch.application.services.IBatchPeriodicIndexOrchestrator
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.application.services.IPopupContainerIdentificationService
@@ -126,6 +131,11 @@ private val applicationCommonTestModule = module {
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
     
     // Batch periodic index services
+    singleOf(::BatchEventEmitter)
+    singleOf(::CrawlAndExtractHandler)
+    singleOf(::ContentLlmBatchHandler)
+    singleOf(::TableInterpretationBatchHandler)
+    singleOf(::FinalizeAndCacheHandler)
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 

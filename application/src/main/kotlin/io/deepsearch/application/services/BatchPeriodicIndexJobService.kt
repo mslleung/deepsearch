@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.services.batch.IBatchPeriodicIndexOrchestrator
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
