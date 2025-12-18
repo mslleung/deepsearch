@@ -311,7 +311,7 @@ class GeminiBatchServiceImpl(
         val exactSizeMB = exactSize / (1024.0 * 1024.0)
         
         logger.info(
-            "Creating embedding batch with {} requests (exact size: {:.2f} MB)", 
+            "Creating embedding batch with {} requests (exact size: {} MB)",
             requests.size, 
             exactSizeMB
         )

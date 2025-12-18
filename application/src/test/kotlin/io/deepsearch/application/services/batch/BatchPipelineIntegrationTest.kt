@@ -1,23 +1,24 @@
 package io.deepsearch.application.services.batch
 
-import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.application.config.applicationBenchmarkTestModule
 import io.deepsearch.application.services.CachedWebpageResult
 import io.deepsearch.application.services.IBatchPeriodicIndexJobService
 import io.deepsearch.application.services.IWebpageCacheService
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.UserId
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import java.util.concurrent.TimeUnit
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -40,13 +41,21 @@ class BatchPipelineIntegrationTest : KoinTest {
     @JvmField
     @RegisterExtension
     val koinTestExtension = KoinTestExtension.create {
-        modules(applicationTestModule)
+        // Use benchmark module which provides real dispatchers (Dispatchers.IO, etc.)
+        // instead of StandardTestDispatcher which skips all timing/delays
+        modules(applicationBenchmarkTestModule)
     }
 
     private val batchJobService by inject<IBatchPeriodicIndexJobService>()
     private val webpageCacheService by inject<IWebpageCacheService>()
-    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
 
+    /**
+     * Note: This test uses applicationBenchmarkTestModule and runBlocking because:
+     * - Standard Koin test modules use StandardTestDispatcher which skips all delays (virtual time)
+     * - Batch jobs require real-time waiting as they execute actual API calls and processing
+     * - applicationBenchmarkTestModule provides DefaultDispatcherProvider with real dispatchers
+     * - Using runBlocking with real dispatchers allows the batch pipeline to execute properly
+     */
     @ParameterizedTest
     @ValueSource(
         strings = [
@@ -58,7 +67,8 @@ class BatchPipelineIntegrationTest : KoinTest {
 //            "https://sleekflow.io/ticketing"
         ]
     )
-    fun `batch pipeline produces valid cached markdown`(url: String) = runTest(testCoroutineDispatcher) {
+    @Timeout(value = 1, unit = TimeUnit.HOURS)
+    fun `batch pipeline produces valid cached markdown`(url: String) = runBlocking {
         // 1. Start a batch job with maxUrlCount=1 (single page for focused testing)
         val job = batchJobService.start(
             baseUrl = url,
@@ -72,7 +82,7 @@ class BatchPipelineIntegrationTest : KoinTest {
         // 2. Poll until job completes (with timeout)
         // Note: Batch jobs use Gemini Batch API which can take up to 24+ hours,
         // but for single-page tests, it should complete much faster
-        val timeout = 30.minutes
+        val timeout = 60.minutes
         val pollInterval = 5.seconds
         val deadline = Clock.System.now() + timeout
         
