@@ -14,9 +14,19 @@ import com.google.genai.types.InlinedRequest
 import com.google.genai.types.JobState
 import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.UploadFileConfig
 import io.deepsearch.domain.agents.infra.withRateLimitRetry
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import kotlin.io.createTempFile
 
 /**
  * Implementation of IGeminiBatchService using the Gemini Batch API.
@@ -38,13 +48,184 @@ class GeminiBatchServiceImpl(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun createContentBatch(requests: List<BatchContentRequest>): String {
-        if (requests.isEmpty()) {
-            throw IllegalArgumentException("Cannot create batch with empty requests")
+    companion object {
+        /**
+         * Maximum size in bytes for inline batch requests.
+         * The Gemini API has a 20MB limit; we use 15MB for safety margin.
+         */
+        private const val MAX_INLINE_SIZE_BYTES = 15 * 1024 * 1024L // 15MB
+    }
+
+    /**
+     * Estimate the total size of batch requests in bytes.
+     * Used to determine whether to use inline or file-based approach.
+     */
+    private fun estimateBatchSizeBytes(requests: List<BatchContentRequest>): Long {
+        return requests.sumOf { request ->
+            // System instruction
+            val systemSize = (request.systemInstruction?.length ?: 0).toLong()
+            // User prompt (main content)
+            val promptSize = request.userPrompt.length.toLong()
+            // Image data (base64 encoded)
+            val imageSize = (request.imageData?.length ?: 0).toLong()
+            // Overhead for JSON structure, metadata, config, etc.
+            val overhead = 500L
+            
+            systemSize + promptSize + imageSize + overhead
         }
+    }
 
-        logger.info("Creating content batch with {} requests", requests.size)
+    /**
+     * Estimate the total size of embedding batch requests in bytes.
+     */
+    private fun estimateEmbeddingBatchSizeBytes(requests: List<BatchEmbeddingRequest>): Long {
+        return requests.sumOf { request ->
+            request.text.length.toLong() + 200L // overhead
+        }
+    }
 
+    // ==================== File-Based Batch Methods ====================
+
+    /**
+     * Build a JSON object representing a single request for JSONL file format.
+     * Format: {"key": "request-id", "request": {...}}
+     */
+    private fun buildJsonLineRequest(request: BatchContentRequest): JsonObject {
+        // Build contents array with parts
+        val parts = mutableListOf<JsonObject>()
+        
+        // Add image part if present
+        if (request.imageData != null && request.imageMimeType != null) {
+            parts.add(buildJsonObject {
+                putJsonObject("inline_data") {
+                    put("mime_type", request.imageMimeType)
+                    put("data", request.imageData)
+                }
+            })
+        }
+        
+        // Add text part
+        parts.add(buildJsonObject {
+            put("text", request.userPrompt)
+        })
+        
+        // Build the request object
+        return buildJsonObject {
+            put("key", request.requestId)
+            putJsonObject("request") {
+                putJsonArray("contents") {
+                    add(buildJsonObject {
+                        put("role", "user")
+                        putJsonArray("parts") {
+                            parts.forEach { add(it) }
+                        }
+                    })
+                }
+                
+                // Add system instruction if present
+                if (request.systemInstruction != null) {
+                    putJsonObject("system_instruction") {
+                        putJsonArray("parts") {
+                            add(buildJsonObject {
+                                put("text", request.systemInstruction)
+                            })
+                        }
+                    }
+                }
+                
+                // Add generation config
+                putJsonObject("generation_config") {
+                    put("temperature", request.temperature.toDouble())
+                    // Note: Response schema is not directly serializable, 
+                    // but for file-based batches we may need to handle this differently
+                    if (request.schema != null) {
+                        put("response_mime_type", "application/json")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Create a content batch using file-based upload for large batches.
+     * 
+     * @param requests The batch content requests
+     * @return The batch job ID
+     */
+    private suspend fun createContentBatchWithFile(requests: List<BatchContentRequest>): String {
+        val modelId = requests.first().modelId
+        val timestamp = System.currentTimeMillis()
+        
+        logger.info("Creating file-based content batch with {} requests (model: {})", requests.size, modelId)
+        
+        // Create temp file for JSONL content
+        val tempFile = createTempFile(prefix = "batch-requests-$timestamp", suffix = ".jsonl")
+        
+        try {
+            // Write JSONL content
+            tempFile.bufferedWriter().use { writer ->
+                requests.forEach { request ->
+                    val jsonLine = buildJsonLineRequest(request)
+                    writer.write(Json.encodeToString(JsonObject.serializer(), jsonLine))
+                    writer.newLine()
+                }
+            }
+            
+            logger.debug("Created JSONL file: {} ({} bytes)", tempFile.absolutePath, tempFile.length())
+            
+            // Upload file to Gemini Files API
+            val uploadConfig = UploadFileConfig.builder()
+                .displayName("deepsearch-batch-$timestamp.jsonl")
+                .mimeType("application/jsonl")
+                .build()
+            
+            val uploadedFile = withRateLimitRetry(this::class.simpleName!!) {
+                client.files.upload(tempFile, uploadConfig)
+            }
+            
+            val uploadedFileName = uploadedFile.name().orElseThrow {
+                RuntimeException("File uploaded but no name returned")
+            }
+            
+            logger.info("Uploaded batch file: {}", uploadedFileName)
+            
+            // Create batch job with file reference
+            val source = BatchJobSource.builder()
+                .fileName(uploadedFileName)
+                .build()
+            
+            val config = CreateBatchJobConfig.builder()
+                .displayName("deepsearch-content-batch-file-$timestamp")
+                .build()
+            
+            val batchJob = withRateLimitRetry(this::class.simpleName!!) {
+                client.batches.create(modelId, source, config)
+            }
+            
+            val batchJobName = batchJob.name().orElseThrow {
+                RuntimeException("Batch job created but no name returned")
+            }
+            
+            logger.info("Created file-based content batch job: {}", batchJobName)
+            return batchJobName
+            
+        } finally {
+            // Clean up temp file
+            try {
+                tempFile.delete()
+            } catch (e: Exception) {
+                logger.warn("Failed to delete temp file: {}", tempFile.absolutePath)
+            }
+        }
+    }
+
+    /**
+     * Create a content batch using inline requests for small batches.
+     * 
+     * @param requests The batch content requests
+     * @return The batch job ID
+     */
+    private suspend fun createContentBatchInline(requests: List<BatchContentRequest>): String {
         // Convert BatchContentRequest to InlinedRequest
         val inlinedRequests = requests.map { request ->
             buildInlinedRequest(request)
@@ -71,8 +252,37 @@ class GeminiBatchServiceImpl(
             RuntimeException("Batch job created but no name returned")
         }
 
-        logger.info("Created content batch job: {}", batchJobName)
+        logger.info("Created inline content batch job: {}", batchJobName)
         return batchJobName
+    }
+
+    // ==================== Public API Methods ====================
+
+    override suspend fun createContentBatch(requests: List<BatchContentRequest>): String {
+        if (requests.isEmpty()) {
+            throw IllegalArgumentException("Cannot create batch with empty requests")
+        }
+
+        val estimatedSize = estimateBatchSizeBytes(requests)
+        val estimatedSizeMB = estimatedSize / (1024.0 * 1024.0)
+        
+        logger.info(
+            "Creating content batch with {} requests (estimated size: {:.2f} MB)", 
+            requests.size, 
+            estimatedSizeMB
+        )
+
+        // Choose inline or file-based approach based on estimated size
+        return if (estimatedSize < MAX_INLINE_SIZE_BYTES) {
+            logger.debug("Using inline approach (under {}MB limit)", MAX_INLINE_SIZE_BYTES / (1024 * 1024))
+            createContentBatchInline(requests)
+        } else {
+            logger.info("Using file-based approach (estimated {}MB exceeds {}MB limit)", 
+                String.format("%.2f", estimatedSizeMB),
+                MAX_INLINE_SIZE_BYTES / (1024 * 1024)
+            )
+            createContentBatchWithFile(requests)
+        }
     }
 
     override suspend fun createEmbeddingBatch(requests: List<BatchEmbeddingRequest>): String {
@@ -80,8 +290,32 @@ class GeminiBatchServiceImpl(
             throw IllegalArgumentException("Cannot create embedding batch with empty requests")
         }
 
-        logger.info("Creating embedding batch with {} requests", requests.size)
+        val estimatedSize = estimateEmbeddingBatchSizeBytes(requests)
+        val estimatedSizeMB = estimatedSize / (1024.0 * 1024.0)
+        
+        logger.info(
+            "Creating embedding batch with {} requests (estimated size: {:.2f} MB)", 
+            requests.size, 
+            estimatedSizeMB
+        )
 
+        // Choose inline or file-based approach based on estimated size
+        return if (estimatedSize < MAX_INLINE_SIZE_BYTES) {
+            logger.debug("Using inline approach for embeddings (under {}MB limit)", MAX_INLINE_SIZE_BYTES / (1024 * 1024))
+            createEmbeddingBatchInline(requests)
+        } else {
+            logger.info("Using file-based approach for embeddings (estimated {}MB exceeds {}MB limit)", 
+                String.format("%.2f", estimatedSizeMB),
+                MAX_INLINE_SIZE_BYTES / (1024 * 1024)
+            )
+            createEmbeddingBatchWithFile(requests)
+        }
+    }
+
+    /**
+     * Create an embedding batch using inline requests for small batches.
+     */
+    private suspend fun createEmbeddingBatchInline(requests: List<BatchEmbeddingRequest>): String {
         // Convert BatchEmbeddingRequest to EmbedContentBatch
         // Each request becomes a Content object with the text to embed
         val contents = requests.map { request ->
@@ -124,8 +358,96 @@ class GeminiBatchServiceImpl(
             RuntimeException("Embedding batch job created but no name returned")
         }
 
-        logger.info("Created embedding batch job: {}", batchJobName)
+        logger.info("Created inline embedding batch job: {}", batchJobName)
         return batchJobName
+    }
+
+    /**
+     * Create an embedding batch using file-based upload for large batches.
+     * 
+     * Note: For embeddings, the JSONL format is slightly different.
+     * Each line contains: {"key": "request-id", "request": {"content": {...}, "config": {...}}}
+     */
+    private suspend fun createEmbeddingBatchWithFile(requests: List<BatchEmbeddingRequest>): String {
+        val modelId = requests.first().modelId
+        val timestamp = System.currentTimeMillis()
+        
+        logger.info("Creating file-based embedding batch with {} requests (model: {})", requests.size, modelId)
+        
+        // Create temp file for JSONL content
+        val tempFile = createTempFile(prefix = "batch-embedding-requests-$timestamp", suffix = ".jsonl")
+        
+        try {
+            // Write JSONL content
+            tempFile.bufferedWriter().use { writer ->
+                requests.forEach { request ->
+                    val jsonLine = buildJsonObject {
+                        put("key", request.requestId)
+                        putJsonObject("request") {
+                            putJsonObject("content") {
+                                putJsonArray("parts") {
+                                    add(buildJsonObject {
+                                        put("text", request.text)
+                                    })
+                                }
+                            }
+                            putJsonObject("config") {
+                                put("task_type", request.taskType)
+                                put("output_dimensionality", request.outputDimensionality)
+                            }
+                        }
+                    }
+                    writer.write(Json.encodeToString(JsonObject.serializer(), jsonLine))
+                    writer.newLine()
+                }
+            }
+            
+            logger.debug("Created embedding JSONL file: {} ({} bytes)", tempFile.absolutePath, tempFile.length())
+            
+            // Upload file to Gemini Files API
+            val uploadConfig = UploadFileConfig.builder()
+                .displayName("deepsearch-embedding-batch-$timestamp.jsonl")
+                .mimeType("application/jsonl")
+                .build()
+            
+            val uploadedFile = withRateLimitRetry(this::class.simpleName!!) {
+                client.files.upload(tempFile, uploadConfig)
+            }
+            
+            val uploadedFileName = uploadedFile.name().orElseThrow {
+                RuntimeException("File uploaded but no name returned")
+            }
+            
+            logger.info("Uploaded embedding batch file: {}", uploadedFileName)
+            
+            // Create batch job with file reference
+            val source = EmbeddingsBatchJobSource.builder()
+                .fileName(uploadedFileName)
+                .build()
+            
+            val config = CreateEmbeddingsBatchJobConfig.builder()
+                .displayName("deepsearch-embedding-batch-file-$timestamp")
+                .build()
+            
+            val batchJob = withRateLimitRetry(this::class.simpleName!!) {
+                client.batches.createEmbeddings(modelId, source, config)
+            }
+            
+            val batchJobName = batchJob.name().orElseThrow {
+                RuntimeException("Embedding batch job created but no name returned")
+            }
+            
+            logger.info("Created file-based embedding batch job: {}", batchJobName)
+            return batchJobName
+            
+        } finally {
+            // Clean up temp file
+            try {
+                tempFile.delete()
+            } catch (e: Exception) {
+                logger.warn("Failed to delete temp file: {}", tempFile.absolutePath)
+            }
+        }
     }
 
     override suspend fun pollBatchStatus(batchJobId: String): BatchJobStatus {
@@ -245,8 +567,134 @@ class GeminiBatchServiceImpl(
             }
         }
 
-        logger.warn("No inlined responses found for batch job: {}", batchJobId)
+        // Try to get file-based responses (for large batches)
+        val resultFileName = dest.fileName().orElse(null)
+        if (resultFileName != null) {
+            logger.debug("Found file-based responses in: {}", resultFileName)
+            return fetchFileBasedResults(resultFileName)
+        }
+
+        logger.warn("No inlined or file-based responses found for batch job: {}", batchJobId)
         return emptyList()
+    }
+
+    /**
+     * Fetch and parse results from a file-based batch response.
+     * 
+     * The result file is a JSONL file where each line contains:
+     * - For content generation: {"key": "request-id", "response": {...}} or {"key": "request-id", "error": {...}}
+     * - For embeddings: {"key": "request-id", "response": {"embedding": {...}}} or {"key": "request-id", "error": {...}}
+     */
+    private suspend fun fetchFileBasedResults(fileName: String): List<BatchResult> {
+        logger.info("Downloading batch results from file: {}", fileName)
+        
+        // Create temp file for download
+        val tempFile = createTempFile(prefix = "batch-results-", suffix = ".jsonl")
+        
+        try {
+            // Download the file content to temp file
+            withRateLimitRetry(this::class.simpleName!!) {
+                client.files.download(fileName, tempFile.absolutePath, null)
+            }
+            
+            val fileContent = tempFile.readText()
+            val results = mutableListOf<BatchResult>()
+            
+            // Parse each JSONL line
+            fileContent.lines().filter { it.isNotBlank() }.forEachIndexed { index, line ->
+                try {
+                    val jsonElement = Json.parseToJsonElement(line)
+                    if (jsonElement is JsonObject) {
+                        val key = (jsonElement["key"] as? JsonPrimitive)?.content ?: "request-$index"
+                        
+                        // Check for response
+                        val responseObj = jsonElement["response"] as? JsonObject
+                        val errorObj = jsonElement["error"] as? JsonObject
+                        
+                        if (responseObj != null) {
+                            // Check if this is an embedding response
+                            val embeddingObj = responseObj["embedding"] as? JsonObject
+                            if (embeddingObj != null) {
+                                // Parse embedding response
+                                val valuesArray = embeddingObj["values"] as? JsonArray
+                                val embedding = valuesArray?.mapNotNull { value ->
+                                    (value as? JsonPrimitive)?.content?.toFloatOrNull()
+                                }
+                                
+                                results.add(BatchResult(
+                                    requestId = key,
+                                    success = embedding != null && embedding.isNotEmpty(),
+                                    generatedText = null,
+                                    embedding = embedding,
+                                    errorMessage = null,
+                                    promptTokens = 0,
+                                    outputTokens = 0,
+                                    totalTokens = 0
+                                ))
+                            } else {
+                                // Parse content generation response
+                                val candidates = responseObj["candidates"] as? JsonArray
+                                val firstCandidate = candidates?.firstOrNull() as? JsonObject
+                                val content = firstCandidate?.get("content") as? JsonObject
+                                val parts = content?.get("parts") as? JsonArray
+                                val textPart = parts?.firstOrNull { part ->
+                                    (part as? JsonObject)?.containsKey("text") == true
+                                } as? JsonObject
+                                val generatedText = (textPart?.get("text") as? JsonPrimitive)?.content
+                                
+                                // Extract usage metadata
+                                val usageMetadata = responseObj["usageMetadata"] as? JsonObject
+                                val promptTokens = (usageMetadata?.get("promptTokenCount") as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+                                val candidatesTokens = (usageMetadata?.get("candidatesTokenCount") as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+                                val totalTokens = (usageMetadata?.get("totalTokenCount") as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+                                
+                                results.add(BatchResult(
+                                    requestId = key,
+                                    success = generatedText != null,
+                                    generatedText = generatedText,
+                                    embedding = null,
+                                    errorMessage = null,
+                                    promptTokens = promptTokens,
+                                    outputTokens = candidatesTokens,
+                                    totalTokens = totalTokens
+                                ))
+                            }
+                        } else if (errorObj != null) {
+                            // Extract error message
+                            val errorMessage = (errorObj["message"] as? JsonPrimitive)?.content
+                                ?: "Unknown error"
+                            
+                            results.add(BatchResult(
+                                requestId = key,
+                                success = false,
+                                generatedText = null,
+                                embedding = null,
+                                errorMessage = errorMessage,
+                                promptTokens = 0,
+                                outputTokens = 0,
+                                totalTokens = 0
+                            ))
+                        }
+                    }
+                } catch (e: Exception) {
+                    logger.warn("Failed to parse batch result line {}: {}", index, e.message)
+                }
+            }
+            
+            logger.info("Parsed {} results from file", results.size)
+            return results
+            
+        } catch (e: Exception) {
+            logger.error("Failed to download batch results file {}: {}", fileName, e.message)
+            throw RuntimeException("Failed to download batch results: ${e.message}", e)
+        } finally {
+            // Clean up temp file
+            try {
+                tempFile.delete()
+            } catch (e: Exception) {
+                logger.warn("Failed to delete temp results file: {}", tempFile.absolutePath)
+            }
+        }
     }
 
     override suspend fun cancelBatch(batchJobId: String) {
