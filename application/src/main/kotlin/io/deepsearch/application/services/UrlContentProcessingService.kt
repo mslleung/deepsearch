@@ -39,6 +39,18 @@ interface IUrlContentProcessingService {
             val description: String?,
             val wasCached: Boolean
         ) : UrlProcessingEvent
+
+        /**
+         * Emitted immediately after HTML is loaded, before LLM processing.
+         * Contains simple programmatic text extraction (no LLM) for early evaluation.
+         * Only emitted for uncached HTML URLs.
+         */
+        data class SimpleTextExtractionComplete(
+            override val url: String,
+            val text: String,
+            val title: String?,
+            val description: String?
+        ) : UrlProcessingEvent
     }
 
     /**
@@ -75,7 +87,8 @@ class UrlContentProcessingService(
     private val fileSearchService: IFileSearchService,
     private val tokenUsageService: ILlmTokenUsageService,
     private val urlProcessingLockRegistry: UrlProcessingLockRegistry,
-    private val webpageImageLinkageRepository: IWebpageImageLinkageRepository
+    private val webpageImageLinkageRepository: IWebpageImageLinkageRepository,
+    private val simpleTextExtractionService: ISimpleTextExtractionService
 ) : IUrlContentProcessingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -257,6 +270,21 @@ class UrlContentProcessingService(
             page.navigate(normalizedUrl)
             val extractedHtml = page.getFullHtml()
 
+            // Emit simple text extraction immediately (no LLM) for early evaluation
+            // This allows the shortlist agent to start processing while full markdown is being extracted
+            val simpleTextFlow = flow {
+                val result = simpleTextExtractionService.extractSimpleText(extractedHtml, normalizedUrl)
+                logger.debug("Simple text extraction complete for {}: {} chars", normalizedUrl, result.text.length)
+                emit(
+                    UrlProcessingEvent.SimpleTextExtractionComplete(
+                        normalizedUrl,
+                        result.text,
+                        result.title,
+                        result.description
+                    )
+                )
+            }
+
             // Create separate flows for each operation - these are cancellation-aware
             val linkDiscoveryFlow = flow {
                 val discoveredLinks = discoverLinks(extractedHtml)
@@ -312,9 +340,9 @@ class UrlContentProcessingService(
                 }
             }
 
-            // Merge both flows - they emit independently as each completes
+            // Merge all flows - simple text emits first (synchronous), then LLM flows run in parallel
             // When this flow is cancelled, merge stops collecting immediately and propagates cancellation
-            merge(linkDiscoveryFlow, markdownExtractionFlow)
+            merge(simpleTextFlow, linkDiscoveryFlow, markdownExtractionFlow)
                 .onCompletion { cause ->
                     if (cause != null) {
                         logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)

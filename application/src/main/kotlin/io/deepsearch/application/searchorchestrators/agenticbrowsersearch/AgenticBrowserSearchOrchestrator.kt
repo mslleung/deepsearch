@@ -279,10 +279,24 @@ class AgenticBrowserSearchOrchestrator(
                                     )
                                 )
                             }
+
+                            is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                // Simple text extraction is for early evaluation - no URL access record needed
+                                // The final MarkdownExtractionComplete will record the access
+                                logger.debug("[{}] Simple text extraction complete for {}: {} chars", 
+                                    sessionId.value, event.url, event.text.length)
+                            }
                         }
                     }
-                    .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                    .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
+                    .mapNotNull { event ->
+                        when (event) {
+                            is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
+                                MarkdownSource(event.url, event.title, event.description, event.text)
+                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
+                                MarkdownSource(event.url, event.title, event.description, event.markdown)
+                            else -> null
+                        }
+                    }
                     .onCompletion { initialDiscoveredLinksChannel.close() }
             }
     }
@@ -391,10 +405,23 @@ class AgenticBrowserSearchOrchestrator(
                                             )
                                         )
                                     }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                        // Simple text extraction is for early evaluation - no URL access record needed
+                                        logger.debug("[{}] Simple text extraction complete for {}: {} chars", 
+                                            sessionId.value, event.url, event.text.length)
+                                    }
                                 }
                             }
-                            .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                            .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
+                            .mapNotNull { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
+                                        MarkdownSource(event.url, event.title, event.description, event.text)
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
+                                        MarkdownSource(event.url, event.title, event.description, event.markdown)
+                                    else -> null
+                                }
+                            }
                             .collect { emit(it) }
                     }
                 }
@@ -514,10 +541,23 @@ class AgenticBrowserSearchOrchestrator(
                                             )
                                         )
                                     }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                        // Simple text extraction is for early evaluation - no URL access record needed
+                                        logger.debug("[{}] Simple text extraction complete for {}: {} chars", 
+                                            sessionId.value, event.url, event.text.length)
+                                    }
                                 }
                             }
-                            .filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete>()
-                            .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
+                            .mapNotNull { event ->
+                                when (event) {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
+                                        MarkdownSource(event.url, event.title, event.description, event.text)
+                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
+                                        MarkdownSource(event.url, event.title, event.description, event.markdown)
+                                    else -> null
+                                }
+                            }
                             .collect { emit(it) }
                     }
                 }

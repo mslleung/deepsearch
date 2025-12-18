@@ -37,10 +37,18 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
         assertTrue(events.isNotEmpty(), "Should emit at least one event")
         
         // Find event indices
+        val simpleTextEventIndex = events.indexOfFirst { it is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete }
         val linkEventIndex = events.indexOfFirst { it is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete }
         val markdownEventIndex = events.indexOfFirst { it is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete }
         
-        // Verify both events are present
+        // For uncached HTML URLs, SimpleTextExtractionComplete should be emitted first
+        if (simpleTextEventIndex >= 0) {
+            val simpleTextEvent = events[simpleTextEventIndex] as IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete
+            assertEquals(url, simpleTextEvent.url)
+            assertTrue(simpleTextEvent.text.isNotBlank(), "Simple text should not be blank")
+        }
+        
+        // Verify both required events are present
         assertTrue(linkEventIndex >= 0, "Should emit LinkDiscoveryComplete event")
         assertTrue(markdownEventIndex >= 0, "Should emit MarkdownExtractionComplete event")
         
@@ -68,11 +76,12 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
         // Then
         assertTrue(events.size >= 2, "Should emit at least two events")
         
-        // Verify first event is LinkDiscoveryComplete
+        // For uncached HTML URLs, first event should be SimpleTextExtractionComplete
         val firstEvent = events[0]
         assertTrue(
+            firstEvent is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ||
             firstEvent is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete,
-            "First event should be LinkDiscoveryComplete"
+            "First event should be SimpleTextExtractionComplete or LinkDiscoveryComplete"
         )
         
         // Verify last event is MarkdownExtractionComplete
@@ -81,6 +90,15 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
             lastEvent is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete,
             "Last event should be MarkdownExtractionComplete"
         )
+        
+        // Verify SimpleTextExtractionComplete is emitted for uncached URLs
+        val simpleTextEvents = events.filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete>()
+        if (simpleTextEvents.isNotEmpty()) {
+            val simpleTextEvent = simpleTextEvents.first()
+            assertEquals(url, simpleTextEvent.url)
+            assertTrue(simpleTextEvent.text.isNotBlank(), "Simple text should not be blank")
+        }
     }
 }
+
 
