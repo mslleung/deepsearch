@@ -13,6 +13,8 @@ import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.BatchJobState
 import io.deepsearch.domain.services.IGeminiBatchService
+import io.deepsearch.domain.services.IJsoupDomService
+import org.jsoup.Jsoup
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.serialization.json.Json
@@ -36,6 +38,7 @@ class ContentLlmBatchHandler(
     private val batchJobRepository: IBatchPeriodicIndexJobRepository,
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val geminiBatchService: IGeminiBatchService,
+    private val jsoupDomService: IJsoupDomService,
     private val semanticIdentificationService: ISemanticIdentificationService,
     private val tableIdentificationService: ITableIdentificationService,
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
@@ -211,7 +214,17 @@ class ContentLlmBatchHandler(
         for ((urlStateId, tableIdentifications) in preparations.tablePrep.cachedResults) {
             val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
             val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: continue
-            val updatedSnapshot = snapshotData.copy(tableIdentifications = tableIdentifications)
+            
+            // Inject table IDs into cleanedHtml (which currently only has semantic IDs)
+            val existingCleanedHtml = snapshotData.cleanedHtml ?: snapshotData.html
+            val docWithTableIds = Jsoup.parse(existingCleanedHtml)
+            val tableInjections = tableIdentifications.map { it.cssSelector to it.dataId }
+            jsoupDomService.injectIdentifiers(docWithTableIds, tableInjections)
+            
+            val updatedSnapshot = snapshotData.copy(
+                tableIdentifications = tableIdentifications,
+                cleanedHtml = docWithTableIds.html()
+            )
             urlState.snapshotData = json.encodeToString(updatedSnapshot)
             batchUrlStateRepository.update(urlState)
         }
@@ -399,7 +412,17 @@ class ContentLlmBatchHandler(
                     val htmlHash = MessageDigest.getInstance("SHA-256").digest(snapshotData.html.toByteArray())
                     tableIdentificationService.cacheResult(htmlHash, tableIdentifications)
 
-                    val updatedSnapshot = snapshotData.copy(tableIdentifications = tableIdentifications)
+                    // Inject table IDs into cleanedHtml (which currently only has semantic IDs)
+                    // This ensures table elements can be found using [data-ds-id="..."] selectors in Stage 3 and Stage 4
+                    val existingCleanedHtml = snapshotData.cleanedHtml ?: snapshotData.html
+                    val docWithTableIds = Jsoup.parse(existingCleanedHtml)
+                    val tableInjections = tableIdentifications.map { it.cssSelector to it.dataId }
+                    jsoupDomService.injectIdentifiers(docWithTableIds, tableInjections)
+
+                    val updatedSnapshot = snapshotData.copy(
+                        tableIdentifications = tableIdentifications,
+                        cleanedHtml = docWithTableIds.html()
+                    )
                     urlState.snapshotData = json.encodeToString(updatedSnapshot)
                     batchUrlStateRepository.update(urlState)
                 } catch (e: Exception) {

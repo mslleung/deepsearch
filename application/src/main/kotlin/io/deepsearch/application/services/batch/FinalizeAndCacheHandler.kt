@@ -182,7 +182,19 @@ class FinalizeAndCacheHandler(
             jsoupDomService.replaceElementsWithText(doc, mediaReplacements)
         }
 
-        // Step 3: Remove semantic elements
+        // Step 3: Extract popup text before removal (matches WebpageExtractionService behavior)
+        val popupText = snapshotData.semanticElements?.popups
+            ?.map { "[data-ds-id=\"${it.dataId}\"]" }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { selectors ->
+                jsoupDomService.extractElementsText(doc, selectors)
+                    .values
+                    .filter { it.isNotBlank() }
+                    .joinToString("\n")
+                    .takeIf { it.isNotBlank() }
+            }
+
+        // Step 4: Remove semantic elements
         snapshotData.semanticElements?.let { semantic ->
             listOfNotNull(
                 semantic.header?.dataId,
@@ -197,10 +209,12 @@ class FinalizeAndCacheHandler(
                 }
         }
 
-        // Step 4: Replace tables with markdown
-        snapshotData.tableMarkdowns?.forEach { (dataId, markdown) ->
-            val tableElement = doc.select("[data-ds-id=\"$dataId\"]").firstOrNull()
-            tableElement?.html(markdown)
+        // Step 5: Replace tables with markdown (using replaceElementsWithText for consistency)
+        val tableReplacements = snapshotData.tableMarkdowns?.map { (dataId, markdown) ->
+            CssSelectorReplacement("[data-ds-id=\"$dataId\"]", markdown)
+        } ?: emptyList()
+        if (tableReplacements.isNotEmpty()) {
+            jsoupDomService.replaceElementsWithText(doc, tableReplacements)
         }
 
         val textContent = jsoupDomService.extractTextContent(doc)
@@ -212,6 +226,10 @@ class FinalizeAndCacheHandler(
                 appendLine("Description: ${urlState.description}")
             }
             appendLine()
+            if (!popupText.isNullOrBlank()) {
+                appendLine(popupText)
+                appendLine()
+            }
             appendLine(textContent)
         }.trim()
     }
