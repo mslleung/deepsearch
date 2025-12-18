@@ -7,6 +7,8 @@ import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.models.entities.BatchUrlState
+import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
+import io.deepsearch.domain.models.valueobjects.MediaHash
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.BatchJobState
@@ -105,9 +107,9 @@ class ContentLlmBatchHandler(
     // ==================== Phase 1: Collect Data ====================
 
     private fun collectContentData(urlStates: List<BatchUrlState>): ContentCollectionResult {
-        val urlPages = mutableMapOf<Long, UrlPageData>()
-        val uniqueIcons = mutableMapOf<String, io.deepsearch.domain.models.entities.BatchIconData>()
-        val uniqueImages = mutableMapOf<String, io.deepsearch.domain.models.entities.BatchImageData>()
+        val urlPages = mutableMapOf<BatchUrlStateId, UrlPageData>()
+        val uniqueIcons = mutableMapOf<MediaHash, io.deepsearch.domain.models.entities.BatchIconData>()
+        val uniqueImages = mutableMapOf<MediaHash, io.deepsearch.domain.models.entities.BatchImageData>()
 
         urlStates.forEach { urlState ->
             try {
@@ -115,20 +117,22 @@ class ContentLlmBatchHandler(
                     json.decodeFromString<BatchUrlSnapshotData>(it) 
                 } ?: return@forEach
 
-                val urlStateId = urlState.id!!
+                val urlStateId = BatchUrlStateId(urlState.id!!)
 
                 // Collect icon hashes
-                val iconHashes = mutableListOf<String>()
+                val iconHashes = mutableListOf<MediaHash>()
                 snapshotData.icons?.forEach { icon ->
-                    uniqueIcons.putIfAbsent(icon.hashBase64, icon)
-                    iconHashes.add(icon.hashBase64)
+                    val hash = MediaHash(icon.hashBase64)
+                    uniqueIcons.putIfAbsent(hash, icon)
+                    iconHashes.add(hash)
                 }
 
                 // Collect image hashes
-                val imageHashes = mutableListOf<String>()
+                val imageHashes = mutableListOf<MediaHash>()
                 snapshotData.images?.forEach { image ->
-                    uniqueImages.putIfAbsent(image.hashBase64, image)
-                    imageHashes.add(image.hashBase64)
+                    val hash = MediaHash(image.hashBase64)
+                    uniqueImages.putIfAbsent(hash, image)
+                    imageHashes.add(hash)
                 }
 
                 urlPages[urlStateId] = UrlPageData(
@@ -153,8 +157,8 @@ class ContentLlmBatchHandler(
         val tablePrep: io.deepsearch.application.services.TableIdentificationBatchPreparation,
         val iconPrep: io.deepsearch.application.services.IconBatchPreparation,
         val imagePrep: io.deepsearch.application.services.ImageBatchPreparation,
-        val iconDataMap: Map<String, Pair<ByteArray, String>>,
-        val imageDataMap: Map<String, Pair<ByteArray, String>>
+        val iconDataMap: Map<MediaHash, MediaData>,
+        val imageDataMap: Map<MediaHash, MediaData>
     )
 
     private suspend fun prepareBatches(collected: ContentCollectionResult, jobId: Long): BatchPreparations {
@@ -169,14 +173,14 @@ class ContentLlmBatchHandler(
         // Prepare icon interpretation batch
         val iconDataMap = collected.uniqueIcons.mapValues { (_, iconData) ->
             val iconBytes = kotlin.io.encoding.Base64.decode(iconData.bytesBase64)
-            iconBytes to iconData.mimeType
+            MediaData(iconBytes, iconData.mimeType)
         }
         val iconPrep = webpageIconInterpretationService.prepareBatchRequests(iconDataMap, jobId)
 
         // Prepare image classification batch
         val imageDataMap = collected.uniqueImages.mapValues { (_, imageData) ->
             val imageBytes = kotlin.io.encoding.Base64.decode(imageData.bytesBase64)
-            imageBytes to imageData.mimeType
+            MediaData(imageBytes, imageData.mimeType)
         }
         val imagePrep = webpageImageTextExtractionService.prepareBatchRequests(imageDataMap, jobId)
 
@@ -192,7 +196,7 @@ class ContentLlmBatchHandler(
     private suspend fun applyCachedResults(preparations: BatchPreparations, urlStates: List<BatchUrlState>) {
         // Apply cached semantic results
         for ((urlStateId, semanticElements) in preparations.semanticPrep.cachedResults) {
-            val urlState = urlStates.find { it.id == urlStateId } ?: continue
+            val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
             val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: continue
             val updatedSnapshot = snapshotData.copy(
                 cleanedHtml = preparations.semanticPrep.htmlWithIdsMap[urlStateId] ?: snapshotData.html,
@@ -204,7 +208,7 @@ class ContentLlmBatchHandler(
 
         // Apply cached table results
         for ((urlStateId, tableIdentifications) in preparations.tablePrep.cachedResults) {
-            val urlState = urlStates.find { it.id == urlStateId } ?: continue
+            val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
             val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: continue
             val updatedSnapshot = snapshotData.copy(tableIdentifications = tableIdentifications)
             urlState.snapshotData = json.encodeToString(updatedSnapshot)
@@ -255,7 +259,7 @@ class ContentLlmBatchHandler(
         val imageTexts = preparations.imagePrep.cachedResults.toMutableMap()
 
         // Process icon batch results
-        val newIconResults = mutableMapOf<String, String?>()
+        val newIconResults = mutableMapOf<MediaHash, String?>()
         if (batches.iconId != null) {
             val iconResults = geminiBatchService.fetchBatchResults(batches.iconId)
             iconResults.forEachIndexed { index, result ->
@@ -272,8 +276,8 @@ class ContentLlmBatchHandler(
         }
 
         // Process image classification batch results
-        val newImageResults = mutableMapOf<String, String?>()
-        val imagesWithTables = mutableMapOf<String, Pair<ByteArray, String>>()
+        val newImageResults = mutableMapOf<MediaHash, String?>()
+        val imagesWithTables = mutableMapOf<MediaHash, MediaData>()
         if (batches.imageClassId != null) {
             val imageResults = geminiBatchService.fetchBatchResults(batches.imageClassId)
             imageResults.forEachIndexed { index, result ->
@@ -307,9 +311,9 @@ class ContentLlmBatchHandler(
     }
 
     private suspend fun processImageTableExtraction(
-        imagesWithTables: Map<String, Pair<ByteArray, String>>,
-        imageTexts: MutableMap<String, String?>,
-        newImageResults: MutableMap<String, String?>,
+        imagesWithTables: Map<MediaHash, MediaData>,
+        imageTexts: MutableMap<MediaHash, String?>,
+        newImageResults: MutableMap<MediaHash, String?>,
         preparations: BatchPreparations,
         job: BatchPeriodicIndexJob,
         eventFlow: MutableSharedFlow<BatchPeriodicIndexEvent>,
@@ -350,7 +354,7 @@ class ContentLlmBatchHandler(
             val semanticResults = geminiBatchService.fetchBatchResults(batches.semanticId)
             semanticResults.forEachIndexed { index, result ->
                 val urlStateId = preparations.semanticPrep.requestIndexToUrlStateId[index] ?: return@forEachIndexed
-                val urlState = urlStates.find { it.id == urlStateId } ?: return@forEachIndexed
+                val urlState = urlStates.find { it.id == urlStateId.value } ?: return@forEachIndexed
                 
                 try {
                     if (!result.success || result.generatedText == null) {
@@ -380,7 +384,7 @@ class ContentLlmBatchHandler(
             val tableResults = geminiBatchService.fetchBatchResults(batches.tableId)
             tableResults.forEachIndexed { index, result ->
                 val urlStateId = preparations.tablePrep.requestIndexToUrlStateId[index] ?: return@forEachIndexed
-                val urlState = urlStates.find { it.id == urlStateId } ?: return@forEachIndexed
+                val urlState = urlStates.find { it.id == urlStateId.value } ?: return@forEachIndexed
                 
                 try {
                     if (!result.success || result.generatedText == null) {
@@ -419,17 +423,17 @@ class ContentLlmBatchHandler(
                     json.decodeFromString<BatchUrlSnapshotData>(it)
                 } ?: return@forEach
 
-                val urlStateId = urlState.id!!
+                val urlStateId = BatchUrlStateId(urlState.id!!)
                 val pageData = collected.urlPages[urlStateId] ?: return@forEach
 
-                // Build icon interpretations for this URL
+                // Build icon interpretations for this URL (convert MediaHash to String for storage)
                 val urlIconInterpretations = pageData.iconHashes.mapNotNull { hash ->
-                    mediaResults.iconInterpretations[hash]?.let { hash to it }
+                    mediaResults.iconInterpretations[hash]?.let { hash.value to it }
                 }.toMap()
 
-                // Build image texts for this URL
+                // Build image texts for this URL (convert MediaHash to String for storage)
                 val urlImageTexts = pageData.imageHashes.mapNotNull { hash ->
-                    mediaResults.imageTexts[hash]?.let { hash to it }
+                    mediaResults.imageTexts[hash]?.let { hash.value to it }
                 }.toMap()
 
                 if (urlIconInterpretations.isNotEmpty() || urlImageTexts.isNotEmpty()) {

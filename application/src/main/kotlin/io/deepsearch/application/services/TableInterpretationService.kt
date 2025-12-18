@@ -1,9 +1,12 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.services.batch.TableKey
 import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.models.entities.WebpageTableInterpretation
+import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
 import io.deepsearch.domain.models.valueobjects.SessionId
+import io.deepsearch.domain.models.valueobjects.TableDataId
 import io.deepsearch.domain.repositories.IWebpageTableInterpretationRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -20,8 +23,8 @@ import io.deepsearch.domain.services.BatchContentRequest
  * Input for table interpretation batch request preparation.
  */
 data class TableInterpretationBatchInput(
-    val urlStateId: Long,
-    val tableDataId: String,
+    val urlStateId: BatchUrlStateId,
+    val tableDataId: TableDataId,
     val tableHtml: String,
     val auxiliaryInfo: String?,
     val boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>
@@ -31,14 +34,14 @@ data class TableInterpretationBatchInput(
  * Result of preparing table interpretation batch requests.
  */
 data class TableInterpretationBatchPreparation(
-    /** Map of (urlStateId, tableDataId) to cached markdown */
-    val cachedResults: Map<Pair<Long, String>, String>,
+    /** Map of TableKey to cached markdown */
+    val cachedResults: Map<TableKey, String>,
     /** Batch requests for uncached tables */
     val batchRequests: List<BatchContentRequest>,
-    /** Map of request index -> (urlStateId, tableDataId) */
-    val requestIndexToKey: Map<Int, Pair<Long, String>>,
-    /** Map of (urlStateId, tableDataId) -> tableHtml hash for caching */
-    val hashMap: Map<Pair<Long, String>, ByteArray>
+    /** Map of request index -> TableKey */
+    val requestIndexToKey: Map<Int, TableKey>,
+    /** Map of TableKey -> tableHtml hash for caching */
+    val hashMap: Map<TableKey, ByteArray>
 )
 
 interface ITableInterpretationService {
@@ -94,13 +97,13 @@ class TableInterpretationService(
             return TableInterpretationBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
         }
 
-        val cachedResults = mutableMapOf<Pair<Long, String>, String>()
+        val cachedResults = mutableMapOf<TableKey, String>()
         val batchRequests = mutableListOf<BatchContentRequest>()
-        val requestIndexToKey = mutableMapOf<Int, Pair<Long, String>>()
-        val hashMap = mutableMapOf<Pair<Long, String>, ByteArray>()
+        val requestIndexToKey = mutableMapOf<Int, TableKey>()
+        val hashMap = mutableMapOf<TableKey, ByteArray>()
 
         for (table in tables) {
-            val key = table.urlStateId to table.tableDataId
+            val key = TableKey(table.urlStateId, table.tableDataId)
             val digest = MessageDigest.getInstance("SHA-256")
             digest.update(table.tableHtml.toByteArray())
             val tableHash = digest.digest()
@@ -115,7 +118,7 @@ class TableInterpretationService(
 
             // Prepare batch request using agent
             val request = tableInterpretationAgent.prepareBatchRequest(
-                requestId = "$jobId-table-interp-${table.urlStateId}-${table.tableDataId}",
+                requestId = "$jobId-table-interp-${table.urlStateId.value}-${table.tableDataId.value}",
                 tableHtml = table.tableHtml,
                 auxiliaryInfo = table.auxiliaryInfo ?: "",
                 boundingBoxes = table.boundingBoxes

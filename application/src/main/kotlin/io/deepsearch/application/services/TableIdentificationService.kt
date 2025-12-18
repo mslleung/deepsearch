@@ -1,10 +1,12 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.services.batch.PageHtmlWithBoundingBoxes
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageTable
+import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.IWebpageTableRepository
 import kotlinx.serialization.json.Json
@@ -18,13 +20,13 @@ import io.deepsearch.domain.services.BatchContentRequest
  */
 data class TableIdentificationBatchPreparation(
     /** Map of URL state ID to cached table identifications (if found in cache) */
-    val cachedResults: Map<Long, List<TableIdentification>>,
+    val cachedResults: Map<BatchUrlStateId, List<TableIdentification>>,
     /** Batch requests for uncached pages */
     val batchRequests: List<BatchContentRequest>,
     /** Map of request index -> URL state ID */
-    val requestIndexToUrlStateId: Map<Int, Long>,
+    val requestIndexToUrlStateId: Map<Int, BatchUrlStateId>,
     /** Map of URL state ID -> cleaned HTML with injected IDs (for parsing results) */
-    val htmlWithIdsMap: Map<Long, String>
+    val htmlWithIdsMap: Map<BatchUrlStateId, String>
 )
 
 interface ITableIdentificationService {
@@ -44,12 +46,12 @@ interface ITableIdentificationService {
     /**
      * Prepare batch requests for table identification with cache check.
      * 
-     * @param pages Map of URL state ID -> (html, boundingBoxes)
+     * @param pages Map of URL state ID -> page HTML with bounding boxes
      * @param jobId Batch job ID for request ID generation
      * @return Cached results and batch requests for uncached pages
      */
     suspend fun prepareBatchRequests(
-        pages: Map<Long, Pair<String, Map<String, IBrowserPage.BoundingBox>>>,
+        pages: Map<BatchUrlStateId, PageHtmlWithBoundingBoxes>,
         jobId: Long
     ): TableIdentificationBatchPreparation
     
@@ -82,21 +84,20 @@ class TableIdentificationService(
     // ========== Batch API Methods ==========
 
     override suspend fun prepareBatchRequests(
-        pages: Map<Long, Pair<String, Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>>>,
+        pages: Map<BatchUrlStateId, PageHtmlWithBoundingBoxes>,
         jobId: Long
     ): TableIdentificationBatchPreparation {
         if (pages.isEmpty()) {
             return TableIdentificationBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
         }
 
-        val cachedResults = mutableMapOf<Long, List<TableIdentification>>()
+        val cachedResults = mutableMapOf<BatchUrlStateId, List<TableIdentification>>()
         val batchRequests = mutableListOf<BatchContentRequest>()
-        val requestIndexToUrlStateId = mutableMapOf<Int, Long>()
-        val htmlWithIdsMap = mutableMapOf<Long, String>()
+        val requestIndexToUrlStateId = mutableMapOf<Int, BatchUrlStateId>()
+        val htmlWithIdsMap = mutableMapOf<BatchUrlStateId, String>()
 
         for ((urlStateId, pageData) in pages) {
-            val (html, boundingBoxes) = pageData
-            val htmlHash = java.security.MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
+            val htmlHash = MessageDigest.getInstance("SHA-256").digest(pageData.html.toByteArray())
 
             // Check cache
             val existing = webpageTableRepository.findByHash(htmlHash)
@@ -107,8 +108,8 @@ class TableIdentificationService(
 
             // Prepare batch request using agent
             val batchRequest = tableIdentificationAgent.prepareBatchRequest(
-                requestId = "$jobId-table-$urlStateId",
-                html = html
+                requestId = "$jobId-table-${urlStateId.value}",
+                html = pageData.html
             )
             
             requestIndexToUrlStateId[batchRequests.size] = urlStateId

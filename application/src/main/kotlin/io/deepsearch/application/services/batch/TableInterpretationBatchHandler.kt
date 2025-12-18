@@ -6,6 +6,9 @@ import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
 import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.models.entities.BatchUrlState
+import io.deepsearch.domain.models.valueobjects.BatchJobId
+import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
+import io.deepsearch.domain.models.valueobjects.TableDataId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.BatchJobState
@@ -50,7 +53,7 @@ class TableInterpretationBatchHandler(
     }
 
     // Mapping storage for batch result processing
-    private val tableInterpretationMappings = ConcurrentHashMap<Long, List<Triple<Long, String, Int>>>()
+    private val tableInterpretationMappings = ConcurrentHashMap<BatchJobId, List<TableRequestMapping>>()
 
     override suspend fun execute(
         job: BatchPeriodicIndexJob,
@@ -60,6 +63,8 @@ class TableInterpretationBatchHandler(
         logger.info("[{}] Stage 3: LLM table interpretation", jobId)
         eventEmitter.emit(job, eventFlow, "Stage 3: Applying media replacements and preparing table interpretation...")
 
+        val batchJobIdTyped = BatchJobId(jobId)
+        
         // Check if we already have a batch job running (resume case)
         if (job.geminiBatchJobId != null) {
             // Rebuild mapping from database state for resumability
@@ -71,11 +76,11 @@ class TableInterpretationBatchHandler(
             val urlsNeedingProcessing = batchUrlStateRepository.findNeedingFinalLlmProcessing(jobId)
             val tableInputs = collectTableInputs(urlsNeedingProcessing, jobId)
             val tableBatchPrep = tableInterpretationService.prepareBatchRequests(tableInputs, jobId)
-            val requestMapping = tableBatchPrep.requestIndexToKey.entries.map { (index, key) ->
-                Triple(key.first, key.second, index)
+            val requestMappings = tableBatchPrep.requestIndexToKey.entries.map { (index, key) ->
+                TableRequestMapping(key.urlStateId, key.tableDataId, index)
             }
-            tableInterpretationMappings[jobId] = requestMapping
-            logger.info("[{}] Rebuilt table interpretation mapping with {} entries for resume", jobId, requestMapping.size)
+            tableInterpretationMappings[batchJobIdTyped] = requestMappings
+            logger.info("[{}] Rebuilt table interpretation mapping with {} entries for resume", jobId, requestMappings.size)
 
             pollBatchUntilComplete(job, eventFlow, job.geminiBatchJobId!!)
             processTableBatchResults(jobId, job.geminiBatchJobId!!)
@@ -114,10 +119,10 @@ class TableInterpretationBatchHandler(
         }
 
         // Store mapping for result processing
-        val requestMapping = tableBatchPrep.requestIndexToKey.entries.map { (index, key) ->
-            Triple(key.first, key.second, index)
+        val requestMappings = tableBatchPrep.requestIndexToKey.entries.map { (index, key) ->
+            TableRequestMapping(key.urlStateId, key.tableDataId, index)
         }
-        tableInterpretationMappings[jobId] = requestMapping
+        tableInterpretationMappings[batchJobIdTyped] = requestMappings
 
         logger.info(
             "[{}] Submitting {} table interpretation requests ({} cached)",
@@ -201,8 +206,8 @@ class TableInterpretationBatchHandler(
 
                     tableInputs.add(
                         TableInterpretationBatchInput(
-                            urlStateId = urlState.id!!,
-                            tableDataId = table.dataId,
+                            urlStateId = BatchUrlStateId(urlState.id!!),
+                            tableDataId = TableDataId(table.dataId),
                             tableHtml = tableHtml,
                             auxiliaryInfo = table.auxiliaryInfo,
                             boundingBoxes = tableBoundingBoxes
@@ -255,17 +260,16 @@ class TableInterpretationBatchHandler(
     }
 
     private suspend fun applyCachedResults(
-        cachedResults: Map<Pair<Long, String>, String>,
+        cachedResults: Map<TableKey, String>,
         urlStates: List<BatchUrlState>
     ) {
-        val urlTableMarkdowns = mutableMapOf<Long, MutableMap<String, String>>()
+        val urlTableMarkdowns = mutableMapOf<BatchUrlStateId, MutableMap<String, String>>()
         for ((key, markdown) in cachedResults) {
-            val (urlStateId, tableDataId) = key
-            urlTableMarkdowns.getOrPut(urlStateId) { mutableMapOf() }[tableDataId] = markdown
+            urlTableMarkdowns.getOrPut(key.urlStateId) { mutableMapOf() }[key.tableDataId.value] = markdown
         }
 
         for ((urlStateId, tableMarkdowns) in urlTableMarkdowns) {
-            val urlState = urlStates.find { it.id == urlStateId } ?: continue
+            val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
             val snapshotData =
                 urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: continue
 
@@ -296,24 +300,25 @@ class TableInterpretationBatchHandler(
         logger.info("[{}] Processing table batch results from: {}", jobId, batchJobId)
 
         val results = geminiBatchService.fetchBatchResults(batchJobId)
-        val mappings = tableInterpretationMappings.remove(jobId) ?: emptyList()
+        val batchJobIdTyped = BatchJobId(jobId)
+        val mappings = tableInterpretationMappings.remove(batchJobIdTyped) ?: emptyList()
 
-        val resultsByUrlState = mutableMapOf<Long, MutableMap<String, String>>()
+        val resultsByUrlState = mutableMapOf<BatchUrlStateId, MutableMap<String, String>>()
         val urlsNeedingProcessingForHash = batchUrlStateRepository.findNeedingFinalLlmProcessing(jobId)
 
-        mappings.forEach { (urlStateId, tableDataId, requestIndex) ->
-            if (requestIndex >= results.size) return@forEach
+        mappings.forEach { mapping ->
+            if (mapping.requestIndex >= results.size) return@forEach
 
-            val result = results[requestIndex]
+            val result = results[mapping.requestIndex]
             if (result.success && result.generatedText != null) {
-                val tableMarkdowns = resultsByUrlState.getOrPut(urlStateId) { mutableMapOf() }
+                val tableMarkdowns = resultsByUrlState.getOrPut(mapping.urlStateId) { mutableMapOf() }
                 val markdown = tableInterpretationService.parseBatchResponse(result.generatedText!!)
-                tableMarkdowns[tableDataId] = markdown
+                tableMarkdowns[mapping.tableDataId.value] = markdown
 
                 // Cache the result
-                val urlState = urlsNeedingProcessingForHash.find { it.id == urlStateId }
+                val urlState = urlsNeedingProcessingForHash.find { it.id == mapping.urlStateId.value }
                 if (urlState != null) {
-                    cacheTableResult(urlState, tableDataId, markdown)
+                    cacheTableResult(urlState, mapping.tableDataId, markdown)
                 }
             }
         }
@@ -326,7 +331,8 @@ class TableInterpretationBatchHandler(
                     json.decodeFromString<BatchUrlSnapshotData>(it)
                 } ?: return@forEach
 
-                val tableMarkdowns = resultsByUrlState[urlState.id] ?: emptyMap()
+                val urlStateId = BatchUrlStateId(urlState.id!!)
+                val tableMarkdowns = resultsByUrlState[urlStateId] ?: emptyMap()
                 val updatedSnapshot = snapshotData.copy(tableMarkdowns = tableMarkdowns)
                 urlState.markFinalLlmDone(json.encodeToString(updatedSnapshot))
                 batchUrlStateRepository.update(urlState)
@@ -343,9 +349,9 @@ class TableInterpretationBatchHandler(
         }
     }
 
-    private suspend fun cacheTableResult(urlState: BatchUrlState, tableDataId: String, markdown: String) {
+    private suspend fun cacheTableResult(urlState: BatchUrlState, tableDataId: TableDataId, markdown: String) {
         val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return
-        val table = snapshotData.tableIdentifications?.find { it.dataId == tableDataId } ?: return
+        val table = snapshotData.tableIdentifications?.find { it.dataId == tableDataId.value } ?: return
 
         val cleanedHtml = snapshotData.cleanedHtml ?: snapshotData.html
         val doc = Jsoup.parse(cleanedHtml)

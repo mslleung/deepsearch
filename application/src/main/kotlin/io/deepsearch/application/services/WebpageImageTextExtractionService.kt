@@ -1,11 +1,13 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.services.batch.MediaData
 import io.deepsearch.domain.agents.IImageClassificationAgent
 import io.deepsearch.domain.agents.ITableExtractionAgent
 import io.deepsearch.domain.agents.ImageClassificationInput
 import io.deepsearch.domain.agents.TableExtractionInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageImage
+import io.deepsearch.domain.models.valueobjects.MediaHash
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
@@ -43,14 +45,14 @@ data class ImageExtractionResult(
  * Contains cached results and batch requests for uncached images.
  */
 data class ImageBatchPreparation(
-    /** Map of image hash (base64) to cached text (null if no text extracted) */
-    val cachedResults: Map<String, String?>,
+    /** Map of image hash to cached text (null if no text extracted) */
+    val cachedResults: Map<MediaHash, String?>,
     /** Batch requests for image classification (first stage) */
     val classificationRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
     /** Map of request index -> image hash for matching classification results */
-    val classificationIndexToHash: Map<Int, String>,
-    /** Images that need OCR check before LLM (bytes keyed by hash) */
-    val imagesNeedingOcr: Map<String, Pair<ByteArray, String>>
+    val classificationIndexToHash: Map<Int, MediaHash>,
+    /** Images that need OCR check before LLM (keyed by hash) */
+    val imagesNeedingOcr: Map<MediaHash, MediaData>
 )
 
 /**
@@ -60,7 +62,7 @@ data class ImageTableExtractionBatchPreparation(
     /** Batch requests for table extraction */
     val tableExtractionRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
     /** Map of request index -> image hash for matching results */
-    val requestIndexToHash: Map<Int, String>
+    val requestIndexToHash: Map<Int, MediaHash>
 )
 
 interface IWebpageImageTextExtractionService {
@@ -76,12 +78,12 @@ interface IWebpageImageTextExtractionService {
      * Prepare batch requests for image text extraction with cache check.
      * Returns cached results and batch requests for uncached images only.
      * 
-     * @param images Map of hash (base64) to image data (bytes + mimeType)
+     * @param images Map of media hash to image data
      * @param ocrLanguage Language for OCR text detection
      * @return Cached results and batch requests for uncached images
      */
     suspend fun prepareBatchRequests(
-        images: Map<String, Pair<ByteArray, String>>,
+        images: Map<MediaHash, MediaData>,
         jobId: Long,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
     ): ImageBatchPreparation
@@ -90,24 +92,24 @@ interface IWebpageImageTextExtractionService {
      * Prepare table extraction batch requests for images that contain tables.
      * Called after processing classification results.
      * 
-     * @param imagesWithTables Map of hash (base64) to image data (bytes + mimeType)
+     * @param imagesWithTables Map of media hash to image data
      * @param jobId Batch job ID
      * @return Batch requests for table extraction
      */
     suspend fun prepareTableExtractionBatchRequests(
-        imagesWithTables: Map<String, Pair<ByteArray, String>>,
+        imagesWithTables: Map<MediaHash, MediaData>,
         jobId: Long
     ): ImageTableExtractionBatchPreparation
     
     /**
      * Process batch results and update cache.
      * 
-     * @param results Map of image hash -> extracted text
-     * @param imageData Map of hash -> (bytes, mimeType) for storing in cache
+     * @param results Map of media hash -> extracted text
+     * @param imageData Map of hash -> image data for storing in cache
      */
     suspend fun processBatchResults(
-        results: Map<String, String?>,
-        imageData: Map<String, Pair<ByteArray, String>>
+        results: Map<MediaHash, String?>,
+        imageData: Map<MediaHash, MediaData>
     )
 }
 
@@ -125,7 +127,7 @@ class WebpageImageTextExtractionService(
 
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     override suspend fun prepareBatchRequests(
-        images: Map<String, Pair<ByteArray, String>>,
+        images: Map<MediaHash, MediaData>,
         jobId: Long,
         ocrLanguage: OcrLanguage
     ): ImageBatchPreparation {
@@ -134,14 +136,14 @@ class WebpageImageTextExtractionService(
         }
 
         // Convert hash strings to byte arrays for cache lookup
-        val hashBytesMap = images.keys.associateWith { hashBase64 ->
-            kotlin.io.encoding.Base64.decode(hashBase64)
+        val hashBytesMap = images.keys.associateWith { hash ->
+            kotlin.io.encoding.Base64.decode(hash.value)
         }
 
         // Batch cache lookup
         val cachedImages = webpageImageRepository.findByHashes(hashBytesMap.values.toList())
         val cachedResults = cachedImages.associate { image ->
-            kotlin.io.encoding.Base64.encode(image.imageBytesHash) to image.extractedText
+            MediaHash(kotlin.io.encoding.Base64.encode(image.imageBytesHash)) to image.extractedText
         }.toMutableMap()
 
         logger.debug("Found {} cached results for {} images", cachedResults.size, images.size)
@@ -155,15 +157,14 @@ class WebpageImageTextExtractionService(
         
         // Prepare classification batch requests for uncached images
         val classificationRequests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
-        val classificationIndexToHash = mutableMapOf<Int, String>()
+        val classificationIndexToHash = mutableMapOf<Int, MediaHash>()
 
         uncachedImages.forEach { (hash, imageData) ->
-            val (bytes, mimeType) = imageData
             val request = imageClassificationAgent.prepareBatchRequest(
-                requestId = "$jobId-image-$hash",
+                requestId = "$jobId-image-${hash.value}",
                 image = ImageClassificationInput.ImageItem(
-                    bytes = bytes,
-                    mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(mimeType)
+                    bytes = imageData.bytes,
+                    mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(imageData.mimeType)
                 )
             )
             classificationIndexToHash[classificationRequests.size] = hash
@@ -182,7 +183,7 @@ class WebpageImageTextExtractionService(
 
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     override suspend fun prepareTableExtractionBatchRequests(
-        imagesWithTables: Map<String, Pair<ByteArray, String>>,
+        imagesWithTables: Map<MediaHash, MediaData>,
         jobId: Long
     ): ImageTableExtractionBatchPreparation {
         if (imagesWithTables.isEmpty()) {
@@ -190,15 +191,14 @@ class WebpageImageTextExtractionService(
         }
 
         val requests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
-        val requestIndexToHash = mutableMapOf<Int, String>()
+        val requestIndexToHash = mutableMapOf<Int, MediaHash>()
 
         imagesWithTables.forEach { (hash, imageData) ->
-            val (bytes, mimeType) = imageData
             val request = tableExtractionAgent.prepareBatchRequest(
-                requestId = "$jobId-table-extract-$hash",
+                requestId = "$jobId-table-extract-${hash.value}",
                 image = TableExtractionInput.ImageItem(
-                    bytes = bytes,
-                    mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(mimeType)
+                    bytes = imageData.bytes,
+                    mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(imageData.mimeType)
                 )
             )
             requestIndexToHash[requests.size] = hash
@@ -215,20 +215,19 @@ class WebpageImageTextExtractionService(
 
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class, kotlin.time.ExperimentalTime::class)
     override suspend fun processBatchResults(
-        results: Map<String, String?>,
-        imageData: Map<String, Pair<ByteArray, String>>
+        results: Map<MediaHash, String?>,
+        imageData: Map<MediaHash, MediaData>
     ) {
         if (results.isEmpty()) return
 
         // Store results in cache
-        val imagesToCache = results.mapNotNull { (hashBase64, text) ->
-            val data = imageData[hashBase64] ?: return@mapNotNull null
-            val (bytes, mimeType) = data
-            val hashBytes = kotlin.io.encoding.Base64.decode(hashBase64)
+        val imagesToCache = results.mapNotNull { (hash, text) ->
+            val data = imageData[hash] ?: return@mapNotNull null
+            val hashBytes = kotlin.io.encoding.Base64.decode(hash.value)
             WebpageImage(
                 imageBytesHash = hashBytes,
-                imageBytes = bytes,
-                mimeType = mimeType,
+                imageBytes = data.bytes,
+                mimeType = data.mimeType,
                 extractedText = text?.takeIf { it.isNotBlank() }
             )
         }

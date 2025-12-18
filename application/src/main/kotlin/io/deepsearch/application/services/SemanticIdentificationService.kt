@@ -1,10 +1,12 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.services.batch.PageHtmlWithBoundingBoxes
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
 import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.entities.WebpageSemanticElement
+import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.repositories.IWebpageNavigationElementRepository
@@ -20,13 +22,13 @@ import io.deepsearch.domain.services.BatchContentRequest
  */
 data class SemanticBatchPreparation(
     /** Map of URL state ID to cached SemanticElements (if found in cache) */
-    val cachedResults: Map<Long, SemanticElements>,
+    val cachedResults: Map<BatchUrlStateId, SemanticElements>,
     /** Batch requests for uncached pages */
     val batchRequests: List<BatchContentRequest>,
     /** Map of request index -> URL state ID */
-    val requestIndexToUrlStateId: Map<Int, Long>,
+    val requestIndexToUrlStateId: Map<Int, BatchUrlStateId>,
     /** Map of URL state ID -> cleaned HTML with injected IDs (for parsing results) */
-    val htmlWithIdsMap: Map<Long, String>
+    val htmlWithIdsMap: Map<BatchUrlStateId, String>
 )
 
 interface ISemanticIdentificationService {
@@ -51,12 +53,12 @@ interface ISemanticIdentificationService {
     /**
      * Prepare batch requests for semantic identification with cache check.
      * 
-     * @param pages Map of URL state ID -> (html, boundingBoxes)
+     * @param pages Map of URL state ID -> page HTML with bounding boxes
      * @param jobId Batch job ID for request ID generation
      * @return Cached results and batch requests for uncached pages
      */
     suspend fun prepareBatchRequests(
-        pages: Map<Long, Pair<String, Map<String, IBrowserPage.BoundingBox>>>,
+        pages: Map<BatchUrlStateId, PageHtmlWithBoundingBoxes>,
         jobId: Long
     ): SemanticBatchPreparation
     
@@ -89,21 +91,20 @@ class SemanticIdentificationService(
     // ========== Batch API Methods ==========
 
     override suspend fun prepareBatchRequests(
-        pages: Map<Long, Pair<String, Map<String, IBrowserPage.BoundingBox>>>,
+        pages: Map<BatchUrlStateId, PageHtmlWithBoundingBoxes>,
         jobId: Long
     ): SemanticBatchPreparation {
         if (pages.isEmpty()) {
             return SemanticBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
         }
 
-        val cachedResults = mutableMapOf<Long, SemanticElements>()
+        val cachedResults = mutableMapOf<BatchUrlStateId, SemanticElements>()
         val batchRequests = mutableListOf<BatchContentRequest>()
-        val requestIndexToUrlStateId = mutableMapOf<Int, Long>()
-        val htmlWithIdsMap = mutableMapOf<Long, String>()
+        val requestIndexToUrlStateId = mutableMapOf<Int, BatchUrlStateId>()
+        val htmlWithIdsMap = mutableMapOf<BatchUrlStateId, String>()
 
         for ((urlStateId, pageData) in pages) {
-            val (html, boundingBoxes) = pageData
-            val pageHash = MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
+            val pageHash = MessageDigest.getInstance("SHA-256").digest(pageData.html.toByteArray())
 
             // Check cache
             val cached = webpageSemanticElementRepository.findByHash(pageHash)
@@ -114,8 +115,8 @@ class SemanticIdentificationService(
 
             // Prepare batch request using agent
             val batchRequest = semanticIdentificationAgent.prepareBatchRequest(
-                requestId = "$jobId-semantic-$urlStateId",
-                html = html
+                requestId = "$jobId-semantic-${urlStateId.value}",
+                html = pageData.html
             )
             
             requestIndexToUrlStateId[batchRequests.size] = urlStateId

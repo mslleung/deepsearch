@@ -1,9 +1,11 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.services.batch.MediaData
 import io.deepsearch.domain.agents.IMultiIconInterpreterAgent
 import io.deepsearch.domain.agents.MultiIconInterpreterInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageIcon
+import io.deepsearch.domain.models.valueobjects.MediaHash
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.IWebpageIconRepository
 import org.slf4j.Logger
@@ -17,12 +19,12 @@ import kotlin.time.ExperimentalTime
  * Contains cached results and batch requests for uncached icons.
  */
 data class IconBatchPreparation(
-    /** Map of icon hash (base64) to cached label (null if icon was not interpretable) */
-    val cachedResults: Map<String, String?>,
+    /** Map of icon hash to cached label (null if icon was not interpretable) */
+    val cachedResults: Map<MediaHash, String?>,
     /** Batch requests for icons not in cache */
     val batchRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
     /** Map of request index -> icon hash for matching batch results */
-    val requestIndexToHash: Map<Int, String>
+    val requestIndexToHash: Map<Int, MediaHash>
 )
 
 interface IWebpageIconInterpretationService {
@@ -33,11 +35,11 @@ interface IWebpageIconInterpretationService {
      * Prepare batch requests for icon interpretation with cache check.
      * Returns cached results and batch requests for uncached icons only.
      * 
-     * @param icons Map of hash (base64) to icon data (bytes + mimeType)
+     * @param icons Map of media hash to icon data (bytes + mimeType)
      * @return Cached results and batch requests for uncached icons
      */
     suspend fun prepareBatchRequests(
-        icons: Map<String, Pair<ByteArray, String>>,
+        icons: Map<MediaHash, MediaData>,
         jobId: Long
     ): IconBatchPreparation
     
@@ -46,7 +48,7 @@ interface IWebpageIconInterpretationService {
      * 
      * @param results Map of icon hash -> interpreted label
      */
-    suspend fun processBatchResults(results: Map<String, String?>)
+    suspend fun processBatchResults(results: Map<MediaHash, String?>)
 }
 
 class WebpageIconInterpretationService(
@@ -61,7 +63,7 @@ class WebpageIconInterpretationService(
 
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     override suspend fun prepareBatchRequests(
-        icons: Map<String, Pair<ByteArray, String>>,
+        icons: Map<MediaHash, MediaData>,
         jobId: Long
     ): IconBatchPreparation {
         if (icons.isEmpty()) {
@@ -69,14 +71,14 @@ class WebpageIconInterpretationService(
         }
 
         // Convert hash strings to byte arrays for cache lookup
-        val hashBytesMap = icons.keys.associateWith { hashBase64 ->
-            kotlin.io.encoding.Base64.decode(hashBase64)
+        val hashBytesMap = icons.keys.associateWith { hash ->
+            kotlin.io.encoding.Base64.decode(hash.value)
         }
 
         // Batch cache lookup
         val cachedIcons = webpageIconRepository.findByHashes(hashBytesMap.values.toList())
         val cachedResults = cachedIcons.associate { icon ->
-            kotlin.io.encoding.Base64.encode(icon.imageBytesHash) to icon.label
+            MediaHash(kotlin.io.encoding.Base64.encode(icon.imageBytesHash)) to icon.label
         }.toMutableMap()
 
         logger.debug("Found {} cached results for {} icons", cachedResults.size, icons.size)
@@ -86,16 +88,15 @@ class WebpageIconInterpretationService(
 
         // Prepare batch requests for uncached icons
         val batchRequests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
-        val requestIndexToHash = mutableMapOf<Int, String>()
+        val requestIndexToHash = mutableMapOf<Int, MediaHash>()
 
         uncachedIcons.forEach { (hash, iconData) ->
-            val (bytes, mimeType) = iconData
             val request = multiIconInterpreterAgent.prepareBatchRequest(
-                requestId = "$jobId-icon-$hash",
+                requestId = "$jobId-icon-${hash.value}",
                 icons = listOf(
                     MultiIconInterpreterInput.IconItem(
-                        bytes = bytes,
-                        mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(mimeType)
+                        bytes = iconData.bytes,
+                        mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(iconData.mimeType)
                     )
                 )
             )
@@ -113,12 +114,12 @@ class WebpageIconInterpretationService(
     }
 
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class, kotlin.time.ExperimentalTime::class)
-    override suspend fun processBatchResults(results: Map<String, String?>) {
+    override suspend fun processBatchResults(results: Map<MediaHash, String?>) {
         if (results.isEmpty()) return
 
         // Store results in cache
-        val iconsToCache = results.map { (hashBase64, label) ->
-            val hashBytes = kotlin.io.encoding.Base64.decode(hashBase64)
+        val iconsToCache = results.map { (hash, label) ->
+            val hashBytes = kotlin.io.encoding.Base64.decode(hash.value)
             WebpageIcon(
                 imageBytesHash = hashBytes,
                 label = label?.takeIf { it.isNotBlank() }

@@ -4,6 +4,9 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.BatchIconData
 import io.deepsearch.domain.models.entities.BatchImageData
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
+import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
+import io.deepsearch.domain.models.valueobjects.MediaHash
+import io.deepsearch.domain.models.valueobjects.TableDataId
 
 /**
  * Event emitted during batch periodic index processing.
@@ -38,11 +41,11 @@ data class BatchPeriodicIndexEvent(
  * Per-URL page data collected from snapshots for content LLM processing.
  */
 data class UrlPageData(
-    val urlStateId: Long,
+    val urlStateId: BatchUrlStateId,
     val html: String,
     val boundingBoxes: Map<String, IBrowserPage.BoundingBox>,
-    val iconHashes: List<String>,
-    val imageHashes: List<String>
+    val iconHashes: List<MediaHash>,
+    val imageHashes: List<MediaHash>
 )
 
 /**
@@ -50,15 +53,17 @@ data class UrlPageData(
  * Icons and images are deduplicated globally by hash.
  */
 data class ContentCollectionResult(
-    val urlPages: Map<Long, UrlPageData>,
-    val uniqueIcons: Map<String, BatchIconData>,
-    val uniqueImages: Map<String, BatchImageData>
+    val urlPages: Map<BatchUrlStateId, UrlPageData>,
+    val uniqueIcons: Map<MediaHash, BatchIconData>,
+    val uniqueImages: Map<MediaHash, BatchImageData>
 ) {
     /**
      * Get the pages map in the format expected by batch services.
      */
-    fun pagesForBatchServices(): Map<Long, Pair<String, Map<String, IBrowserPage.BoundingBox>>> {
-        return urlPages.mapValues { (_, data) -> data.html to data.boundingBoxes }
+    fun pagesForBatchServices(): Map<BatchUrlStateId, PageHtmlWithBoundingBoxes> {
+        return urlPages.mapValues { (_, data) -> 
+            PageHtmlWithBoundingBoxes(data.html, data.boundingBoxes) 
+        }
     }
     
     fun isEmpty(): Boolean = urlPages.isEmpty() && uniqueIcons.isEmpty() && uniqueImages.isEmpty()
@@ -82,8 +87,8 @@ data class SubmittedBatches(
  * Maps hash -> interpretation/text.
  */
 data class MediaResults(
-    val iconInterpretations: Map<String, String?>,
-    val imageTexts: Map<String, String?>
+    val iconInterpretations: Map<MediaHash, String?>,
+    val imageTexts: Map<MediaHash, String?>
 )
 
 // ==================== JSON Response Wrappers ====================
@@ -118,5 +123,59 @@ data class ImageClassificationResponseWrapper(
 data class TableExtractionResponseWrapper(
     val text: String? = null
 )
+
+// ==================== Typed Data Classes ====================
+
+/**
+ * Encapsulates media (icon/image) binary data with its MIME type.
+ * Replaces Pair<ByteArray, String> for better readability.
+ */
+data class MediaData(
+    val bytes: ByteArray,
+    val mimeType: String
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as MediaData
+        return bytes.contentEquals(other.bytes) && mimeType == other.mimeType
+    }
+
+    override fun hashCode(): Int {
+        var result = bytes.contentHashCode()
+        result = 31 * result + mimeType.hashCode()
+        return result
+    }
+}
+
+/**
+ * Encapsulates page HTML with its bounding boxes for batch processing.
+ * Replaces Pair<String, Map<String, BoundingBox>> for better readability.
+ */
+data class PageHtmlWithBoundingBoxes(
+    val html: String,
+    val boundingBoxes: Map<String, IBrowserPage.BoundingBox>
+)
+
+/**
+ * Composite key identifying a specific table within a URL state.
+ * Replaces Pair<Long, String> for better type safety.
+ */
+data class TableKey(
+    val urlStateId: BatchUrlStateId,
+    val tableDataId: TableDataId
+)
+
+/**
+ * Maps a table to its position in a batch request.
+ * Replaces Triple<Long, String, Int> for better readability.
+ */
+data class TableRequestMapping(
+    val urlStateId: BatchUrlStateId,
+    val tableDataId: TableDataId,
+    val requestIndex: Int
+) {
+    fun toKey(): TableKey = TableKey(urlStateId, tableDataId)
+}
 
 
