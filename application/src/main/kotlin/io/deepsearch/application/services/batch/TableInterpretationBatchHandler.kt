@@ -62,6 +62,21 @@ class TableInterpretationBatchHandler(
 
         // Check if we already have a batch job running (resume case)
         if (job.geminiBatchJobId != null) {
+            // Rebuild mapping from database state for resumability
+            // This works because:
+            // 1. findNeedingFinalLlmProcessing() returns URLs in deterministic order (by id)
+            // 2. collectTableInputs() processes them in the same order
+            // 3. prepareBatchRequests() filters out cached results consistently
+            // 4. The resulting mapping matches the original batch submission order
+            val urlsNeedingProcessing = batchUrlStateRepository.findNeedingFinalLlmProcessing(jobId)
+            val tableInputs = collectTableInputs(urlsNeedingProcessing, jobId)
+            val tableBatchPrep = tableInterpretationService.prepareBatchRequests(tableInputs, jobId)
+            val requestMapping = tableBatchPrep.requestIndexToKey.entries.map { (index, key) ->
+                Triple(key.first, key.second, index)
+            }
+            tableInterpretationMappings[jobId] = requestMapping
+            logger.info("[{}] Rebuilt table interpretation mapping with {} entries for resume", jobId, requestMapping.size)
+
             pollBatchUntilComplete(job, eventFlow, job.geminiBatchJobId!!)
             processTableBatchResults(jobId, job.geminiBatchJobId!!)
             job.clearBatchJob()

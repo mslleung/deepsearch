@@ -4,6 +4,7 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.entities.BatchIconData
 import io.deepsearch.domain.models.entities.BatchImageData
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
+import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
 import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.models.valueobjects.LanguagePattern
@@ -87,6 +88,16 @@ class CrawlAndExtractHandler(
             if (it.isExtracted()) {
                 processedCount.incrementAndGet()
             }
+        }
+        
+        // Re-queue PENDING URLs that were discovered but not yet extracted (for resumability)
+        val pendingUrls = existingUrls.filter { 
+            it.stage == BatchUrlProcessingStage.PENDING && !it.isFailed() 
+        }
+        pendingUrls.forEach { urlState ->
+            // URL is already in seenUrls from above, just queue it for processing
+            inFlightCount.incrementAndGet()
+            urlChannel.send(urlState.url)
         }
         
         // Seed with base URL if not already processed
