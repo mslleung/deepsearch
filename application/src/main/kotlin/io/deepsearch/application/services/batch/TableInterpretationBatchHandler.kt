@@ -76,8 +76,8 @@ class TableInterpretationBatchHandler(
             val urlsNeedingProcessing = batchUrlStateRepository.findNeedingFinalLlmProcessing(jobId)
             val tableInputs = collectTableInputs(urlsNeedingProcessing, jobId)
             val tableBatchPrep = tableInterpretationService.prepareBatchRequests(tableInputs, jobId)
-            val requestMappings = tableBatchPrep.requestIndexToKey.entries.map { (index, key) ->
-                TableRequestMapping(key.urlStateId, key.tableDataId, index)
+            val requestMappings = tableBatchPrep.pendingRequests.mapIndexed { index, pending ->
+                TableRequestMapping(pending.key.urlStateId, pending.key.tableDataId, index)
             }
             tableInterpretationMappings[batchJobIdTyped] = requestMappings
             logger.info("[{}] Rebuilt table interpretation mapping with {} entries for resume", jobId, requestMappings.size)
@@ -103,13 +103,13 @@ class TableInterpretationBatchHandler(
 
         // Use service to prepare batch requests (with cache check)
         val tableBatchPrep = tableInterpretationService.prepareBatchRequests(tableInputs, jobId)
-        val batchRequests = tableBatchPrep.batchRequests
+        val pendingRequests = tableBatchPrep.pendingRequests
         val cachedTableResults = tableBatchPrep.cachedResults
 
         // Apply cached results immediately
         applyCachedResults(cachedTableResults, urlsNeedingProcessing)
 
-        if (batchRequests.isEmpty()) {
+        if (pendingRequests.isEmpty()) {
             markAllUrlsAsDone(urlsNeedingProcessing)
             job.urlsFinalProcessed = urlsNeedingProcessing.size
             job.advanceToNextStage()
@@ -119,23 +119,23 @@ class TableInterpretationBatchHandler(
         }
 
         // Store mapping for result processing
-        val requestMappings = tableBatchPrep.requestIndexToKey.entries.map { (index, key) ->
-            TableRequestMapping(key.urlStateId, key.tableDataId, index)
+        val requestMappings = pendingRequests.mapIndexed { index, pending ->
+            TableRequestMapping(pending.key.urlStateId, pending.key.tableDataId, index)
         }
         tableInterpretationMappings[batchJobIdTyped] = requestMappings
 
         logger.info(
             "[{}] Submitting {} table interpretation requests ({} cached)",
-            jobId, batchRequests.size, cachedTableResults.size
+            jobId, pendingRequests.size, cachedTableResults.size
         )
 
         try {
-            val batchJobId = geminiBatchService.createContentBatch(batchRequests)
+            val batchJobId = geminiBatchService.createContentBatch(pendingRequests.map { it.request })
             job.setBatchJob(batchJobId)
             batchJobRepository.update(job)
 
             logger.info("[{}] Submitted table batch job: {}", jobId, batchJobId)
-            eventEmitter.emit(job, eventFlow, "Table batch submitted: $batchJobId (${batchRequests.size} tables)")
+            eventEmitter.emit(job, eventFlow, "Table batch submitted: $batchJobId (${pendingRequests.size} tables)")
 
             pollBatchUntilComplete(job, eventFlow, batchJobId)
             processTableBatchResults(jobId, batchJobId)

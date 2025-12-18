@@ -18,17 +18,23 @@ import kotlin.time.ExperimentalTime
 import io.deepsearch.domain.services.BatchContentRequest
 
 /**
+ * A pending batch request bundling the key, request, and additional data needed for processing.
+ * Used by Semantic and Table Identification services.
+ */
+data class PendingHtmlBatchRequest(
+    val urlStateId: BatchUrlStateId,
+    val request: BatchContentRequest,
+    val htmlWithIds: String
+)
+
+/**
  * Result of preparing semantic identification batch requests.
  */
 data class SemanticBatchPreparation(
     /** Map of URL state ID to cached SemanticElements (if found in cache) */
     val cachedResults: Map<BatchUrlStateId, SemanticElements>,
-    /** Batch requests for uncached pages */
-    val batchRequests: List<BatchContentRequest>,
-    /** Map of request index -> URL state ID */
-    val requestIndexToUrlStateId: Map<Int, BatchUrlStateId>,
-    /** Map of URL state ID -> cleaned HTML with injected IDs (for parsing results) */
-    val htmlWithIdsMap: Map<BatchUrlStateId, String>
+    /** Pending requests for uncached pages (bundled with key and additional data) */
+    val pendingRequests: List<PendingHtmlBatchRequest>
 )
 
 interface ISemanticIdentificationService {
@@ -95,13 +101,11 @@ class SemanticIdentificationService(
         jobId: Long
     ): SemanticBatchPreparation {
         if (pages.isEmpty()) {
-            return SemanticBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
+            return SemanticBatchPreparation(emptyMap(), emptyList())
         }
 
         val cachedResults = mutableMapOf<BatchUrlStateId, SemanticElements>()
-        val batchRequests = mutableListOf<BatchContentRequest>()
-        val requestIndexToUrlStateId = mutableMapOf<Int, BatchUrlStateId>()
-        val htmlWithIdsMap = mutableMapOf<BatchUrlStateId, String>()
+        val pendingRequests = mutableListOf<PendingHtmlBatchRequest>()
 
         for ((urlStateId, pageData) in pages) {
             val pageHash = MessageDigest.getInstance("SHA-256").digest(pageData.html.toByteArray())
@@ -119,18 +123,20 @@ class SemanticIdentificationService(
                 html = pageData.html
             )
             
-            requestIndexToUrlStateId[batchRequests.size] = urlStateId
-            batchRequests.add(batchRequest.request)
-            htmlWithIdsMap[urlStateId] = batchRequest.htmlWithIds
+            pendingRequests.add(
+                PendingHtmlBatchRequest(
+                    urlStateId = urlStateId,
+                    request = batchRequest.request,
+                    htmlWithIds = batchRequest.htmlWithIds
+                )
+            )
         }
 
-        logger.debug("Semantic batch: {} cached, {} need processing", cachedResults.size, batchRequests.size)
+        logger.debug("Semantic batch: {} cached, {} need processing", cachedResults.size, pendingRequests.size)
 
         return SemanticBatchPreparation(
             cachedResults = cachedResults,
-            batchRequests = batchRequests,
-            requestIndexToUrlStateId = requestIndexToUrlStateId,
-            htmlWithIdsMap = htmlWithIdsMap
+            pendingRequests = pendingRequests
         )
     }
 

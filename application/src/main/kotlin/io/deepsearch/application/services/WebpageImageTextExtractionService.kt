@@ -47,22 +47,16 @@ data class ImageExtractionResult(
 data class ImageBatchPreparation(
     /** Map of image hash to cached text (null if no text extracted) */
     val cachedResults: Map<MediaHash, String?>,
-    /** Batch requests for image classification (first stage) */
-    val classificationRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
-    /** Map of request index -> image hash for matching classification results */
-    val classificationIndexToHash: Map<Int, MediaHash>,
-    /** Images that need OCR check before LLM (keyed by hash) */
-    val imagesNeedingOcr: Map<MediaHash, MediaData>
+    /** Pending requests for image classification (bundled with hash) */
+    val pendingRequests: List<PendingMediaBatchRequest>
 )
 
 /**
  * Result of preparing table extraction batch requests for images with tables.
  */
 data class ImageTableExtractionBatchPreparation(
-    /** Batch requests for table extraction */
-    val tableExtractionRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
-    /** Map of request index -> image hash for matching results */
-    val requestIndexToHash: Map<Int, MediaHash>
+    /** Pending requests for table extraction (bundled with hash) */
+    val pendingRequests: List<PendingMediaBatchRequest>
 )
 
 interface IWebpageImageTextExtractionService {
@@ -132,7 +126,7 @@ class WebpageImageTextExtractionService(
         ocrLanguage: OcrLanguage
     ): ImageBatchPreparation {
         if (images.isEmpty()) {
-            return ImageBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
+            return ImageBatchPreparation(emptyMap(), emptyList())
         }
 
         // Convert hash strings to byte arrays for cache lookup
@@ -156,8 +150,7 @@ class WebpageImageTextExtractionService(
         // (OCR is used in interactive mode to reduce LLM calls, but batch has different cost structure)
         
         // Prepare classification batch requests for uncached images
-        val classificationRequests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
-        val classificationIndexToHash = mutableMapOf<Int, MediaHash>()
+        val pendingRequests = mutableListOf<PendingMediaBatchRequest>()
 
         uncachedImages.forEach { (hash, imageData) ->
             val request = imageClassificationAgent.prepareBatchRequest(
@@ -167,17 +160,14 @@ class WebpageImageTextExtractionService(
                     mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(imageData.mimeType)
                 )
             )
-            classificationIndexToHash[classificationRequests.size] = hash
-            classificationRequests.add(request)
+            pendingRequests.add(PendingMediaBatchRequest(hash = hash, request = request))
         }
 
-        logger.debug("Prepared {} classification batch requests for uncached images", classificationRequests.size)
+        logger.debug("Prepared {} classification batch requests for uncached images", pendingRequests.size)
 
         return ImageBatchPreparation(
             cachedResults = cachedResults,
-            classificationRequests = classificationRequests,
-            classificationIndexToHash = classificationIndexToHash,
-            imagesNeedingOcr = emptyMap() // Not used in batch mode
+            pendingRequests = pendingRequests
         )
     }
 
@@ -187,11 +177,10 @@ class WebpageImageTextExtractionService(
         jobId: Long
     ): ImageTableExtractionBatchPreparation {
         if (imagesWithTables.isEmpty()) {
-            return ImageTableExtractionBatchPreparation(emptyList(), emptyMap())
+            return ImageTableExtractionBatchPreparation(emptyList())
         }
 
-        val requests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
-        val requestIndexToHash = mutableMapOf<Int, MediaHash>()
+        val pendingRequests = mutableListOf<PendingMediaBatchRequest>()
 
         imagesWithTables.forEach { (hash, imageData) ->
             val request = tableExtractionAgent.prepareBatchRequest(
@@ -201,16 +190,12 @@ class WebpageImageTextExtractionService(
                     mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(imageData.mimeType)
                 )
             )
-            requestIndexToHash[requests.size] = hash
-            requests.add(request)
+            pendingRequests.add(PendingMediaBatchRequest(hash = hash, request = request))
         }
 
-        logger.debug("Prepared {} table extraction batch requests", requests.size)
+        logger.debug("Prepared {} table extraction batch requests", pendingRequests.size)
 
-        return ImageTableExtractionBatchPreparation(
-            tableExtractionRequests = requests,
-            requestIndexToHash = requestIndexToHash
-        )
+        return ImageTableExtractionBatchPreparation(pendingRequests = pendingRequests)
     }
 
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class, kotlin.time.ExperimentalTime::class)

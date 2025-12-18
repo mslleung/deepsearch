@@ -15,16 +15,22 @@ import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 /**
+ * A pending batch request for media (icons or images), bundling the hash and request.
+ */
+data class PendingMediaBatchRequest(
+    val hash: MediaHash,
+    val request: io.deepsearch.domain.services.BatchContentRequest
+)
+
+/**
  * Result of preparing icon interpretation batch requests.
  * Contains cached results and batch requests for uncached icons.
  */
 data class IconBatchPreparation(
     /** Map of icon hash to cached label (null if icon was not interpretable) */
     val cachedResults: Map<MediaHash, String?>,
-    /** Batch requests for icons not in cache */
-    val batchRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
-    /** Map of request index -> icon hash for matching batch results */
-    val requestIndexToHash: Map<Int, MediaHash>
+    /** Pending requests for uncached icons (bundled with hash) */
+    val pendingRequests: List<PendingMediaBatchRequest>
 )
 
 interface IWebpageIconInterpretationService {
@@ -67,7 +73,7 @@ class WebpageIconInterpretationService(
         jobId: Long
     ): IconBatchPreparation {
         if (icons.isEmpty()) {
-            return IconBatchPreparation(emptyMap(), emptyList(), emptyMap())
+            return IconBatchPreparation(emptyMap(), emptyList())
         }
 
         // Convert hash strings to byte arrays for cache lookup
@@ -87,8 +93,7 @@ class WebpageIconInterpretationService(
         val uncachedIcons = icons.filterKeys { hash -> !cachedResults.containsKey(hash) }
 
         // Prepare batch requests for uncached icons
-        val batchRequests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
-        val requestIndexToHash = mutableMapOf<Int, MediaHash>()
+        val pendingRequests = mutableListOf<PendingMediaBatchRequest>()
 
         uncachedIcons.forEach { (hash, iconData) ->
             val request = multiIconInterpreterAgent.prepareBatchRequest(
@@ -100,16 +105,14 @@ class WebpageIconInterpretationService(
                     )
                 )
             )
-            requestIndexToHash[batchRequests.size] = hash
-            batchRequests.add(request)
+            pendingRequests.add(PendingMediaBatchRequest(hash = hash, request = request))
         }
 
-        logger.debug("Prepared {} batch requests for uncached icons", batchRequests.size)
+        logger.debug("Prepared {} batch requests for uncached icons", pendingRequests.size)
 
         return IconBatchPreparation(
             cachedResults = cachedResults,
-            batchRequests = batchRequests,
-            requestIndexToHash = requestIndexToHash
+            pendingRequests = pendingRequests
         )
     }
 

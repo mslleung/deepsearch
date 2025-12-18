@@ -21,12 +21,8 @@ import io.deepsearch.domain.services.BatchContentRequest
 data class TableIdentificationBatchPreparation(
     /** Map of URL state ID to cached table identifications (if found in cache) */
     val cachedResults: Map<BatchUrlStateId, List<TableIdentification>>,
-    /** Batch requests for uncached pages */
-    val batchRequests: List<BatchContentRequest>,
-    /** Map of request index -> URL state ID */
-    val requestIndexToUrlStateId: Map<Int, BatchUrlStateId>,
-    /** Map of URL state ID -> cleaned HTML with injected IDs (for parsing results) */
-    val htmlWithIdsMap: Map<BatchUrlStateId, String>
+    /** Pending requests for uncached pages (bundled with key and additional data) */
+    val pendingRequests: List<PendingHtmlBatchRequest>
 )
 
 interface ITableIdentificationService {
@@ -88,13 +84,11 @@ class TableIdentificationService(
         jobId: Long
     ): TableIdentificationBatchPreparation {
         if (pages.isEmpty()) {
-            return TableIdentificationBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
+            return TableIdentificationBatchPreparation(emptyMap(), emptyList())
         }
 
         val cachedResults = mutableMapOf<BatchUrlStateId, List<TableIdentification>>()
-        val batchRequests = mutableListOf<BatchContentRequest>()
-        val requestIndexToUrlStateId = mutableMapOf<Int, BatchUrlStateId>()
-        val htmlWithIdsMap = mutableMapOf<BatchUrlStateId, String>()
+        val pendingRequests = mutableListOf<PendingHtmlBatchRequest>()
 
         for ((urlStateId, pageData) in pages) {
             val htmlHash = MessageDigest.getInstance("SHA-256").digest(pageData.html.toByteArray())
@@ -112,18 +106,20 @@ class TableIdentificationService(
                 html = pageData.html
             )
             
-            requestIndexToUrlStateId[batchRequests.size] = urlStateId
-            batchRequests.add(batchRequest.request)
-            htmlWithIdsMap[urlStateId] = batchRequest.htmlWithIds
+            pendingRequests.add(
+                PendingHtmlBatchRequest(
+                    urlStateId = urlStateId,
+                    request = batchRequest.request,
+                    htmlWithIds = batchRequest.htmlWithIds
+                )
+            )
         }
 
-        logger.debug("Table ID batch: {} cached, {} need processing", cachedResults.size, batchRequests.size)
+        logger.debug("Table ID batch: {} cached, {} need processing", cachedResults.size, pendingRequests.size)
 
         return TableIdentificationBatchPreparation(
             cachedResults = cachedResults,
-            batchRequests = batchRequests,
-            requestIndexToUrlStateId = requestIndexToUrlStateId,
-            htmlWithIdsMap = htmlWithIdsMap
+            pendingRequests = pendingRequests
         )
     }
 

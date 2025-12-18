@@ -185,8 +185,8 @@ class ContentLlmBatchHandler(
         val imagePrep = webpageImageTextExtractionService.prepareBatchRequests(imageDataMap, jobId)
 
         logger.info("[{}] Prepared batches: {} semantic, {} table, {} icons, {} images",
-            jobId, semanticPrep.batchRequests.size, tablePrep.batchRequests.size,
-            iconPrep.batchRequests.size, imagePrep.classificationRequests.size)
+            jobId, semanticPrep.pendingRequests.size, tablePrep.pendingRequests.size,
+            iconPrep.pendingRequests.size, imagePrep.pendingRequests.size)
 
         return BatchPreparations(semanticPrep, tablePrep, iconPrep, imagePrep, iconDataMap, imageDataMap)
     }
@@ -195,11 +195,12 @@ class ContentLlmBatchHandler(
 
     private suspend fun applyCachedResults(preparations: BatchPreparations, urlStates: List<BatchUrlState>) {
         // Apply cached semantic results
+        // Note: For cached results, we use the existing HTML since we didn't call prepareBatchRequest
         for ((urlStateId, semanticElements) in preparations.semanticPrep.cachedResults) {
             val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
             val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: continue
             val updatedSnapshot = snapshotData.copy(
-                cleanedHtml = preparations.semanticPrep.htmlWithIdsMap[urlStateId] ?: snapshotData.html,
+                cleanedHtml = snapshotData.html,
                 semanticElements = semanticElements
             )
             urlState.snapshotData = json.encodeToString(updatedSnapshot)
@@ -219,26 +220,26 @@ class ContentLlmBatchHandler(
     // ==================== Phase 4: Submit Batches ====================
 
     private suspend fun submitBatches(preparations: BatchPreparations, jobId: Long): SubmittedBatches {
-        val semanticId = if (preparations.semanticPrep.batchRequests.isNotEmpty()) {
-            geminiBatchService.createContentBatch(preparations.semanticPrep.batchRequests).also {
+        val semanticId = if (preparations.semanticPrep.pendingRequests.isNotEmpty()) {
+            geminiBatchService.createContentBatch(preparations.semanticPrep.pendingRequests.map { it.request }).also {
                 logger.info("[{}] Submitted semantic batch: {}", jobId, it)
             }
         } else null
 
-        val tableId = if (preparations.tablePrep.batchRequests.isNotEmpty()) {
-            geminiBatchService.createContentBatch(preparations.tablePrep.batchRequests).also {
+        val tableId = if (preparations.tablePrep.pendingRequests.isNotEmpty()) {
+            geminiBatchService.createContentBatch(preparations.tablePrep.pendingRequests.map { it.request }).also {
                 logger.info("[{}] Submitted table ID batch: {}", jobId, it)
             }
         } else null
 
-        val iconId = if (preparations.iconPrep.batchRequests.isNotEmpty()) {
-            geminiBatchService.createContentBatch(preparations.iconPrep.batchRequests).also {
+        val iconId = if (preparations.iconPrep.pendingRequests.isNotEmpty()) {
+            geminiBatchService.createContentBatch(preparations.iconPrep.pendingRequests.map { it.request }).also {
                 logger.info("[{}] Submitted icon batch: {}", jobId, it)
             }
         } else null
 
-        val imageClassId = if (preparations.imagePrep.classificationRequests.isNotEmpty()) {
-            geminiBatchService.createContentBatch(preparations.imagePrep.classificationRequests).also {
+        val imageClassId = if (preparations.imagePrep.pendingRequests.isNotEmpty()) {
+            geminiBatchService.createContentBatch(preparations.imagePrep.pendingRequests.map { it.request }).also {
                 logger.info("[{}] Submitted image classification batch: {}", jobId, it)
             }
         } else null
@@ -263,11 +264,11 @@ class ContentLlmBatchHandler(
         if (batches.iconId != null) {
             val iconResults = geminiBatchService.fetchBatchResults(batches.iconId)
             iconResults.forEachIndexed { index, result ->
-                val hash = preparations.iconPrep.requestIndexToHash[index] ?: return@forEachIndexed
+                val pending = preparations.iconPrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 if (result.success && result.generatedText != null) {
                     val label = parseIconResponse(result.generatedText!!, jobId)
-                    iconInterpretations[hash] = label
-                    newIconResults[hash] = label
+                    iconInterpretations[pending.hash] = label
+                    newIconResults[pending.hash] = label
                 }
             }
             webpageIconInterpretationService.processBatchResults(newIconResults)
@@ -281,15 +282,15 @@ class ContentLlmBatchHandler(
         if (batches.imageClassId != null) {
             val imageResults = geminiBatchService.fetchBatchResults(batches.imageClassId)
             imageResults.forEachIndexed { index, result ->
-                val hash = preparations.imagePrep.classificationIndexToHash[index] ?: return@forEachIndexed
+                val pending = preparations.imagePrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 if (result.success && result.generatedText != null) {
                     val classification = parseImageClassificationResponse(result.generatedText!!, jobId)
                     if (classification?.containsTable == true) {
-                        preparations.imageDataMap[hash]?.let { imagesWithTables[hash] = it }
+                        preparations.imageDataMap[pending.hash]?.let { imagesWithTables[pending.hash] = it }
                     } else {
                         val text = classification?.text?.takeIf { it.isNotBlank() }
-                        imageTexts[hash] = text
-                        newImageResults[hash] = text
+                        imageTexts[pending.hash] = text
+                        newImageResults[pending.hash] = text
                     }
                 }
             }
@@ -321,20 +322,20 @@ class ContentLlmBatchHandler(
     ) {
         val tableExtractPrep = webpageImageTextExtractionService.prepareTableExtractionBatchRequests(imagesWithTables, jobId)
         
-        if (tableExtractPrep.tableExtractionRequests.isNotEmpty()) {
-            val tableExtractBatchId = geminiBatchService.createContentBatch(tableExtractPrep.tableExtractionRequests)
+        if (tableExtractPrep.pendingRequests.isNotEmpty()) {
+            val tableExtractBatchId = geminiBatchService.createContentBatch(tableExtractPrep.pendingRequests.map { it.request })
             logger.info("[{}] Submitted image table extraction batch: {}", jobId, tableExtractBatchId)
             
             pollBatchUntilComplete(job, eventFlow, tableExtractBatchId)
             
             val extractResults = geminiBatchService.fetchBatchResults(tableExtractBatchId)
             extractResults.forEachIndexed { index, result ->
-                val hash = tableExtractPrep.requestIndexToHash[index] ?: return@forEachIndexed
+                val pending = tableExtractPrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 if (result.success && result.generatedText != null) {
                     val extraction = parseTableExtractionResponse(result.generatedText!!, jobId)
                     val text = extraction?.text?.takeIf { it.isNotBlank() }
-                    imageTexts[hash] = text
-                    newImageResults[hash] = text
+                    imageTexts[pending.hash] = text
+                    newImageResults[pending.hash] = text
                 }
             }
             logger.info("[{}] Extracted tables from {} images", jobId, extractResults.count { it.success })
@@ -353,8 +354,8 @@ class ContentLlmBatchHandler(
         if (batches.semanticId != null) {
             val semanticResults = geminiBatchService.fetchBatchResults(batches.semanticId)
             semanticResults.forEachIndexed { index, result ->
-                val urlStateId = preparations.semanticPrep.requestIndexToUrlStateId[index] ?: return@forEachIndexed
-                val urlState = urlStates.find { it.id == urlStateId.value } ?: return@forEachIndexed
+                val pending = preparations.semanticPrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
+                val urlState = urlStates.find { it.id == pending.urlStateId.value } ?: return@forEachIndexed
                 
                 try {
                     if (!result.success || result.generatedText == null) {
@@ -362,15 +363,14 @@ class ContentLlmBatchHandler(
                         return@forEachIndexed
                     }
 
-                    val htmlWithIds = preparations.semanticPrep.htmlWithIdsMap[urlStateId] ?: return@forEachIndexed
-                    val semanticElements = semanticIdentificationService.parseBatchResponse(result.generatedText!!, htmlWithIds)
+                    val semanticElements = semanticIdentificationService.parseBatchResponse(result.generatedText!!, pending.htmlWithIds)
 
                     // Cache the result
                     val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed
                     val htmlHash = MessageDigest.getInstance("SHA-256").digest(snapshotData.html.toByteArray())
                     semanticIdentificationService.cacheResult(htmlHash, semanticElements)
 
-                    val updatedSnapshot = snapshotData.copy(cleanedHtml = htmlWithIds, semanticElements = semanticElements)
+                    val updatedSnapshot = snapshotData.copy(cleanedHtml = pending.htmlWithIds, semanticElements = semanticElements)
                     urlState.snapshotData = json.encodeToString(updatedSnapshot)
                     batchUrlStateRepository.update(urlState)
                 } catch (e: Exception) {
@@ -383,8 +383,8 @@ class ContentLlmBatchHandler(
         if (batches.tableId != null) {
             val tableResults = geminiBatchService.fetchBatchResults(batches.tableId)
             tableResults.forEachIndexed { index, result ->
-                val urlStateId = preparations.tablePrep.requestIndexToUrlStateId[index] ?: return@forEachIndexed
-                val urlState = urlStates.find { it.id == urlStateId.value } ?: return@forEachIndexed
+                val pending = preparations.tablePrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
+                val urlState = urlStates.find { it.id == pending.urlStateId.value } ?: return@forEachIndexed
                 
                 try {
                     if (!result.success || result.generatedText == null) {
@@ -392,8 +392,7 @@ class ContentLlmBatchHandler(
                         return@forEachIndexed
                     }
 
-                    val htmlWithIds = preparations.tablePrep.htmlWithIdsMap[urlStateId] ?: return@forEachIndexed
-                    val tableIdentifications = tableIdentificationService.parseBatchResponse(result.generatedText!!, htmlWithIds)
+                    val tableIdentifications = tableIdentificationService.parseBatchResponse(result.generatedText!!, pending.htmlWithIds)
 
                     // Cache the result
                     val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed

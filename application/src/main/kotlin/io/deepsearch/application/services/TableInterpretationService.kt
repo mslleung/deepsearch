@@ -31,17 +31,22 @@ data class TableInterpretationBatchInput(
 )
 
 /**
+ * A pending batch request for table interpretation, bundling the key, request, and hash for caching.
+ */
+data class PendingTableInterpretationRequest(
+    val key: TableKey,
+    val request: BatchContentRequest,
+    val tableHtmlHash: ByteArray
+)
+
+/**
  * Result of preparing table interpretation batch requests.
  */
 data class TableInterpretationBatchPreparation(
     /** Map of TableKey to cached markdown */
     val cachedResults: Map<TableKey, String>,
-    /** Batch requests for uncached tables */
-    val batchRequests: List<BatchContentRequest>,
-    /** Map of request index -> TableKey */
-    val requestIndexToKey: Map<Int, TableKey>,
-    /** Map of TableKey -> tableHtml hash for caching */
-    val hashMap: Map<TableKey, ByteArray>
+    /** Pending requests for uncached tables (bundled with key and hash) */
+    val pendingRequests: List<PendingTableInterpretationRequest>
 )
 
 interface ITableInterpretationService {
@@ -94,20 +99,17 @@ class TableInterpretationService(
         jobId: Long
     ): TableInterpretationBatchPreparation {
         if (tables.isEmpty()) {
-            return TableInterpretationBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
+            return TableInterpretationBatchPreparation(emptyMap(), emptyList())
         }
 
         val cachedResults = mutableMapOf<TableKey, String>()
-        val batchRequests = mutableListOf<BatchContentRequest>()
-        val requestIndexToKey = mutableMapOf<Int, TableKey>()
-        val hashMap = mutableMapOf<TableKey, ByteArray>()
+        val pendingRequests = mutableListOf<PendingTableInterpretationRequest>()
 
         for (table in tables) {
             val key = TableKey(table.urlStateId, table.tableDataId)
             val digest = MessageDigest.getInstance("SHA-256")
             digest.update(table.tableHtml.toByteArray())
             val tableHash = digest.digest()
-            hashMap[key] = tableHash
 
             // Check cache
             val existing = webpageTableInterpretationRepository.findByHash(tableHash)
@@ -124,17 +126,20 @@ class TableInterpretationService(
                 boundingBoxes = table.boundingBoxes
             )
             
-            requestIndexToKey[batchRequests.size] = key
-            batchRequests.add(request)
+            pendingRequests.add(
+                PendingTableInterpretationRequest(
+                    key = key,
+                    request = request,
+                    tableHtmlHash = tableHash
+                )
+            )
         }
 
-        logger.debug("Table interpretation batch: {} cached, {} need processing", cachedResults.size, batchRequests.size)
+        logger.debug("Table interpretation batch: {} cached, {} need processing", cachedResults.size, pendingRequests.size)
 
         return TableInterpretationBatchPreparation(
             cachedResults = cachedResults,
-            batchRequests = batchRequests,
-            requestIndexToKey = requestIndexToKey,
-            hashMap = hashMap
+            pendingRequests = pendingRequests
         )
     }
 
