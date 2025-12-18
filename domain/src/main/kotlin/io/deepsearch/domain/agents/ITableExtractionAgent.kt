@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.services.BatchContentRequest
 
 /**
  * Input for table extraction from images.
@@ -45,5 +46,27 @@ data class TableExtractionOutput(
  */
 interface ITableExtractionAgent : IAgent<TableExtractionInput, TableExtractionOutput> {
     override suspend fun generate(input: TableExtractionInput): TableExtractionOutput
+
+    /**
+     * Prepare a batch request for table extraction from an image.
+     * Used by batch processing to create requests with the same prompts as interactive mode.
+     * 
+     * @param requestId Unique identifier for this request
+     * @param image Single image containing a table
+     * @return BatchContentRequest with multimodal content (text + image)
+     */
+    fun prepareBatchRequest(
+        requestId: String,
+        image: TableExtractionInput.ImageItem
+    ): BatchContentRequest
+
+    /**
+     * Parse a batch response into table extraction result.
+     * Used by batch processing to parse responses with the same logic as interactive mode.
+     * 
+     * @param responseText The JSON response from the batch API
+     * @return The extracted text (with tables in markdown)
+     */
+    fun parseBatchResponse(responseText: String): String?
 }
 

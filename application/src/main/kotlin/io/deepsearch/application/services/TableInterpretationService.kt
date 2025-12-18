@@ -14,9 +14,66 @@ import java.security.MessageDigest
 import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
+import io.deepsearch.domain.services.BatchContentRequest
+
+/**
+ * Input for table interpretation batch request preparation.
+ */
+data class TableInterpretationBatchInput(
+    val urlStateId: Long,
+    val tableDataId: String,
+    val tableHtml: String,
+    val auxiliaryInfo: String?,
+    val boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>
+)
+
+/**
+ * Result of preparing table interpretation batch requests.
+ */
+data class TableInterpretationBatchPreparation(
+    /** Map of (urlStateId, tableDataId) to cached markdown */
+    val cachedResults: Map<Pair<Long, String>, String>,
+    /** Batch requests for uncached tables */
+    val batchRequests: List<BatchContentRequest>,
+    /** Map of request index -> (urlStateId, tableDataId) */
+    val requestIndexToKey: Map<Int, Pair<Long, String>>,
+    /** Map of (urlStateId, tableDataId) -> tableHtml hash for caching */
+    val hashMap: Map<Pair<Long, String>, ByteArray>
+)
+
 interface ITableInterpretationService {
     suspend fun interpretTable(input: TableInterpretationInput, sessionId: SessionId): String
     suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: SessionId): List<String>
+    
+    // ========== Batch API Methods ==========
+    
+    /**
+     * Prepare batch requests for table interpretation with cache check.
+     * 
+     * @param tables List of table interpretation inputs
+     * @param jobId Batch job ID for request ID generation
+     * @return Cached results and batch requests for uncached tables
+     */
+    suspend fun prepareBatchRequests(
+        tables: List<TableInterpretationBatchInput>,
+        jobId: Long
+    ): TableInterpretationBatchPreparation
+    
+    /**
+     * Parse batch response and return markdown.
+     * 
+     * @param responseText JSON response from batch API
+     * @return Markdown string
+     */
+    fun parseBatchResponse(responseText: String): String
+    
+    /**
+     * Cache table interpretation result.
+     * 
+     * @param tableHtmlHash SHA-256 hash of the table HTML
+     * @param markdown Interpreted markdown to cache
+     */
+    suspend fun cacheResult(tableHtmlHash: ByteArray, markdown: String)
 }
 
 class TableInterpretationService(
@@ -26,6 +83,73 @@ class TableInterpretationService(
 ) : ITableInterpretationService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    // ========== Batch API Methods ==========
+
+    override suspend fun prepareBatchRequests(
+        tables: List<TableInterpretationBatchInput>,
+        jobId: Long
+    ): TableInterpretationBatchPreparation {
+        if (tables.isEmpty()) {
+            return TableInterpretationBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
+        }
+
+        val cachedResults = mutableMapOf<Pair<Long, String>, String>()
+        val batchRequests = mutableListOf<BatchContentRequest>()
+        val requestIndexToKey = mutableMapOf<Int, Pair<Long, String>>()
+        val hashMap = mutableMapOf<Pair<Long, String>, ByteArray>()
+
+        for (table in tables) {
+            val key = table.urlStateId to table.tableDataId
+            val digest = MessageDigest.getInstance("SHA-256")
+            digest.update(table.tableHtml.toByteArray())
+            val tableHash = digest.digest()
+            hashMap[key] = tableHash
+
+            // Check cache
+            val existing = webpageTableInterpretationRepository.findByHash(tableHash)
+            if (existing != null) {
+                cachedResults[key] = existing.markdown
+                continue
+            }
+
+            // Prepare batch request using agent
+            val request = tableInterpretationAgent.prepareBatchRequest(
+                requestId = "$jobId-table-interp-${table.urlStateId}-${table.tableDataId}",
+                tableHtml = table.tableHtml,
+                auxiliaryInfo = table.auxiliaryInfo ?: "",
+                boundingBoxes = table.boundingBoxes
+            )
+            
+            requestIndexToKey[batchRequests.size] = key
+            batchRequests.add(request)
+        }
+
+        logger.debug("Table interpretation batch: {} cached, {} need processing", cachedResults.size, batchRequests.size)
+
+        return TableInterpretationBatchPreparation(
+            cachedResults = cachedResults,
+            batchRequests = batchRequests,
+            requestIndexToKey = requestIndexToKey,
+            hashMap = hashMap
+        )
+    }
+
+    override fun parseBatchResponse(responseText: String): String {
+        return tableInterpretationAgent.parseBatchResponse(responseText).markdown
+    }
+
+    @OptIn(ExperimentalTime::class)
+    override suspend fun cacheResult(tableHtmlHash: ByteArray, markdown: String) {
+        webpageTableInterpretationRepository.upsert(
+            WebpageTableInterpretation(
+                tableDataHash = tableHtmlHash,
+                markdown = markdown
+            )
+        )
+    }
+
+    // ========== Interactive Mode Methods ==========
 
     /**
      * Interprets a table using an LLM agent and returns markdown.

@@ -1,6 +1,8 @@
 package io.deepsearch.domain.services
 
+import com.google.genai.types.Schema
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlin.time.Instant
 import kotlin.time.ExperimentalTime
 
@@ -70,11 +72,29 @@ data class BatchContentRequest(
     val imageData: String? = null,
     /** Optional image MIME type */
     val imageMimeType: String? = null,
-    /** Response schema for structured output (JSON) */
-    val responseSchema: String? = null,
     /** Temperature for generation */
-    val temperature: Float = 0f
-)
+    val temperature: Float = 0f,
+    /** Optional metadata for client-side use (not sent to the API) */
+    val metadata: Map<String, String>? = null
+) {
+    /**
+     * Response schema for structured output.
+     * Transient because Schema is not serializable, but we need it for batch API calls.
+     * Set via the withSchema() method.
+     */
+    @Transient
+    var schema: Schema? = null
+        private set
+    
+    /**
+     * Create a copy of this request with the specified schema.
+     */
+    fun withSchema(schema: Schema): BatchContentRequest {
+        val copy = this.copy()
+        copy.schema = schema
+        return copy
+    }
+}
 
 /**
  * A single embedding request in a batch.

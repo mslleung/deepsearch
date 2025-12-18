@@ -8,7 +8,11 @@ import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOr
 import io.deepsearch.application.searchorchestrators.googlesearch.IGoogleSearchOrchestrator
 import io.deepsearch.application.services.ApiKeyService
 import io.deepsearch.application.services.AuthService
+import io.deepsearch.application.services.BatchPeriodicIndexJobService
+import io.deepsearch.application.services.BatchPeriodicIndexOrchestrator
 import io.deepsearch.application.services.FileSearchService
+import io.deepsearch.application.services.IBatchPeriodicIndexJobService
+import io.deepsearch.application.services.IBatchPeriodicIndexOrchestrator
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.SerperConfig
 import io.deepsearch.application.services.IPopupContainerIdentificationService
@@ -120,6 +124,10 @@ private val applicationCommonTestModule = module {
     singleOf(::QuerySessionService) bind IQuerySessionService::class
     singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
+    
+    // Batch periodic index services
+    singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
+    singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 
     // test stubs
     singleOf(::TestLlmTokenUsageService) bind ILlmTokenUsageService::class

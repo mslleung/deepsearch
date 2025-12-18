@@ -11,6 +11,22 @@ import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
+import io.deepsearch.domain.services.BatchContentRequest
+
+/**
+ * Result of preparing table identification batch requests.
+ */
+data class TableIdentificationBatchPreparation(
+    /** Map of URL state ID to cached table identifications (if found in cache) */
+    val cachedResults: Map<Long, List<TableIdentification>>,
+    /** Batch requests for uncached pages */
+    val batchRequests: List<BatchContentRequest>,
+    /** Map of request index -> URL state ID */
+    val requestIndexToUrlStateId: Map<Int, Long>,
+    /** Map of URL state ID -> cleaned HTML with injected IDs (for parsing results) */
+    val htmlWithIdsMap: Map<Long, String>
+)
+
 interface ITableIdentificationService {
     /**
      * Identifies tables in webpage HTML using an LLM agent.
@@ -22,6 +38,37 @@ interface ITableIdentificationService {
         sessionId: SessionId,
         pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): List<TableIdentification>
+    
+    // ========== Batch API Methods ==========
+    
+    /**
+     * Prepare batch requests for table identification with cache check.
+     * 
+     * @param pages Map of URL state ID -> (html, boundingBoxes)
+     * @param jobId Batch job ID for request ID generation
+     * @return Cached results and batch requests for uncached pages
+     */
+    suspend fun prepareBatchRequests(
+        pages: Map<Long, Pair<String, Map<String, IBrowserPage.BoundingBox>>>,
+        jobId: Long
+    ): TableIdentificationBatchPreparation
+    
+    /**
+     * Parse batch response and return table identifications.
+     * 
+     * @param responseText JSON response from batch API
+     * @param htmlWithIds HTML with injected IDs (from TableIdentificationBatchPreparation.htmlWithIdsMap)
+     * @return List of TableIdentification
+     */
+    fun parseBatchResponse(responseText: String, htmlWithIds: String): List<TableIdentification>
+    
+    /**
+     * Cache table identification result.
+     * 
+     * @param htmlHash SHA-256 hash of the original HTML
+     * @param tables List of identified tables to cache
+     */
+    suspend fun cacheResult(htmlHash: ByteArray, tables: List<TableIdentification>)
 }
 
 class TableIdentificationService(
@@ -29,6 +76,71 @@ class TableIdentificationService(
     private val webpageTableRepository: IWebpageTableRepository,
     private val tokenUsageService: ILlmTokenUsageService
 ) : ITableIdentificationService {
+
+    private val logger = org.slf4j.LoggerFactory.getLogger(this::class.java)
+
+    // ========== Batch API Methods ==========
+
+    override suspend fun prepareBatchRequests(
+        pages: Map<Long, Pair<String, Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>>>,
+        jobId: Long
+    ): TableIdentificationBatchPreparation {
+        if (pages.isEmpty()) {
+            return TableIdentificationBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
+        }
+
+        val cachedResults = mutableMapOf<Long, List<TableIdentification>>()
+        val batchRequests = mutableListOf<BatchContentRequest>()
+        val requestIndexToUrlStateId = mutableMapOf<Int, Long>()
+        val htmlWithIdsMap = mutableMapOf<Long, String>()
+
+        for ((urlStateId, pageData) in pages) {
+            val (html, boundingBoxes) = pageData
+            val htmlHash = java.security.MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
+
+            // Check cache
+            val existing = webpageTableRepository.findByHash(htmlHash)
+            if (existing != null) {
+                cachedResults[urlStateId] = Json.decodeFromString<List<TableIdentification>>(existing.tables)
+                continue
+            }
+
+            // Prepare batch request using agent
+            val batchRequest = tableIdentificationAgent.prepareBatchRequest(
+                requestId = "$jobId-table-$urlStateId",
+                html = html
+            )
+            
+            requestIndexToUrlStateId[batchRequests.size] = urlStateId
+            batchRequests.add(batchRequest.request)
+            htmlWithIdsMap[urlStateId] = batchRequest.htmlWithIds
+        }
+
+        logger.debug("Table ID batch: {} cached, {} need processing", cachedResults.size, batchRequests.size)
+
+        return TableIdentificationBatchPreparation(
+            cachedResults = cachedResults,
+            batchRequests = batchRequests,
+            requestIndexToUrlStateId = requestIndexToUrlStateId,
+            htmlWithIdsMap = htmlWithIdsMap
+        )
+    }
+
+    override fun parseBatchResponse(responseText: String, htmlWithIds: String): List<TableIdentification> {
+        return tableIdentificationAgent.parseBatchResponse(responseText, htmlWithIds)
+    }
+
+    @OptIn(ExperimentalTime::class)
+    override suspend fun cacheResult(htmlHash: ByteArray, tables: List<TableIdentification>) {
+        webpageTableRepository.upsert(
+            WebpageTable(
+                webpageHtmlHash = htmlHash,
+                tables = Json.encodeToString(tables)
+            )
+        )
+    }
+
+    // ========== Interactive Mode Methods ==========
 
     /**
      * Identifies tables in webpage HTML using an LLM agent.

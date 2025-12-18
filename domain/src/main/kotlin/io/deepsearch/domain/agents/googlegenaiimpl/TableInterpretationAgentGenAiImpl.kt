@@ -6,13 +6,16 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.ITableInterpretationAgent
+import io.deepsearch.domain.agents.TableInterpretationBatchResult
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.agents.TableInterpretationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.services.BatchContentRequest
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.TextNode
 import org.slf4j.Logger
@@ -386,6 +389,50 @@ class TableInterpretationAgentGenAiImpl(
 
         return removedCount
     }
+
+    // ========== Batch Processing Methods ==========
+
+    private val batchJson = Json { ignoreUnknownKeys = true }
+
+    override fun prepareBatchRequest(
+        requestId: String,
+        tableHtml: String,
+        auxiliaryInfo: String,
+        boundingBoxes: Map<String, IBrowserPage.BoundingBox>
+    ): BatchContentRequest {
+        // Inject bounding boxes into HTML (same as interactive mode)
+        val htmlWithBoundingBoxes = injectBoundingBoxes(tableHtml, boundingBoxes)
+        val cleanedHtml = cleanHtml(htmlWithBoundingBoxes)
+
+        val userPrompt = buildString {
+            appendLine("Auxiliary Info: $auxiliaryInfo")
+            appendLine(cleanedHtml)
+            appendLine("Please generate the response in JSON structured output")
+        }
+
+        return BatchContentRequest(
+            requestId = requestId,
+            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            systemInstruction = systemInstruction,
+            userPrompt = userPrompt,
+            temperature = 1.0f
+        ).withSchema(outputSchema) // Use same schema as interactive mode
+    }
+
+    override fun parseBatchResponse(responseText: String): TableInterpretationBatchResult {
+        return try {
+            val response = batchJson.decodeFromString<TableInterpretationResponse>(responseText)
+            val combinedMarkdown = combineMarkdownWithAdditionalInfo(response.markdown, response.additionalInfo)
+            TableInterpretationBatchResult(
+                markdown = combinedMarkdown,
+                additionalInfo = response.additionalInfo
+            )
+        } catch (e: Exception) {
+            logger.warn("Failed to parse batch response: {}", e.message)
+            TableInterpretationBatchResult(
+                markdown = "",
+                additionalInfo = ""
+            )
+        }
+    }
 }
-
-

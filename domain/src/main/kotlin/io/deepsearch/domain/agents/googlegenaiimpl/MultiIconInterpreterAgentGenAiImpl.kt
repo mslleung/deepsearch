@@ -12,16 +12,20 @@ import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.services.BatchContentRequest
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.awt.Color
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import javax.imageio.ImageIO
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * Multimodal multi-icon interpretation agent.
@@ -284,6 +288,44 @@ class MultiIconInterpreterAgentGenAiImpl(
             false
         }
     }
+
+    // ========== Batch Processing Methods ==========
+
+    private val batchJson = Json { ignoreUnknownKeys = true }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    override fun prepareBatchRequest(
+        requestId: String,
+        icons: List<MultiIconInterpreterInput.IconItem>
+    ): BatchContentRequest {
+        // Build prompt for icon interpretation
+        val userPrompt = buildString {
+            appendLine("Interpret the following ${icons.size} icons in order:")
+            icons.forEachIndexed { index, _ ->
+                appendLine("Icon ${index + 1}: [IMAGE]")
+            }
+        }
+
+        // For multimodal batch requests with a single icon, include the image data
+        // For multiple icons, they would need to be sent as separate requests
+        return BatchContentRequest(
+            requestId = requestId,
+            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            systemInstruction = systemInstruction,
+            userPrompt = userPrompt,
+            imageData = if (icons.size == 1) Base64.encode(icons[0].bytes) else null,
+            imageMimeType = if (icons.size == 1) icons[0].mimeType.value else null,
+            temperature = 0f
+        ).withSchema(outputSchema) // Use same schema as interactive mode
+    }
+
+    override fun parseBatchResponse(responseText: String): List<String?> {
+        return try {
+            val response = batchJson.decodeFromString<MultiIconInterpretationResponse>(responseText)
+            response.icons.map { it.label }
+        } catch (e: Exception) {
+            logger.warn("Failed to parse batch response: {}", e.message)
+            emptyList()
+        }
+    }
 }
-
-

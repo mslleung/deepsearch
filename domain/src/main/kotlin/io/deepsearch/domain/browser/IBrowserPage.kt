@@ -1,6 +1,7 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.constants.ImageMimeType
+import kotlinx.serialization.Serializable
 import java.security.MessageDigest
 
 /**
@@ -15,6 +16,7 @@ interface IBrowserPage {
      * Bounding box coordinates relative to an element's position.
      * Coordinates are relative to the queried element's top-left corner.
      */
+    @Serializable
     data class BoundingBox(
         val left: Double,
         val top: Double,

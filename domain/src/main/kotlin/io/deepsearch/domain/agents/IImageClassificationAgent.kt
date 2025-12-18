@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.services.BatchContentRequest
 
 /**
  * Input for image classification and text extraction.
@@ -77,5 +78,27 @@ data class ImageClassificationOutput(
  */
 interface IImageClassificationAgent : IAgent<ImageClassificationInput, ImageClassificationOutput> {
     override suspend fun generate(input: ImageClassificationInput): ImageClassificationOutput
+
+    /**
+     * Prepare a batch request for image classification.
+     * Used by batch processing to create requests with the same prompts as interactive mode.
+     * 
+     * @param requestId Unique identifier for this request
+     * @param image Single image to classify
+     * @return BatchContentRequest with multimodal content (text + image)
+     */
+    fun prepareBatchRequest(
+        requestId: String,
+        image: ImageClassificationInput.ImageItem
+    ): BatchContentRequest
+
+    /**
+     * Parse a batch response into image classification.
+     * Used by batch processing to parse responses with the same logic as interactive mode.
+     * 
+     * @param responseText The JSON response from the batch API
+     * @return The image classification result
+     */
+    fun parseBatchResponse(responseText: String): ImageClassificationOutput.ImageClassification
 }
 

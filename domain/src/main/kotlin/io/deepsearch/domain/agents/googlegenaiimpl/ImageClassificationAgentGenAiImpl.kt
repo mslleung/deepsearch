@@ -12,14 +12,18 @@ import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.services.BatchContentRequest
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.io.ByteArrayInputStream
 import javax.imageio.ImageIO
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * Image classification agent that identifies whether images are illustrative or informational,
@@ -269,5 +273,48 @@ class ImageClassificationAgentGenAiImpl(
             false
         }
     }
-}
 
+    // ========== Batch Processing Methods ==========
+
+    private val batchJson = Json { ignoreUnknownKeys = true }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    override fun prepareBatchRequest(
+        requestId: String,
+        image: ImageClassificationInput.ImageItem
+    ): BatchContentRequest {
+        return BatchContentRequest(
+            requestId = requestId,
+            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            systemInstruction = systemInstruction,
+            userPrompt = "Classify this image and extract any text content",
+            imageData = Base64.encode(image.bytes),
+            imageMimeType = image.mimeType.value,
+            temperature = 1.0f
+        ).withSchema(outputSchema) // Use same schema as interactive mode
+    }
+
+    override fun parseBatchResponse(responseText: String): ImageClassificationOutput.ImageClassification {
+        return try {
+            val response = batchJson.decodeFromString<SingleImageClassificationResponse>(responseText)
+            val extractedText = response.text.takeIf { it.isNotBlank() }?.trim()
+            val imageType = when (response.imageType.uppercase()) {
+                "ILLUSTRATIVE" -> ImageClassificationOutput.ImageType.ILLUSTRATIVE
+                "INFORMATIONAL" -> ImageClassificationOutput.ImageType.INFORMATIONAL
+                else -> ImageClassificationOutput.ImageType.INFORMATIONAL
+            }
+            ImageClassificationOutput.ImageClassification(
+                imageType = imageType,
+                text = extractedText,
+                containsTable = response.containsTable
+            )
+        } catch (e: Exception) {
+            logger.warn("Failed to parse batch response: {}", e.message)
+            ImageClassificationOutput.ImageClassification(
+                imageType = ImageClassificationOutput.ImageType.ILLUSTRATIVE,
+                text = null,
+                containsTable = false
+            )
+        }
+    }
+}

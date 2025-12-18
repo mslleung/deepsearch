@@ -7,14 +7,17 @@ import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.ITableIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentification
+import io.deepsearch.domain.agents.TableIdentificationBatchRequest
 import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.services.BatchContentRequest
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.slf4j.Logger
@@ -423,6 +426,123 @@ class TableIdentificationAgentGenAiImpl(
         )
         return cleanedHtml
     }
+
+    // ========== Batch Processing Methods ==========
+
+    private val batchJson = Json { ignoreUnknownKeys = true }
+
+    override fun prepareBatchRequest(requestId: String, html: String): TableIdentificationBatchRequest {
+        val htmlWithIds = injectStableIdentifiers(html, "ds-table")
+        
+        // Apply programmatic extraction to reduce LLM workload (same as interactive mode)
+        val (programmaticTables, reducedHtml) = extractSemanticTables(htmlWithIds)
+        val cleanedHtml = cleanHtml(reducedHtml)
+
+        val request = BatchContentRequest(
+            requestId = requestId,
+            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            systemInstruction = systemInstruction,
+            userPrompt = cleanedHtml,
+            temperature = 0f,
+            // Store programmatic tables in metadata for merging during response parsing
+            metadata = mapOf("programmaticTables" to batchJson.encodeToString(
+                kotlinx.serialization.builtins.ListSerializer(LlmTableResult.serializer()),
+                programmaticTables
+            ))
+        ).withSchema(outputSchema) // Use same schema as interactive mode
+
+        return TableIdentificationBatchRequest(
+            request = request,
+            htmlWithIds = htmlWithIds
+        )
+    }
+
+    override fun parseBatchResponse(responseText: String, htmlWithIds: String): List<TableIdentification> {
+        return try {
+            val response = batchJson.decodeFromString<TableIdentificationResponse>(responseText)
+            
+            // Build CSS selectors for all tables
+            val identifiers = response.tables.map { it.id }
+            val cssSelectorsMap = cssSelectorConstructionService.constructCssSelectorsFromIdentifiers(
+                identifiers = identifiers,
+                htmlWithIdentifiers = htmlWithIds
+            )
+
+            // Pre-parse HTML for media detection
+            val docForMediaDetection = Jsoup.parse(htmlWithIds)
+
+            response.tables.mapNotNull { llmResult ->
+                val cssSelector = cssSelectorsMap[llmResult.id]
+                if (cssSelector == null) {
+                    logger.warn("Skipping table '{}' - could not construct CSS selector", llmResult.id)
+                    return@mapNotNull null
+                }
+
+                val containsMedia = detectMediaInTable(llmResult.id, docForMediaDetection)
+                val auxiliaryInfo = combineAuxiliaryInfo(llmResult.description, llmResult.columnHeaders)
+
+                TableIdentification(
+                    cssSelector = cssSelector,
+                    dataId = llmResult.id,
+                    auxiliaryInfo = auxiliaryInfo,
+                    containsMedia = containsMedia
+                )
+            }
+        } catch (e: Exception) {
+            logger.warn("Failed to parse batch response: {}", e.message)
+            emptyList()
+        }
+    }
+
+    /**
+     * Parse batch response and merge with programmatic tables.
+     * Use this when you have the metadata from prepareBatchRequest.
+     */
+    fun parseBatchResponseWithProgrammaticTables(
+        responseText: String,
+        htmlWithIds: String,
+        programmaticTablesJson: String?
+    ): List<TableIdentification> {
+        return try {
+            val response = batchJson.decodeFromString<TableIdentificationResponse>(responseText)
+            
+            // Merge programmatic tables with LLM results
+            val programmaticTables = programmaticTablesJson?.let {
+                batchJson.decodeFromString<List<LlmTableResult>>(it)
+            } ?: emptyList()
+            
+            val allTableResults = programmaticTables + response.tables
+
+            // Build CSS selectors for all tables
+            val identifiers = allTableResults.map { it.id }
+            val cssSelectorsMap = cssSelectorConstructionService.constructCssSelectorsFromIdentifiers(
+                identifiers = identifiers,
+                htmlWithIdentifiers = htmlWithIds
+            )
+
+            // Pre-parse HTML for media detection
+            val docForMediaDetection = Jsoup.parse(htmlWithIds)
+
+            allTableResults.mapNotNull { llmResult ->
+                val cssSelector = cssSelectorsMap[llmResult.id]
+                if (cssSelector == null) {
+                    logger.warn("Skipping table '{}' - could not construct CSS selector", llmResult.id)
+                    return@mapNotNull null
+                }
+
+                val containsMedia = detectMediaInTable(llmResult.id, docForMediaDetection)
+                val auxiliaryInfo = combineAuxiliaryInfo(llmResult.description, llmResult.columnHeaders)
+
+                TableIdentification(
+                    cssSelector = cssSelector,
+                    dataId = llmResult.id,
+                    auxiliaryInfo = auxiliaryInfo,
+                    containsMedia = containsMedia
+                )
+            }
+        } catch (e: Exception) {
+            logger.warn("Failed to parse batch response: {}", e.message)
+            emptyList()
+        }
+    }
 }
-
-

@@ -12,9 +12,41 @@ import java.security.MessageDigest
 import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
+/**
+ * Result of preparing icon interpretation batch requests.
+ * Contains cached results and batch requests for uncached icons.
+ */
+data class IconBatchPreparation(
+    /** Map of icon hash (base64) to cached label (null if icon was not interpretable) */
+    val cachedResults: Map<String, String?>,
+    /** Batch requests for icons not in cache */
+    val batchRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
+    /** Map of request index -> icon hash for matching batch results */
+    val requestIndexToHash: Map<Int, String>
+)
+
 interface IWebpageIconInterpretationService {
     suspend fun interpretIcon(icon: IBrowserPage.Icon, sessionId: SessionId): String?
     suspend fun interpretIcons(icons: List<IBrowserPage.Icon>, sessionId: SessionId): List<String?>
+    
+    /**
+     * Prepare batch requests for icon interpretation with cache check.
+     * Returns cached results and batch requests for uncached icons only.
+     * 
+     * @param icons Map of hash (base64) to icon data (bytes + mimeType)
+     * @return Cached results and batch requests for uncached icons
+     */
+    suspend fun prepareBatchRequests(
+        icons: Map<String, Pair<ByteArray, String>>,
+        jobId: Long
+    ): IconBatchPreparation
+    
+    /**
+     * Process batch results and update cache.
+     * 
+     * @param results Map of icon hash -> interpreted label
+     */
+    suspend fun processBatchResults(results: Map<String, String?>)
 }
 
 class WebpageIconInterpretationService(
@@ -24,6 +56,80 @@ class WebpageIconInterpretationService(
 ) : IWebpageIconInterpretationService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+    
+    // ========== Batch API Methods ==========
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    override suspend fun prepareBatchRequests(
+        icons: Map<String, Pair<ByteArray, String>>,
+        jobId: Long
+    ): IconBatchPreparation {
+        if (icons.isEmpty()) {
+            return IconBatchPreparation(emptyMap(), emptyList(), emptyMap())
+        }
+
+        // Convert hash strings to byte arrays for cache lookup
+        val hashBytesMap = icons.keys.associateWith { hashBase64 ->
+            kotlin.io.encoding.Base64.decode(hashBase64)
+        }
+
+        // Batch cache lookup
+        val cachedIcons = webpageIconRepository.findByHashes(hashBytesMap.values.toList())
+        val cachedResults = cachedIcons.associate { icon ->
+            kotlin.io.encoding.Base64.encode(icon.imageBytesHash) to icon.label
+        }.toMutableMap()
+
+        logger.debug("Found {} cached results for {} icons", cachedResults.size, icons.size)
+
+        // Find uncached icons
+        val uncachedIcons = icons.filterKeys { hash -> !cachedResults.containsKey(hash) }
+
+        // Prepare batch requests for uncached icons
+        val batchRequests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
+        val requestIndexToHash = mutableMapOf<Int, String>()
+
+        uncachedIcons.forEach { (hash, iconData) ->
+            val (bytes, mimeType) = iconData
+            val request = multiIconInterpreterAgent.prepareBatchRequest(
+                requestId = "$jobId-icon-$hash",
+                icons = listOf(
+                    MultiIconInterpreterInput.IconItem(
+                        bytes = bytes,
+                        mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(mimeType)
+                    )
+                )
+            )
+            requestIndexToHash[batchRequests.size] = hash
+            batchRequests.add(request)
+        }
+
+        logger.debug("Prepared {} batch requests for uncached icons", batchRequests.size)
+
+        return IconBatchPreparation(
+            cachedResults = cachedResults,
+            batchRequests = batchRequests,
+            requestIndexToHash = requestIndexToHash
+        )
+    }
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class, kotlin.time.ExperimentalTime::class)
+    override suspend fun processBatchResults(results: Map<String, String?>) {
+        if (results.isEmpty()) return
+
+        // Store results in cache
+        val iconsToCache = results.map { (hashBase64, label) ->
+            val hashBytes = kotlin.io.encoding.Base64.decode(hashBase64)
+            WebpageIcon(
+                imageBytesHash = hashBytes,
+                label = label?.takeIf { it.isNotBlank() }
+            )
+        }
+
+        webpageIconRepository.batchUpsert(iconsToCache)
+        logger.debug("Cached {} icon interpretation results", iconsToCache.size)
+    }
+    
+    // ========== Interactive Mode Methods ==========
 
     /**
      * Use an LLM to interpret the icon and return a textual representation of it.

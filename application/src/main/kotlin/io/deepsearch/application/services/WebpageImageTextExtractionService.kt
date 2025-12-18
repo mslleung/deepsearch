@@ -38,6 +38,31 @@ data class ImageExtractionResult(
     }
 }
 
+/**
+ * Result of preparing image text extraction batch requests.
+ * Contains cached results and batch requests for uncached images.
+ */
+data class ImageBatchPreparation(
+    /** Map of image hash (base64) to cached text (null if no text extracted) */
+    val cachedResults: Map<String, String?>,
+    /** Batch requests for image classification (first stage) */
+    val classificationRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
+    /** Map of request index -> image hash for matching classification results */
+    val classificationIndexToHash: Map<Int, String>,
+    /** Images that need OCR check before LLM (bytes keyed by hash) */
+    val imagesNeedingOcr: Map<String, Pair<ByteArray, String>>
+)
+
+/**
+ * Result of preparing table extraction batch requests for images with tables.
+ */
+data class ImageTableExtractionBatchPreparation(
+    /** Batch requests for table extraction */
+    val tableExtractionRequests: List<io.deepsearch.domain.services.BatchContentRequest>,
+    /** Map of request index -> image hash for matching results */
+    val requestIndexToHash: Map<Int, String>
+)
+
 interface IWebpageImageTextExtractionService {
     suspend fun extractTextFromImage(image: IBrowserPage.WebImage, sessionId: SessionId, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT): String?
     suspend fun extractTextFromImages(images: List<IBrowserPage.WebImage>, sessionId: SessionId, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT): List<String?>
@@ -46,6 +71,44 @@ interface IWebpageImageTextExtractionService {
      * Extract text from images and return results with image hashes for XML tag generation.
      */
     suspend fun extractTextFromImagesWithHashes(images: List<IBrowserPage.WebImage>, sessionId: SessionId, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT): List<ImageExtractionResult>
+    
+    /**
+     * Prepare batch requests for image text extraction with cache check.
+     * Returns cached results and batch requests for uncached images only.
+     * 
+     * @param images Map of hash (base64) to image data (bytes + mimeType)
+     * @param ocrLanguage Language for OCR text detection
+     * @return Cached results and batch requests for uncached images
+     */
+    suspend fun prepareBatchRequests(
+        images: Map<String, Pair<ByteArray, String>>,
+        jobId: Long,
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
+    ): ImageBatchPreparation
+    
+    /**
+     * Prepare table extraction batch requests for images that contain tables.
+     * Called after processing classification results.
+     * 
+     * @param imagesWithTables Map of hash (base64) to image data (bytes + mimeType)
+     * @param jobId Batch job ID
+     * @return Batch requests for table extraction
+     */
+    suspend fun prepareTableExtractionBatchRequests(
+        imagesWithTables: Map<String, Pair<ByteArray, String>>,
+        jobId: Long
+    ): ImageTableExtractionBatchPreparation
+    
+    /**
+     * Process batch results and update cache.
+     * 
+     * @param results Map of image hash -> extracted text
+     * @param imageData Map of hash -> (bytes, mimeType) for storing in cache
+     */
+    suspend fun processBatchResults(
+        results: Map<String, String?>,
+        imageData: Map<String, Pair<ByteArray, String>>
+    )
 }
 
 class WebpageImageTextExtractionService(
@@ -57,6 +120,124 @@ class WebpageImageTextExtractionService(
 ) : IWebpageImageTextExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    // ========== Batch API Methods ==========
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    override suspend fun prepareBatchRequests(
+        images: Map<String, Pair<ByteArray, String>>,
+        jobId: Long,
+        ocrLanguage: OcrLanguage
+    ): ImageBatchPreparation {
+        if (images.isEmpty()) {
+            return ImageBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
+        }
+
+        // Convert hash strings to byte arrays for cache lookup
+        val hashBytesMap = images.keys.associateWith { hashBase64 ->
+            kotlin.io.encoding.Base64.decode(hashBase64)
+        }
+
+        // Batch cache lookup
+        val cachedImages = webpageImageRepository.findByHashes(hashBytesMap.values.toList())
+        val cachedResults = cachedImages.associate { image ->
+            kotlin.io.encoding.Base64.encode(image.imageBytesHash) to image.extractedText
+        }.toMutableMap()
+
+        logger.debug("Found {} cached results for {} images", cachedResults.size, images.size)
+
+        // Find uncached images
+        val uncachedImages = images.filterKeys { hash -> !cachedResults.containsKey(hash) }
+
+        // For batch mode, we skip OCR check and send all uncached images to LLM
+        // The LLM will determine if there's text to extract
+        // (OCR is used in interactive mode to reduce LLM calls, but batch has different cost structure)
+        
+        // Prepare classification batch requests for uncached images
+        val classificationRequests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
+        val classificationIndexToHash = mutableMapOf<Int, String>()
+
+        uncachedImages.forEach { (hash, imageData) ->
+            val (bytes, mimeType) = imageData
+            val request = imageClassificationAgent.prepareBatchRequest(
+                requestId = "$jobId-image-$hash",
+                image = ImageClassificationInput.ImageItem(
+                    bytes = bytes,
+                    mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(mimeType)
+                )
+            )
+            classificationIndexToHash[classificationRequests.size] = hash
+            classificationRequests.add(request)
+        }
+
+        logger.debug("Prepared {} classification batch requests for uncached images", classificationRequests.size)
+
+        return ImageBatchPreparation(
+            cachedResults = cachedResults,
+            classificationRequests = classificationRequests,
+            classificationIndexToHash = classificationIndexToHash,
+            imagesNeedingOcr = emptyMap() // Not used in batch mode
+        )
+    }
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    override suspend fun prepareTableExtractionBatchRequests(
+        imagesWithTables: Map<String, Pair<ByteArray, String>>,
+        jobId: Long
+    ): ImageTableExtractionBatchPreparation {
+        if (imagesWithTables.isEmpty()) {
+            return ImageTableExtractionBatchPreparation(emptyList(), emptyMap())
+        }
+
+        val requests = mutableListOf<io.deepsearch.domain.services.BatchContentRequest>()
+        val requestIndexToHash = mutableMapOf<Int, String>()
+
+        imagesWithTables.forEach { (hash, imageData) ->
+            val (bytes, mimeType) = imageData
+            val request = tableExtractionAgent.prepareBatchRequest(
+                requestId = "$jobId-table-extract-$hash",
+                image = TableExtractionInput.ImageItem(
+                    bytes = bytes,
+                    mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(mimeType)
+                )
+            )
+            requestIndexToHash[requests.size] = hash
+            requests.add(request)
+        }
+
+        logger.debug("Prepared {} table extraction batch requests", requests.size)
+
+        return ImageTableExtractionBatchPreparation(
+            tableExtractionRequests = requests,
+            requestIndexToHash = requestIndexToHash
+        )
+    }
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class, kotlin.time.ExperimentalTime::class)
+    override suspend fun processBatchResults(
+        results: Map<String, String?>,
+        imageData: Map<String, Pair<ByteArray, String>>
+    ) {
+        if (results.isEmpty()) return
+
+        // Store results in cache
+        val imagesToCache = results.mapNotNull { (hashBase64, text) ->
+            val data = imageData[hashBase64] ?: return@mapNotNull null
+            val (bytes, mimeType) = data
+            val hashBytes = kotlin.io.encoding.Base64.decode(hashBase64)
+            WebpageImage(
+                imageBytesHash = hashBytes,
+                imageBytes = bytes,
+                mimeType = mimeType,
+                extractedText = text?.takeIf { it.isNotBlank() }
+            )
+        }
+
+        webpageImageRepository.batchUpsert(imagesToCache)
+        logger.debug("Cached {} image text extraction results", imagesToCache.size)
+    }
+
+    // ========== Interactive Mode Methods ==========
 
     /**
      * Extract text from an image using Tesseract OCR + LLM.

@@ -8,14 +8,17 @@ import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
+import io.deepsearch.domain.agents.SemanticIdentificationBatchRequest
 import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.agents.SemanticIdentificationOutput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.valueobjects.IdentifiedElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
+import io.deepsearch.domain.services.BatchContentRequest
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.slf4j.Logger
@@ -366,6 +369,67 @@ class SemanticIdentificationAgentGenAiImpl(
         logger.debug("Cleaned HTML character count: {} (original: ~{})", cleanedHtml.length, rawHtml.length)
         return cleanedHtml
     }
+
+    // ========== Batch Processing Methods ==========
+
+    private val batchJson = Json { ignoreUnknownKeys = true }
+
+    override fun prepareBatchRequest(requestId: String, html: String): SemanticIdentificationBatchRequest {
+        val htmlWithIds = injectStableIdentifiers(html, "ds-semantic")
+        val cleanedHtml = cleanHtml(htmlWithIds)
+
+        val request = BatchContentRequest(
+            requestId = requestId,
+            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            systemInstruction = systemInstruction,
+            userPrompt = cleanedHtml,
+            temperature = 0f
+        ).withSchema(outputSchema) // Use same schema as interactive mode
+
+        return SemanticIdentificationBatchRequest(
+            request = request,
+            htmlWithIds = htmlWithIds
+        )
+    }
+
+    override fun parseBatchResponse(responseText: String, htmlWithIds: String): SemanticElements {
+        return try {
+            val response = batchJson.decodeFromString<SemanticIdentificationResponse>(responseText)
+            
+            // Collect all identifiers for batch processing
+            val allLlmResults = listOfNotNull(
+                response.header, response.footer, response.navSidebar,
+                response.breadcrumb, response.cookieBanner
+            ) + response.adBanners + response.popups
+
+            val identifiers = allLlmResults.map { it.id }
+            val cssSelectorsMap = cssSelectorConstructionService.constructCssSelectorsFromIdentifiers(
+                identifiers = identifiers,
+                htmlWithIdentifiers = htmlWithIds
+            )
+
+            fun resolveElement(llmResult: LlmSemanticResult?): IdentifiedElement? {
+                if (llmResult == null) return null
+                val cssSelector = cssSelectorsMap[llmResult.id] ?: return null
+                return IdentifiedElement(
+                    cssSelector = cssSelector,
+                    dataId = llmResult.id,
+                    note = llmResult.note
+                )
+            }
+
+            SemanticElements(
+                header = resolveElement(response.header),
+                footer = resolveElement(response.footer),
+                navSidebar = resolveElement(response.navSidebar),
+                breadcrumb = resolveElement(response.breadcrumb),
+                cookieBanner = resolveElement(response.cookieBanner),
+                adBanners = response.adBanners.mapNotNull { resolveElement(it) },
+                popups = response.popups.mapNotNull { resolveElement(it) }
+            )
+        } catch (e: Exception) {
+            logger.warn("Failed to parse batch response: {}", e.message)
+            SemanticElements()
+        }
+    }
 }
-
-

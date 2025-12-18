@@ -13,6 +13,22 @@ import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import kotlin.time.ExperimentalTime
 
+import io.deepsearch.domain.services.BatchContentRequest
+
+/**
+ * Result of preparing semantic identification batch requests.
+ */
+data class SemanticBatchPreparation(
+    /** Map of URL state ID to cached SemanticElements (if found in cache) */
+    val cachedResults: Map<Long, SemanticElements>,
+    /** Batch requests for uncached pages */
+    val batchRequests: List<BatchContentRequest>,
+    /** Map of request index -> URL state ID */
+    val requestIndexToUrlStateId: Map<Int, Long>,
+    /** Map of URL state ID -> cleaned HTML with injected IDs (for parsing results) */
+    val htmlWithIdsMap: Map<Long, String>
+)
+
 interface ISemanticIdentificationService {
     /**
      * Identifies all semantic elements (navigation elements + popups) on a webpage.
@@ -29,6 +45,37 @@ interface ISemanticIdentificationService {
         sessionId: SessionId,
         pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
     ): SemanticElements
+    
+    // ========== Batch API Methods ==========
+    
+    /**
+     * Prepare batch requests for semantic identification with cache check.
+     * 
+     * @param pages Map of URL state ID -> (html, boundingBoxes)
+     * @param jobId Batch job ID for request ID generation
+     * @return Cached results and batch requests for uncached pages
+     */
+    suspend fun prepareBatchRequests(
+        pages: Map<Long, Pair<String, Map<String, IBrowserPage.BoundingBox>>>,
+        jobId: Long
+    ): SemanticBatchPreparation
+    
+    /**
+     * Parse batch response and return SemanticElements.
+     * 
+     * @param responseText JSON response from batch API
+     * @param htmlWithIds HTML with injected IDs (from SemanticBatchPreparation.htmlWithIdsMap)
+     * @return Parsed SemanticElements
+     */
+    fun parseBatchResponse(responseText: String, htmlWithIds: String): SemanticElements
+    
+    /**
+     * Cache semantic elements result.
+     * 
+     * @param htmlHash SHA-256 hash of the original HTML
+     * @param elements Semantic elements to cache
+     */
+    suspend fun cacheResult(htmlHash: ByteArray, elements: SemanticElements)
 }
 
 class SemanticIdentificationService(
@@ -38,6 +85,69 @@ class SemanticIdentificationService(
 ) : ISemanticIdentificationService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    // ========== Batch API Methods ==========
+
+    override suspend fun prepareBatchRequests(
+        pages: Map<Long, Pair<String, Map<String, IBrowserPage.BoundingBox>>>,
+        jobId: Long
+    ): SemanticBatchPreparation {
+        if (pages.isEmpty()) {
+            return SemanticBatchPreparation(emptyMap(), emptyList(), emptyMap(), emptyMap())
+        }
+
+        val cachedResults = mutableMapOf<Long, SemanticElements>()
+        val batchRequests = mutableListOf<BatchContentRequest>()
+        val requestIndexToUrlStateId = mutableMapOf<Int, Long>()
+        val htmlWithIdsMap = mutableMapOf<Long, String>()
+
+        for ((urlStateId, pageData) in pages) {
+            val (html, boundingBoxes) = pageData
+            val pageHash = MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
+
+            // Check cache
+            val cached = webpageSemanticElementRepository.findByHash(pageHash)
+            if (cached != null) {
+                cachedResults[urlStateId] = cached.elements
+                continue
+            }
+
+            // Prepare batch request using agent
+            val batchRequest = semanticIdentificationAgent.prepareBatchRequest(
+                requestId = "$jobId-semantic-$urlStateId",
+                html = html
+            )
+            
+            requestIndexToUrlStateId[batchRequests.size] = urlStateId
+            batchRequests.add(batchRequest.request)
+            htmlWithIdsMap[urlStateId] = batchRequest.htmlWithIds
+        }
+
+        logger.debug("Semantic batch: {} cached, {} need processing", cachedResults.size, batchRequests.size)
+
+        return SemanticBatchPreparation(
+            cachedResults = cachedResults,
+            batchRequests = batchRequests,
+            requestIndexToUrlStateId = requestIndexToUrlStateId,
+            htmlWithIdsMap = htmlWithIdsMap
+        )
+    }
+
+    override fun parseBatchResponse(responseText: String, htmlWithIds: String): SemanticElements {
+        return semanticIdentificationAgent.parseBatchResponse(responseText, htmlWithIds)
+    }
+
+    @OptIn(ExperimentalTime::class)
+    override suspend fun cacheResult(htmlHash: ByteArray, elements: SemanticElements) {
+        webpageSemanticElementRepository.upsert(
+            WebpageSemanticElement(
+                pageHash = htmlHash,
+                elements = elements
+            )
+        )
+    }
+
+    // ========== Interactive Mode Methods ==========
 
     override suspend fun identifySemanticElements(
         sessionId: SessionId,

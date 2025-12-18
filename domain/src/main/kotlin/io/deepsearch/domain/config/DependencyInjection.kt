@@ -62,7 +62,8 @@ val domainModule = module {
     singleOf(::JsoupDomService) bind IJsoupDomService::class
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
     
-    // Gemini Batch API service (stub implementation until SDK supports batch API)
+    // Gemini Batch API service for cost-effective large-scale processing
+    // Uses inline requests for batches under 20MB, 50% cost savings
     singleOf(::GeminiBatchServiceImpl) bind IGeminiBatchService::class
     
     // Adaptive rate limiter (singleton to maintain state across requests per domain)
