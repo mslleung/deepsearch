@@ -250,7 +250,13 @@ class AgenticBrowserSearchOrchestrator(
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
                 eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
 
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, searchQuery.query, maxCacheAge, sessionId, searchQuery.ocrLanguage)
+                urlContentProcessingService.processUrlAsFlow(
+                    normalizedUrl,
+                    searchQuery.query,
+                    maxCacheAge,
+                    sessionId,
+                    searchQuery.ocrLanguage
+                )
                     .filter { event ->
                         val eventUrl = normalizeUrlService.normalize(event.url) ?: event.url
                         // Use atomic add() which returns true only if element was NOT already present
@@ -264,8 +270,10 @@ class AgenticBrowserSearchOrchestrator(
                             }
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                val urlAccess = if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now())
-                                else UncachedUrlAccess(event.url, Clock.System.now())
+                                val urlAccess = if (event.wasCached)
+                                    CachedUrlAccess(event.url, Clock.System.now())
+                                else
+                                    UncachedUrlAccess(event.url, Clock.System.now())
                                 urlAccessService.recordUrlAccess(sessionId, urlAccess)
 
                                 eventChannel.send(
@@ -283,18 +291,26 @@ class AgenticBrowserSearchOrchestrator(
                             is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
                                 // Simple text extraction is for early evaluation - no URL access record needed
                                 // The final MarkdownExtractionComplete will record the access
-                                logger.debug("[{}] Simple text extraction complete for {}: {} chars", 
-                                    sessionId.value, event.url, event.text.length)
+                                logger.debug(
+                                    "[{}] Simple text extraction complete for {}: {} chars",
+                                    sessionId.value, event.url, event.text.length
+                                )
                             }
                         }
                     }
-                    .mapNotNull { event ->
+                    .filter { event ->
+                        event is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ||
+                                event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
+                    }
+                    .map { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
                                 MarkdownSource(event.url, event.title, event.description, event.text)
+
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
                                 MarkdownSource(event.url, event.title, event.description, event.markdown)
-                            else -> null
+
+                            else -> throw IllegalStateException("Unexpected event type")
                         }
                     }
                     .onCompletion { initialDiscoveredLinksChannel.close() }
@@ -408,18 +424,26 @@ class AgenticBrowserSearchOrchestrator(
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
                                         // Simple text extraction is for early evaluation - no URL access record needed
-                                        logger.debug("[{}] Simple text extraction complete for {}: {} chars", 
-                                            sessionId.value, event.url, event.text.length)
+                                        logger.debug(
+                                            "[{}] Simple text extraction complete for {}: {} chars",
+                                            sessionId.value, event.url, event.text.length
+                                        )
                                     }
                                 }
                             }
-                            .mapNotNull { event ->
+                            .filter { event ->
+                                event is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ||
+                                        event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
+                            }
+                            .map { event ->
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
                                         MarkdownSource(event.url, event.title, event.description, event.text)
+
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
                                         MarkdownSource(event.url, event.title, event.description, event.markdown)
-                                    else -> null
+
+                                    else -> throw IllegalStateException("Unexpected event type")
                                 }
                             }
                             .collect { emit(it) }
@@ -478,7 +502,13 @@ class AgenticBrowserSearchOrchestrator(
 
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(url) {
-                        urlContentProcessingService.processUrlAsFlow(url, searchQuery.query, maxCacheAge, sessionId, searchQuery.ocrLanguage)
+                        urlContentProcessingService.processUrlAsFlow(
+                            url,
+                            searchQuery.query,
+                            maxCacheAge,
+                            sessionId,
+                            searchQuery.ocrLanguage
+                        )
                             .catch { e ->
                                 when (e) {
                                     is CancellationException -> throw e
@@ -512,10 +542,11 @@ class AgenticBrowserSearchOrchestrator(
                                         inFlight.remove(event.url)
                                         val languagePattern = searchQuery.parsedLanguagePattern
                                         val newLinks = event.discoveredLinks.filter { discoveredLink ->
-                                            val discoveredUrl = normalizeUrlService.normalize(discoveredLink.url) ?: discoveredLink.url
+                                            val discoveredUrl =
+                                                normalizeUrlService.normalize(discoveredLink.url) ?: discoveredLink.url
                                             // Check language filter
-                                            val matchesLanguage = languagePattern == null || 
-                                                languagePattern.matches(discoveredUrl, searchQuery.url)
+                                            val matchesLanguage = languagePattern == null ||
+                                                    languagePattern.matches(discoveredUrl, searchQuery.url)
                                             matchesLanguage && !seenUrls.contains(discoveredUrl)
                                         }
                                         newLinks.forEach { recursiveChannel.send(it) }
@@ -544,18 +575,26 @@ class AgenticBrowserSearchOrchestrator(
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
                                         // Simple text extraction is for early evaluation - no URL access record needed
-                                        logger.debug("[{}] Simple text extraction complete for {}: {} chars", 
-                                            sessionId.value, event.url, event.text.length)
+                                        logger.debug(
+                                            "[{}] Simple text extraction complete for {}: {} chars",
+                                            sessionId.value, event.url, event.text.length
+                                        )
                                     }
                                 }
                             }
-                            .mapNotNull { event ->
+                            .filter { event ->
+                                event is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ||
+                                        event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
+                            }
+                            .map { event ->
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
                                         MarkdownSource(event.url, event.title, event.description, event.text)
+
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
                                         MarkdownSource(event.url, event.title, event.description, event.markdown)
-                                    else -> null
+
+                                    else -> throw IllegalStateException("Unexpected event type")
                                 }
                             }
                             .collect { emit(it) }
@@ -853,7 +892,13 @@ class AgenticBrowserSearchOrchestrator(
                     }
 
                     when (finishReason) {
-                        "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer, answerFound, imageIds)
+                        "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(
+                            sessionId,
+                            fullAnswer,
+                            answerFound,
+                            imageIds
+                        )
+
                         "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(
                             sessionId,
                             fullAnswer,
@@ -862,7 +907,12 @@ class AgenticBrowserSearchOrchestrator(
                             imageIds
                         )
 
-                        else -> querySessionService.completeSessionLinksExhausted(sessionId, fullAnswer, answerFound, imageIds)
+                        else -> querySessionService.completeSessionLinksExhausted(
+                            sessionId,
+                            fullAnswer,
+                            answerFound,
+                            imageIds
+                        )
                     }
 
                     // Fetch full session detail for the completed event

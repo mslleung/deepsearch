@@ -430,6 +430,9 @@ class PeriodicIndexJobRegistry(
                                         urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                         emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                     }
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                        // Ignored for periodic index - we only care about final markdown
+                                    }
                                 }
                             }
                             .collect {}
@@ -531,6 +534,9 @@ class PeriodicIndexJobRegistry(
                                         urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                         emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                     }
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                        // Ignored for periodic index - we only care about final markdown
+                                    }
                                 }
                             }
                             .collect {}
@@ -631,6 +637,9 @@ class PeriodicIndexJobRegistry(
                                         urlAccessService.recordUrlAccess(sessionId, urlAccess)
                                         urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                         emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                    }
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                        // Ignored for periodic index - we only care about final markdown
                                     }
                                 }
                             }
@@ -792,6 +801,9 @@ class PeriodicIndexJobRegistry(
                                         urlAccessService.recordUrlAccess(sessionId, urlAccess)
                                         urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                         emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
+                                    }
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                        // Ignored for periodic index - we only care about final markdown
                                     }
                                 }
                             }
