@@ -64,6 +64,19 @@ interface IJsoupDomService {
     fun extractTextContent(doc: Document): String
     
     /**
+     * Extract text content from the document body with image placeholders.
+     * Similar to extractTextContent, but emits placeholders for images
+     * to indicate their presence to downstream agents.
+     * 
+     * Format: `<image placeholder alt="..."/>` for images with alt text,
+     * or `<image placeholder/>` for images without alt text.
+     * 
+     * @param doc The Jsoup document to extract text from
+     * @return Extracted text content with image placeholders
+     */
+    fun extractTextContentWithImagePlaceholders(doc: Document): String
+    
+    /**
      * Extract text content from specific elements by CSS selectors.
      * 
      * @param doc The Jsoup document
@@ -294,7 +307,12 @@ class JsoupDomService : IJsoupDomService {
     
     override fun extractTextContent(doc: Document): String {
         val body = doc.body() ?: return ""
-        return extractTextFromElement(body)
+        return extractTextFromElement(body, includeImagePlaceholders = false)
+    }
+    
+    override fun extractTextContentWithImagePlaceholders(doc: Document): String {
+        val body = doc.body() ?: return ""
+        return extractTextFromElement(body, includeImagePlaceholders = true)
     }
     
     override fun extractElementsText(doc: Document, selectors: List<String>): Map<String, String> {
@@ -308,7 +326,7 @@ class JsoupDomService : IJsoupDomService {
                 if (elements.isNotEmpty()) {
                     // Match browser behavior: use last matching element
                     val target = elements.last()
-                    extractTextFromElement(target!!)
+                    extractTextFromElement(target!!, includeImagePlaceholders = false)
                 } else {
                     ""
                 }
@@ -349,8 +367,11 @@ class JsoupDomService : IJsoupDomService {
      * 
      * Note: Uses getWholeText() instead of text() to preserve internal newlines,
      * which is critical for markdown tables and other multi-line content.
+     * 
+     * @param root The root element to extract text from
+     * @param includeImagePlaceholders If true, emit placeholders for img elements
      */
-    private fun extractTextFromElement(root: Element): String {
+    private fun extractTextFromElement(root: Element, includeImagePlaceholders: Boolean = false): String {
         val result = mutableListOf<String>()
         val stack = ArrayDeque<Node>()
         stack.addLast(root)
@@ -369,7 +390,18 @@ class JsoupDomService : IJsoupDomService {
                 }
                 is Element -> {
                     val tagName = node.tagName().lowercase()
-                    if (tagName !in EXCLUDE_TAGS) {
+                    
+                    // Handle image placeholders
+                    if (includeImagePlaceholders && tagName == "img") {
+                        val alt = node.attr("alt").trim()
+                        val placeholder = if (alt.isNotEmpty()) {
+                            "<image placeholder alt=\"$alt\"/>"
+                        } else {
+                            "<image placeholder/>"
+                        }
+                        result.add(placeholder)
+                        // Don't process children of img (there shouldn't be any)
+                    } else if (tagName !in EXCLUDE_TAGS) {
                         // Add children in reverse order so they're processed in document order
                         val children = node.childNodes()
                         for (i in children.indices.reversed()) {

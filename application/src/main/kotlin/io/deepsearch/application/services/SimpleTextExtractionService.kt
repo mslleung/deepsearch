@@ -39,7 +39,7 @@ class SimpleTextExtractionService(
         val title = doc.title().takeIf { it.isNotBlank() }
         val description = doc.selectFirst("meta[name=description]")?.attr("content")?.takeIf { it.isNotBlank() }
         
-        val text = jsoupDomService.extractTextContent(doc)
+        val text = jsoupDomService.extractTextContentWithImagePlaceholders(doc)
         
         logger.debug("Simple text extraction for {}: {} chars, title={}", url, text.length, title)
         
