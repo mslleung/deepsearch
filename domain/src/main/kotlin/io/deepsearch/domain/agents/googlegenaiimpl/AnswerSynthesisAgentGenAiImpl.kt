@@ -12,6 +12,8 @@ import io.deepsearch.domain.agents.IAnswerSynthesisAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.flowWithRateLimitRetry
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.agents.googlegenaiimpl.StreamingSourceShortlistAgentGenAiImpl.Companion.transformImageIdsForLlm
+import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -44,7 +46,7 @@ class AnswerSynthesisAgentGenAiImpl(
                     .build(),
                 "imageIds" to Schema.builder()
                     .type("ARRAY")
-                    .description("List of image IDs (format: img-xxx) from the sources that should be displayed with the answer")
+                    .description("List of image IDs (numbered, e.g., '1', '2') from the sources that should be displayed with the answer. Use the numbered IDs shown in the source content.")
                     .items(Schema.builder().type("STRING").build())
                     .build()
             )
@@ -88,8 +90,9 @@ class AnswerSynthesisAgentGenAiImpl(
           - The answer is essentially "I don't know" or "information not available"
         
         Image References:
-        - Sources may contain <image id="img-xxx">description</image> tags representing images
-        - If an image is relevant to your answer, include its ID in the imageIds array
+        - Sources contain images in format: `<image id="N">description</image>` where N is a number
+        - Some sources include "Suggested Relevant Images" - these are hints from prior analysis but you can select any image
+        - If an image is relevant to your answer, include its numbered ID in the imageIds array (e.g., "1", "3")
         - Only include images that add absolute value to the answer (e.g., product images, diagrams, charts)
         - Do not include decorative or irrelevant images
         
@@ -97,7 +100,7 @@ class AnswerSynthesisAgentGenAiImpl(
         {
             "answer": "your comprehensive answer text",
             "answerFound": boolean,  // true if meaningful answer found, false otherwise
-            "imageIds": ["img-xxx", "img-yyy"]  // optional, only include if relevant images exist
+            "imageIds": ["1", "3"]  // optional, numbered IDs of relevant images
         }
     """.trimIndent()
 
@@ -127,7 +130,9 @@ class AnswerSynthesisAgentGenAiImpl(
             )
         }
 
-        val userPrompt = buildUserPrompt(input)
+        // Transform sources with numbered image IDs
+        val transformedSources = transformSources(input.shortlistedSources)
+        val userPrompt = buildUserPrompt(input, transformedSources)
 
         val response = retryLlmCall<SynthesisResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
@@ -161,16 +166,20 @@ class AnswerSynthesisAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
+        // Map numbered image IDs back to original hash-based IDs
+        val originalImageIds = mapNumberedIdsToOriginal(response.imageIds, transformedSources)
+
         logger.debug(
-            "Answer synthesis complete: {} chars, answerFound: {}",
+            "Answer synthesis complete: {} chars, answerFound: {}, {} images",
             response.answer.length,
-            response.answerFound
+            response.answerFound,
+            originalImageIds.size
         )
 
         return AnswerSynthesisOutput(
             answer = response.answer,
             answerFound = response.answerFound,
-            imageIds = response.imageIds,
+            imageIds = originalImageIds,
             tokenUsage = tokenUsage
         )
     }
@@ -191,7 +200,9 @@ class AnswerSynthesisAgentGenAiImpl(
             return@flow
         }
 
-        val userPrompt = buildUserPrompt(input)
+        // Transform sources with numbered image IDs
+        val transformedSources = transformSources(input.shortlistedSources)
+        val userPrompt = buildUserPrompt(input, transformedSources)
 
         val config = GenerateContentConfig.builder()
             .temperature(0F)
@@ -248,12 +259,15 @@ class AnswerSynthesisAgentGenAiImpl(
             }
         }
 
-        // Extract answerFound and imageIds from the complete JSON
+        // Extract answerFound and numbered imageIds from the complete JSON
         val answerFound = extractAnswerFound(accumulatedJson)
-        val imageIds = extractImageIds(accumulatedJson)
+        val numberedImageIds = extractImageIds(accumulatedJson)
         
-        logger.debug("Streaming answer synthesis complete: {} chars total, answerFound: {}, {} images", lastAnswerLength, answerFound, imageIds.size)
-        emit(AnswerStreamItem.Complete(tokenUsage, answerFound, imageIds))
+        // Map numbered IDs back to original hash-based IDs
+        val originalImageIds = mapNumberedIdsToOriginal(numberedImageIds, transformedSources)
+        
+        logger.debug("Streaming answer synthesis complete: {} chars total, answerFound: {}, {} images", lastAnswerLength, answerFound, originalImageIds.size)
+        emit(AnswerStreamItem.Complete(tokenUsage, answerFound, originalImageIds))
     }
 
     /**
@@ -268,7 +282,8 @@ class AnswerSynthesisAgentGenAiImpl(
 
     /**
      * Extract imageIds array from accumulated JSON.
-     * The JSON format is: {"answer": "...", "imageIds": ["img-xxx", "img-yyy"]}
+     * The JSON format is: {"answer": "...", "imageIds": ["1", "3"]}
+     * Returns numbered IDs that will be mapped back to original hash-based IDs.
      */
     private fun extractImageIds(json: String): List<String> {
         val regex = """"imageIds"\s*:\s*\[([^\]]*)\]""".toRegex()
@@ -277,11 +292,10 @@ class AnswerSynthesisAgentGenAiImpl(
         val arrayContent = match.groupValues[1]
         if (arrayContent.isBlank()) return emptyList()
         
-        // Extract individual string values from the array
+        // Extract individual string values from the array (numbered IDs like "1", "2", "3")
         val stringRegex = """"([^"]+)"""".toRegex()
         return stringRegex.findAll(arrayContent)
             .map { it.groupValues[1] }
-            .filter { it.startsWith("img-") }
             .toList()
     }
 
@@ -359,7 +373,69 @@ class AnswerSynthesisAgentGenAiImpl(
             .replace("\\\\", "\\")
     }
 
-    private fun buildUserPrompt(input: AnswerSynthesisInput): String {
+    /**
+     * Holds transformed source data with image ID mapping.
+     */
+    private data class TransformedSource(
+        val source: ShortlistedSource,
+        val transformedMarkdown: String,
+        /** Maps numbered image ID to original hash-based ID */
+        val imageIdMapping: Map<String, String>
+    )
+
+    /**
+     * Transforms all sources and builds a global image ID mapping.
+     * Each source gets its own numbering starting from 1.
+     * Returns list of transformed sources.
+     */
+    private fun transformSources(sources: List<ShortlistedSource>): List<TransformedSource> {
+        return sources.map { source ->
+            val (transformedMarkdown, imageMapping) = transformImageIdsForLlm(source.markdown)
+            TransformedSource(source, transformedMarkdown, imageMapping)
+        }
+    }
+
+    /**
+     * Maps numbered image IDs from LLM response back to original hash-based IDs.
+     * The LLM returns per-source numbered IDs, so we need to find which source each belongs to.
+     * 
+     * @param numberedIds List of numbered IDs from LLM (e.g., ["1", "3"])
+     * @param transformedSources List of transformed sources with their mappings
+     * @return List of original hash-based image IDs
+     */
+    private fun mapNumberedIdsToOriginal(
+        numberedIds: List<String>,
+        transformedSources: List<TransformedSource>
+    ): List<String> {
+        val originalIds = mutableListOf<String>()
+        
+        for (numberedId in numberedIds) {
+            // Search through all sources for this numbered ID
+            for (transformed in transformedSources) {
+                val originalId = transformed.imageIdMapping[numberedId]
+                if (originalId != null && originalId != StreamingSourceShortlistAgentGenAiImpl.PLACEHOLDER_MARKER) {
+                    originalIds.add(originalId)
+                    break  // Found the mapping, move to next ID
+                }
+            }
+        }
+        
+        return originalIds.distinct()  // Remove duplicates
+    }
+
+    /**
+     * Maps original hash-based image IDs to their numbered equivalents for display in hints.
+     */
+    private fun mapOriginalToNumbered(
+        originalIds: List<String>,
+        imageMapping: Map<String, String>
+    ): List<String> {
+        // Reverse the mapping: original -> numbered
+        val reversedMapping = imageMapping.entries.associate { (numbered, original) -> original to numbered }
+        return originalIds.mapNotNull { reversedMapping[it] }
+    }
+
+    private fun buildUserPrompt(input: AnswerSynthesisInput, transformedSources: List<TransformedSource>): String {
         return buildString {
             appendLine("# Query")
             appendLine(input.query)
@@ -367,16 +443,27 @@ class AnswerSynthesisAgentGenAiImpl(
             appendLine("# Shortlisted Sources")
             appendLine()
 
-            input.shortlistedSources.forEachIndexed { index, source ->
+            transformedSources.forEachIndexed { index, transformed ->
+                val source = transformed.source
                 appendLine("## Source ${index + 1}")
                 appendLine("URL: ${source.url}")
                 appendLine("Source Classification: ${source.sourceClassification}")
                 appendLine("Content Date: ${source.contentDate ?: "Not found"}")
                 appendLine("Answer Type: ${source.answerType}")
                 appendLine("Relevance Justification: ${source.relevanceJustification}")
+                
+                // Include suggested relevant images as hints (map back to numbered IDs for this prompt)
+                if (source.relevantImageIds.isNotEmpty()) {
+                    val numberedHints = mapOriginalToNumbered(source.relevantImageIds, transformed.imageIdMapping)
+                    if (numberedHints.isNotEmpty()) {
+                        appendLine("Suggested Relevant Images: ${numberedHints.joinToString(", ")}")
+                    }
+                }
+                
                 appendLine()
                 appendLine("### Content")
-                appendLine(source.markdown)
+                // Use transformed markdown with numbered image IDs
+                appendLine(transformed.transformedMarkdown)
                 appendLine()
                 appendLine("---")
                 appendLine()
@@ -386,6 +473,7 @@ class AnswerSynthesisAgentGenAiImpl(
             appendLine("# Instructions")
             appendLine("Generate a comprehensive answer to the query using the shortlisted sources above.")
             appendLine("Prioritize sources with DIRECT_ANSWER type and OFFICIAL_LIVING_DOC classification when synthesizing information.")
+            appendLine("Select relevant images using their numbered IDs (e.g., \"1\", \"3\") if they add value to the answer.")
         }
     }
 }
