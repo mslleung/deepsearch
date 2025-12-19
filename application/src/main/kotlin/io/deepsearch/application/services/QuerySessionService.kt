@@ -314,11 +314,9 @@ class QuerySessionService(
         // Get URL accesses for the session
         val urlAccesses = urlAccessService.getUrlAccessesBySession(sessionId)
 
-        // Fetch cached webpages for URLs that were accessed
+        // Fetch cached webpages for URLs that were accessed (batch query for efficiency)
         val urls = urlAccesses.map { it.url }
-        val cachedWebpages = urls.mapNotNull { url ->
-            webpageMarkdownRepository.findByUrl(url)
-        }
+        val cachedWebpages = webpageMarkdownRepository.findByUrls(urls)
 
         return QuerySessionDetail(
             session = session,

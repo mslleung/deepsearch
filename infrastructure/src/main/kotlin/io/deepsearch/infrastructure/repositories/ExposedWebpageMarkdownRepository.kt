@@ -58,6 +58,18 @@ class ExposedWebpageMarkdownRepository(
             .singleOrNull()
     }
 
+    override suspend fun findByUrls(urls: List<String>): List<WebpageMarkdown> {
+        if (urls.isEmpty()) return emptyList()
+        
+        return transactionService.withTransaction {
+            webpageMarkdownTable
+                .select(webpageMarkdownColumns)
+                .where { webpageMarkdownTable.url inList urls }
+                .map { mapRowToWebpageMarkdown(it) }
+                .toList()
+        }
+    }
+
     override suspend fun upsert(webpage: WebpageMarkdown): Unit = transactionService.withTransaction {
         // Check for existing record to implement optimistic locking and preview protection
         val existingRecord = webpageMarkdownTable

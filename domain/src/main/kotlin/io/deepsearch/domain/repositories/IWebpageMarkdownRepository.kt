@@ -4,6 +4,14 @@ import io.deepsearch.domain.models.entities.WebpageMarkdown
 
 interface IWebpageMarkdownRepository {
     suspend fun findByUrl(url: String): WebpageMarkdown?
+    
+    /**
+     * Batch find webpages by their URLs.
+     * Returns a list of all found webpages (URLs not found are omitted).
+     * This is more efficient than calling findByUrl for each URL individually.
+     */
+    suspend fun findByUrls(urls: List<String>): List<WebpageMarkdown>
+    
     suspend fun upsert(webpage: WebpageMarkdown)
     suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown>
     suspend fun countByDomainPrefix(prefix: String): Long
