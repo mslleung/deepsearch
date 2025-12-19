@@ -57,8 +57,7 @@ class AnswerSynthesisAgentGenAiImpl(
         
         Answer Quality:
         - The answer should be as comprehensive as possible based on the provided sources
-        - The answer should be standalone and serve as a direct answer to the user query
-        - If the user query is a statement instead of a question, focus on supplying relevant information
+        - The answer should be standalone and serve as a straightforward and direct answer to the user query
         - Only include information that supports the answer in addressing the query
         - Do not invent information not present in the sources
         - Use markdown styling as applicable (headings, lists, bold, etc.)
