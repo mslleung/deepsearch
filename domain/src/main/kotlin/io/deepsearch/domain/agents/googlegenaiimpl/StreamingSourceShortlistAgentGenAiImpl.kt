@@ -111,7 +111,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
            - Set isGoodEnough=false if the best source is an `OFFICIAL_SNAPSHOT` (Blog/News) when the query asks for static facts (Price, Specs, Current Features), unless you have verified no Living Doc exists.
            - Set isGoodEnough=false if the answer relies on data that is too old.
            - **ALWAYS** set `isGoodEnough=false` if the source suggests a "New Update" but the URL indicates a blog post (e.g., /blog/pricing-update), as we must find the actual implementation page.
-           - Set isGoodEnough=false if the source indicates the presence of a relevant image but it is in preview so images are missing.
+           - Set isGoodEnough=false if the a preview source indicates the presence of a relevant image based on document position or alt text (all images are in the format <image placeholder alt="image alt"/>).
            - When isGoodEnough=false, the pipeline will fetch more sources for the next shortlist generation. 
              Since sources are not given to you in any order, prefer to process more sources if the sources seem to
              be biased and not directly answer the query.
