@@ -270,27 +270,56 @@ class AgenticBrowserSearchOrchestrator(
                             }
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                val urlAccess = if (event.wasCached)
-                                    CachedUrlAccess(event.url, Clock.System.now())
-                                else
-                                    UncachedUrlAccess(event.url, Clock.System.now())
-                                urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                if (event.wasCached) {
+                                    // Cached URLs: record access and fire UrlProcessed (no SimpleTextExtraction for cached)
+                                    urlAccessService.recordUrlAccess(
+                                        sessionId,
+                                        CachedUrlAccess(event.url, Clock.System.now())
+                                    )
+                                    eventChannel.send(
+                                        SearchEvent.UrlProcessed(
+                                            sessionId = sessionId,
+                                            url = event.url,
+                                            accessType = "CACHED",
+                                            title = event.title,
+                                            description = event.description,
+                                            markdownLength = event.markdown.length,
+                                            isPreview = false
+                                        )
+                                    )
+                                } else {
+                                    // Uncached URLs: URL access already recorded by SimpleTextExtraction
+                                    // Fire UrlContentUpgraded to notify frontend of full markdown
+                                    eventChannel.send(
+                                        SearchEvent.UrlContentUpgraded(
+                                            sessionId = sessionId,
+                                            url = event.url,
+                                            title = event.title,
+                                            description = event.description,
+                                            markdownLength = event.markdown.length
+                                        )
+                                    )
+                                }
+                            }
 
+                            is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                // Record URL access for live crawled URLs
+                                urlAccessService.recordUrlAccess(
+                                    sessionId,
+                                    UncachedUrlAccess(event.url, Clock.System.now())
+                                )
+                                // Fire UrlProcessed with isPreview=true
                                 eventChannel.send(
                                     SearchEvent.UrlProcessed(
                                         sessionId = sessionId,
                                         url = event.url,
-                                        accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                        accessType = "UNCACHED",
                                         title = event.title,
                                         description = event.description,
-                                        markdownLength = event.markdown.length
+                                        markdownLength = event.text.length,
+                                        isPreview = true
                                     )
                                 )
-                            }
-
-                            is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
-                                // Simple text extraction is for early evaluation - no URL access record needed
-                                // The final MarkdownExtractionComplete will record the access
                                 logger.debug(
                                     "[{}] Simple text extraction complete for {}: {} chars",
                                     sessionId.value, event.url, event.text.length
@@ -305,10 +334,10 @@ class AgenticBrowserSearchOrchestrator(
                     .map { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
-                                MarkdownSource(event.url, event.title, event.description, event.text)
+                                MarkdownSource(event.url, event.title, event.description, event.text, isPreview = true)
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                                MarkdownSource(event.url, event.title, event.description, event.markdown)
+                                MarkdownSource(event.url, event.title, event.description, event.markdown, isPreview = false)
 
                             else -> throw IllegalStateException("Unexpected event type")
                         }
@@ -406,24 +435,55 @@ class AgenticBrowserSearchOrchestrator(
                                     }
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                        val urlAccess =
-                                            if (event.wasCached) CachedUrlAccess(event.url, Clock.System.now())
-                                            else UncachedUrlAccess(event.url, Clock.System.now())
-                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                        if (event.wasCached) {
+                                            // Cached URLs: record access and fire UrlProcessed
+                                            urlAccessService.recordUrlAccess(
+                                                sessionId,
+                                                CachedUrlAccess(event.url, Clock.System.now())
+                                            )
+                                            eventChannel.send(
+                                                SearchEvent.UrlProcessed(
+                                                    sessionId = sessionId,
+                                                    url = event.url,
+                                                    accessType = "CACHED",
+                                                    title = event.title,
+                                                    description = event.description,
+                                                    markdownLength = event.markdown.length,
+                                                    isPreview = false
+                                                )
+                                            )
+                                        } else {
+                                            // Uncached URLs: URL access already recorded by SimpleTextExtraction
+                                            eventChannel.send(
+                                                SearchEvent.UrlContentUpgraded(
+                                                    sessionId = sessionId,
+                                                    url = event.url,
+                                                    title = event.title,
+                                                    description = event.description,
+                                                    markdownLength = event.markdown.length
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                        // Record URL access for live crawled URLs
+                                        urlAccessService.recordUrlAccess(
+                                            sessionId,
+                                            UncachedUrlAccess(event.url, Clock.System.now())
+                                        )
+                                        // Fire UrlProcessed with isPreview=true
                                         eventChannel.send(
                                             SearchEvent.UrlProcessed(
                                                 sessionId = sessionId,
                                                 url = event.url,
-                                                accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                                accessType = "UNCACHED",
                                                 title = event.title,
                                                 description = event.description,
-                                                markdownLength = event.markdown.length
+                                                markdownLength = event.text.length,
+                                                isPreview = true
                                             )
                                         )
-                                    }
-
-                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
-                                        // Simple text extraction is for early evaluation - no URL access record needed
                                         logger.debug(
                                             "[{}] Simple text extraction complete for {}: {} chars",
                                             sessionId.value, event.url, event.text.length
@@ -438,10 +498,10 @@ class AgenticBrowserSearchOrchestrator(
                             .map { event ->
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
-                                        MarkdownSource(event.url, event.title, event.description, event.text)
+                                        MarkdownSource(event.url, event.title, event.description, event.text, isPreview = true)
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                                        MarkdownSource(event.url, event.title, event.description, event.markdown)
+                                        MarkdownSource(event.url, event.title, event.description, event.markdown, isPreview = false)
 
                                     else -> throw IllegalStateException("Unexpected event type")
                                 }
@@ -556,25 +616,55 @@ class AgenticBrowserSearchOrchestrator(
                                     }
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                        val access = if (event.wasCached) CachedUrlAccess(
-                                            event.url,
-                                            Clock.System.now()
-                                        ) else UncachedUrlAccess(event.url, Clock.System.now())
-                                        urlAccessService.recordUrlAccess(sessionId, access)
+                                        if (event.wasCached) {
+                                            // Cached URLs: record access and fire UrlProcessed
+                                            urlAccessService.recordUrlAccess(
+                                                sessionId,
+                                                CachedUrlAccess(event.url, Clock.System.now())
+                                            )
+                                            eventChannel.send(
+                                                SearchEvent.UrlProcessed(
+                                                    sessionId = sessionId,
+                                                    url = event.url,
+                                                    accessType = "CACHED",
+                                                    title = event.title,
+                                                    description = event.description,
+                                                    markdownLength = event.markdown.length,
+                                                    isPreview = false
+                                                )
+                                            )
+                                        } else {
+                                            // Uncached URLs: URL access already recorded by SimpleTextExtraction
+                                            eventChannel.send(
+                                                SearchEvent.UrlContentUpgraded(
+                                                    sessionId = sessionId,
+                                                    url = event.url,
+                                                    title = event.title,
+                                                    description = event.description,
+                                                    markdownLength = event.markdown.length
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                        // Record URL access for live crawled URLs
+                                        urlAccessService.recordUrlAccess(
+                                            sessionId,
+                                            UncachedUrlAccess(event.url, Clock.System.now())
+                                        )
+                                        // Fire UrlProcessed with isPreview=true
                                         eventChannel.send(
                                             SearchEvent.UrlProcessed(
                                                 sessionId = sessionId,
                                                 url = event.url,
-                                                accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                                accessType = "UNCACHED",
                                                 title = event.title,
                                                 description = event.description,
-                                                markdownLength = event.markdown.length
+                                                markdownLength = event.text.length,
+                                                isPreview = true
                                             )
                                         )
-                                    }
-
-                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
-                                        // Simple text extraction is for early evaluation - no URL access record needed
                                         logger.debug(
                                             "[{}] Simple text extraction complete for {}: {} chars",
                                             sessionId.value, event.url, event.text.length
@@ -589,10 +679,10 @@ class AgenticBrowserSearchOrchestrator(
                             .map { event ->
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete ->
-                                        MarkdownSource(event.url, event.title, event.description, event.text)
+                                        MarkdownSource(event.url, event.title, event.description, event.text, isPreview = true)
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                                        MarkdownSource(event.url, event.title, event.description, event.markdown)
+                                        MarkdownSource(event.url, event.title, event.description, event.markdown, isPreview = false)
 
                                     else -> throw IllegalStateException("Unexpected event type")
                                 }
@@ -813,9 +903,14 @@ class AgenticBrowserSearchOrchestrator(
         return SearchQuery(output.optimizedQuery, searchQuery.url)
     }
 
+    /**
+     * Accumulator for streaming answer generation.
+     * Tracks markdown sources by URL to enable preview-to-full-markdown upgrades.
+     */
     private data class AnswerAccumulator(
         val currentShortlist: List<ShortlistedSource> = emptyList(),
-        val allMarkdownSources: List<MarkdownSource> = emptyList(),
+        /** Map of URL -> MarkdownSource, allowing preview sources to be replaced with full markdown */
+        val allMarkdownSourcesByUrl: Map<String, MarkdownSource> = emptyMap(),
         val isComplete: Boolean = false
     )
 
@@ -826,10 +921,49 @@ class AgenticBrowserSearchOrchestrator(
         markdownSources: List<MarkdownSource>,
         eventChannel: SendChannel<SearchEvent>
     ): AnswerAccumulator {
-        val newSources = state.allMarkdownSources + markdownSources
+        // Build updated sources map, replacing previews with full markdown when available
+        val updatedSourcesMap = state.allMarkdownSourcesByUrl.toMutableMap()
+        val sourcesToEvaluate = mutableListOf<MarkdownSource>()
+
+        for (source in markdownSources) {
+            val existing = updatedSourcesMap[source.url]
+            if (existing != null) {
+                // URL already exists - only update if upgrading from preview to full markdown
+                if (existing.isPreview && !source.isPreview) {
+                    updatedSourcesMap[source.url] = source
+                    logger.debug(
+                        "[{}] Upgraded preview to full markdown for {}: {} -> {} chars",
+                        sessionId.value, source.url, existing.markdown.length, source.markdown.length
+                    )
+                    // Include upgraded source in evaluation batch
+                    sourcesToEvaluate.add(source)
+                }
+                // If existing is already full markdown or new source is also preview, skip
+            } else {
+                // New URL - add to map and evaluation batch
+                updatedSourcesMap[source.url] = source
+                sourcesToEvaluate.add(source)
+            }
+        }
+
+        // If no new sources to evaluate, return current state unchanged
+        if (sourcesToEvaluate.isEmpty()) {
+            return state.copy(allMarkdownSourcesByUrl = updatedSourcesMap)
+        }
+
+        // Update shortlist with upgraded sources if any shortlisted source was upgraded
+        val updatedShortlist = state.currentShortlist.map { shortlisted ->
+            val upgradedSource = updatedSourcesMap[shortlisted.url]
+            if (upgradedSource != null && !upgradedSource.isPreview && shortlisted.isPreview) {
+                // Upgrade the shortlisted source's markdown content
+                shortlisted.copy(markdown = upgradedSource.markdown, isPreview = false)
+            } else {
+                shortlisted
+            }
+        }
 
         val output = streamingSourceShortlistAgent.generate(
-            StreamingSourceShortlistInput(searchQuery.query, state.currentShortlist, markdownSources)
+            StreamingSourceShortlistInput(searchQuery.query, updatedShortlist, sourcesToEvaluate)
         )
 
         tokenUsageService.recordTokenUsage(
@@ -841,14 +975,14 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel.send(
             SearchEvent.ShortlistUpdated(
                 sessionId = sessionId,
-                processedUrlCount = newSources.size,
+                processedUrlCount = updatedSourcesMap.size,
                 shortlistedCount = output.updatedShortlist.size,
                 isGoodEnough = output.isGoodEnough,
                 reason = output.reason
             )
         )
 
-        return AnswerAccumulator(output.updatedShortlist, newSources, output.isGoodEnough)
+        return AnswerAccumulator(output.updatedShortlist, updatedSourcesMap, output.isGoodEnough)
     }
 
     private suspend fun finishQuerySession(

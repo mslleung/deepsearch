@@ -45,6 +45,22 @@ sealed class SearchEventDto {
         val description: String? = null,
         val markdownLength: Int? = null,
         val errorMessage: String? = null,
+        val isPreview: Boolean = false,
+        override val timestampMs: Long
+    ) : SearchEventDto()
+
+    /**
+     * Emitted when a URL's content is upgraded from preview (simple text) to full markdown.
+     * This allows the frontend to update the source display with complete content.
+     */
+    @Serializable
+    @SerialName("url_content_upgraded")
+    data class UrlContentUpgradedDto(
+        override val sessionId: String,
+        val url: String,
+        val title: String? = null,
+        val description: String? = null,
+        val markdownLength: Int,
         override val timestampMs: Long
     ) : SearchEventDto()
 
@@ -132,6 +148,16 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
             description = description,
             markdownLength = markdownLength,
             errorMessage = errorMessage,
+            isPreview = isPreview,
+            timestampMs = timestampMs
+        )
+
+        is SearchEvent.UrlContentUpgraded -> SearchEventDto.UrlContentUpgradedDto(
+            sessionId = sessionId.value,
+            url = url,
+            title = title,
+            description = description,
+            markdownLength = markdownLength,
             timestampMs = timestampMs
         )
 

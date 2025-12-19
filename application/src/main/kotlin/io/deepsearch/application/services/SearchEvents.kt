@@ -43,6 +43,20 @@ sealed class SearchEvent {
         val description: String? = null,
         val markdownLength: Int? = null,
         val errorMessage: String? = null,
+        val isPreview: Boolean = false,  // true for simple text extraction, false for full markdown
+        override val timestampMs: Long = System.currentTimeMillis()
+    ) : SearchEvent()
+
+    /**
+     * Emitted when a URL's content is upgraded from preview (simple text) to full markdown.
+     * This allows the frontend to update the source display with complete content.
+     */
+    data class UrlContentUpgraded(
+        override val sessionId: QuerySessionId,
+        val url: String,
+        val title: String? = null,
+        val description: String? = null,
+        val markdownLength: Int,
         override val timestampMs: Long = System.currentTimeMillis()
     ) : SearchEvent()
 

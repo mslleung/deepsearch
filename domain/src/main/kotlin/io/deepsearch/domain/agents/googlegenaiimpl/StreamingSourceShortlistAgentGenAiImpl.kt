@@ -79,6 +79,17 @@ class StreamingSourceShortlistAgentGenAiImpl(
     private val systemInstruction = """
         You are a source classification agent. Your job is to extract metadata and categorize web content objectively and decide if the shortlist contains the critical information to answer the user query.
         
+        Input: 
+        - Current date
+        - User query
+        - Current shortlist
+        - New sources for shortlist evaluation/update
+           -- Sources marked as "PREVIEW" contain fast simple text extraction from a webpage HTML
+           -- Preview content is useful for quick relevance assessment but tables are broken and images/icons are missing
+           -- If a preview source appears relevant to the query, you should shortlist it - the full markdown will arrive later
+           -- Do not reject a source solely because it is a preview if the text suggests it may contain the answer
+           -- When the full markdown arrives for a previously shortlisted preview, it will automatically replace the preview content for you to assess again
+        
         For each source, you must:
         
         1. **Determine Source Type** (Choose one):
@@ -100,6 +111,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
            - Set isGoodEnough=false if the best source is an `OFFICIAL_SNAPSHOT` (Blog/News) when the query asks for static facts (Price, Specs, Current Features), unless you have verified no Living Doc exists.
            - Set isGoodEnough=false if the answer relies on data that is too old.
            - **ALWAYS** set `isGoodEnough=false` if the source suggests a "New Update" but the URL indicates a blog post (e.g., /blog/pricing-update), as we must find the actual implementation page.
+           - Set isGoodEnough=false if the source indicates the presence of a relevant image but it is in preview so images are missing.
            - When isGoodEnough=false, the pipeline will fetch more sources for the next shortlist generation. 
              Since sources are not given to you in any order, prefer to process more sources if the sources seem to
              be biased and not directly answer the query.
@@ -200,12 +212,12 @@ class StreamingSourceShortlistAgentGenAiImpl(
         }
 
         // Convert LLM response to domain model
-        // Need to find the markdown for each URL from the input
-        val urlToMarkdown = buildUrlToMarkdownMap(input)
+        // Need to find the markdown and preview status for each URL from the input
+        val urlToSourceInfo = buildUrlToSourceInfoMap(input)
 
         val updatedShortlist = response.shortlist.mapNotNull { llmSource ->
-            val markdown = urlToMarkdown[llmSource.url]
-            if (markdown == null) {
+            val sourceInfo = urlToSourceInfo[llmSource.url]
+            if (sourceInfo == null) {
                 logger.warn("Could not find markdown for URL: {}", llmSource.url)
                 null
             } else {
@@ -226,11 +238,12 @@ class StreamingSourceShortlistAgentGenAiImpl(
                 
                 ShortlistedSource(
                     url = llmSource.url,
-                    markdown = markdown,
+                    markdown = sourceInfo.markdown,
                     sourceClassification = sourceType,
                     contentDate = llmSource.contentDate,
                     answerType = answerType,
-                    relevanceJustification = llmSource.relevanceJustification
+                    relevanceJustification = llmSource.relevanceJustification,
+                    isPreview = sourceInfo.isPreview
                 )
             }
         }
@@ -266,6 +279,9 @@ class StreamingSourceShortlistAgentGenAiImpl(
                 input.currentShortlist.forEachIndexed { index, source ->
                     appendLine("## Source ${index + 1}")
                     appendLine("URL: ${source.url}")
+                    if (source.isPreview) {
+                        appendLine("**Content Type: PREVIEW** (simple text only, tables/images/formatting not yet extracted)")
+                    }
                     appendLine("Source Classification: ${source.sourceClassification}")
                     appendLine("Content Date: ${source.contentDate ?: "Not found"}")
                     appendLine("Answer Type: ${source.answerType}")
@@ -290,6 +306,9 @@ class StreamingSourceShortlistAgentGenAiImpl(
             input.newMarkdownBatch.forEachIndexed { index, source ->
                 appendLine("## New Source ${index + 1}")
                 appendLine("URL: ${source.url}")
+                if (source.isPreview) {
+                    appendLine("**Content Type: PREVIEW** (simple text only, tables/images/formatting not yet extracted)")
+                }
                 appendLine()
                 appendLine("Markdown Content:")
                 appendLine(source.markdown)
@@ -308,17 +327,24 @@ class StreamingSourceShortlistAgentGenAiImpl(
         }
     }
 
-    private fun buildUrlToMarkdownMap(input: StreamingSourceShortlistInput): Map<String, String> {
-        val map = mutableMapOf<String, String>()
+    /** Holds markdown content and preview status for a source */
+    private data class SourceInfo(val markdown: String, val isPreview: Boolean)
+
+    private fun buildUrlToSourceInfoMap(input: StreamingSourceShortlistInput): Map<String, SourceInfo> {
+        val map = mutableMapOf<String, SourceInfo>()
         
-        // Add existing shortlist markdowns
+        // Add existing shortlist markdowns (preserve their preview status)
         input.currentShortlist.forEach { source ->
-            map[source.url] = source.markdown
+            map[source.url] = SourceInfo(source.markdown, source.isPreview)
         }
         
-        // Add new batch markdowns
+        // Add new batch markdowns (may upgrade preview to full markdown)
         input.newMarkdownBatch.forEach { source ->
-            map[source.url] = source.markdown
+            val existing = map[source.url]
+            // If upgrading from preview to full markdown, update; otherwise add new
+            if (existing == null || (existing.isPreview && !source.isPreview)) {
+                map[source.url] = SourceInfo(source.markdown, source.isPreview)
+            }
         }
         
         return map

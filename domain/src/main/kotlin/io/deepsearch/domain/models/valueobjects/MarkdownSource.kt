@@ -5,11 +5,14 @@ import kotlinx.serialization.Serializable
 /**
  * Represents a webpage source with its URL, metadata, and markdown content.
  * Used as input for source evaluation and shortlisting.
+ *
+ * @property isPreview true for SimpleTextExtraction (fast, no LLM), false for full markdown extraction
  */
 @Serializable
 data class MarkdownSource(
     val url: String,
     val title: String?,
     val description: String?,
-    val markdown: String
+    val markdown: String,
+    val isPreview: Boolean = false
 )
