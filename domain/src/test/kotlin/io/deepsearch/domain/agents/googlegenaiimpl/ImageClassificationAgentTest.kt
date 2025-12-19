@@ -2,7 +2,6 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 
 import io.deepsearch.domain.agents.IImageClassificationAgent
 import io.deepsearch.domain.agents.ImageClassificationInput
-import io.deepsearch.domain.agents.ImageClassificationOutput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CoroutineDispatcher
@@ -57,13 +56,12 @@ class ImageClassificationAgentTest : KoinTest {
         )
 
         assertEquals(1, output.classifications.size, "Should return one classification")
-        assertEquals(
-            ImageClassificationOutput.ImageType.INFORMATIONAL,
-            output.classifications[0].imageType,
-            "Text image should be classified as INFORMATIONAL"
+        assertTrue(
+            output.classifications[0].imageType.isNotBlank(),
+            "Image type should be a non-blank string"
         )
-        assertNotNull(output.classifications[0].text, "Extracted text should not be null for beame_text.webp")
-        assertTrue(output.classifications[0].text!!.isNotBlank(), "Extracted text should not be blank for beame_text.webp")
+        assertNotNull(output.classifications[0].imageDescription, "Image description should not be null for beame_text.webp")
+        assertTrue(output.classifications[0].imageDescription!!.isNotBlank(), "Image description should not be blank for beame_text.webp")
     }
 
     @Test
@@ -105,9 +103,9 @@ class ImageClassificationAgentTest : KoinTest {
 
         assertEquals(3, output.classifications.size, "Should return three classifications")
 
-        // Check first image has text
-        assertNotNull(output.classifications[0].text, "First classification should not be null")
-        assertTrue(output.classifications[0].text!!.isNotBlank(), "First classification should not be blank")
+        // Check first image has description
+        assertNotNull(output.classifications[0].imageDescription, "First classification should have description")
+        assertTrue(output.classifications[0].imageDescription!!.isNotBlank(), "First classification description should not be blank")
 
         // Check second image detects table
         assertTrue(output.classifications[1].containsTable, "Second image should have containsTable=true")
@@ -137,16 +135,16 @@ class ImageClassificationAgentTest : KoinTest {
 
         assertEquals(3, output.classifications.size, "Should return three classifications")
 
-        // Position 0: text image should have text
-        assertNotNull(output.classifications[0].text, "Position 0 should have text")
-        assertTrue(output.classifications[0].text!!.isNotBlank(), "Position 0 should not be blank")
+        // Position 0: text image should have description
+        assertNotNull(output.classifications[0].imageDescription, "Position 0 should have description")
+        assertTrue(output.classifications[0].imageDescription!!.isNotBlank(), "Position 0 description should not be blank")
 
         // Position 2: table image should have containsTable=true
         assertTrue(output.classifications[2].containsTable, "Position 2 should have containsTable=true")
     }
 
     @Test
-    fun `image with no text returns null or empty`() = runTest(testCoroutineDispatcher) {
+    fun `icon image returns appropriate type and description`() = runTest(testCoroutineDispatcher) {
         val bytes = resourceBytes("beame_icon.webp")
         val output = agent.generate(
             ImageClassificationInput(
@@ -160,12 +158,10 @@ class ImageClassificationAgentTest : KoinTest {
         )
 
         assertEquals(1, output.classifications.size, "Should return one classification")
-        assertEquals(
-            ImageClassificationOutput.ImageType.ILLUSTRATIVE,
-            output.classifications[0].imageType,
-            "Icon should be classified as ILLUSTRATIVE"
+        assertTrue(
+            output.classifications[0].imageType.isNotBlank(),
+            "Icon should have a non-blank image type"
         )
         assertFalse(output.classifications[0].containsTable, "Icon should not contain table")
     }
 }
-

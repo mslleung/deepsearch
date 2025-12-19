@@ -332,23 +332,18 @@ class WebpageImageTextExtractionService(
                 val imagesWithoutTables = imageClassifications.filter { !it.second.containsTable }
 
                 // Log detailed classification results for debugging
-                val illustrativeCount = classificationOutput.classifications.count { 
-                    it.imageType == io.deepsearch.domain.agents.ImageClassificationOutput.ImageType.ILLUSTRATIVE 
-                }
-                val informationalCount = classificationOutput.classifications.count { 
-                    it.imageType == io.deepsearch.domain.agents.ImageClassificationOutput.ImageType.INFORMATIONAL 
-                }
+                val imageTypes = classificationOutput.classifications.groupBy { it.imageType }
+                    .mapValues { it.value.size }
                 logger.debug(
-                    "Classification results: {} illustrative, {} informational, {} with tables, {} without tables",
-                    illustrativeCount,
-                    informationalCount,
+                    "Classification results: imageTypes={}, {} with tables, {} without tables",
+                    imageTypes,
                     imagesWithTables.size,
                     imagesWithoutTables.size
                 )
 
-                // For images without tables, use classification text directly
+                // For images without tables, use classification description directly
                 imagesWithoutTables.forEach { (image, classification) ->
-                    cachedResults[Base64.encode(image.bytesHash)] = classification.text?.takeIf { it.isNotBlank() }
+                    cachedResults[Base64.encode(image.bytesHash)] = classification.imageDescription?.takeIf { it.isNotBlank() }
                 }
 
                 // Stage 2: Extract tables from images that contain them

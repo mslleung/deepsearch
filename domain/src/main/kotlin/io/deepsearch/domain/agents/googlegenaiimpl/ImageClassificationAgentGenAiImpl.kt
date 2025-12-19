@@ -26,8 +26,8 @@ import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
- * Image classification agent that identifies whether images are illustrative or informational,
- * extracts text, and detects if the image contains a table.
+ * Image classification agent that classifies images by type, generates comprehensive
+ * descriptions, and detects if the image contains a table.
  *
  * This agent processes each image individually in its own LLM call to maximize
  * extraction quality, while processing multiple images in parallel for throughput.
@@ -44,49 +44,53 @@ class ImageClassificationAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("image classification and text extraction result")
+        .description("image classification and description result")
         .properties(
             mapOf(
                 "imageType" to Schema.builder()
                     .type("STRING")
-                    .description("whether the image is ILLUSTRATIVE (decorative, icons, photos for visual appeal) or INFORMATIONAL (contains text, data, charts, tables)")
-                    .enum_(listOf("ILLUSTRATIVE", "INFORMATIONAL"))
+                    .description("A textual classification of the image type: icon, logo, avatar, infographic, chart, diagram, product image, photograph, portrait, headshot, screenshot, UI mockup, decorative, background, or other descriptive category")
                     .build(),
-                "text" to Schema.builder()
+                "imageDescription" to Schema.builder()
                     .type("STRING")
-                    .description("text representation of the image")
+                    .description("Comprehensive description of what the image shows, written as standalone sentences/paragraphs - not just extracted text but meaningful prose describing the image content")
                     .build(),
                 "containsTable" to Schema.builder()
                     .type("BOOLEAN")
-                    .description("whether the image contains a table")
+                    .description("whether the image contains a table (data arranged in rows and columns)")
                     .build()
             )
         )
-        .required(listOf("imageType", "text", "containsTable"))
+        .required(listOf("imageType", "imageDescription", "containsTable"))
         .build()
 
     private val systemInstruction = """
-        You are given an image found in a webpage. Your task is to classify it and extract text.
+        You are given an image found in a webpage. Your task is to classify it and provide a comprehensive description.
         
-        Classification guidelines:
-        - Use ILLUSTRATIVE for: photos of people/places/objects, decorative graphics, icons, logos, avatars, background images
-        - Use INFORMATIONAL for: screenshots with text, infographics, charts, tables, diagrams with labels, images with significant readable text
+        Classification guidelines for imageType:
+        - Use descriptive categories such as: icon, logo, avatar, infographic, chart, diagram, product image, photograph, portrait, headshot, screenshot, UI mockup, decorative, background
+        - Be specific: "company logo" is better than just "logo", "product photograph" is better than just "photograph"
+        - You can combine categories if appropriate: "product infographic", "UI screenshot"
         
-        Instructions for ILLUSTRATIVE images:
-        - Generate a brief description of what the image shows
-        - Set containsTable to false
+        Instructions for imageDescription:
+        - Write comprehensive descriptions as standalone sentences and paragraphs
+        - Don't just extract visible text - describe what the image shows and its purpose
+        - If text is present in the image, incorporate it naturally into your description
+        - For charts/graphs, describe the data trends and all key insights
+        - For product images, describe the product's appearance and features
+        - For screenshots, describe what the interface shows and its purpose
+        - For portraits/headshots, describe the person's appearance professionally
+        - For icons/logos, describe their visual design and likely purpose
         
-        Instructions for INFORMATIONAL images:
-        - Extract all text present in the image
-        - In quoted strings, the only allowed escape sequences are \\, \n, and \". Instead of \u escapes, use UTF-8.
-        - Identify if the image contains a table (data arranged in rows and columns)
-        - Set containsTable to true if you see tabular data, false otherwise
-        - If containsTable is true, you don't need to format the table specially - just note that it exists
+        Table detection:
+        - Set containsTable to true if you see tabular data (information arranged in rows and columns)
+        - Set containsTable to false otherwise
+        - If containsTable is true, still provide a description but note that specialized table extraction will be used
         
         Expected output shape:
         {
-            "imageType": "ILLUSTRATIVE" | "INFORMATIONAL",
-            "text": string,
+            "imageType": "A textual classification of the image type",
+            "imageDescription": "Comprehensive description as standalone sentences/paragraphs",
             "containsTable": boolean
         }
     """.trimIndent()
@@ -94,7 +98,7 @@ class ImageClassificationAgentGenAiImpl(
     @Serializable
     private data class SingleImageClassificationResponse(
         val imageType: String,
-        val text: String,
+        val imageDescription: String,
         val containsTable: Boolean
     )
 
@@ -179,8 +183,8 @@ class ImageClassificationAgentGenAiImpl(
                 MAX_PIXEL_COUNT
             )
             return ImageClassificationOutput.ImageClassification(
-                imageType = ImageClassificationOutput.ImageType.ILLUSTRATIVE,
-                text = null,
+                imageType = "unknown",
+                imageDescription = null,
                 containsTable = false
             ) to tokenUsage
         }
@@ -188,7 +192,7 @@ class ImageClassificationAgentGenAiImpl(
         // Build content with single image
         val contentParts = listOf(
             Part.fromBytes(image.bytes, image.mimeType.value),
-            Part.fromText("Classify this image and extract any text content")
+            Part.fromText("Classify this image and provide a comprehensive description")
         )
 
         val response = retryLlmCall<SingleImageClassificationResponse>(this::class.simpleName!!) {
@@ -224,35 +228,22 @@ class ImageClassificationAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
-        val extractedText = response.text.takeIf { it.isNotBlank() }?.trim()
-        
-        // Parse imageType from response, defaulting to INFORMATIONAL if unrecognized
-        val imageType = when (response.imageType.uppercase()) {
-            "ILLUSTRATIVE" -> ImageClassificationOutput.ImageType.ILLUSTRATIVE
-            "INFORMATIONAL" -> ImageClassificationOutput.ImageType.INFORMATIONAL
-            else -> {
-                logger.warn(
-                    "Unrecognized imageType '{}' for image at position {}, defaulting to INFORMATIONAL",
-                    response.imageType,
-                    imageIndex
-                )
-                ImageClassificationOutput.ImageType.INFORMATIONAL
-            }
-        }
+        val description = response.imageDescription.takeIf { it.isNotBlank() }?.trim()
+        val imageType = response.imageType.trim().ifBlank { "unknown" }
 
         // Log classification result for debugging
         logger.debug(
-            "Image {} classified: imageType={}, containsTable={}, textLength={}, textPreview={}",
+            "Image {} classified: imageType={}, containsTable={}, descriptionLength={}, descriptionPreview={}",
             imageIndex,
             imageType,
             response.containsTable,
-            extractedText?.length ?: 0,
-            extractedText?.take(100)?.replace("\n", "\\n") ?: "<null>"
+            description?.length ?: 0,
+            description?.take(100)?.replace("\n", "\\n") ?: "<null>"
         )
 
         return ImageClassificationOutput.ImageClassification(
             imageType = imageType,
-            text = extractedText,
+            imageDescription = description,
             containsTable = response.containsTable
         ) to tokenUsage
     }
@@ -287,7 +278,7 @@ class ImageClassificationAgentGenAiImpl(
             requestId = requestId,
             modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
             systemInstruction = systemInstruction,
-            userPrompt = "Classify this image and extract any text content",
+            userPrompt = "Classify this image and provide a comprehensive description",
             imageData = Base64.encode(image.bytes),
             imageMimeType = image.mimeType.value,
             temperature = 1.0f
@@ -297,22 +288,18 @@ class ImageClassificationAgentGenAiImpl(
     override fun parseBatchResponse(responseText: String): ImageClassificationOutput.ImageClassification {
         return try {
             val response = batchJson.decodeFromString<SingleImageClassificationResponse>(responseText)
-            val extractedText = response.text.takeIf { it.isNotBlank() }?.trim()
-            val imageType = when (response.imageType.uppercase()) {
-                "ILLUSTRATIVE" -> ImageClassificationOutput.ImageType.ILLUSTRATIVE
-                "INFORMATIONAL" -> ImageClassificationOutput.ImageType.INFORMATIONAL
-                else -> ImageClassificationOutput.ImageType.INFORMATIONAL
-            }
+            val description = response.imageDescription.takeIf { it.isNotBlank() }?.trim()
+            val imageType = response.imageType.trim().ifBlank { "unknown" }
             ImageClassificationOutput.ImageClassification(
                 imageType = imageType,
-                text = extractedText,
+                imageDescription = description,
                 containsTable = response.containsTable
             )
         } catch (e: Exception) {
             logger.warn("Failed to parse batch response: {}", e.message)
             ImageClassificationOutput.ImageClassification(
-                imageType = ImageClassificationOutput.ImageType.ILLUSTRATIVE,
-                text = null,
+                imageType = "unknown",
+                imageDescription = null,
                 containsTable = false
             )
         }
