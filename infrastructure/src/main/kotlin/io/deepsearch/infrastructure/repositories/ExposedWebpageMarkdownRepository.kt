@@ -44,6 +44,7 @@ class ExposedWebpageMarkdownRepository(
             webpageMarkdownTable.httpReason,
             webpageMarkdownTable.mimeType,
             webpageMarkdownTable.embedding,
+            webpageMarkdownTable.isPreview,
             webpageMarkdownTable.createdAtEpochMs,
             webpageMarkdownTable.updatedAtEpochMs,
             webpageMarkdownTable.version
@@ -58,16 +59,26 @@ class ExposedWebpageMarkdownRepository(
     }
 
     override suspend fun upsert(webpage: WebpageMarkdown): Unit = transactionService.withTransaction {
-        // Check for existing version to implement optimistic locking
-        val existingVersion = webpageMarkdownTable
-            .select(webpageMarkdownTable.version)
+        // Check for existing record to implement optimistic locking and preview protection
+        val existingRecord = webpageMarkdownTable
+            .select(webpageMarkdownTable.version, webpageMarkdownTable.isPreview)
             .where { webpageMarkdownTable.url eq webpage.url }
-            .map { it[webpageMarkdownTable.version] }
+            .map { Pair(it[webpageMarkdownTable.version], it[webpageMarkdownTable.isPreview]) }
             .singleOrNull()
+        
+        val existingVersion = existingRecord?.first
+        val existingIsPreview = existingRecord?.second
         
         // If record exists, verify version matches to prevent concurrent modification issues
         if (existingVersion != null && existingVersion != webpage.version) {
             throw OptimisticLockException("WebpageMarkdown", webpage.url, webpage.version)
+        }
+        
+        // Prevent preview from overwriting full markdown
+        // This can happen if preview extraction runs after full extraction in a race condition
+        if (existingIsPreview == false && webpage.isPreview) {
+            logger.debug("Skipping preview upsert - full markdown already exists for {}", webpage.url)
+            return@withTransaction
         }
         
         // Calculate new version (increment from existing, or use provided version for new records)
@@ -91,6 +102,7 @@ class ExposedWebpageMarkdownRepository(
             it[httpReason] = webpage.httpReason
             it[mimeType] = webpage.mimeType
             it[embedding] = webpage.embedding
+            it[isPreview] = webpage.isPreview
             it[createdAtEpochMs] = webpage.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpage.updatedAt.toEpochMilliseconds()
             it[version] = newVersion
@@ -99,7 +111,7 @@ class ExposedWebpageMarkdownRepository(
         // Update the webpage object's version to reflect the new version
         webpage.version = newVersion
         
-        logger.debug("Upserted webpage for URL: {} (version: {} -> {})", webpage.url, existingVersion ?: "new", newVersion)
+        logger.debug("Upserted webpage for URL: {} (version: {} -> {}, isPreview: {})", webpage.url, existingVersion ?: "new", newVersion, webpage.isPreview)
     }
 
     override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
@@ -331,6 +343,7 @@ class ExposedWebpageMarkdownRepository(
             httpReason = row[webpageMarkdownTable.httpReason],
             mimeType = row[webpageMarkdownTable.mimeType],
             embedding = row[webpageMarkdownTable.embedding],
+            isPreview = row[webpageMarkdownTable.isPreview],
             createdAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.updatedAtEpochMs]),
             version = row[webpageMarkdownTable.version]

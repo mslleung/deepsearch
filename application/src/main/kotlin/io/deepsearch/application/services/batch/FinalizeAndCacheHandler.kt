@@ -135,7 +135,8 @@ class FinalizeAndCacheHandler(
                     httpStatus = 200,
                     httpReason = "OK",
                     mimeType = "text/html",
-                    sessionId = sessionId
+                    sessionId = sessionId,
+                    isPreview = false
                 )
 
                 urlState.markCached()

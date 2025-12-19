@@ -275,6 +275,22 @@ class UrlContentProcessingService(
             val simpleTextFlow = flow {
                 val result = simpleTextExtractionService.extractSimpleText(extractedHtml, normalizedUrl)
                 logger.debug("Simple text extraction complete for {}: {} chars", normalizedUrl, result.text.length)
+                
+                // Cache the preview content so sources are available if search completes before full extraction
+                // When full markdown is extracted, it will replace this via upsert (isPreview=false overwrites isPreview=true)
+                webpageCacheService.cacheWebpage(
+                    url = normalizedUrl,
+                    title = result.title,
+                    description = result.description,
+                    markdown = result.text,
+                    html = extractedHtml,
+                    httpStatus = 200,
+                    httpReason = "OK",
+                    mimeType = "text/html",
+                    sessionId = sessionId,
+                    isPreview = true
+                )
+                
                 emit(
                     UrlProcessingEvent.SimpleTextExtractionComplete(
                         normalizedUrl,
@@ -304,6 +320,7 @@ class UrlContentProcessingService(
                     )
 
                     // Cache the webpage content (has its own transaction)
+                    // isPreview = false to indicate this is full LLM-processed markdown
                     webpageCacheService.cacheWebpage(
                         url = normalizedUrl,
                         title = extractionResult.title,
@@ -313,7 +330,8 @@ class UrlContentProcessingService(
                         httpStatus = 200,
                         httpReason = "OK",
                         mimeType = "text/html",
-                        sessionId = sessionId
+                        sessionId = sessionId,
+                        isPreview = false
                     )
 
                     // Update URL-to-image linkages in a separate transaction
@@ -440,7 +458,8 @@ class UrlContentProcessingService(
             httpStatus = statusCode,
             httpReason = reasonPhrase,
             mimeType = mimeType,
-            sessionId = sessionId
+            sessionId = sessionId,
+            isPreview = false
         )
     }
 }

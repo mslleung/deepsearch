@@ -19,6 +19,7 @@ class WebpageMarkdownCacheTable(
     val mimeType = varchar("mime_type", length = 256).nullable()
     val embedding = vector("embedding", dimensions = 1536).nullable() // gemini-embedding-001 produces 1536-dim vectors
     val markdownSearchVector = tsvector("markdown_search_vector").nullable() // tsvector for full-text search
+    val isPreview = bool("is_preview").default(false) // true if content is from simple text extraction (no LLM)
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

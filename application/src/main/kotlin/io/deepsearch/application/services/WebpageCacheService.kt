@@ -42,6 +42,7 @@ interface IWebpageCacheService {
      * @param httpReason HTTP reason phrase
      * @param mimeType Content MIME type
      * @param sessionId Session ID for token tracking
+     * @param isPreview True if content is from simple text extraction (no LLM processing)
      */
     suspend fun cacheWebpage(
         url: String,
@@ -52,7 +53,8 @@ interface IWebpageCacheService {
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        sessionId: SessionId
+        sessionId: SessionId,
+        isPreview: Boolean = false
     )
 
     /**
@@ -104,6 +106,16 @@ class WebpageCacheService(
             return CachedWebpageResult.Hit(cached)
         }
 
+        // For live crawling (maxCacheAge != null), treat preview content as expired
+        // This ensures preview-only cached pages will be re-crawled with full extraction
+        if (cached.isPreview) {
+            logger.debug(
+                "Cache expired for URL: {} (preview content, will re-crawl for full markdown)",
+                url
+            )
+            return CachedWebpageResult.Expired(cached)
+        }
+
         val currentTime = Clock.System.now()
         val age = currentTime - cached.updatedAt
 
@@ -135,7 +147,8 @@ class WebpageCacheService(
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        sessionId: SessionId
+        sessionId: SessionId,
+        isPreview: Boolean
     ) {
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
@@ -152,6 +165,7 @@ class WebpageCacheService(
                 httpReason = httpReason,
                 mimeType = mimeType,
                 embedding = null, // Will be updated asynchronously
+                isPreview = isPreview,
                 createdAt = existing?.createdAt ?: currentTime,
                 updatedAt = currentTime,
                 version = existing?.version ?: 0 // Preserve version for optimistic locking
@@ -159,14 +173,16 @@ class WebpageCacheService(
         )
 
         logger.debug(
-            "Cached webpage for URL: {} (status: {}, markdown: {} chars)",
+            "Cached webpage for URL: {} (status: {}, markdown: {} chars, isPreview: {})",
             url,
             httpStatus,
-            markdown?.length ?: 0
+            markdown?.length ?: 0,
+            isPreview
         )
 
-        // Generate and store embedding asynchronously if markdown is available
-        if (markdown != null && markdown.isNotBlank()) {
+        // Generate and store embedding asynchronously if markdown is available and not preview
+        // Preview content is lower quality, so skip embedding generation for it
+        if (markdown != null && markdown.isNotBlank() && !isPreview) {
             generateAndStoreEmbeddingAsync(url, markdown, sessionId)
         }
     }
