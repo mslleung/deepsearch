@@ -80,8 +80,10 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         Your task is to:
         1. Identify all <a href> links in the provided text
         2. Using the surrounding context, analyze which links are relevant to the user's query
-        3. Return all relevant links with reasons why they are relevant
-        4. The links must be unique and exactly the same as given in the source (use the relative path exactly as shown)
+        3. Be very permissive, look for any link that may be relevant directly or indirectly to the user query.
+        4. Include links that may lead to pages that have a high chance to contain linkage to pages related to the query. (multi-hop)
+        5. Return all relevant links with reasons why they are relevant
+        6. The links must be unique and exactly the same as given in the source (use the relative path exactly as shown)
         
         Focus on links that would help answer the user's query or provide more detailed information.
         
