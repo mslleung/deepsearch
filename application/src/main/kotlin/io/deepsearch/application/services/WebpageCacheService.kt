@@ -20,6 +20,7 @@ sealed class CachedWebpageResult {
     data class Hit(val webpageMarkdown: WebpageMarkdown) : CachedWebpageResult()
     data object Miss : CachedWebpageResult()
     data class Expired(val webpageMarkdown: WebpageMarkdown) : CachedWebpageResult()
+    data class Failure(val webpageMarkdown: WebpageMarkdown) : CachedWebpageResult()
 }
 
 interface IWebpageCacheService {
@@ -99,6 +100,12 @@ class WebpageCacheService(
             ?: return CachedWebpageResult.Miss.also {
                 logger.debug("Cache miss for URL: {}", url)
             }
+
+        // Check for cached failure (non-2xx status) - always return Failure to trigger retry
+        if (cached.httpStatus != null && cached.httpStatus !in 200..299) {
+            logger.debug("Cached failure for URL: {} (status: {})", url, cached.httpStatus)
+            return CachedWebpageResult.Failure(cached)
+        }
 
         // If no expiry time is specified, always return Hit
         if (maxCacheAge == null) {

@@ -166,9 +166,9 @@ class UrlContentProcessingService(
                         return@withKeyLock
                     }
 
-                    is CachedWebpageResult.Miss, is CachedWebpageResult.Expired -> {
-                        // non-html links will always miss
-                        logger.debug("Cache miss/expired for URL, proceeding with processing: {}", normalizedUrl)
+                    is CachedWebpageResult.Miss, is CachedWebpageResult.Expired, is CachedWebpageResult.Failure -> {
+                        // non-html links will always miss, failures are retried
+                        logger.debug("Cache miss/expired/failure for URL, proceeding with processing: {}", normalizedUrl)
                     }
                 }
 
@@ -235,12 +235,6 @@ class UrlContentProcessingService(
         cached: io.deepsearch.domain.models.entities.WebpageMarkdown,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
-        if (cached.httpStatus != null && cached.httpStatus !in 200..299) {
-            logger.debug("Cached failure for URL: {} (status: {})", originalUrl, cached.httpStatus)
-            emit(UrlProcessingEvent.MarkdownExtractionComplete(originalUrl, "", null, null, wasCached = true))
-            return@flow
-        }
-
         val cachedHtml = cached.html
         val links = if (cachedHtml != null) discoverLinks(cachedHtml) else emptyList()
 
