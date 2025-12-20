@@ -248,6 +248,11 @@ class AgenticBrowserSearchOrchestrator(
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
+                // Add URL to seenUrls before processing to prevent duplicate processing
+                // This must happen before processUrlAsFlow, not on each event, because
+                // multiple events (SimpleTextExtraction, LinkDiscovery, MarkdownExtraction)
+                // share the same URL and would filter out subsequent events
+                seenUrls.add(normalizedUrl)
                 eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
 
                 urlContentProcessingService.processUrlAsFlow(
@@ -257,11 +262,6 @@ class AgenticBrowserSearchOrchestrator(
                     sessionId,
                     searchQuery.ocrLanguage
                 )
-                    .filter { event ->
-                        val eventUrl = normalizeUrlService.normalize(event.url) ?: event.url
-                        // Use atomic add() which returns true only if element was NOT already present
-                        seenUrls.add(eventUrl)
-                    }
                     .onEach { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
