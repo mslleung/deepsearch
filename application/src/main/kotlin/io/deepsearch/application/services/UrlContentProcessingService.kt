@@ -17,6 +17,7 @@ import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
+import io.deepsearch.domain.proxy.ProxyConfiguration
 
 interface IUrlContentProcessingService {
     /**
@@ -42,12 +43,12 @@ interface IUrlContentProcessingService {
 
         /**
          * Emitted immediately after HTML is loaded, before LLM processing.
-         * Contains simple programmatic text extraction (no LLM) for early evaluation.
+         * Contains cleaned HTML for preview shortlist evaluation.
          * Only emitted for uncached HTML URLs.
          */
-        data class SimpleTextExtractionComplete(
+        data class HtmlPreviewReady(
             override val url: String,
-            val text: String,
+            val cleanedHtml: String,
             val title: String?,
             val description: String?
         ) : UrlProcessingEvent
@@ -56,29 +57,38 @@ interface IUrlContentProcessingService {
     /**
      * Process a URL and discover links relevant to the provided query.
      * Emits LinkDiscoveryComplete event first, then MarkdownExtractionComplete event.
+     * 
+     * @param proxyConfig User's proxy configuration. None (default) uses adaptive bypass strategy.
+     *                    Custom/Included proxies are used directly without bypass logic.
      */
     fun processUrlAsFlow(
         url: String,
         query: String,
         maxCacheAge: Long? = null,
         sessionId: QuerySessionId,
-        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
+        proxyConfig: ProxyConfiguration = ProxyConfiguration.None
     ): Flow<UrlProcessingEvent>
 
     /**
      * Process a URL and discover all links on the page (query-agnostic).
      * Used for periodic index jobs.
      * Emits LinkDiscoveryComplete event first, then MarkdownExtractionComplete event.
+     * 
+     * @param proxyConfig User's proxy configuration. None (default) uses adaptive bypass strategy.
+     *                    Custom/Included proxies are used directly without bypass logic.
      */
     fun processUrlAsFlow(
         url: String,
         sessionId: PeriodicIndexSessionId,
-        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
+        ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
+        proxyConfig: ProxyConfiguration = ProxyConfiguration.None
     ): Flow<UrlProcessingEvent>
 }
 
 class UrlContentProcessingService(
     private val browserPool: IBrowserPool,
+    private val bypassStrategyService: IBypassStrategyService,
     private val normalizeUrlService: INormalizeUrlService,
     private val webpageCacheService: IWebpageCacheService,
     private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
@@ -88,7 +98,7 @@ class UrlContentProcessingService(
     private val tokenUsageService: ILlmTokenUsageService,
     private val urlProcessingLockRegistry: UrlProcessingLockRegistry,
     private val webpageImageLinkageRepository: IWebpageImageLinkageRepository,
-    private val simpleTextExtractionService: ISimpleTextExtractionService
+    private val htmlPreviewService: IHtmlPreviewService
 ) : IUrlContentProcessingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -98,7 +108,8 @@ class UrlContentProcessingService(
         query: String,
         maxCacheAge: Long?,
         sessionId: QuerySessionId,
-        ocrLanguage: OcrLanguage
+        ocrLanguage: OcrLanguage,
+        proxyConfig: ProxyConfiguration
     ): Flow<UrlProcessingEvent> {
         return processInternalAsFlow(
             url = url,
@@ -106,6 +117,7 @@ class UrlContentProcessingService(
             maxCacheAge = maxCacheAge,
             sessionId = sessionId,
             ocrLanguage = ocrLanguage,
+            proxyConfig = proxyConfig,
             discoverLinks = { html ->
                 webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, html, url, sessionId)
             },
@@ -119,7 +131,8 @@ class UrlContentProcessingService(
     override fun processUrlAsFlow(
         url: String,
         sessionId: PeriodicIndexSessionId,
-        ocrLanguage: OcrLanguage
+        ocrLanguage: OcrLanguage,
+        proxyConfig: ProxyConfiguration
     ): Flow<UrlProcessingEvent> {
         // max cache age is set to 0 so the cache will always expire, this is because periodic index should forcefully refresh everything
         // For periodic index, we use a generic query for file search
@@ -129,6 +142,7 @@ class UrlContentProcessingService(
             maxCacheAge = 0,
             sessionId = sessionId,
             ocrLanguage = ocrLanguage,
+            proxyConfig = proxyConfig,
             discoverLinks = { html ->
                 webpageLinkDiscoveryService.discoverAllLinks(html, url)
             },
@@ -149,6 +163,7 @@ class UrlContentProcessingService(
         maxCacheAge: Long?,
         sessionId: SessionId,
         ocrLanguage: OcrLanguage,
+        proxyConfig: ProxyConfiguration,
         discoverLinks: suspend (html: String) -> List<WebpageLink>,
         discoverLinksForFile: suspend (markdown: String, fileBytes: ByteArray, mimeType: String, sourceUrl: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
@@ -175,7 +190,7 @@ class UrlContentProcessingService(
                 when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
                     is ContentTypeResult.Html -> {
                         logger.debug("Detected HTML content for: {}", normalizedUrl)
-                        processHtmlUrlAsFlow(normalizedUrl, sessionId, ocrLanguage, discoverLinks)
+                        processHtmlUrlAsFlow(normalizedUrl, sessionId, ocrLanguage, proxyConfig, discoverLinks)
                             .collect { event -> emit(event) }
                     }
 
@@ -258,25 +273,30 @@ class UrlContentProcessingService(
         normalizedUrl: String,
         sessionId: SessionId,
         ocrLanguage: OcrLanguage,
+        proxyConfig: ProxyConfiguration,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
-        browserPool.withPage { page ->
-            page.navigate(normalizedUrl)
+        // Use bypass strategy service for navigation with automatic proxy fallback
+        // For Custom/Included proxies: uses them directly
+        // For None (default): handles direct connection first, then falls back to free rotating proxies if blocked
+        bypassStrategyService.withPageWithBypass(normalizedUrl, proxyConfig) { page ->
+            // Navigation is already done by bypassStrategyService
             val extractedHtml = page.getFullHtml()
 
-            // Emit simple text extraction immediately (no LLM) for early evaluation
-            // This allows the shortlist agent to start processing while full markdown is being extracted
-            val simpleTextFlow = flow {
-                val result = simpleTextExtractionService.extractSimpleText(extractedHtml, normalizedUrl)
-                logger.debug("Simple text extraction complete for {}: {} chars", normalizedUrl, result.text.length)
+            // Emit HTML preview immediately (no LLM) for early evaluation by preview path
+            // This allows the preview shortlist agent to start processing while full markdown is being extracted
+            val htmlPreviewFlow = flow {
+                val result = htmlPreviewService.prepareHtmlPreview(extractedHtml, normalizedUrl)
+                logger.debug("HTML preview ready for {}: {} chars", normalizedUrl, result.cleanedHtml.length)
                 
                 // Cache the preview content so sources are available if search completes before full extraction
                 // When full markdown is extracted, it will replace this via upsert (isPreview=false overwrites isPreview=true)
+                // For preview, we store the cleaned HTML as markdown for embedding generation
                 webpageCacheService.cacheWebpage(
                     url = normalizedUrl,
                     title = result.title,
                     description = result.description,
-                    markdown = result.text,
+                    markdown = result.cleanedHtml,  // Use cleaned HTML for preview embedding
                     html = extractedHtml,
                     httpStatus = 200,
                     httpReason = "OK",
@@ -286,9 +306,9 @@ class UrlContentProcessingService(
                 )
                 
                 emit(
-                    UrlProcessingEvent.SimpleTextExtractionComplete(
+                    UrlProcessingEvent.HtmlPreviewReady(
                         normalizedUrl,
-                        result.text,
+                        result.cleanedHtml,
                         result.title,
                         result.description
                     )
@@ -304,6 +324,10 @@ class UrlContentProcessingService(
 
             val markdownExtractionFlow = flow {
                 try {
+                    // Wait for full page load before extraction (navigate only waits for DOMContentLoaded)
+                    // This ensures all resources are loaded for accurate markdown extraction
+                    page.waitForLoad()
+                    
                     // Extract webpage content - this internally stores images in their own
                     // committed transactions via webpageImageRepository.batchUpsert()
                     val extractionResult = webpageExtractionService.extractWebpage(page, sessionId, ocrLanguage)
@@ -352,9 +376,9 @@ class UrlContentProcessingService(
                 }
             }
 
-            // Merge all flows - simple text emits first (synchronous), then LLM flows run in parallel
+            // Merge all flows - HTML preview emits first (synchronous), then LLM flows run in parallel
             // When this flow is cancelled, merge stops collecting immediately and propagates cancellation
-            merge(simpleTextFlow, linkDiscoveryFlow, markdownExtractionFlow)
+            merge(htmlPreviewFlow, linkDiscoveryFlow, markdownExtractionFlow)
                 .onCompletion { cause ->
                     if (cause != null) {
                         logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)

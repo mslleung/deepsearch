@@ -187,10 +187,10 @@ class WebpageCacheService(
             isPreview
         )
 
-        // Generate and store embedding asynchronously if markdown is available and not preview
-        // Preview content is lower quality, so skip embedding generation for it
-        if (markdown != null && markdown.isNotBlank() && !isPreview) {
-            generateAndStoreEmbeddingAsync(url, markdown, sessionId)
+        // Generate and store embedding asynchronously if markdown is available
+        // Both preview and full markdown generate embeddings for hybrid search
+        if (!markdown.isNullOrBlank()) {
+            generateAndStoreEmbeddingAsync(url, markdown, sessionId, wasPreviewContent = isPreview)
         }
     }
 
@@ -200,12 +200,22 @@ class WebpageCacheService(
      *
      * If embedding generation or storage fails, the error is logged but not propagated.
      * This ensures that embedding failures don't break the main request flow.
+     *
+     * @param url The URL of the webpage
+     * @param markdown The markdown content to embed
+     * @param sessionId The session ID for token tracking
+     * @param wasPreviewContent Whether this embedding is for preview content (used for race protection)
      */
-    private fun generateAndStoreEmbeddingAsync(url: String, markdown: String, sessionId: SessionId) {
+    private fun generateAndStoreEmbeddingAsync(
+        url: String,
+        markdown: String,
+        sessionId: SessionId,
+        wasPreviewContent: Boolean
+    ) {
         // Launch in application scope (fire-and-forget)
         applicationScope.scope.launch {
             try {
-                logger.debug("Generating embedding for URL: {}", url)
+                logger.debug("Generating embedding for URL: {} (isPreview: {})", url, wasPreviewContent)
 
                 // Generate embedding (returns EmbeddingResult with embeddings and token usage)
                 val result = textEmbeddingService.embedDocuments(listOf(markdown))
@@ -237,13 +247,25 @@ class WebpageCacheService(
                         // Fetch current webpage data and update with embedding
                         val existing = webpageMarkdownRepository.findByUrl(url)
                         if (existing != null) {
+                            // Race protection: don't let preview embedding overwrite full markdown embedding
+                            // If this was a preview embedding but the record is now full markdown,
+                            // skip storing as the full markdown embedding will be/was stored separately
+                            if (wasPreviewContent && !existing.isPreview) {
+                                logger.debug(
+                                    "Skipping preview embedding for URL {} - full markdown already stored",
+                                    url
+                                )
+                                return@launch
+                            }
+                            
                             webpageMarkdownRepository.upsert(
                                 existing.copy(
                                     embedding = embedding,
                                     updatedAt = Clock.System.now()
                                 )
                             )
-                            logger.debug("Successfully stored embedding for URL: {} (attempt {})", url, retries + 1)
+                            logger.debug("Successfully stored embedding for URL: {} (attempt {}, isPreview: {})", 
+                                url, retries + 1, wasPreviewContent)
                             break // Success, exit retry loop
                         } else {
                             logger.warn("Webpage not found for URL {} when trying to store embedding", url)

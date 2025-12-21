@@ -27,10 +27,21 @@ interface IBrowserPage {
     suspend fun getUrl(): String
 
     /**
-     * Navigates the current page to the given URL and waits for the default load state.
+     * Navigates the current page to the given URL and waits for DOMContentLoaded.
+     * This returns as soon as the HTML structure is ready, allowing fast HTML preview extraction.
+     * Call [waitForLoad] after extracting HTML if you need to wait for full page load.
      * @param url Absolute or relative URL to open.
      */
     suspend fun navigate(url: String)
+
+    /**
+     * Wait for the page to fully load (load event fired).
+     * Call this before operations that require all resources to be loaded (e.g., full markdown extraction).
+     * 
+     * Handles the race condition where the load event may have already fired before this method is called
+     * by first checking document.readyState.
+     */
+    suspend fun waitForLoad()
 
     /**
      * Takes a screenshot of the current viewport and returns the image bytes.

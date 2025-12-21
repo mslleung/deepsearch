@@ -19,6 +19,7 @@ import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchMode
+import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -60,7 +61,8 @@ class CacheOnlySearchOrchestrator(
     override fun execute(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
-        apiKeyId: ApiKeyId
+        apiKeyId: ApiKeyId,
+        proxyConfig: ProxyConfiguration
     ): Flow<SearchEvent> = flow {
         val session = querySessionService.createSession(
             searchQuery.query,

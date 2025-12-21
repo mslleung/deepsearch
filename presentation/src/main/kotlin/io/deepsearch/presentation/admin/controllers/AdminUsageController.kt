@@ -12,9 +12,13 @@ import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import kotlinx.datetime.*
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.number
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class AdminUsageController(
@@ -45,9 +49,9 @@ class AdminUsageController(
         
         val dailyUsage = sessions.groupBy { session ->
             // Format as YYYY-MM-DD from epoch millis
-            val instant = kotlinx.datetime.Instant.fromEpochMilliseconds(session.createdAt.toEpochMilliseconds())
+            val instant = Instant.fromEpochMilliseconds(session.createdAt.toEpochMilliseconds())
             val localDateTime = instant.toLocalDateTime(kotlinx.datetime.TimeZone.UTC)
-            "${localDateTime.year}-${localDateTime.monthNumber.toString().padStart(2, '0')}-${localDateTime.dayOfMonth.toString().padStart(2, '0')}"
+            "${localDateTime.year}-${localDateTime.month.number.toString().padStart(2, '0')}-${localDateTime.day.toString().padStart(2, '0')}"
         }.mapValues { it.value.size }
         
         // Get per-user breakdown
@@ -62,8 +66,8 @@ class AdminUsageController(
             val lastActivity = userUsageStats?.dailyUsage?.keys?.maxOrNull()
             val lastActivityEpoch = lastActivity?.let {
                 runCatching {
-                    val date = kotlinx.datetime.LocalDate.parse(it)
-                    val instant = kotlinx.datetime.LocalDateTime(date.year, date.monthNumber, date.dayOfMonth, 0, 0, 0).toInstant(kotlinx.datetime.TimeZone.UTC)
+                    val date = LocalDate.parse(it)
+                    val instant = LocalDateTime(date.year, date.month.number, date.day, 0, 0, 0).toInstant(kotlinx.datetime.TimeZone.UTC)
                     instant.toEpochMilliseconds()
                 }.getOrNull()
             }

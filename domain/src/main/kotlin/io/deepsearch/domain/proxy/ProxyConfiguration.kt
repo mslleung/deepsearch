@@ -23,6 +23,14 @@ sealed class ProxyConfiguration {
      */
     data object Included : ProxyConfiguration()
 
+    /**
+     * Free rotating proxy from ProxyScrape pool.
+     * Used internally when the bypass strategy determines proxies are needed.
+     *
+     * @property proxyUrl The proxy server URL (e.g., "http://1.2.3.4:8080")
+     */
+    data class FreeRotating(val proxyUrl: String) : ProxyConfiguration()
+
     companion object {
         /**
          * Create a ProxyConfiguration from a ProxyRule.

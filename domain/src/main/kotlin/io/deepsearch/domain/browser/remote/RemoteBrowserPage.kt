@@ -106,6 +106,10 @@ class RemoteBrowserPage(
         pageCmd(PageCommand.Navigate(url))
     }
 
+    override suspend fun waitForLoad() {
+        pageCmd(PageCommand.WaitForLoad)
+    }
+
     override suspend fun getUrl(): String = pageCmd(PageCommand.GetUrl)
     override suspend fun getFullHtml(): String = pageCmd(PageCommand.GetFullHtml)
     override suspend fun getTitle(): String = pageCmd(PageCommand.GetTitle)

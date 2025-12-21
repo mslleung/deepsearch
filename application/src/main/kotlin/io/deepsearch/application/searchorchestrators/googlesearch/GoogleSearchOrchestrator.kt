@@ -9,6 +9,7 @@ import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.proxy.ProxyConfiguration
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import org.slf4j.Logger
@@ -32,7 +33,8 @@ class GoogleSearchOrchestrator(
     override fun execute(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
-        apiKeyId: ApiKeyId
+        apiKeyId: ApiKeyId,
+        proxyConfig: ProxyConfiguration
     ): Flow<SearchEvent> = flow {
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
 

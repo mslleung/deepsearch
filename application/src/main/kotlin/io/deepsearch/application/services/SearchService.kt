@@ -9,6 +9,7 @@ import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.UserId
+import io.deepsearch.domain.proxy.ProxyConfiguration
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
@@ -41,12 +42,13 @@ interface ISearchService {
      * For streaming clients: subscribe and forward events to the client
      * For blocking clients: use searchWebsite() instead
      */
-    fun executeStreaming(
+    suspend fun executeStreaming(
         query: String,
         url: String,
         maxCacheAge: Long? = null,
         mode: SearchMode = SearchMode.LIVE_CRAWLING,
         apiKeyId: ApiKeyId,
+        userId: UserId,
         languagePattern: String? = null,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
     ): Flow<SearchEvent>
@@ -56,7 +58,8 @@ class SearchService(
     private val applicationScope: IApplicationCoroutineScope,
     private val agenticBrowserSearchOrchestrator: IAgenticBrowserSearchOrchestrator,
     private val cacheOnlySearchOrchestrator: ICacheOnlySearchOrchestrator,
-    private val querySessionService: IQuerySessionService
+    private val querySessionService: IQuerySessionService,
+    private val proxySettingsService: IProxySettingsService
 ) : ISearchService {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -72,7 +75,14 @@ class SearchService(
     ): QuerySessionDetail {
         val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage)
         
-        logger.debug("Executing {} search for query: {} with language pattern: {} and OCR language: {}", mode, query, languagePattern, ocrLanguage)
+        // Resolve user's proxy configuration for this URL
+        // Custom/Included proxies are used directly; None triggers adaptive bypass strategy
+        val proxyConfig = proxySettingsService.resolveProxyForUrl(userId, url)
+        
+        logger.debug(
+            "Executing {} search for query: {} with proxy: {} language pattern: {} and OCR language: {}", 
+            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage
+        )
         
         val orchestrator = when (mode) {
             SearchMode.LIVE_CRAWLING -> agenticBrowserSearchOrchestrator
@@ -83,7 +93,7 @@ class SearchService(
         val completionDeferred = CompletableDeferred<SearchEvent.SessionCompleted>()
 
         val job = applicationScope.scope.launch {
-            orchestrator.execute(searchQuery, maxCacheAge, apiKeyId)
+            orchestrator.execute(searchQuery, maxCacheAge, apiKeyId, proxyConfig)
                 .filterIsInstance<SearchEvent.SessionCompleted>()
                 .onEach {
                     completionDeferred.complete(it)
@@ -97,24 +107,31 @@ class SearchService(
         return querySessionService.getSessionDetail(completionEvent.sessionId, userId)
     }
 
-    override fun executeStreaming(
+    override suspend fun executeStreaming(
         query: String,
         url: String,
         maxCacheAge: Long?,
         mode: SearchMode,
         apiKeyId: ApiKeyId,
+        userId: UserId,
         languagePattern: String?,
         ocrLanguage: OcrLanguage
     ): Flow<SearchEvent> {
         val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage)
         
-        logger.debug("Starting streaming {} search for query: {} with language pattern: {} and OCR language: {}", mode, query, languagePattern, ocrLanguage)
+        // Resolve user's proxy configuration for this URL
+        val proxyConfig = proxySettingsService.resolveProxyForUrl(userId, url)
+        
+        logger.debug(
+            "Starting streaming {} search for query: {} with proxy: {} language pattern: {} and OCR language: {}", 
+            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage
+        )
         
         val orchestrator = when (mode) {
             SearchMode.LIVE_CRAWLING -> agenticBrowserSearchOrchestrator
             SearchMode.CACHE_ONLY -> cacheOnlySearchOrchestrator
         }
         
-        return orchestrator.execute(searchQuery, maxCacheAge, apiKeyId)
+        return orchestrator.execute(searchQuery, maxCacheAge, apiKeyId, proxyConfig)
     }
 }

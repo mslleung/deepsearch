@@ -3,6 +3,7 @@ package io.deepsearch.application.searchorchestrators
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.proxy.ProxyConfiguration
 import kotlinx.coroutines.flow.Flow
 
 interface ISearchOrchestrator {
@@ -18,6 +19,14 @@ interface ISearchOrchestrator {
      * 
      * For blocking execution: collect the flow until SessionCompleted/SessionError
      * For streaming: subscribe and process events as they arrive
+     * 
+     * @param proxyConfig User's proxy configuration. None (default) uses adaptive bypass strategy.
+     *                    Custom/Included proxies are used directly without bypass logic.
      */
-    fun execute(searchQuery: SearchQuery, maxCacheAge: Long? = null, apiKeyId: ApiKeyId): Flow<SearchEvent>
+    fun execute(
+        searchQuery: SearchQuery, 
+        maxCacheAge: Long? = null, 
+        apiKeyId: ApiKeyId,
+        proxyConfig: ProxyConfiguration = ProxyConfiguration.None
+    ): Flow<SearchEvent>
 }

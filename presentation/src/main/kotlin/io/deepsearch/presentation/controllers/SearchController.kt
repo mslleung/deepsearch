@@ -312,6 +312,7 @@ class SearchController(
                 maxCacheAge,
                 searchMode,
                 apiKey.id!!,
+                apiKey.userId,
                 languagePattern,
                 searchRequest.toOcrLanguage()
             )

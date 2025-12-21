@@ -55,6 +55,9 @@ class ProxyAwareHttpClientFactory(
                     is ProxyConfiguration.Included -> {
                         configureProxy(proxyrackConfig.toProxyUrl())
                     }
+                    is ProxyConfiguration.FreeRotating -> {
+                        configureProxy(proxyConfig.proxyUrl)
+                    }
                 }
                 
                 // Apply additional configuration

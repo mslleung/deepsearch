@@ -124,6 +124,7 @@ class RemoteBrowserPool(
             is ProxyConfiguration.None -> null
             is ProxyConfiguration.Custom -> ProxyConfigDto(type = "CUSTOM", customUrl = this.proxyUrl)
             is ProxyConfiguration.Included -> ProxyConfigDto(type = "INCLUDED", customUrl = null)
+            is ProxyConfiguration.FreeRotating -> ProxyConfigDto(type = "FREE_ROTATING", customUrl = this.proxyUrl)
         }
     }
 

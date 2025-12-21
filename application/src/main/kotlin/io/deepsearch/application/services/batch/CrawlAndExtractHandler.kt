@@ -1,7 +1,10 @@
 package io.deepsearch.application.services.batch
 
+import io.deepsearch.application.services.IBypassStrategyService
+import io.deepsearch.application.services.IProxySettingsService
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.entities.BatchIconData
+import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.models.entities.BatchImageData
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
@@ -39,6 +42,8 @@ class CrawlAndExtractHandler(
     private val batchJobRepository: IBatchPeriodicIndexJobRepository,
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val browserPool: IBrowserPool,
+    private val bypassStrategyService: IBypassStrategyService,
+    private val proxySettingsService: IProxySettingsService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
     private val adaptiveRateLimiter: IAdaptiveRateLimiter,
@@ -72,6 +77,10 @@ class CrawlAndExtractHandler(
         logger.info("[{}] Stage 1: Crawl + Extract for {} (concurrency: {})", 
             jobId, job.baseUrl, BROWSER_EXTRACTION_CONCURRENCY)
         eventEmitter.emit(job, eventFlow, "Stage 1: Crawling & extracting webpages...")
+        
+        // Resolve user's proxy configuration for this job's base URL
+        // Custom/Included proxies are used directly; None triggers adaptive bypass strategy
+        val proxyConfig = proxySettingsService.resolveProxyForUrl(job.userId, job.baseUrl)
 
         // Thread-safe collections
         val seenUrls = ConcurrentHashMap.newKeySet<String>()
@@ -125,7 +134,7 @@ class CrawlAndExtractHandler(
                         return@flow
                     }
                     
-                    val result = processSingleUrl(jobId, url)
+                    val result = processSingleUrl(jobId, url, proxyConfig)
                     emit(result)
                     
                     // Feed discovered links back into channel (if under limit)
@@ -181,7 +190,8 @@ class CrawlAndExtractHandler(
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class, kotlin.time.ExperimentalTime::class)
     private suspend fun processSingleUrl(
         jobId: Long,
-        url: String
+        url: String,
+        proxyConfig: ProxyConfiguration
     ): CrawlExtractResult {
         var urlState = batchUrlStateRepository.findByJobIdAndUrl(jobId, url)
         
@@ -198,8 +208,11 @@ class CrawlAndExtractHandler(
             var discoveredLinks = emptyList<String>()
             
             adaptiveRateLimiter.withRateLimit(url) {
-                browserPool.withPage { page ->
-                    page.navigate(url)
+                // Use bypass strategy for adaptive proxy handling:
+                // - Custom/Included proxies are used directly
+                // - None triggers direct-first, then free rotating proxy fallback
+                bypassStrategyService.withPageWithBypass(url, proxyConfig) { page ->
+                    // Navigation is already done by bypassStrategyService
                     val html = page.getFullHtml()
                     
                     // Parallel browser captures

@@ -28,8 +28,8 @@ import io.deepsearch.application.services.ITableInterpretationService
 import io.deepsearch.application.services.IUserService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.HttpContentTypeResolutionService
-import io.deepsearch.application.services.SimpleTextExtractionService
-import io.deepsearch.application.services.ISimpleTextExtractionService
+import io.deepsearch.application.services.HtmlPreviewService
+import io.deepsearch.application.services.IHtmlPreviewService
 import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IAuthService
 import io.deepsearch.application.services.IFileSearchService
@@ -126,7 +126,7 @@ private val applicationCommonTestModule = module {
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
-    singleOf(::SimpleTextExtractionService) bind ISimpleTextExtractionService::class
+    singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
     singleOf(::UrlAccessService) bind IUrlAccessService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class

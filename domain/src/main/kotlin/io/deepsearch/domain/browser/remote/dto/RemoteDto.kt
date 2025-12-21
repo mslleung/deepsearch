@@ -10,6 +10,9 @@ sealed class PageCommand {
     @Serializable @SerialName("navigate")
     data class Navigate(val url: String) : PageCommand()
     
+    @Serializable @SerialName("waitForLoad")
+    data object WaitForLoad : PageCommand()
+    
     @Serializable @SerialName("getUrl")
     data object GetUrl : PageCommand()
     

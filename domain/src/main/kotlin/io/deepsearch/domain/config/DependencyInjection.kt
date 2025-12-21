@@ -2,6 +2,8 @@ package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googlegenaiimpl.*
+import io.deepsearch.domain.agents.googlegenaiimpl.PreviewShortlistAgentGenAiImpl
+import io.deepsearch.domain.agents.googlegenaiimpl.PreviewAnswerSynthesisAgentGenAiImpl
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.browser.remote.RemoteBrowserPool
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
@@ -11,7 +13,9 @@ import io.deepsearch.domain.ocr.TesseractPoolImpl
 import io.deepsearch.domain.ratelimit.AdaptiveRateLimiter
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.services.ApiKeyCryptoService
+import io.deepsearch.domain.services.BotDetectionService
 import io.deepsearch.domain.services.BoundingBoxDerivationService
+import io.deepsearch.domain.services.IBotDetectionService
 import io.deepsearch.domain.services.CssSelectorConstructionService
 import io.deepsearch.domain.services.GeminiFileSearchService
 import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
@@ -32,8 +36,10 @@ import io.deepsearch.domain.services.GeminiBatchServiceImpl
 import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.domain.http.IProxyAwareHttpClientFactory
 import io.deepsearch.domain.http.ProxyAwareHttpClientFactory
+import io.deepsearch.domain.proxy.IFreeProxyProvider
 import io.deepsearch.domain.proxy.IProxyTestService
 import io.deepsearch.domain.proxy.ProxyTestService
+import io.deepsearch.domain.proxy.RemoteFreeProxyProvider
 import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -53,6 +59,7 @@ val domainModule = module {
     singleOf(::TesseractPoolImpl) { createdAtStart() } bind ITesseractPool::class
 
     // Singleton domain services (used by singleton application services)
+    singleOf(::BotDetectionService) bind IBotDetectionService::class
     singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
     singleOf(::SerperService) bind ISerperService::class
     singleOf(::GeminiTextEmbeddingServiceImpl) bind ITextEmbeddingService::class
@@ -74,6 +81,9 @@ val domainModule = module {
     
     // Proxy test service for validating proxy connections
     singleOf(::ProxyTestService) bind IProxyTestService::class
+    
+    // Free proxy provider - connects to browser service for proxy management
+    singleOf(::RemoteFreeProxyProvider) bind IFreeProxyProvider::class
 
     // Singleton domain agents (used by singleton application services)
     singleOf(::FileSearchQueryAgentGenAiImpl) bind IFileSearchQueryAgent::class
@@ -105,6 +115,8 @@ val domainModule = module {
         scopedOf(::SerpQueryOptimizationAgentGenAiImpl) bind ISerpQueryOptimizationAgent::class
         scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
         scopedOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
+        scopedOf(::PreviewShortlistAgentGenAiImpl) bind IPreviewShortlistAgent::class
+        scopedOf(::PreviewAnswerSynthesisAgentGenAiImpl) bind IPreviewAnswerSynthesisAgent::class
 
         // Request-scoped domain services (user/auth related)
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class

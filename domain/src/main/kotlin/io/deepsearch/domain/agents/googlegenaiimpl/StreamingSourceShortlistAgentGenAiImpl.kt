@@ -88,12 +88,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
         - Current date
         - User query
         - Current shortlist
-        - New sources for shortlist evaluation/update
-           -- Sources marked as "PREVIEW" contain fast simple text extraction from a webpage HTML
-           -- Preview content is useful for quick relevance assessment but tables are broken and images/icons are missing
-           -- If a preview source appears relevant to the query, you should shortlist it - the full markdown will arrive later
-           -- Do not reject a source solely because it is a preview if the text suggests it may contain the answer
-           -- When the full markdown arrives for a previously shortlisted preview, it will automatically replace the preview content for you to assess again
+        - New sources for shortlist evaluation/update (full markdown content with tables, images, and formatting)
         
         For each source, you must:
         
@@ -157,7 +152,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
     private data class LlmShortlistedSource(
         val url: String,
         val sourceClassification: String,
-        val contentDate: String?,
+        val contentDate: String? = null,
         val answerType: String,
         val relevanceJustification: String,
         val relevantImageIds: List<String> = emptyList()
@@ -270,7 +265,6 @@ class StreamingSourceShortlistAgentGenAiImpl(
                     contentDate = llmSource.contentDate,
                     answerType = answerType,
                     relevanceJustification = llmSource.relevanceJustification,
-                    isPreview = sourceInfo.isPreview,
                     relevantImageIds = originalImageIds
                 )
             }
@@ -322,9 +316,6 @@ class StreamingSourceShortlistAgentGenAiImpl(
                     val sourceInfo = urlToSourceInfo[source.url]
                     appendLine("## Source ${index + 1}")
                     appendLine("URL: ${source.url}")
-                    if (source.isPreview) {
-                        appendLine("**Content Type: PREVIEW** (simple text only, tables/images/formatting not yet extracted)")
-                    }
                     appendLine("Source Classification: ${source.sourceClassification}")
                     appendLine("Content Date: ${source.contentDate ?: "Not found"}")
                     appendLine("Answer Type: ${source.answerType}")
@@ -354,9 +345,6 @@ class StreamingSourceShortlistAgentGenAiImpl(
                 val sourceInfo = urlToSourceInfo[source.url]
                 appendLine("## New Source ${index + 1}")
                 appendLine("URL: ${source.url}")
-                if (source.isPreview) {
-                    appendLine("**Content Type: PREVIEW** (simple text only, tables/images/formatting not yet extracted)")
-                }
                 appendLine()
                 appendLine("Markdown Content:")
                 // Use transformed markdown with numbered image IDs
@@ -377,10 +365,9 @@ class StreamingSourceShortlistAgentGenAiImpl(
         }
     }
 
-    /** Holds markdown content, preview status, and image ID mapping for a source */
+    /** Holds markdown content and image ID mapping for a source */
     private data class SourceInfo(
         val markdown: String,
-        val isPreview: Boolean,
         val transformedMarkdown: String,
         /** Maps numbered image ID (e.g., "1") to original ID (e.g., "img-xxx") or PLACEHOLDER_MARKER */
         val imageIdMapping: Map<String, String>
@@ -389,19 +376,17 @@ class StreamingSourceShortlistAgentGenAiImpl(
     private fun buildUrlToSourceInfoMap(input: StreamingSourceShortlistInput): Map<String, SourceInfo> {
         val map = mutableMapOf<String, SourceInfo>()
         
-        // Add existing shortlist markdowns (preserve their preview status)
+        // Add existing shortlist markdowns
         input.currentShortlist.forEach { source ->
             val (transformedMarkdown, imageMapping) = transformImageIdsForLlm(source.markdown)
-            map[source.url] = SourceInfo(source.markdown, source.isPreview, transformedMarkdown, imageMapping)
+            map[source.url] = SourceInfo(source.markdown, transformedMarkdown, imageMapping)
         }
         
-        // Add new batch markdowns (may upgrade preview to full markdown)
+        // Add new batch markdowns (skip duplicates)
         input.newMarkdownBatch.forEach { source ->
-            val existing = map[source.url]
-            // If upgrading from preview to full markdown, update; otherwise add new
-            if (existing == null || (existing.isPreview && !source.isPreview)) {
+            if (source.url !in map) {
                 val (transformedMarkdown, imageMapping) = transformImageIdsForLlm(source.markdown)
-                map[source.url] = SourceInfo(source.markdown, source.isPreview, transformedMarkdown, imageMapping)
+                map[source.url] = SourceInfo(source.markdown, transformedMarkdown, imageMapping)
             }
         }
         

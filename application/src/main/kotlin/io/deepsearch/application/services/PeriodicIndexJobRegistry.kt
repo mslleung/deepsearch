@@ -10,6 +10,7 @@ import io.deepsearch.domain.models.valueobjects.*
 import io.deepsearch.domain.models.valueobjects.LanguagePattern
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
+import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -37,7 +38,8 @@ class PeriodicIndexJobRegistry(
     private val urlAccessService: IUrlAccessService,
     private val dispatchers: IDispatcherProvider,
     private val applicationScope: IApplicationCoroutineScope,
-    private val adaptiveRateLimiter: IAdaptiveRateLimiter
+    private val adaptiveRateLimiter: IAdaptiveRateLimiter,
+    private val proxySettingsService: IProxySettingsService
 ) : IPeriodicIndexJobRegistry {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -93,6 +95,11 @@ class PeriodicIndexJobRegistry(
 
     private suspend fun runPeriodicIndex(job: PeriodicIndexJob, flow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>) {
         val jobId: Long = requireNotNull(job.id) { "Job must have an id" }
+        
+        // Resolve user's proxy configuration for this job's base URL
+        // Custom/Included proxies are used directly; None triggers adaptive bypass strategy
+        val proxyConfig = proxySettingsService.resolveProxyForUrl(job.userId, job.baseUrl)
+        
         flow.emit(
             IPeriodicIndexJobService.PeriodicIndexEvent(
                 jobId = jobId,
@@ -111,6 +118,7 @@ class PeriodicIndexJobRegistry(
             extractAndCacheLinks(
                 jobId = jobId,
                 job = job,
+                proxyConfig = proxyConfig,
                 eventFlow = flow
             )
 
@@ -205,6 +213,7 @@ class PeriodicIndexJobRegistry(
     private suspend fun extractAndCacheLinks(
         jobId: Long,
         job: PeriodicIndexJob,
+        proxyConfig: ProxyConfiguration,
         eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>
     ) {
         val seenUrls = ConcurrentHashMap.newKeySet<String>()
@@ -230,6 +239,7 @@ class PeriodicIndexJobRegistry(
                 initialDiscoveredLinksChannel = initialDiscoveredLinksChannel,
                 urlTracker = urlTracker,
                 carriedOverUrls = carriedOverUrls,
+                proxyConfig = proxyConfig,
                 eventFlow = eventFlow,
                 processedCount = processedCount
             ),
@@ -239,6 +249,7 @@ class PeriodicIndexJobRegistry(
                 seenUrls = seenUrls,
                 serperDiscoveredLinksChannel = serperDiscoveredLinksChannel,
                 urlTracker = urlTracker,
+                proxyConfig = proxyConfig,
                 eventFlow = eventFlow,
                 processedCount = processedCount
             ),
@@ -248,6 +259,7 @@ class PeriodicIndexJobRegistry(
                 seenUrls = seenUrls,
                 sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel,
                 urlTracker = urlTracker,
+                proxyConfig = proxyConfig,
                 eventFlow = eventFlow,
                 processedCount = processedCount
             ),
@@ -260,6 +272,7 @@ class PeriodicIndexJobRegistry(
                 sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel,
                 recursiveDiscoveredLinksChannel = recursiveDiscoveredLinksChannel,
                 urlTracker = urlTracker,
+                proxyConfig = proxyConfig,
                 eventFlow = eventFlow,
                 processedCount = processedCount
             )
@@ -331,6 +344,7 @@ class PeriodicIndexJobRegistry(
         initialDiscoveredLinksChannel: Channel<WebpageLink>,
         urlTracker: UrlTracker,
         carriedOverUrls: Set<String>,
+        proxyConfig: ProxyConfiguration,
         eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
         processedCount: AtomicInteger
     ): Flow<PeriodicIndexStepResult> {
@@ -376,7 +390,7 @@ class PeriodicIndexJobRegistry(
                     
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
                             .catch { e ->
                                 if (e is CancellationException) throw e
                                 if (e is UrlProcessingException) {
@@ -430,7 +444,7 @@ class PeriodicIndexJobRegistry(
                                         urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                         emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                     }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
                                         // Ignored for periodic index - we only care about final markdown
                                     }
                                 }
@@ -455,6 +469,7 @@ class PeriodicIndexJobRegistry(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         serperDiscoveredLinksChannel: Channel<WebpageLink>,
         urlTracker: UrlTracker,
+        proxyConfig: ProxyConfiguration,
         eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
         processedCount: AtomicInteger
     ): Flow<PeriodicIndexStepResult> {
@@ -492,7 +507,7 @@ class PeriodicIndexJobRegistry(
                     
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
                             .catch { e ->
                                 if (e is CancellationException) throw e
                                 if (e is UrlProcessingException) {
@@ -534,7 +549,7 @@ class PeriodicIndexJobRegistry(
                                         urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                         emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                     }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
                                         // Ignored for periodic index - we only care about final markdown
                                     }
                                 }
@@ -559,6 +574,7 @@ class PeriodicIndexJobRegistry(
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
         urlTracker: UrlTracker,
+        proxyConfig: ProxyConfiguration,
         eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
         processedCount: AtomicInteger
     ): Flow<PeriodicIndexStepResult> {
@@ -596,7 +612,7 @@ class PeriodicIndexJobRegistry(
                     
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
                             .catch { e ->
                                 if (e is CancellationException) throw e
                                 if (e is UrlProcessingException) {
@@ -638,7 +654,7 @@ class PeriodicIndexJobRegistry(
                                         urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                         emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                     }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
                                         // Ignored for periodic index - we only care about final markdown
                                     }
                                 }
@@ -667,6 +683,7 @@ class PeriodicIndexJobRegistry(
         sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
         recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
         urlTracker: UrlTracker,
+        proxyConfig: ProxyConfiguration,
         eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
         processedCount: AtomicInteger
     ): Flow<PeriodicIndexStepResult> {
@@ -727,7 +744,7 @@ class PeriodicIndexJobRegistry(
 
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage)
+                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
                             .catch { e ->
                                 when (e) {
                                     is CancellationException -> throw e
@@ -802,7 +819,7 @@ class PeriodicIndexJobRegistry(
                                         urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
                                         emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
                                     }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.SimpleTextExtractionComplete -> {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
                                         // Ignored for periodic index - we only care about final markdown
                                     }
                                 }
