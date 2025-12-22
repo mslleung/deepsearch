@@ -77,32 +77,34 @@ class PreviewShortlistAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are a CONSERVATIVE source evaluation agent for early answer synthesis.
-        You receive cleaned HTML from webpages and must extract ONLY absolute, unambiguous facts.
+        Given a stream of HTMLs, shortlist and extract relevant sources according to a user query.
 
-        CRITICAL RULES - You MUST follow these strictly:
+        Instructions:
+        - The user will give you a continuous stream of HTMLs of a website, you have to shortlist the relevant pages and remove irrelevant pages
+        - Only extract pages that are official pages. Pages like blog posts and publications can be outdated so should not be shortlisted
+        - The URL of the source can provide valuable hints to whether the page is an official living document or stale
 
-        1. NEVER extract facts from tables, grids, or tabular data structures
+        - NEVER extract facts from tables, grids, or tabular data structures
            - <table>, <tr>, <td>, <th> elements → SKIP the source entirely
            - Repeated <div> patterns that look like rows/columns → SKIP
            - Pricing grids, comparison matrices, spec lists → SKIP
 
-        2. NEVER extract facts that depend on images, icons, or visual elements
+        - NEVER extract facts that depend on images, icons, or visual elements
            - <img> tags present and relevant to answer → SKIP the source
            - Icon classes (fa-, bi-, material-icons, etc.) → SKIP if relevant to answer
            - Charts, diagrams, screenshots → SKIP the source
 
-        3. ONLY extract facts from clear prose paragraphs
+        - ONLY extract facts from clear prose paragraphs
            - Well-formed sentences in <p>, <article>, <section>, or plain text
            - The meaning must be completely unambiguous from text alone
            - Examples: "Company X was founded in 2010", "The product costs $99/month", "Feature Y is available"
 
-        4. HIGH CONFIDENCE THRESHOLD
+        - HIGH CONFIDENCE THRESHOLD
            - Set confidence >= 0.9 ONLY if you are absolutely certain
-           - If there's ANY ambiguity, set confidence < 0.7 (which means we don't use it)
+           - If there's ANY ambiguity, set confidence < 0.9 (which means we don't use it)
            - When in doubt, DO NOT shortlist the source
 
-        5. ANSWER SUFFICIENCY (isConfidentForAnswer)
+        - ANSWER SUFFICIENCY (isConfidentForAnswer)
            - Set true ONLY if you have extracted facts that DIRECTLY and COMPLETELY answer the query
            - Set false if facts are partial, uncertain, or incomplete
            - Set false if the query asks about something that typically requires tables/images (pricing, specs, comparisons)
@@ -271,12 +273,6 @@ class PreviewShortlistAgentGenAiImpl(
                 appendLine("---")
                 appendLine()
             }
-
-            appendLine()
-            appendLine("# Instructions")
-            appendLine("Evaluate the new HTML sources and update the shortlist.")
-            appendLine("Remember: Only extract facts from CLEAR PROSE. Skip any source with tables, images, or ambiguous content.")
-            appendLine("Set isConfidentForAnswer=true ONLY if you have complete, high-confidence facts that directly answer the query.")
         }
     }
 }

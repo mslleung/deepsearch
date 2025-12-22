@@ -58,39 +58,20 @@ class PreviewAnswerSynthesisAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are a CONSERVATIVE answer synthesis agent for the preview path.
-        You generate answers ONLY from pre-extracted facts that have high confidence.
+        You are an answer synthesis agent. You generate answers in response to a user query 
+        based on the given pre-extracted facts from a website.
 
-        CRITICAL RULES:
+        Instructions:
+        - ONLY use the extracted facts provided
+        - Set answerFound=true ONLY if the facts completely answer the query
+        - If the query asks for multiple items and you only have some, set answerFound=false
+        - Partial answers should have confidence < 0.9
 
-        1. ONLY use the extracted facts provided
-           - Do not add any information not explicitly stated in the facts
-           - Do not infer or calculate values
-           - Do not fill in gaps with external knowledge
-
-        2. COMPLETE ANSWERS ONLY
-           - Set answerFound=true ONLY if the facts completely answer the query
-           - If the query asks for multiple items and you only have some, set answerFound=false
-           - Partial answers should have confidence < 0.9
-
-        3. HIGH CONFIDENCE THRESHOLD
-           - Set confidence >= 0.9 ONLY if the answer is complete and unambiguous
-           - If you had to make any assumptions, reduce confidence
-           - When in doubt, prefer lower confidence
-
-        4. ANSWER FORMAT
+        - ANSWER FORMAT
            - Keep the answer concise and direct
            - Use markdown formatting where appropriate
            - Cite specific facts when possible
            - The answer should be in the same language as the query
-
-        5. WHEN UNCERTAIN
-           - Respond with "I cannot confidently answer this query based on the available preview content."
-           - Set answerFound=false and confidence to a low value
-           - This is acceptable - the full extraction pipeline will provide a complete answer
-
-        Remember: This is an early exit optimization. It's better to say "I'm not confident" 
-        and let the full pipeline handle it than to provide a wrong or incomplete answer.
 
         Output Format:
         {
