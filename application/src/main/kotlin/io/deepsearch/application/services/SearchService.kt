@@ -76,7 +76,7 @@ class SearchService(
         val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage)
         
         // Resolve user's proxy configuration for this URL
-        // Custom/Included proxies are used directly; None triggers adaptive bypass strategy
+        // Custom/Premium proxies are used directly; None triggers adaptive bypass strategy
         val proxyConfig = proxySettingsService.resolveProxyForUrl(userId, url)
         
         logger.debug(

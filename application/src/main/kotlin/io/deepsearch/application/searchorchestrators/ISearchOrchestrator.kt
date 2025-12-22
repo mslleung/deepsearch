@@ -21,7 +21,7 @@ interface ISearchOrchestrator {
      * For streaming: subscribe and process events as they arrive
      * 
      * @param proxyConfig User's proxy configuration. None (default) uses adaptive bypass strategy.
-     *                    Custom/Included proxies are used directly without bypass logic.
+     *                    Custom/Premium proxies are used directly without bypass logic.
      */
     fun execute(
         searchQuery: SearchQuery, 

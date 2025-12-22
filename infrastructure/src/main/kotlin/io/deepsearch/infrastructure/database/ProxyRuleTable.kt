@@ -12,7 +12,7 @@ class ProxyRuleTable(
     val id = long("id").autoIncrement()
     val userId = integer("user_id").references(userTable.id)
     val urlPattern = varchar("url_pattern", length = 255)
-    val proxyType = varchar("proxy_type", length = 20) // NONE, CUSTOM, INCLUDED
+    val proxyType = varchar("proxy_type", length = 20) // NONE, CUSTOM, PREMIUM
     val customProxyUrl = varchar("custom_proxy_url", length = 500).nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")

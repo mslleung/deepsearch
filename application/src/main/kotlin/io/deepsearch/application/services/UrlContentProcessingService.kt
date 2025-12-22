@@ -68,7 +68,7 @@ interface IUrlContentProcessingService {
      * @param proxyConfig User's proxy configuration choice:
      *                    - None: direct connection
      *                    - Custom: user's custom proxy
-     *                    - Included: Proxyrack residential proxy
+     *                    - Premium: Proxyrack residential proxy
      *                    - FreeRotating: fanout to multiple free proxies
      */
     fun processUrlAsFlow(

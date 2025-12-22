@@ -97,7 +97,7 @@ class PeriodicIndexJobRegistry(
         val jobId: Long = requireNotNull(job.id) { "Job must have an id" }
         
         // Resolve user's proxy configuration for this job's base URL
-        // Custom/Included proxies are used directly; None triggers adaptive bypass strategy
+        // Custom/Premium proxies are used directly; None triggers adaptive bypass strategy
         val proxyConfig = proxySettingsService.resolveProxyForUrl(job.userId, job.baseUrl)
         
         flow.emit(

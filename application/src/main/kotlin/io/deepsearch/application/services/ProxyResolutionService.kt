@@ -15,7 +15,7 @@ interface IProxyResolutionService {
      * @param url The URL being accessed (for domain-based selection in FreeRotating)
      * @param config The user's proxy configuration choice
      * @return List of proxy URLs. Empty list means direct connection.
-     *         Single element for Custom/Included, multiple for FreeRotating fanout.
+     *         Single element for Custom/Premium, multiple for FreeRotating fanout.
      */
     suspend fun resolve(url: String, config: ProxyConfiguration): List<String>
 }
@@ -26,7 +26,7 @@ interface IProxyResolutionService {
  * Handles the mapping from user's proxy choice to concrete proxy URLs:
  * - None -> empty list (direct connection)
  * - Custom -> single-element list with user's custom proxy URL
- * - Included -> single-element list with Proxyrack residential proxy URL
+ * - Premium -> single-element list with Proxyrack residential proxy URL
  * - FreeRotating -> multiple proxy URLs for fanout
  */
 class ProxyResolutionService(
@@ -44,7 +44,7 @@ class ProxyResolutionService(
         return when (config) {
             is ProxyConfiguration.None -> emptyList()
             is ProxyConfiguration.Custom -> listOf(config.proxyUrl)
-            is ProxyConfiguration.Included -> listOf(proxyrackConfig.toProxyUrl())
+            is ProxyConfiguration.Premium -> listOf(proxyrackConfig.toProxyUrl())
             is ProxyConfiguration.FreeRotating -> {
                 val domain = extractDomain(url) ?: "default"
                 val proxies = freeProxyProvider.selectProxiesForDomain(domain, FANOUT_COUNT)

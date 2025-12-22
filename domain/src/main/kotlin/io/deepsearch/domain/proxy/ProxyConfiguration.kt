@@ -18,10 +18,10 @@ sealed class ProxyConfiguration {
     data class Custom(val proxyUrl: String) : ProxyConfiguration()
 
     /**
-     * Included Proxyrack residential proxy.
+     * Premium Proxyrack residential proxy.
      * The actual proxy credentials are configured at the system level.
      */
-    data object Included : ProxyConfiguration()
+    data object Premium : ProxyConfiguration()
 
     /**
      * Free rotating proxy from ProxyScrape pool.
@@ -37,7 +37,7 @@ sealed class ProxyConfiguration {
             return when (rule.proxyType) {
                 ProxyType.NONE -> None
                 ProxyType.CUSTOM -> Custom(rule.customProxyUrl!!)
-                ProxyType.INCLUDED -> Included
+                ProxyType.PREMIUM -> Premium
                 ProxyType.FREE_ROTATING -> FreeRotating
             }
         }
