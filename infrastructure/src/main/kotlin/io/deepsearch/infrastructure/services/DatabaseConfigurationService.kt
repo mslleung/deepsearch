@@ -50,6 +50,7 @@ class DatabaseConfigurationService(
     private val periodicIndexConfigTable: PeriodicIndexConfigTable,
     private val batchPeriodicIndexJobTable: BatchPeriodicIndexJobTable,
     private val batchUrlStateTable: BatchUrlStateTable,
+    private val proxyRuleTable: ProxyRuleTable,
 ) : IDatabaseConfigurationService {
 
     private val logger = LoggerFactory.getLogger(DatabaseConfigurationService::class.java)
@@ -131,6 +132,7 @@ class DatabaseConfigurationService(
                     periodicIndexConfigTable,
                     batchPeriodicIndexJobTable,
                     batchUrlStateTable,
+                    proxyRuleTable,
                 )
 
                 // Migration: Add is_preview column to webpage_markdowns if it doesn't exist
