@@ -137,12 +137,12 @@ class WebpageExtractionService(
             llmResults.imageReplacements.size
         )
 
-        // ===== Phase 4: DOM Processing (Jsoup) =====
+        // ===== DOM Processing (Jsoup) + table interpretation =====
         val result: WebpageExtractionResult
         val jsoupDuration = measureTimeMillis {
             result = processDom(snapshot, llmResults, sessionId)
         }
-        logger.debug("DOM processing complete in {} ms", jsoupDuration)
+        logger.debug("Table interpretation complete in {} ms", jsoupDuration)
 
         result
     }
