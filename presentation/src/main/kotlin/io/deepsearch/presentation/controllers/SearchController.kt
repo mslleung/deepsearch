@@ -18,9 +18,12 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.sse.*
 import io.ktor.sse.*
+import io.ktor.utils.io.ClosedWriteChannelException
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.nio.channels.ClosedChannelException
 
 class SearchController(
     private val searchService: ISearchService,
@@ -330,6 +333,12 @@ class SearchController(
             }
 
         } catch (e: Exception) {
+            // Handle channel closure gracefully - this is expected when client disconnects or stream ends
+            if (e.isChannelClosed()) {
+                logger.debug("SSE channel closed (client disconnected or stream ended)")
+                return
+            }
+            
             logger.error("Error in streaming search: {}", e.message, e)
             try {
                 sse.send(
@@ -346,9 +355,24 @@ class SearchController(
                     )
                 )
             } catch (sendError: Exception) {
-                logger.warn("Failed to send error event: {}", sendError.message)
+                // If we can't send the error, the channel is likely closed - this is fine
+                if (sendError.isChannelClosed()) {
+                    logger.debug("SSE channel closed while sending error event")
+                } else {
+                    logger.warn("Failed to send error event: {}", sendError.message)
+                }
             }
         }
+    }
+    
+    /**
+     * Check if an exception indicates a closed channel (expected during SSE shutdown).
+     */
+    private fun Exception.isChannelClosed(): Boolean {
+        return this is ClosedWriteChannelException ||
+            this is ClosedChannelException ||
+            this is CancellationException ||
+            this.cause?.let { it is ClosedWriteChannelException || it is ClosedChannelException } == true
     }
 
     /**
