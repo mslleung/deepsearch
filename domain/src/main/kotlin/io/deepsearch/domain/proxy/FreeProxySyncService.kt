@@ -7,6 +7,7 @@ import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import kotlinx.coroutines.*
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
@@ -31,18 +32,17 @@ class FreeProxySyncService(
     // ==================== Configuration ====================
 
     companion object {
-        private const val PROXYSCRAPE_INFO_URL =
-            "https://api.proxyscrape.com/v4/free-proxy-list/get?request=proxyinfo"
-        private const val PROXYSCRAPE_PROXIES_URL =
-            "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&country="
+        /**
+         * ProxyScrape API endpoint that returns proxies in JSON format with full metadata.
+         * We request HTTP/HTTPS proxies with skip/limit pagination.
+         * @see https://docs.proxyscrape.com/#1ec9e5ed-0dce-4511-91e1-ebe99f7bd88d
+         */
+        private const val PROXYSCRAPE_JSON_URL =
+            "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http,https&format=json&limit=2000"
         
         private val SYNC_INTERVAL = 2.minutes
         private val INITIAL_DELAY = 5.seconds
-        private val REQUEST_TIMEOUT = 30.seconds
-        private val INTER_REQUEST_DELAY = 100L // ms between country fetches
-        
-        /** Maximum countries to fetch proxies from (limits API calls per sync) */
-        private const val MAX_COUNTRIES = 20
+        private val REQUEST_TIMEOUT = 60.seconds // Increased timeout for larger JSON response
     }
 
     // ==================== HTTP Client ====================
@@ -170,18 +170,10 @@ class FreeProxySyncService(
         logger.debug("Starting proxy list sync from ProxyScrape...")
 
         try {
-            val countries = fetchAvailableCountries()
-            if (countries.isEmpty()) {
-                logger.warn("No countries available from ProxyScrape")
-                return
-            }
-            
-            logger.debug("Found {} available countries", countries.size)
-
-            val newProxiesByCountry = fetchProxiesForCountries(countries.take(MAX_COUNTRIES))
+            val newProxiesByCountry = fetchProxies()
             
             if (newProxiesByCountry.isEmpty()) {
-                logger.warn("No proxies fetched from any country")
+                logger.warn("No proxies fetched from ProxyScrape")
                 return
             }
 
@@ -203,54 +195,43 @@ class FreeProxySyncService(
         }
     }
 
-    private suspend fun fetchAvailableCountries(): List<String> {
-        val response = httpClient.get(PROXYSCRAPE_INFO_URL)
+    /**
+     * Fetches proxies from ProxyScrape JSON API and groups them by country.
+     */
+    private suspend fun fetchProxies(): Map<String, List<FreeProxy>> {
+        val response = httpClient.get(PROXYSCRAPE_JSON_URL)
         
         if (response.status.value != 200) {
-            logger.warn("ProxyScrape proxyinfo returned status: {}", response.status)
-            return emptyList()
+            logger.warn("ProxyScrape returned status: {}", response.status)
+            return emptyMap()
         }
 
         return try {
-            val proxyInfo = json.decodeFromString<ProxyInfoResponse>(response.bodyAsText())
-            proxyInfo.countries?.keys?.toList() ?: emptyList()
-        } catch (e: Exception) {
-            logger.warn("Failed to parse proxyinfo response: {}", e.message)
-            emptyList()
-        }
-    }
-
-    private suspend fun fetchProxiesForCountries(countries: List<String>): Map<String, List<FreeProxy>> {
-        val result = mutableMapOf<String, List<FreeProxy>>()
-        
-        for (country in countries) {
-            try {
-                val proxies = fetchProxiesForCountry(country)
-                if (proxies.isNotEmpty()) {
-                    result[country] = proxies
+            val proxyResponse = json.decodeFromString<ProxyScrapeResponse>(response.bodyAsText())
+            
+            logger.debug(
+                "Fetched {} proxies from ProxyScrape (total available: {})",
+                proxyResponse.proxies.size,
+                proxyResponse.totalRecords
+            )
+            
+            // Group proxies by country code and convert to FreeProxy
+            proxyResponse.proxies
+                .filter { it.alive && it.ipData?.countryCode != null }
+                .mapNotNull { proxy ->
+                    val countryCode = proxy.ipData?.countryCode ?: return@mapNotNull null
+                    FreeProxy(
+                        protocol = proxy.protocol,
+                        host = proxy.ip,
+                        port = proxy.port,
+                        country = countryCode.uppercase()
+                    )
                 }
-                delay(INTER_REQUEST_DELAY)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logger.debug("Failed to fetch proxies for {}: {}", country, e.message)
-            }
+                .groupBy { it.country }
+        } catch (e: Exception) {
+            logger.warn("Failed to parse ProxyScrape response: {}", e.message)
+            emptyMap()
         }
-        
-        return result
-    }
-
-    private suspend fun fetchProxiesForCountry(countryCode: String): List<FreeProxy> {
-        val response = httpClient.get("$PROXYSCRAPE_PROXIES_URL$countryCode")
-        
-        if (response.status.value != 200) {
-            return emptyList()
-        }
-
-        return response.bodyAsText()
-            .lineSequence()
-            .mapNotNull { line -> FreeProxy.parse(line.trim(), countryCode.uppercase()) }
-            .toList()
     }
 
     // ==================== Data Classes ====================
@@ -265,8 +246,25 @@ class FreeProxySyncService(
     )
 }
 
+// ==================== ProxyScrape API Response DTOs ====================
+
 @Serializable
-private data class ProxyInfoResponse(
-    val countries: Map<String, Int>? = null
+private data class ProxyScrapeResponse(
+    @SerialName("total_records") val totalRecords: Int = 0,
+    val proxies: List<ProxyRecord> = emptyList()
+)
+
+@Serializable
+private data class ProxyRecord(
+    val alive: Boolean = false,
+    val protocol: String = "http",
+    val ip: String = "",
+    val port: Int = 0,
+    @SerialName("ip_data") val ipData: IpData? = null
+)
+
+@Serializable
+private data class IpData(
+    @SerialName("countryCode") val countryCode: String? = null
 )
 

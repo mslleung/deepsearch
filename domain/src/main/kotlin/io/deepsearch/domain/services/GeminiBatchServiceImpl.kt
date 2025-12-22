@@ -26,7 +26,12 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import kotlin.io.createTempFile
+import kotlin.io.path.absolutePathString
+import kotlin.io.path.bufferedWriter
+import kotlin.io.path.createTempFile
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.fileSize
+import kotlin.io.path.readText
 
 /**
  * Implementation of IGeminiBatchService using the Gemini Batch API.
@@ -185,7 +190,7 @@ class GeminiBatchServiceImpl(
                 }
             }
             
-            logger.debug("Created JSONL file: {} ({} bytes)", tempFile.absolutePath, tempFile.length())
+            logger.debug("Created JSONL file: {} ({} bytes)", tempFile.absolutePathString(), tempFile.fileSize())
             
             // Upload file to Gemini Files API
             val uploadConfig = UploadFileConfig.builder()
@@ -194,7 +199,7 @@ class GeminiBatchServiceImpl(
                 .build()
             
             val uploadedFile = withRateLimitRetry(this::class.simpleName!!) {
-                client.files.upload(tempFile, uploadConfig)
+                client.files.upload(tempFile.toFile(), uploadConfig)
             }
             
             val uploadedFileName = uploadedFile.name().orElseThrow {
@@ -226,9 +231,9 @@ class GeminiBatchServiceImpl(
         } finally {
             // Clean up temp file
             try {
-                tempFile.delete()
+                tempFile.deleteIfExists()
             } catch (e: Exception) {
-                logger.warn("Failed to delete temp file: {}", tempFile.absolutePath)
+                logger.warn("Failed to delete temp file: {}", tempFile.absolutePathString())
             }
         }
     }
@@ -404,7 +409,7 @@ class GeminiBatchServiceImpl(
                 }
             }
             
-            logger.debug("Created embedding JSONL file: {} ({} bytes)", tempFile.absolutePath, tempFile.length())
+            logger.debug("Created embedding JSONL file: {} ({} bytes)", tempFile.absolutePathString(), tempFile.fileSize())
             
             // Upload file to Gemini Files API
             val uploadConfig = UploadFileConfig.builder()
@@ -413,7 +418,7 @@ class GeminiBatchServiceImpl(
                 .build()
             
             val uploadedFile = withRateLimitRetry(this::class.simpleName!!) {
-                client.files.upload(tempFile, uploadConfig)
+                client.files.upload(tempFile.toFile(), uploadConfig)
             }
             
             val uploadedFileName = uploadedFile.name().orElseThrow {
@@ -445,9 +450,9 @@ class GeminiBatchServiceImpl(
         } finally {
             // Clean up temp file
             try {
-                tempFile.delete()
+                tempFile.deleteIfExists()
             } catch (e: Exception) {
-                logger.warn("Failed to delete temp file: {}", tempFile.absolutePath)
+                logger.warn("Failed to delete temp file: {}", tempFile.absolutePathString())
             }
         }
     }
@@ -596,7 +601,7 @@ class GeminiBatchServiceImpl(
         try {
             // Download the file content to temp file
             withRateLimitRetry(this::class.simpleName!!) {
-                client.files.download(fileName, tempFile.absolutePath, null)
+                client.files.download(fileName, tempFile.absolutePathString(), null)
             }
             
             val fileContent = tempFile.readText()
@@ -692,9 +697,9 @@ class GeminiBatchServiceImpl(
         } finally {
             // Clean up temp file
             try {
-                tempFile.delete()
+                tempFile.deleteIfExists()
             } catch (e: Exception) {
-                logger.warn("Failed to delete temp results file: {}", tempFile.absolutePath)
+                logger.warn("Failed to delete temp results file: {}", tempFile.absolutePathString())
             }
         }
     }
