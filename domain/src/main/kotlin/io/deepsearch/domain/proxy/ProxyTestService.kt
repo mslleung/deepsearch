@@ -46,10 +46,8 @@ class ProxyTestService(
     override suspend fun testProxy(proxyUrl: String): ProxyTestResult {
         logger.info("Testing proxy connection: {}", proxyUrl.substringBefore("@").substringAfter("://"))
 
-        val proxyConfig = ProxyConfiguration.Custom(proxyUrl)
-
         return try {
-            val client = httpClientFactory.createClient(proxyConfig) {
+            val client = httpClientFactory.createClient(proxyUrl) {
                 config {
                     connectTimeout(TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
                     readTimeout(TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)

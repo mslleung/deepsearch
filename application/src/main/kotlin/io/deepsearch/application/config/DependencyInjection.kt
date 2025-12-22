@@ -45,7 +45,7 @@ val applicationModule = module {
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
-    singleOf(::BypassStrategyService) bind IBypassStrategyService::class
+    singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
     singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class

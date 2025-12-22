@@ -1,7 +1,5 @@
 package io.deepsearch.domain.http
 
-import io.deepsearch.domain.config.ProxyrackHttpConfig
-import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.*
@@ -15,49 +13,36 @@ import java.net.URI
  * Factory for creating HTTP clients with proxy configuration.
  * 
  * This factory creates Ktor HTTP clients backed by OkHttp with proxy settings
- * applied based on the provided ProxyConfiguration.
+ * applied based on the provided proxy URL.
  */
 interface IProxyAwareHttpClientFactory {
     /**
-     * Create an HTTP client with the specified proxy configuration.
+     * Create an HTTP client with the specified proxy URL.
      * 
-     * @param proxyConfig The proxy configuration to apply
+     * @param proxyUrl The resolved proxy URL (null for direct connection)
      * @param configure Additional OkHttp configuration
      * @return A configured HttpClient
      */
     fun createClient(
-        proxyConfig: ProxyConfiguration,
+        proxyUrl: String? = null,
         configure: OkHttpConfig.() -> Unit = {}
     ): HttpClient
 }
 
-class ProxyAwareHttpClientFactory(
-    private val proxyrackConfig: ProxyrackHttpConfig
-) : IProxyAwareHttpClientFactory {
+class ProxyAwareHttpClientFactory : IProxyAwareHttpClientFactory {
     
     private val logger = LoggerFactory.getLogger(this::class.java)
     
     override fun createClient(
-        proxyConfig: ProxyConfiguration,
+        proxyUrl: String?,
         configure: OkHttpConfig.() -> Unit
     ): HttpClient {
         return HttpClient(OkHttp) {
             engine {
-                // Apply proxy configuration
-                when (proxyConfig) {
-                    is ProxyConfiguration.None -> {
-                        // No proxy - direct connection
-                        logger.debug("Creating HTTP client without proxy")
-                    }
-                    is ProxyConfiguration.Custom -> {
-                        configureProxy(proxyConfig.proxyUrl)
-                    }
-                    is ProxyConfiguration.Included -> {
-                        configureProxy(proxyrackConfig.toProxyUrl())
-                    }
-                    is ProxyConfiguration.FreeRotating -> {
-                        configureProxy(proxyConfig.proxyUrl)
-                    }
+                if (proxyUrl != null) {
+                    configureProxy(proxyUrl)
+                } else {
+                    logger.debug("Creating HTTP client without proxy")
                 }
                 
                 // Apply additional configuration
@@ -115,4 +100,3 @@ class ProxyAwareHttpClientFactory(
         }
     }
 }
-

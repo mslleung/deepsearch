@@ -1,9 +1,16 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
@@ -58,8 +65,11 @@ interface IUrlContentProcessingService {
      * Process a URL and discover links relevant to the provided query.
      * Emits LinkDiscoveryComplete event first, then MarkdownExtractionComplete event.
      * 
-     * @param proxyConfig User's proxy configuration. None (default) uses adaptive bypass strategy.
-     *                    Custom/Included proxies are used directly without bypass logic.
+     * @param proxyConfig User's proxy configuration choice:
+     *                    - None: direct connection
+     *                    - Custom: user's custom proxy
+     *                    - Included: Proxyrack residential proxy
+     *                    - FreeRotating: fanout to multiple free proxies
      */
     fun processUrlAsFlow(
         url: String,
@@ -75,8 +85,7 @@ interface IUrlContentProcessingService {
      * Used for periodic index jobs.
      * Emits LinkDiscoveryComplete event first, then MarkdownExtractionComplete event.
      * 
-     * @param proxyConfig User's proxy configuration. None (default) uses adaptive bypass strategy.
-     *                    Custom/Included proxies are used directly without bypass logic.
+     * @param proxyConfig User's proxy configuration choice.
      */
     fun processUrlAsFlow(
         url: String,
@@ -88,7 +97,7 @@ interface IUrlContentProcessingService {
 
 class UrlContentProcessingService(
     private val browserPool: IBrowserPool,
-    private val bypassStrategyService: IBypassStrategyService,
+    private val proxyResolutionService: IProxyResolutionService,
     private val normalizeUrlService: INormalizeUrlService,
     private val webpageCacheService: IWebpageCacheService,
     private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
@@ -276,11 +285,8 @@ class UrlContentProcessingService(
         proxyConfig: ProxyConfiguration,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
-        // Use bypass strategy service for navigation with automatic proxy fallback
-        // For Custom/Included proxies: uses them directly
-        // For None (default): handles direct connection first, then falls back to free rotating proxies if blocked
-        bypassStrategyService.withPageWithBypass(normalizedUrl, proxyConfig) { page ->
-            // Navigation is already done by bypassStrategyService
+        // Resolve proxy config and execute with appropriate browser pool method (navigation is handled internally)
+        withResolvedPage(normalizedUrl, proxyConfig) { page ->
             val extractedHtml = page.getFullHtml()
 
             // Emit HTML preview immediately (no LLM) for early evaluation by preview path
@@ -389,6 +395,73 @@ class UrlContentProcessingService(
     }
 
     /**
+     * Execute block with resolved proxy configuration.
+     * Handles navigation internally and orchestrates fanout if multiple proxies are returned.
+     */
+    private suspend fun <T> withResolvedPage(
+        url: String,
+        proxyConfig: ProxyConfiguration,
+        block: suspend (IBrowserPage) -> T
+    ): T {
+        val proxyUrls = proxyResolutionService.resolve(url, proxyConfig)
+        return if (proxyUrls.size <= 1) {
+            browserPool.withPage(proxyUrls.firstOrNull()) { page ->
+                page.navigate(url)
+                block(page)
+            }
+        } else {
+            withProxyFanout(proxyUrls, url, block)
+        }
+    }
+
+    /**
+     * Try multiple proxies in parallel. First successful navigation wins and proceeds with extraction.
+     * Other attempts are cancelled once a winner is selected.
+     */
+    private suspend fun <T> withProxyFanout(
+        proxyUrls: List<String>,
+        navigateUrl: String,
+        block: suspend (IBrowserPage) -> T
+    ): T = coroutineScope {
+        logger.debug("Fanout to {} proxies for {}", proxyUrls.size, navigateUrl)
+
+        val result = CompletableDeferred<T>()
+        val winnerSelected = AtomicBoolean(false)
+        val failureCount = AtomicInteger(0)
+
+        val jobs = proxyUrls.map { proxyUrl ->
+            launch {
+                try {
+                    browserPool.withPage(proxyUrl) { page ->
+                        page.navigate(navigateUrl)
+
+                        // First successful navigation wins - others just exit
+                        if (winnerSelected.compareAndSet(false, true)) {
+                            val output = block(page)
+                            result.complete(output)
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.debug("Proxy {} failed: {}", proxyUrl, e.message)
+                    if (failureCount.incrementAndGet() == proxyUrls.size) {
+                        result.completeExceptionally(
+                            AllProxiesFailedException(proxyUrls.first(), proxyUrls.size, e)
+                        )
+                    }
+                }
+            }
+        }
+
+        try {
+            result.await()
+        } finally {
+            jobs.forEach { it.cancel() }
+        }
+    }
+
+    /**
      * Process a supported file (PDF, docx, etc.) using Gemini File Search.
      *
      * Flow (similar to processHtmlUrlAsFlow):
@@ -481,5 +554,3 @@ class UrlContentProcessingService(
         )
     }
 }
-
-

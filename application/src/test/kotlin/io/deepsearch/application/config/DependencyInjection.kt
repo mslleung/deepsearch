@@ -65,6 +65,8 @@ import io.deepsearch.application.services.LlmTokenUsageService
 import io.deepsearch.application.services.TestLlmTokenUsageService
 import io.deepsearch.application.services.ProxySettingsService
 import io.deepsearch.application.services.IProxySettingsService
+import io.deepsearch.application.services.ProxyResolutionService
+import io.deepsearch.application.services.IProxyResolutionService
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.application.services.PeriodicIndexJobRegistry
 import io.deepsearch.application.services.PeriodicIndexJobService
@@ -135,6 +137,7 @@ private val applicationCommonTestModule = module {
     singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
     singleOf(::ProxySettingsService) bind IProxySettingsService::class
+    singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
     
     // Batch periodic index services
     singleOf(::BatchEventEmitter)

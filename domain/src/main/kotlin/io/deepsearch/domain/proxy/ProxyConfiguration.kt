@@ -1,8 +1,8 @@
 package io.deepsearch.domain.proxy
 
 /**
- * Represents the resolved proxy configuration for a specific request.
- * This is the result of matching a URL against user's proxy rules.
+ * Represents the user's proxy configuration choice.
+ * This is selected by the user in the UI.
  */
 sealed class ProxyConfiguration {
     /**
@@ -25,11 +25,9 @@ sealed class ProxyConfiguration {
 
     /**
      * Free rotating proxy from ProxyScrape pool.
-     * Used internally when the bypass strategy determines proxies are needed.
-     *
-     * @property proxyUrl The proxy server URL (e.g., "http://1.2.3.4:8080")
+     * When selected, the system will fanout to multiple proxies.
      */
-    data class FreeRotating(val proxyUrl: String) : ProxyConfiguration()
+    data object FreeRotating : ProxyConfiguration()
 
     companion object {
         /**
@@ -40,8 +38,8 @@ sealed class ProxyConfiguration {
                 ProxyType.NONE -> None
                 ProxyType.CUSTOM -> Custom(rule.customProxyUrl!!)
                 ProxyType.INCLUDED -> Included
+                ProxyType.FREE_ROTATING -> FreeRotating
             }
         }
     }
 }
-

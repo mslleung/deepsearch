@@ -17,5 +17,10 @@ enum class ProxyType {
     /**
      * Included proxy - uses the system-configured Proxyrack residential proxy.
      */
-    INCLUDED
+    INCLUDED,
+
+    /**
+     * Free rotating proxy - uses ProxyScrape pool with fanout strategy.
+     */
+    FREE_ROTATING
 }

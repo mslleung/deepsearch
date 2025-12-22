@@ -5,7 +5,6 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.browser.remote.dto.*
 import io.deepsearch.domain.config.DeepSearchBrowserConfig
 import io.deepsearch.domain.config.IApplicationCoroutineScope
-import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.okhttp.*
@@ -60,17 +59,14 @@ class RemoteBrowserPool(
     }
 
     override suspend fun <T> withPage(
-        proxyConfig: ProxyConfiguration,
+        proxyUrl: String?,
         block: suspend (IBrowserPage) -> T
     ): T {
-        // Convert domain ProxyConfiguration to API ProxyConfigDto
-        val proxyDto = proxyConfig.toDto()
-        
-        // Acquire session with proxy configuration
+        // Acquire session with proxy URL
         val acquireResponse = try {
             httpClient.post("$baseUrl/sessions") {
                 contentType(ContentType.Application.Json)
-                setBody(AcquireRequest(proxy = proxyDto))
+                setBody(AcquireRequest(proxyUrl = proxyUrl))
             }
         } catch (e: CancellationException) {
             throw e // Preserve cooperative cancellation
@@ -86,7 +82,7 @@ class RemoteBrowserPool(
         val sessionInfo = acquireResponse.body<AcquireResponse>()
         val sessionId = sessionInfo.sessionId
 
-        logger.debug("Acquired session: {} with proxy: {}", sessionId, proxyConfig::class.simpleName)
+        logger.debug("Acquired session: {} with proxy: {}", sessionId, proxyUrl ?: "direct")
 
         val released = AtomicBoolean(false)
 
@@ -113,18 +109,6 @@ class RemoteBrowserPool(
                     logger.warn("Failed to release session {}: {}", sessionId, e.message)
                 }
             }
-        }
-    }
-    
-    /**
-     * Convert domain ProxyConfiguration to API DTO.
-     */
-    private fun ProxyConfiguration.toDto(): ProxyConfigDto? {
-        return when (this) {
-            is ProxyConfiguration.None -> null
-            is ProxyConfiguration.Custom -> ProxyConfigDto(type = "CUSTOM", customUrl = this.proxyUrl)
-            is ProxyConfiguration.Included -> ProxyConfigDto(type = "INCLUDED", customUrl = null)
-            is ProxyConfiguration.FreeRotating -> ProxyConfigDto(type = "FREE_ROTATING", customUrl = this.proxyUrl)
         }
     }
 
@@ -180,13 +164,7 @@ class RemoteBrowserPool(
 
 @Serializable
 private data class AcquireRequest(
-    val proxy: ProxyConfigDto? = null
-)
-
-@Serializable
-private data class ProxyConfigDto(
-    val type: String = "NONE",
-    val customUrl: String? = null
+    val proxyUrl: String? = null
 )
 
 @Serializable

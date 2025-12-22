@@ -1,7 +1,8 @@
 package io.deepsearch.application.services.batch
 
-import io.deepsearch.application.services.IBypassStrategyService
+import io.deepsearch.application.services.IProxyResolutionService
 import io.deepsearch.application.services.IProxySettingsService
+import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.entities.BatchIconData
 import io.deepsearch.domain.proxy.ProxyConfiguration
@@ -16,9 +17,15 @@ import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
+import io.deepsearch.domain.exceptions.AllProxiesFailedException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.flatMapMerge
@@ -29,7 +36,6 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Stage 1: Browser-based crawl + extract handler.
@@ -42,7 +48,7 @@ class CrawlAndExtractHandler(
     private val batchJobRepository: IBatchPeriodicIndexJobRepository,
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val browserPool: IBrowserPool,
-    private val bypassStrategyService: IBypassStrategyService,
+    private val proxyResolutionService: IProxyResolutionService,
     private val proxySettingsService: IProxySettingsService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
@@ -79,7 +85,6 @@ class CrawlAndExtractHandler(
         eventEmitter.emit(job, eventFlow, "Stage 1: Crawling & extracting webpages...")
         
         // Resolve user's proxy configuration for this job's base URL
-        // Custom/Included proxies are used directly; None triggers adaptive bypass strategy
         val proxyConfig = proxySettingsService.resolveProxyForUrl(job.userId, job.baseUrl)
 
         // Thread-safe collections
@@ -208,11 +213,8 @@ class CrawlAndExtractHandler(
             var discoveredLinks = emptyList<String>()
             
             adaptiveRateLimiter.withRateLimit(url) {
-                // Use bypass strategy for adaptive proxy handling:
-                // - Custom/Included proxies are used directly
-                // - None triggers direct-first, then free rotating proxy fallback
-                bypassStrategyService.withPageWithBypass(url, proxyConfig) { page ->
-                    // Navigation is already done by bypassStrategyService
+                // Resolve proxy and acquire page (navigation is handled internally)
+                withResolvedPage(url, proxyConfig) { page ->
                     val html = page.getFullHtml()
                     
                     // Parallel browser captures
@@ -272,9 +274,75 @@ class CrawlAndExtractHandler(
         }
     }
 
+    /**
+     * Execute block with resolved proxy configuration.
+     * Handles navigation internally and orchestrates fanout if multiple proxies are returned.
+     */
+    private suspend fun <T> withResolvedPage(
+        url: String,
+        proxyConfig: ProxyConfiguration,
+        block: suspend (IBrowserPage) -> T
+    ): T {
+        val proxyUrls = proxyResolutionService.resolve(url, proxyConfig)
+        return if (proxyUrls.size <= 1) {
+            browserPool.withPage(proxyUrls.firstOrNull()) { page ->
+                page.navigate(url)
+                block(page)
+            }
+        } else {
+            withProxyFanout(proxyUrls, url, block)
+        }
+    }
+
+    /**
+     * Try multiple proxies in parallel. First successful navigation wins and proceeds with extraction.
+     * Other attempts are cancelled once a winner is selected.
+     */
+    private suspend fun <T> withProxyFanout(
+        proxyUrls: List<String>,
+        navigateUrl: String,
+        block: suspend (IBrowserPage) -> T
+    ): T = coroutineScope {
+        logger.debug("Fanout to {} proxies for {}", proxyUrls.size, navigateUrl)
+
+        val result = CompletableDeferred<T>()
+        val winnerSelected = AtomicBoolean(false)
+        val failureCount = AtomicInteger(0)
+
+        val jobs = proxyUrls.map { proxyUrl ->
+            launch {
+                try {
+                    browserPool.withPage(proxyUrl) { page ->
+                        page.navigate(navigateUrl)
+
+                        // First successful navigation wins - others just exit
+                        if (winnerSelected.compareAndSet(false, true)) {
+                            val output = block(page)
+                            result.complete(output)
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logger.debug("Proxy {} failed: {}", proxyUrl, e.message)
+                    if (failureCount.incrementAndGet() == proxyUrls.size) {
+                        result.completeExceptionally(
+                            AllProxiesFailedException(proxyUrls.first(), proxyUrls.size, e)
+                        )
+                    }
+                }
+            }
+        }
+
+        try {
+            result.await()
+        } finally {
+            jobs.forEach { it.cancel() }
+        }
+    }
+
     private fun matchesLanguageFilter(url: String, job: BatchPeriodicIndexJob): Boolean {
         val pattern = job.languagePattern?.let { LanguagePattern.parse(it) } ?: return true
         return pattern.matches(url, job.baseUrl)
     }
 }
-

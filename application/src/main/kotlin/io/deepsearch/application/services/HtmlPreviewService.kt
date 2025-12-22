@@ -49,9 +49,6 @@ class HtmlPreviewService : IHtmlPreviewService {
             "class", "id", "role", "aria-label", "aria-labelledby",
             "href", "src", "alt", "title", "data-testid"
         )
-
-        // Maximum HTML size to prevent token bloat (characters)
-        private const val MAX_HTML_SIZE = 50_000
     }
 
     override fun prepareHtmlPreview(html: String, url: String): HtmlPreviewResult {
@@ -70,13 +67,7 @@ class HtmlPreviewService : IHtmlPreviewService {
         removeEmptyElements(doc)
 
         // Get the cleaned body HTML
-        var cleanedHtml = doc.body()?.html() ?: ""
-
-        // Truncate if too large
-        if (cleanedHtml.length > MAX_HTML_SIZE) {
-            cleanedHtml = truncateHtml(cleanedHtml, MAX_HTML_SIZE)
-            logger.debug("Truncated HTML preview for {}: {} -> {} chars", url, html.length, cleanedHtml.length)
-        }
+        val cleanedHtml = doc.body().html()
 
         logger.debug("HTML preview for {}: {} -> {} chars", url, html.length, cleanedHtml.length)
 
@@ -150,20 +141,5 @@ class HtmlPreviewService : IHtmlPreviewService {
         if (meaningfulChildren.isNotEmpty()) return false
 
         return true
-    }
-
-    private fun truncateHtml(html: String, maxSize: Int): String {
-        // Try to truncate at a sensible boundary
-        if (html.length <= maxSize) return html
-
-        // Find last complete tag before the limit
-        val truncated = html.take(maxSize)
-        val lastTagEnd = truncated.lastIndexOf('>')
-
-        return if (lastTagEnd > maxSize / 2) {
-            truncated.take(lastTagEnd + 1) + "\n<!-- truncated -->"
-        } else {
-            truncated + "\n<!-- truncated -->"
-        }
     }
 }

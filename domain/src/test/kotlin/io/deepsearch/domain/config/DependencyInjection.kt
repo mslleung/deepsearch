@@ -31,13 +31,16 @@ import io.deepsearch.domain.services.GeminiBatchServiceImpl
 import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.domain.http.IProxyAwareHttpClientFactory
 import io.deepsearch.domain.http.ProxyAwareHttpClientFactory
+import io.deepsearch.domain.proxy.FreeProxyPool
+import io.deepsearch.domain.proxy.FreeProxySyncService
+import io.deepsearch.domain.proxy.IFreeProxyProvider
 import io.deepsearch.domain.proxy.IProxyTestService
+import io.deepsearch.domain.proxy.FreeProxyProvider
 import io.deepsearch.domain.proxy.ProxyTestService
 import io.deepsearch.domain.services.GeminiFileSearchService
 import io.deepsearch.domain.services.IGeminiFileSearchService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
-import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -63,6 +66,13 @@ private val domainCommonTestModule = module {
     single {
         DeepSearchBrowserConfig(
             url = "http://localhost:8090"
+        )
+    }
+    single {
+        ProxyrackHttpConfig(
+            endpoint = System.getenv("PROXYRACK_ENDPOINT") ?: "test-endpoint:10000",
+            username = System.getenv("PROXYRACK_USERNAME") ?: "test-user",
+            apiKey = System.getenv("PROXYRACK_API_KEY") ?: "test-api-key"
         )
     }
 
@@ -116,6 +126,9 @@ private val domainCommonTestModule = module {
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
     singleOf(::ProxyAwareHttpClientFactory) bind IProxyAwareHttpClientFactory::class
     singleOf(::ProxyTestService) bind IProxyTestService::class
+    singleOf(::FreeProxySyncService)
+    singleOf(::FreeProxyPool)
+    singleOf(::FreeProxyProvider) bind IFreeProxyProvider::class
 }
 
 val domainTestModule = module {
