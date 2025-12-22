@@ -64,6 +64,7 @@ val infrastructureModule = module {
     singleOf(::ExposedBatchPeriodicIndexJobRepository) bind IBatchPeriodicIndexJobRepository::class
     singleOf(::ExposedBatchUrlStateRepository) bind IBatchUrlStateRepository::class
     singleOf(::ExposedDomainBypassStrategyRepository) bind IDomainBypassStrategyRepository::class
+    singleOf(::ExposedProxyRuleRepository) bind IProxyRuleRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {
@@ -71,6 +72,5 @@ val infrastructureModule = module {
         scopedOf(::ExposedUserRepository) bind IUserRepository::class
         scopedOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class
         scopedOf(::ExposedQuerySessionRepository) bind IQuerySessionRepository::class
-        scopedOf(::ExposedProxyRuleRepository) bind IProxyRuleRepository::class
     }
 }

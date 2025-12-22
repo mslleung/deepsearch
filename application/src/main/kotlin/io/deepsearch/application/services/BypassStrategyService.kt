@@ -19,6 +19,29 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
+ * Interface for bypass strategy service.
+ */
+interface IBypassStrategyService {
+    /**
+     * Execute a block with a browser page, using adaptive bypass strategy.
+     *
+     * The bypass strategy only applies when proxyConfig is None (the default):
+     * - Custom/Included proxies are used directly without any bypass logic
+     * - None triggers the adaptive bypass: direct first, then free rotating proxy fallback
+     *
+     * @param url The URL to navigate to
+     * @param proxyConfig The user's configured proxy (None applies bypass strategy)
+     * @param block The block to execute with the browser page
+     * @return The result of the block
+     */
+    suspend fun <T> withPageWithBypass(
+        url: String,
+        proxyConfig: ProxyConfiguration = ProxyConfiguration.None,
+        block: suspend (IBrowserPage) -> T
+    ): T
+}
+
+/**
  * Service that orchestrates navigation with adaptive bypass strategy.
  * 
  * Key features:
@@ -262,27 +285,3 @@ class BypassStrategyService(
                 message.contains("tunnel")
     }
 }
-
-/**
- * Interface for bypass strategy service.
- */
-interface IBypassStrategyService {
-    /**
-     * Execute a block with a browser page, using adaptive bypass strategy.
-     * 
-     * The bypass strategy only applies when proxyConfig is None (the default):
-     * - Custom/Included proxies are used directly without any bypass logic
-     * - None triggers the adaptive bypass: direct first, then free rotating proxy fallback
-     * 
-     * @param url The URL to navigate to
-     * @param proxyConfig The user's configured proxy (None applies bypass strategy)
-     * @param block The block to execute with the browser page
-     * @return The result of the block
-     */
-    suspend fun <T> withPageWithBypass(
-        url: String,
-        proxyConfig: ProxyConfiguration = ProxyConfiguration.None,
-        block: suspend (IBrowserPage) -> T
-    ): T
-}
-

@@ -61,6 +61,9 @@ val applicationModule = module {
 
     singleOf(::PeriodicIndexScheduler) { createdAtStart() }
 
+    // ProxySettingsService is stateless and needed by singletons (PeriodicIndexJobRegistry, CrawlAndExtractHandler)
+    singleOf(::ProxySettingsService) bind IProxySettingsService::class
+
     // Request-scoped services (user/auth related)
     requestScope {
         scopedOf(::ApiKeyService) bind IApiKeyService::class
@@ -74,6 +77,5 @@ val applicationModule = module {
         scopedOf(::SearchService) bind ISearchService::class
         scopedOf(::QuerySessionService) bind IQuerySessionService::class
         scopedOf(::PaymentService) bind IPaymentService::class
-        scopedOf(::ProxySettingsService) bind IProxySettingsService::class
     }
 }

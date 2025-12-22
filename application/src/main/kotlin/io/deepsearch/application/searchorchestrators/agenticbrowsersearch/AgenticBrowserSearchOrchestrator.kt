@@ -213,7 +213,6 @@ class AgenticBrowserSearchOrchestrator(
             // Track state for both paths
             var previewAccumulator = PreviewAccumulator()
             var answerAccumulator = AnswerAccumulator()
-            var sessionFinished = false
 
             // Merge both paths: preview (fast HTML) and main (full markdown)
             merge(
@@ -221,7 +220,7 @@ class AgenticBrowserSearchOrchestrator(
                 sourceFlow
                     .filterIsInstance<UrlContentResult.HtmlPreview>()
                     .chunkedWithTimeout(chunkSize = 10, timeoutMs = 800)
-                    .takeWhile { !sessionFinished }
+                    .takeWhile { !answerAccumulator.isComplete }
                     .runningFold(PreviewAccumulator()) { state, htmlBatch ->
                         aggregatePreviewIntoAnswer(sessionId, searchQuery, state, htmlBatch, channel)
                     }
@@ -229,12 +228,8 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { it.isConfidentForAnswer }
                     .take(1)
                     .onEach { confidentAccumulator ->
-                        // Finish immediately in onEach for faster response (don't wait for cooperative cancellation)
-                        if (!sessionFinished) {
-                            logger.info("[{}] Preview path produced confident answer", sessionId.value)
-                            finishWithPreviewAnswer(sessionId, searchQuery, confidentAccumulator, channel)
-                            sessionFinished = true
-                        }
+                        logger.info("[{}] Preview path produced confident answer", sessionId.value)
+                        finishWithPreviewAnswer(sessionId, searchQuery, confidentAccumulator, channel)
                     }
                     .map { AccumulatorUpdate.Preview(it) },
 
@@ -244,34 +239,30 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { it.markdown.isNotBlank() }
                     .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
                     .chunkedWithTimeout(chunkSize = 15, timeoutMs = 1000)
-                    .takeWhile { !sessionFinished }
+                    .takeWhile { !previewAccumulator.isConfidentForAnswer }
                     .runningFold(AnswerAccumulator()) { state, markdownResults ->
-                        aggregateMarkdownResultIntoAnswer(sessionId, searchQuery, state, markdownResults, channel)
+                        aggregateMarkdownResultIntoAnswer(
+                            sessionId, searchQuery, state, markdownResults, channel,
+                            isPreviewConfident = { previewAccumulator.isConfidentForAnswer }
+                        )
                     }
                     .onEach { answerAccumulator = it }
                     .filter { it.isComplete }
                     .take(1)
                     .onEach { completedAccumulator ->
-                        // Finish immediately in onEach for faster response (don't wait for cooperative cancellation)
-                        if (!sessionFinished) {
-                            finishQuerySession(sessionId, searchQuery, completedAccumulator, budget, channel)
-                            sessionFinished = true
-                        }
+                        finishQuerySession(sessionId, searchQuery, completedAccumulator, budget, channel)
                     }
                     .map { AccumulatorUpdate.Main(it) }
             )
                 .onCompletion {
                     // Handle case where neither path completed via onEach (sources exhausted or interrupted)
-                    if (!sessionFinished) {
-                        // Check if preview path was confident - if so, finish with preview
-                        if (previewAccumulator.isConfidentForAnswer) {
-                            logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
-                            finishWithPreviewAnswer(sessionId, searchQuery, previewAccumulator, channel)
-                        } else {
-                            // Fall back to main path accumulator (may be incomplete)
-                            finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
-                        }
-                        sessionFinished = true
+                    // The finish functions check DB to avoid duplicate finishing
+                    if (previewAccumulator.isConfidentForAnswer) {
+                        logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
+                        finishWithPreviewAnswer(sessionId, searchQuery, previewAccumulator, channel)
+                    } else {
+                        // Fall back to main path accumulator (may be incomplete)
+                        finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
                     }
                 }
                 .collect()
@@ -328,55 +319,31 @@ class AgenticBrowserSearchOrchestrator(
                             }
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                // Record URL access based on cached status
                                 if (event.wasCached) {
-                                    // Cached URLs: record access and fire UrlProcessed (no HtmlPreview for cached)
                                     urlAccessService.recordUrlAccess(
                                         sessionId,
                                         CachedUrlAccess(event.url, Clock.System.now())
                                     )
-                                    eventChannel.send(
-                                        SearchEvent.UrlProcessed(
-                                            sessionId = sessionId,
-                                            url = event.url,
-                                            accessType = "CACHED",
-                                            title = event.title,
-                                            description = event.description,
-                                            markdownLength = event.markdown.length,
-                                            isPreview = false
-                                        )
-                                    )
-                                } else {
-                                    // Uncached URLs: URL access already recorded by HtmlPreview
-                                    // Fire UrlContentUpgraded to notify frontend of full markdown
-                                    eventChannel.send(
-                                        SearchEvent.UrlContentUpgraded(
-                                            sessionId = sessionId,
-                                            url = event.url,
-                                            title = event.title,
-                                            description = event.description,
-                                            markdownLength = event.markdown.length
-                                        )
-                                    )
                                 }
-                            }
-
-                            is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                // Record URL access for live crawled URLs
-                                urlAccessService.recordUrlAccess(
-                                    sessionId,
-                                    UncachedUrlAccess(event.url, Clock.System.now())
-                                )
-                                // Fire UrlProcessed with isPreview=true
+                                // Emit UrlProcessed for all markdown extractions (cached and uncached)
                                 eventChannel.send(
                                     SearchEvent.UrlProcessed(
                                         sessionId = sessionId,
                                         url = event.url,
-                                        accessType = "UNCACHED",
+                                        accessType = if (event.wasCached) "CACHED" else "UNCACHED",
                                         title = event.title,
                                         description = event.description,
-                                        markdownLength = event.cleanedHtml.length,
-                                        isPreview = true
+                                        markdownLength = event.markdown.length
                                     )
+                                )
+                            }
+
+                            is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
+                                // Record URL access for live crawled URLs (preview path is silent, no events)
+                                urlAccessService.recordUrlAccess(
+                                    sessionId,
+                                    UncachedUrlAccess(event.url, Clock.System.now())
                                 )
                                 logger.debug(
                                     "[{}] HTML preview ready for {}: {} chars",
@@ -496,54 +463,31 @@ class AgenticBrowserSearchOrchestrator(
                                     }
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        // Record URL access based on cached status
                                         if (event.wasCached) {
-                                            // Cached URLs: record access and fire UrlProcessed
                                             urlAccessService.recordUrlAccess(
                                                 sessionId,
                                                 CachedUrlAccess(event.url, Clock.System.now())
                                             )
-                                            eventChannel.send(
-                                                SearchEvent.UrlProcessed(
-                                                    sessionId = sessionId,
-                                                    url = event.url,
-                                                    accessType = "CACHED",
-                                                    title = event.title,
-                                                    description = event.description,
-                                                    markdownLength = event.markdown.length,
-                                                    isPreview = false
-                                                )
-                                            )
-                                        } else {
-                                            // Uncached URLs: URL access already recorded by HtmlPreview
-                                            eventChannel.send(
-                                                SearchEvent.UrlContentUpgraded(
-                                                    sessionId = sessionId,
-                                                    url = event.url,
-                                                    title = event.title,
-                                                    description = event.description,
-                                                    markdownLength = event.markdown.length
-                                                )
-                                            )
                                         }
-                                    }
-
-                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                        // Record URL access for live crawled URLs
-                                        urlAccessService.recordUrlAccess(
-                                            sessionId,
-                                            UncachedUrlAccess(event.url, Clock.System.now())
-                                        )
-                                        // Fire UrlProcessed with isPreview=true
+                                        // Emit UrlProcessed for all markdown extractions (cached and uncached)
                                         eventChannel.send(
                                             SearchEvent.UrlProcessed(
                                                 sessionId = sessionId,
                                                 url = event.url,
-                                                accessType = "UNCACHED",
+                                                accessType = if (event.wasCached) "CACHED" else "UNCACHED",
                                                 title = event.title,
                                                 description = event.description,
-                                                markdownLength = event.cleanedHtml.length,
-                                                isPreview = true
+                                                markdownLength = event.markdown.length
                                             )
+                                        )
+                                    }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
+                                        // Record URL access for live crawled URLs (preview path is silent, no events)
+                                        urlAccessService.recordUrlAccess(
+                                            sessionId,
+                                            UncachedUrlAccess(event.url, Clock.System.now())
                                         )
                                         logger.debug(
                                             "[{}] HTML preview ready for {}: {} chars",
@@ -679,54 +623,31 @@ class AgenticBrowserSearchOrchestrator(
                                     }
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                        // Record URL access based on cached status
                                         if (event.wasCached) {
-                                            // Cached URLs: record access and fire UrlProcessed
                                             urlAccessService.recordUrlAccess(
                                                 sessionId,
                                                 CachedUrlAccess(event.url, Clock.System.now())
                                             )
-                                            eventChannel.send(
-                                                SearchEvent.UrlProcessed(
-                                                    sessionId = sessionId,
-                                                    url = event.url,
-                                                    accessType = "CACHED",
-                                                    title = event.title,
-                                                    description = event.description,
-                                                    markdownLength = event.markdown.length,
-                                                    isPreview = false
-                                                )
-                                            )
-                                        } else {
-                                            // Uncached URLs: URL access already recorded by HtmlPreview
-                                            eventChannel.send(
-                                                SearchEvent.UrlContentUpgraded(
-                                                    sessionId = sessionId,
-                                                    url = event.url,
-                                                    title = event.title,
-                                                    description = event.description,
-                                                    markdownLength = event.markdown.length
-                                                )
-                                            )
                                         }
-                                    }
-
-                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                        // Record URL access for live crawled URLs
-                                        urlAccessService.recordUrlAccess(
-                                            sessionId,
-                                            UncachedUrlAccess(event.url, Clock.System.now())
-                                        )
-                                        // Fire UrlProcessed with isPreview=true
+                                        // Emit UrlProcessed for all markdown extractions (cached and uncached)
                                         eventChannel.send(
                                             SearchEvent.UrlProcessed(
                                                 sessionId = sessionId,
                                                 url = event.url,
-                                                accessType = "UNCACHED",
+                                                accessType = if (event.wasCached) "CACHED" else "UNCACHED",
                                                 title = event.title,
                                                 description = event.description,
-                                                markdownLength = event.cleanedHtml.length,
-                                                isPreview = true
+                                                markdownLength = event.markdown.length
                                             )
+                                        )
+                                    }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
+                                        // Record URL access for live crawled URLs (preview path is silent, no events)
+                                        urlAccessService.recordUrlAccess(
+                                            sessionId,
+                                            UncachedUrlAccess(event.url, Clock.System.now())
                                         )
                                         logger.debug(
                                             "[{}] HTML preview ready for {}: {} chars",
@@ -796,27 +717,18 @@ class AgenticBrowserSearchOrchestrator(
             emit(UrlContentResult.FullMarkdown(webpage.url, webpage.title, webpage.description, webpage.markdown!!))
         }
 
-        // For preview pages: emit HtmlPreview first, then trigger full extraction
+        // For preview pages: emit HtmlPreview for preview path (no SSE events), then trigger full extraction
         previewPages.forEach { webpage ->
-            eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, webpage.url))
             urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
-            eventChannel.send(
-                SearchEvent.UrlProcessed(
-                    sessionId = sessionId,
-                    url = webpage.url,
-                    accessType = "CACHED",
-                    title = webpage.title,
-                    description = webpage.description,
-                    markdownLength = webpage.html?.length,
-                    isPreview = true
-                )
-            )
             emit(UrlContentResult.HtmlPreview(webpage.url, webpage.title, webpage.description, webpage.html!!))
         }
 
         // Process preview pages through full extraction
         previewPages.asFlow()
             .flatMapMerge(concurrency = 15) { webpage ->
+                // Emit UrlProcessingStarted before full extraction
+                eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, webpage.url))
+
                 urlContentProcessingService.processUrlAsFlow(
                     webpage.url,
                     searchQuery.query,
@@ -837,10 +749,12 @@ class AgenticBrowserSearchOrchestrator(
                 .onEach { event ->
                     when (event) {
                         is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                            // Emit UrlProcessed when full markdown is ready
                             eventChannel.send(
-                                SearchEvent.UrlContentUpgraded(
+                                SearchEvent.UrlProcessed(
                                     sessionId = sessionId,
                                     url = event.url,
+                                    accessType = "CACHED",
                                     title = event.title,
                                     description = event.description,
                                     markdownLength = event.markdown.length
@@ -1070,7 +984,8 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         state: AnswerAccumulator,
         markdownSources: List<MarkdownSource>,
-        eventChannel: SendChannel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>,
+        isPreviewConfident: () -> Boolean
     ): AnswerAccumulator {
         // Filter to only new URLs (deduplication)
         val sourcesToEvaluate = markdownSources.filter { it.url !in state.processedUrls }
@@ -1092,15 +1007,19 @@ class AgenticBrowserSearchOrchestrator(
             output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
         )
 
-        eventChannel.send(
-            SearchEvent.ShortlistUpdated(
-                sessionId = sessionId,
-                processedUrlCount = updatedProcessedUrls.size,
-                shortlistedCount = output.updatedShortlist.size,
-                isGoodEnough = output.isGoodEnough,
-                reason = output.reason
+        // Only emit ShortlistUpdated if preview path hasn't already produced a confident answer
+        // This prevents race condition where main path emits events after preview answer starts streaming
+        if (!isPreviewConfident()) {
+            eventChannel.send(
+                SearchEvent.ShortlistUpdated(
+                    sessionId = sessionId,
+                    processedUrlCount = updatedProcessedUrls.size,
+                    shortlistedCount = output.updatedShortlist.size,
+                    isGoodEnough = output.isGoodEnough,
+                    reason = output.reason
+                )
             )
-        )
+        }
 
         return AnswerAccumulator(output.updatedShortlist, updatedProcessedUrls, output.isGoodEnough)
     }
@@ -1112,6 +1031,13 @@ class AgenticBrowserSearchOrchestrator(
         budget: SearchBudget,
         eventChannel: SendChannel<SearchEvent>
     ) {
+        // Check if session is already finished (use DB as source of truth)
+        val session = querySessionService.getSession(sessionId)
+        if (session.finishReason != null) {
+            logger.debug("[{}] Session already finished with {}, skipping query session finish", sessionId.value, session.finishReason)
+            return
+        }
+
         // Stream the answer and emit chunks
         var fullAnswer = ""
         answerSynthesisAgent.generateStream(
@@ -1233,6 +1159,7 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Finish the query session with a preview answer.
      * Called when the preview path produces a confident answer.
+     * Uses database as source of truth to check if session is already finished.
      */
     private suspend fun finishWithPreviewAnswer(
         sessionId: QuerySessionId,
@@ -1240,6 +1167,13 @@ class AgenticBrowserSearchOrchestrator(
         accumulator: PreviewAccumulator,
         eventChannel: SendChannel<SearchEvent>
     ) {
+        // Check if session is already finished (use DB as source of truth)
+        val session = querySessionService.getSession(sessionId)
+        if (session.finishReason != null) {
+            logger.debug("[{}] Session already finished with {}, skipping preview answer", sessionId.value, session.finishReason)
+            return
+        }
+
         logger.info("[{}] Finishing with preview answer (early exit)", sessionId.value)
 
         // Emit shortlist update for preview path (so frontend knows about preview sources)
