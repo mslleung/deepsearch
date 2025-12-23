@@ -13,6 +13,9 @@ sealed class PageCommand {
     @Serializable @SerialName("waitForLoad")
     data object WaitForLoad : PageCommand()
     
+    @Serializable @SerialName("navigateWithCachedHtml")
+    data class NavigateWithCachedHtml(val url: String, val htmlBodyBase64: String) : PageCommand()
+    
     @Serializable @SerialName("getUrl")
     data object GetUrl : PageCommand()
     

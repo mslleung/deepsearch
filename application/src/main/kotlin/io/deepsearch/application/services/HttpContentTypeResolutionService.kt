@@ -22,12 +22,33 @@ interface IHttpContentTypeResolutionService {
  * Result of HTTP content type resolution.
  */
 sealed class ContentTypeResult {
+    /**
+     * HTML content - includes downloaded body for immediate preview extraction.
+     * Browser will use CDP Fetch interception to serve cached HTML (no second server request).
+     */
     data class Html(
         val finalUrl: String,
         val statusCode: Int,
         val reasonPhrase: String,
-        val mimeType: String
-    ) : ContentTypeResult()
+        val mimeType: String,
+        val bodyBytes: ByteArray
+    ) : ContentTypeResult() {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+            other as Html
+            return finalUrl == other.finalUrl && 
+                   statusCode == other.statusCode &&
+                   bodyBytes.contentEquals(other.bodyBytes)
+        }
+        
+        override fun hashCode(): Int {
+            var result = finalUrl.hashCode()
+            result = 31 * result + statusCode
+            result = 31 * result + bodyBytes.contentHashCode()
+            return result
+        }
+    }
     
     /**
      * A file type supported by Gemini File Search.
@@ -187,7 +208,11 @@ object GeminiSupportedMimeTypes {
 
 /**
  * Service for resolving HTTP content types and downloading content.
- * Uses HEAD request first for efficiency, falls back to GET for supported files.
+ * 
+ * Strategy for single-request processing:
+ * - HTML: GET request downloads body, browser uses CDP Fetch to serve cached HTML (no second request)
+ * - Files: GET request downloads body directly (single request)
+ * - Unsupported/Too large: Check Content-Length header, skip body download if too large
  */
 class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
 
@@ -210,16 +235,16 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
         logger.debug("Resolving content type for URL: {}", url)
         
         try {
-            // Try HEAD request first to check content type without downloading
-            val headResponse = client.head(url)
-            val finalUrl = headResponse.request.url.toString()
-            val statusCode = headResponse.status.value
-            val reasonPhrase = headResponse.status.description
-            val contentType = headResponse.contentType()?.toString() ?: "unknown"
-            val contentLength = headResponse.contentLength()
+            // Single GET request - headers arrive first, body is streamed when read
+            val response = client.get(url)
+            val finalUrl = response.request.url.toString()
+            val statusCode = response.status.value
+            val reasonPhrase = response.status.description
+            val contentType = response.contentType()?.toString() ?: "unknown"
+            val contentLength = response.contentLength()
             
             logger.debug(
-                "HEAD response for {}: status={}, contentType={}, contentLength={}",
+                "GET response for {}: status={}, contentType={}, contentLength={}",
                 url,
                 statusCode,
                 contentType,
@@ -239,19 +264,22 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
             
             // Route based on content type
             return when {
-                // HTML content - process with browser
+                // HTML content - download body for preview, browser will use CDP Fetch interception
                 contentType.contains("text/html", ignoreCase = true) ||
                 contentType.contains("application/xhtml", ignoreCase = true) -> {
+                    val bodyBytes = response.readRawBytes()
+                    logger.debug("Downloaded HTML for {}: {} bytes", finalUrl, bodyBytes.size)
                     ContentTypeResult.Html(
                         finalUrl = finalUrl,
                         statusCode = statusCode,
                         reasonPhrase = reasonPhrase,
-                        mimeType = contentType
+                        mimeType = contentType,
+                        bodyBytes = bodyBytes
                     )
                 }
                 // Supported file types for Gemini File Search
                 GeminiSupportedMimeTypes.isSupported(contentType) -> {
-                    // Check content length from HEAD response if available
+                    // Check content length from header BEFORE downloading body
                     if (contentLength != null && contentLength > MAX_FILE_SIZE_BYTES) {
                         logger.warn("File too large ({} bytes > {} bytes): {}", contentLength, MAX_FILE_SIZE_BYTES, finalUrl)
                         return ContentTypeResult.FileTooLarge(
@@ -263,10 +291,9 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
                     }
                     
                     logger.debug("Downloading supported file from: {} (type: {})", finalUrl, contentType)
-                    val getResponse = client.get(finalUrl)
-                    val fileBytes = getResponse.readRawBytes()
+                    val fileBytes = response.readRawBytes()
                     
-                    // Double-check actual size after download
+                    // Double-check actual size after download (for chunked responses without Content-Length)
                     if (fileBytes.size > MAX_FILE_SIZE_BYTES) {
                         logger.warn("Downloaded file too large ({} bytes > {} bytes): {}", fileBytes.size, MAX_FILE_SIZE_BYTES, finalUrl)
                         return ContentTypeResult.FileTooLarge(
@@ -286,6 +313,7 @@ class HttpContentTypeResolutionService : IHttpContentTypeResolutionService {
                     )
                 }
                 else -> {
+                    // Unsupported content type - don't read body
                     ContentTypeResult.Unsupported(
                         finalUrl = finalUrl,
                         contentType = contentType,

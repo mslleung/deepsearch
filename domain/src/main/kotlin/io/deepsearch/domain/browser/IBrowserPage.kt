@@ -44,6 +44,19 @@ interface IBrowserPage {
     suspend fun waitForLoad()
 
     /**
+     * Navigate to URL with pre-fetched HTML content using network interception.
+     * 
+     * The browser navigates to the URL, but the document request is intercepted and
+     * fulfilled with the cached HTML. Other resources (images, CSS, JS) load normally.
+     * 
+     * This enables single-request processing: HTTP downloads HTML once, browser uses it.
+     * 
+     * @param url The URL to navigate to (for correct origin/base URL)
+     * @param htmlBody The pre-fetched HTML content to serve to the browser
+     */
+    suspend fun navigateWithCachedHtml(url: String, htmlBody: ByteArray)
+
+    /**
      * Takes a screenshot of the current viewport and returns the image bytes.
      */
     suspend fun takeScreenshot(): Screenshot

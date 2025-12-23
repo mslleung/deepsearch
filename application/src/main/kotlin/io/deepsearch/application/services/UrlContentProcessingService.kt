@@ -6,10 +6,8 @@ import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -200,9 +198,15 @@ class UrlContentProcessingService(
 
                 when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
                     is ContentTypeResult.Html -> {
-                        logger.debug("Detected HTML content for: {}", normalizedUrl)
-                        processHtmlUrlAsFlow(normalizedUrl, sessionId, ocrLanguage, proxyConfig, discoverLinks)
-                            .collect { event -> emit(event) }
+                        logger.debug("Detected HTML content for: {} ({} bytes)", normalizedUrl, contentTypeResult.bodyBytes.size)
+                        processHtmlUrlAsFlow(
+                            normalizedUrl = normalizedUrl,
+                            cachedHtmlBody = contentTypeResult.bodyBytes,
+                            sessionId = sessionId,
+                            ocrLanguage = ocrLanguage,
+                            proxyConfig = proxyConfig,
+                            discoverLinks = discoverLinks
+                        ).collect { event -> emit(event) }
                     }
 
                     is ContentTypeResult.SupportedFile -> {
@@ -280,62 +284,79 @@ class UrlContentProcessingService(
         )
     }
 
+    /**
+     * Process HTML URL with single-request optimization.
+     * 
+     * Flow:
+     * 1. HTML body is already fetched by httpContentTypeResolutionService (single GET request)
+     * 2. Emit HtmlPreviewReady immediately from cached HTML (no browser needed for preview)
+     * 3. Browser navigates using cached HTML via Fetch interception (no second server request)
+     * 4. Full markdown extraction proceeds with rendered page
+     * 
+     * @param cachedHtmlBody Pre-fetched HTML body from the initial GET request
+     */
     private fun processHtmlUrlAsFlow(
         normalizedUrl: String,
+        cachedHtmlBody: ByteArray,
         sessionId: SessionId,
         ocrLanguage: OcrLanguage,
         proxyConfig: ProxyConfiguration,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
-        // Resolve proxy config and execute with appropriate browser pool method (navigation is handled internally)
+        // Convert cached HTML to string for processing
+        val cachedHtmlString = cachedHtmlBody.decodeToString()
+        logger.debug("Using cached HTML for {}: {} chars", normalizedUrl, cachedHtmlString.length)
+        
+        // Emit HTML preview IMMEDIATELY from cached HTML - no browser needed for preview
+        // This is the fastest path: HTTP already downloaded the HTML, just clean and emit
+        val previewStart = System.currentTimeMillis()
+        val previewResult = htmlPreviewService.prepareHtmlPreview(cachedHtmlString, normalizedUrl)
+        val previewTime = System.currentTimeMillis() - previewStart
+        logger.debug("HTML preview ready for {} in {}ms: {} chars", normalizedUrl, previewTime, previewResult.cleanedHtml.length)
+        
+        // Emit preview before browser starts - this is the key latency win
+        send(
+            UrlProcessingEvent.HtmlPreviewReady(
+                normalizedUrl,
+                previewResult.cleanedHtml,
+                previewResult.title,
+                previewResult.description
+            )
+        )
+        
+        // Cache preview in background - don't block the flow
+        val previewCacheFlow = flow<UrlProcessingEvent> {
+            webpageCacheService.cacheWebpage(
+                url = normalizedUrl,
+                title = previewResult.title,
+                description = previewResult.description,
+                markdown = previewResult.cleanedHtml,
+                html = null,  // Skip raw HTML for preview - full extraction will store it
+                httpStatus = 200,
+                httpReason = "OK",
+                mimeType = "text/html",
+                sessionId = sessionId,
+                isPreview = true
+            )
+        }
+        
+        // Now start browser operations for full markdown extraction
+        // Browser uses cached HTML via Fetch interception - no second server request
         val navigateStart = System.currentTimeMillis()
-        withResolvedPage(normalizedUrl, proxyConfig) { page ->
+        withResolvedPageCachedHtml(normalizedUrl, cachedHtmlBody, proxyConfig) { page ->
             val navigateTime = System.currentTimeMillis() - navigateStart
             
+            // Get full HTML from rendered page (may differ from cached due to JS execution)
             val getHtmlStart = System.currentTimeMillis()
             val extractedHtml = page.getFullHtml()
             val getHtmlTime = System.currentTimeMillis() - getHtmlStart
             
             logger.debug(
-                "Browser timing for {}: navigate={}ms, getFullHtml={}ms ({} chars)",
+                "Browser timing for {}: navigateWithCachedHtml={}ms, getFullHtml={}ms ({} chars)",
                 normalizedUrl, navigateTime, getHtmlTime, extractedHtml.length
             )
 
-            // Emit HTML preview immediately (no LLM) for early evaluation by preview path
-            // This allows the preview shortlist agent to start processing while full markdown is being extracted
-            val htmlPreviewFlow = flow {
-                val result = htmlPreviewService.prepareHtmlPreview(extractedHtml, normalizedUrl)
-                logger.debug("HTML preview ready for {}: {} chars", normalizedUrl, result.cleanedHtml.length)
-                
-                // Emit FIRST for low latency - preview path shouldn't wait for DB operations
-                emit(
-                    UrlProcessingEvent.HtmlPreviewReady(
-                        normalizedUrl,
-                        result.cleanedHtml,
-                        result.title,
-                        result.description
-                    )
-                )
-                
-                // Cache the preview content so sources are available if search completes before full extraction
-                // When full markdown is extracted, it will replace this via upsert (isPreview=false overwrites isPreview=true)
-                // For preview, we store the cleaned HTML as markdown for embedding generation
-                // Note: html=null to avoid slow 1MB insert - full extraction will store it
-                webpageCacheService.cacheWebpage(
-                    url = normalizedUrl,
-                    title = result.title,
-                    description = result.description,
-                    markdown = result.cleanedHtml,  // Use cleaned HTML for preview embedding
-                    html = null,  // Skip raw HTML for preview - full extraction will store it
-                    httpStatus = 200,
-                    httpReason = "OK",
-                    mimeType = "text/html",
-                    sessionId = sessionId,
-                    isPreview = true
-                )
-            }
-
-            // Create separate flows for each operation - these are cancellation-aware
+            // Link discovery uses rendered HTML for accuracy (JS may modify links)
             val linkDiscoveryFlow = flow {
                 val discoveredLinks = discoverLinks(extractedHtml)
                 logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
@@ -344,12 +365,10 @@ class UrlContentProcessingService(
 
             val markdownExtractionFlow = flow {
                 try {
-                    // Wait for full page load before extraction (navigate only waits for DOMContentLoaded)
-                    // This ensures all resources are loaded for accurate markdown extraction
+                    // Wait for full page load before extraction
                     page.waitForLoad()
                     
-                    // Extract webpage content - this internally stores images in their own
-                    // committed transactions via webpageImageRepository.batchUpsert()
+                    // Extract webpage content
                     val extractionResult = webpageExtractionService.extractWebpage(page, sessionId, ocrLanguage)
                     logger.debug(
                         "Markdown extraction complete for {}: {} chars",
@@ -357,8 +376,7 @@ class UrlContentProcessingService(
                         extractionResult.markdown.length
                     )
 
-                    // Cache the webpage content (has its own transaction)
-                    // isPreview = false to indicate this is full LLM-processed markdown
+                    // Cache the webpage content - full markdown replaces preview
                     webpageCacheService.cacheWebpage(
                         url = normalizedUrl,
                         title = extractionResult.title,
@@ -372,8 +390,7 @@ class UrlContentProcessingService(
                         isPreview = false
                     )
 
-                    // Update URL-to-image linkages in a separate transaction
-                    // Images are already committed by extractWebpage(), so FK constraints are satisfied
+                    // Update URL-to-image linkages
                     if (extractionResult.imageHashes.isNotEmpty()) {
                         webpageImageLinkageRepository.upsertLinkages(
                             normalizedUrl,
@@ -391,14 +408,12 @@ class UrlContentProcessingService(
                         )
                     )
                 } catch (e: Exception) {
-                    // Wrap markdown extraction failures
                     throw MarkdownExtractionException(normalizedUrl, e)
                 }
             }
 
-            // Merge all flows - HTML preview emits first (synchronous), then LLM flows run in parallel
-            // When this flow is cancelled, merge stops collecting immediately and propagates cancellation
-            merge(htmlPreviewFlow, linkDiscoveryFlow, markdownExtractionFlow)
+            // Merge browser operations - preview cache runs alongside LLM operations
+            merge(previewCacheFlow, linkDiscoveryFlow, markdownExtractionFlow)
                 .onCompletion { cause ->
                     if (cause != null) {
                         logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)
@@ -409,35 +424,38 @@ class UrlContentProcessingService(
     }
 
     /**
-     * Execute block with resolved proxy configuration.
-     * Handles navigation internally and orchestrates fanout if multiple proxies are returned.
+     * Execute block with pre-fetched HTML content using Fetch interception.
+     * Browser navigates to the URL but receives cached HTML - no second server request.
+     * 
+     * @param cachedHtmlBody Pre-fetched HTML body from initial GET request
      */
-    private suspend fun <T> withResolvedPage(
+    private suspend fun <T> withResolvedPageCachedHtml(
         url: String,
+        cachedHtmlBody: ByteArray,
         proxyConfig: ProxyConfiguration,
         block: suspend (IBrowserPage) -> T
     ): T {
         val proxyUrls = proxyResolutionService.resolve(url, proxyConfig)
         return if (proxyUrls.size <= 1) {
             browserPool.withPage(proxyUrls.firstOrNull()) { page ->
-                page.navigate(url)
+                page.navigateWithCachedHtml(url, cachedHtmlBody)
                 block(page)
             }
         } else {
-            withProxyFanout(proxyUrls, url, block)
+            withProxyFanoutCachedHtml(proxyUrls, url, cachedHtmlBody, block)
         }
     }
 
     /**
-     * Try multiple proxies in parallel. First successful navigation wins and proceeds with extraction.
-     * Other attempts are cancelled once a winner is selected.
+     * Proxy fanout with cached HTML. Same as withProxyFanout but uses navigateWithCachedHtml.
      */
-    private suspend fun <T> withProxyFanout(
+    private suspend fun <T> withProxyFanoutCachedHtml(
         proxyUrls: List<String>,
         navigateUrl: String,
+        cachedHtmlBody: ByteArray,
         block: suspend (IBrowserPage) -> T
     ): T = coroutineScope {
-        logger.debug("Fanout to {} proxies for {}", proxyUrls.size, navigateUrl)
+        logger.debug("Fanout to {} proxies for {} (with cached HTML)", proxyUrls.size, navigateUrl)
 
         val result = CompletableDeferred<T>()
         val winnerSelected = AtomicBoolean(false)
@@ -447,9 +465,8 @@ class UrlContentProcessingService(
             launch {
                 try {
                     browserPool.withPage(proxyUrl) { page ->
-                        page.navigate(navigateUrl)
+                        page.navigateWithCachedHtml(navigateUrl, cachedHtmlBody)
 
-                        // First successful navigation wins - others just exit
                         if (winnerSelected.compareAndSet(false, true)) {
                             val output = block(page)
                             result.complete(output)

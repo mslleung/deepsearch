@@ -110,6 +110,12 @@ class RemoteBrowserPage(
         pageCmd(PageCommand.WaitForLoad)
     }
 
+    override suspend fun navigateWithCachedHtml(url: String, htmlBody: ByteArray) {
+        currentUrl = url
+        val htmlBodyBase64 = Base64.encode(htmlBody)
+        pageCmd(PageCommand.NavigateWithCachedHtml(url, htmlBodyBase64))
+    }
+
     override suspend fun getUrl(): String = pageCmd(PageCommand.GetUrl)
     override suspend fun getFullHtml(): String = pageCmd(PageCommand.GetFullHtml)
     override suspend fun getTitle(): String = pageCmd(PageCommand.GetTitle)
