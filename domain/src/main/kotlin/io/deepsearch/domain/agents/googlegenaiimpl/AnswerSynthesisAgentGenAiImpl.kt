@@ -166,6 +166,12 @@ class AnswerSynthesisAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
+        logger.debug(
+            "[{}] response: {}",
+            AnswerSynthesisAgentGenAiImpl::class.simpleName,
+            response
+        )
+
         // Map numbered image IDs back to original hash-based IDs
         val originalImageIds = mapNumberedIdsToOriginal(response.imageIds, transformedSources)
 
@@ -258,6 +264,12 @@ class AnswerSynthesisAgentGenAiImpl(
                 }
             }
         }
+
+        logger.debug(
+            "[{}] response: {}",
+            AnswerSynthesisAgentGenAiImpl::class.simpleName,
+            accumulatedJson
+        )
 
         // Extract answerFound and numbered imageIds from the complete JSON
         val answerFound = extractAnswerFound(accumulatedJson)

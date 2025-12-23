@@ -324,21 +324,20 @@ class UrlContentProcessingService(
             )
         )
         
-        // Cache preview in background - don't block the flow
-        val previewCacheFlow = flow<UrlProcessingEvent> {
-            webpageCacheService.cacheWebpage(
-                url = normalizedUrl,
-                title = previewResult.title,
-                description = previewResult.description,
-                markdown = previewResult.cleanedHtml,
-                html = null,  // Skip raw HTML for preview - full extraction will store it
-                httpStatus = 200,
-                httpReason = "OK",
-                mimeType = "text/html",
-                sessionId = sessionId,
-                isPreview = true
-            )
-        }
+        // Cache preview IMMEDIATELY so it's available when session completes
+        // This ensures content sources are consistent between SSE and query session views
+        webpageCacheService.cacheWebpage(
+            url = normalizedUrl,
+            title = previewResult.title,
+            description = previewResult.description,
+            markdown = previewResult.cleanedHtml,
+            html = null,  // Skip raw HTML for preview - full extraction will store it
+            httpStatus = 200,
+            httpReason = "OK",
+            mimeType = "text/html",
+            sessionId = sessionId,
+            isPreview = true
+        )
         
         // Now start browser operations for full markdown extraction
         // Browser uses cached HTML via Fetch interception - no second server request
@@ -412,8 +411,8 @@ class UrlContentProcessingService(
                 }
             }
 
-            // Merge browser operations - preview cache runs alongside LLM operations
-            merge(previewCacheFlow, linkDiscoveryFlow, markdownExtractionFlow)
+            // Merge browser operations for link discovery and markdown extraction
+            merge(linkDiscoveryFlow, markdownExtractionFlow)
                 .onCompletion { cause ->
                     if (cause != null) {
                         logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)

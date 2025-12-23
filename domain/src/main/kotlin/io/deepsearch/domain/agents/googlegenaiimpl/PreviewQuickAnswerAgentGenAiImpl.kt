@@ -229,6 +229,12 @@ class PreviewQuickAnswerAgentGenAiImpl(
             result.text() ?: throw RuntimeException("No text response from model")
         }
 
+        logger.debug(
+            "[{}] response: {}",
+            PreviewQuickAnswerAgentGenAiImpl::class.simpleName,
+            response
+        )
+
         // Convert LLM response to domain model, filtering low confidence sources
         val updatedShortlist = response.shortlist
             .filter { it.confidence >= 0.9f && it.extractedFacts.isNotEmpty() }
@@ -336,6 +342,12 @@ class PreviewQuickAnswerAgentGenAiImpl(
                 }
             }
         }
+
+        logger.debug(
+            "[{}] response: {}",
+            PreviewQuickAnswerAgentGenAiImpl::class.simpleName,
+            accumulatedJson
+        )
 
         // Parse the complete JSON to extract shortlist and metadata
         val parsedResult = parseCompleteResponse(accumulatedJson, input)
