@@ -53,7 +53,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
-            query = "Does the standard body check package include testing Glomerular Filtration Rate - eGfr?",  // no
+            rawQuery = "Does the standard body check package include testing Glomerular Filtration Rate - eGfr?",  // no
             url = "https://www.otandp.com/"
         )
 
@@ -72,7 +72,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.helmetking.com/"
         val searchQuery = SearchQuery(
-            query = "Are there any service package or plans for motorcycle maintenance?",  // yes
+            rawQuery = "Are there any service package or plans for motorcycle maintenance?",  // yes
             url = url
         )
 
@@ -91,7 +91,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(
-            query = "What is the main content of this webpage?",
+            rawQuery = "What is the main content of this webpage?",
             url = url
         )
 
@@ -110,7 +110,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.egltours.com/"
         val searchQuery = SearchQuery(
-            query = "Find pricing, enterprise plan limits, and SLA details",
+            rawQuery = "Find pricing, enterprise plan limits, and SLA details",
             url = url
         )
 
@@ -129,7 +129,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(
-            query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
+            rawQuery = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
             url = url
         )
 
@@ -148,7 +148,7 @@ class GoogleSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(
-            query = "這個網站的主要內容是什麼？",
+            rawQuery = "這個網站的主要內容是什麼？",
             url = url
         )
 

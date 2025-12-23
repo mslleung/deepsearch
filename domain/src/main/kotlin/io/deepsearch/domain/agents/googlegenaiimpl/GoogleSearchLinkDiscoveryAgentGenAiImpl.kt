@@ -55,7 +55,8 @@ class GoogleSearchLinkDiscoveryAgentGenAiImpl(
     override suspend fun generate(
         input: io.deepsearch.domain.agents.GoogleSearchLinkDiscoveryInput
     ): io.deepsearch.domain.agents.GoogleSearchLinkDiscoveryOutput {
-        val (query, url) = input.searchQuery
+        val query = input.searchQuery.query
+        val url = input.searchQuery.url
         logger.debug("Google search link discovery: '{}' on site {}", query, url)
 
         val userPrompt = "$query $url"

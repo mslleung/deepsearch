@@ -44,7 +44,8 @@ class GoogleCombinedSearchAgentGenAiImpl(
     override suspend fun generate(
         input: io.deepsearch.domain.agents.GoogleCombinedSearchInput
     ): io.deepsearch.domain.agents.GoogleCombinedSearchOutput {
-        val (query, url) = input.searchQuery
+        val query = input.searchQuery.query
+        val url = input.searchQuery.url
         logger.debug("Combined search: '{}' on {}", query, url)
 
         val userPrompt = buildString {

@@ -863,7 +863,7 @@ class PeriodicIndexJobRegistry(
      */
     private fun createSerperSearchLinkFlow(jobId: Long, job: PeriodicIndexJob): Flow<WebpageLink> = flow {
         try {
-            val query = SearchQuery(query = job.baseUrl, url = job.baseUrl)
+            val query = SearchQuery(rawQuery = job.baseUrl, url = job.baseUrl)
             val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(query)
                 .filter { 
                     val url = normalize(it.url)

@@ -118,6 +118,7 @@ val domainModule = module {
         scopedOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
         scopedOf(::PreviewShortlistAgentGenAiImpl) bind IPreviewShortlistAgent::class
         scopedOf(::PreviewAnswerSynthesisAgentGenAiImpl) bind IPreviewAnswerSynthesisAgent::class
+        scopedOf(::PreviewQuickAnswerAgentGenAiImpl) bind IPreviewQuickAnswerAgent::class
 
         // Request-scoped domain services (user/auth related)
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class

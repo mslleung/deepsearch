@@ -30,7 +30,7 @@ class BlinkTestAgentTest : KoinTest {
         browserPool.withPage { page ->
             // Given
             val searchQuery = SearchQuery(
-                query = "website purpose",
+                rawQuery = "website purpose",
                 url = "https://www.example.com/"
             )
 
@@ -56,7 +56,7 @@ class BlinkTestAgentTest : KoinTest {
         browserPool.withPage { page ->
             // Given
             val searchQuery = SearchQuery(
-                query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
+                rawQuery = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
                 url = "https://www.example.com/"
             )
 

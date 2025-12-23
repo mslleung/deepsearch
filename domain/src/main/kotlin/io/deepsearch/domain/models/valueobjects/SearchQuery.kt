@@ -5,17 +5,26 @@ import java.net.URI
 /**
  * Represents a search query with URL and optional language filter.
  * 
- * @param query The search query text
+ * @param rawQuery The raw search query text (will be normalized: trimmed and newlines removed)
  * @param url The base URL to search within
  * @param languagePattern Optional language filter pattern (e.g., "/en-us/" or "?lang=en")
  * @param ocrLanguage OCR language for Tesseract text extraction from images
  */
 data class SearchQuery(
-    val query: String, 
+    private val rawQuery: String, 
     val url: String,
     val languagePattern: String? = null,
     val ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
 ) {
+    
+    /**
+     * Normalized query with whitespace trimmed and newlines removed.
+     */
+    val query: String = rawQuery
+        .replace("\r\n", " ")
+        .replace("\n", " ")
+        .replace("\r", " ")
+        .trim()
     
     /**
      * Parsed language pattern for URL filtering. Null if no pattern or invalid pattern.

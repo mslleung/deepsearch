@@ -65,7 +65,8 @@ class SerperService(
     )
 
     override suspend fun searchLinks(searchQuery: SearchQuery): List<WebpageLink> {
-        val (query, url) = searchQuery
+        val query = searchQuery.query
+        val url = searchQuery.url
         logger.debug("SERP search: '{}' on site {}", query, url)
 
         try {

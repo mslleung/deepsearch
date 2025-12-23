@@ -28,7 +28,7 @@ class GoogleCombinedSearchAgentTest : KoinTest {
     fun `combined search returns answer and sources`() = runTest(testCoroutineDispatcher) {
         // Given
         val query = SearchQuery(
-            query = "what servants are S+ tier?",
+            rawQuery = "what servants are S+ tier?",
             url = "https://appmedia.jp/fategrandorder/96261"
         )
 

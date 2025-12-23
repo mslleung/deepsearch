@@ -52,7 +52,8 @@ class GoogleTextSearchAgentGenAiImpl(
     override suspend fun generate(
         input: io.deepsearch.domain.agents.GoogleTextSearchInput
     ): GoogleTextSearchOutput {
-        val (query, url) = input.searchQuery
+        val query = input.searchQuery.query
+        val url = input.searchQuery.url
         logger.debug("Google text search: '{}' on site {}", query, url)
 
         val userPrompt = buildString {

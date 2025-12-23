@@ -3,6 +3,8 @@ package io.deepsearch.application.services
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
+import org.jsoup.select.NodeVisitor
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -37,23 +39,31 @@ class HtmlPreviewService : IHtmlPreviewService {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     companion object {
-        // Elements to completely remove
-        private val REMOVE_ELEMENTS = setOf(
+        // Single combined selector for all elements to remove (avoids multiple DOM traversals)
+        private val REMOVE_SELECTOR = listOf(
             "script", "style", "noscript", "link", "meta", "svg", "iframe",
             "nav", "header", "footer", "aside", "form", "input", "button",
-            "select", "textarea", "canvas", "video", "audio", "object", "embed"
-        )
+            "select", "textarea", "canvas", "video", "audio", "object", "embed",
+            "[hidden]", "[style*='display: none']", "[style*='display:none']",
+            "[aria-hidden='true']"
+        ).joinToString(", ")
 
         // Attributes to keep (all others are stripped)
         private val KEEP_ATTRIBUTES = setOf(
             "class", "id", "role", "aria-label", "aria-labelledby",
             "href", "src", "alt", "title", "data-testid"
         )
+
+        // Tags to check for emptiness
+        private val EMPTY_TAGS = setOf("div", "span", "p", "section", "article", "main")
+
+        // Selector for meaningful children (elements that make a container non-empty)
+        private const val MEANINGFUL_CHILDREN_SELECTOR = "img, table, ul, ol, dl, pre, code, blockquote"
     }
 
     override fun prepareHtmlPreview(html: String, url: String): HtmlPreviewResult {
         val totalStart = System.currentTimeMillis()
-        
+
         val parseStart = System.currentTimeMillis()
         val doc = Jsoup.parse(html)
         val parseTime = System.currentTimeMillis() - parseStart
@@ -61,31 +71,26 @@ class HtmlPreviewService : IHtmlPreviewService {
         val title = doc.title().takeIf { it.isNotBlank() }
         val description = doc.selectFirst("meta[name=description]")?.attr("content")?.takeIf { it.isNotBlank() }
 
-        // Remove unwanted elements
+        // Remove unwanted elements with single combined selector
         val removeStart = System.currentTimeMillis()
-        removeUnwantedElements(doc)
+        doc.select(REMOVE_SELECTOR).remove()
         val removeTime = System.currentTimeMillis() - removeStart
 
-        // Strip unnecessary attributes
-        val stripStart = System.currentTimeMillis()
-        stripAttributes(doc)
-        val stripTime = System.currentTimeMillis() - stripStart
-
-        // Remove empty elements
-        val emptyStart = System.currentTimeMillis()
-        removeEmptyElements(doc)
-        val emptyTime = System.currentTimeMillis() - emptyStart
+        // Single traversal: strip attributes, remove comments, mark empty elements
+        val processStart = System.currentTimeMillis()
+        processElementsInSinglePass(doc)
+        val processTime = System.currentTimeMillis() - processStart
 
         // Get the cleaned body HTML
         val serializeStart = System.currentTimeMillis()
         val cleanedHtml = doc.body().html()
         val serializeTime = System.currentTimeMillis() - serializeStart
-        
+
         val totalTime = System.currentTimeMillis() - totalStart
 
         logger.debug(
-            "HTML preview for {}: {} -> {} chars in {}ms (parse={}ms, remove={}ms, strip={}ms, empty={}ms, serialize={}ms)",
-            url, html.length, cleanedHtml.length, totalTime, parseTime, removeTime, stripTime, emptyTime, serializeTime
+            "HTML preview for {}: {} -> {} chars in {}ms (parse={}ms, remove={}ms, process={}ms, serialize={}ms)",
+            url, html.length, cleanedHtml.length, totalTime, parseTime, removeTime, processTime, serializeTime
         )
 
         return HtmlPreviewResult(
@@ -95,68 +100,51 @@ class HtmlPreviewService : IHtmlPreviewService {
         )
     }
 
-    private fun removeUnwantedElements(doc: Document) {
-        REMOVE_ELEMENTS.forEach { tag ->
-            doc.select(tag).remove()
-        }
+    /**
+     * Single-pass processing using NodeVisitor for O(n) complexity:
+     * - head(): Strip attributes, mark comments for removal
+     * - tail(): Check for empty elements bottom-up (so nested empty elements are caught)
+     */
+    private fun processElementsInSinglePass(doc: Document) {
+        val toRemove = mutableListOf<Node>()
 
-        // Also remove comments
-        doc.select("*").forEach { element ->
-            element.childNodes()
-                .filter { it.nodeName() == "#comment" }
-                .forEach { it.remove() }
-        }
+        doc.traverse(object : NodeVisitor {
+            override fun head(node: Node, depth: Int) {
+                // Mark comments for removal
+                if (node.nodeName() == "#comment") {
+                    toRemove.add(node)
+                    return
+                }
 
-        // Remove hidden elements
-        doc.select("[hidden], [style*='display: none'], [style*='display:none']").remove()
-        doc.select("[aria-hidden='true']").remove()
-    }
-
-    private fun stripAttributes(doc: Document) {
-        doc.allElements.forEach { element ->
-            val attributesToRemove = element.attributes()
-                .filter { attr -> attr.key.lowercase() !in KEEP_ATTRIBUTES }
-                .map { it.key }
-
-            attributesToRemove.forEach { attr ->
-                element.removeAttr(attr)
+                // Strip attributes from elements
+                if (node is Element) {
+                    val attrsToRemove = node.attributes()
+                        .filter { it.key.lowercase() !in KEEP_ATTRIBUTES }
+                        .map { it.key }
+                    attrsToRemove.forEach { node.removeAttr(it) }
+                }
             }
-        }
-    }
 
-    private fun removeEmptyElements(doc: Document) {
-        // Remove elements that have no text content and no meaningful children
-        val emptyTags = setOf("div", "span", "p", "section", "article", "main")
-        
-        var changed = true
-        var iterations = 0
-        val maxIterations = 10
-
-        while (changed && iterations < maxIterations) {
-            changed = false
-            iterations++
-
-            for (tag in emptyTags) {
-                val elements = doc.select(tag)
-                for (element in elements) {
-                    if (isEmptyElement(element)) {
-                        element.remove()
-                        changed = true
+            override fun tail(node: Node, depth: Int) {
+                // Check for empty elements on the way back up (bottom-up traversal)
+                // This ensures nested empty elements are caught in a single pass
+                if (node is Element && node.tagName() in EMPTY_TAGS) {
+                    if (isEmptyElement(node)) {
+                        toRemove.add(node)
                     }
                 }
             }
-        }
+        })
+
+        // Remove all marked nodes
+        toRemove.forEach { it.remove() }
     }
 
     private fun isEmptyElement(element: Element): Boolean {
         // Check if element has any non-whitespace text
-        val text = element.text().trim()
-        if (text.isNotEmpty()) return false
+        if (element.text().trim().isNotEmpty()) return false
 
-        // Check if element has any meaningful children (images, etc.)
-        val meaningfulChildren = element.select("img, table, ul, ol, dl, pre, code, blockquote")
-        if (meaningfulChildren.isNotEmpty()) return false
-
-        return true
+        // Check if element has any meaningful children (images, tables, etc.)
+        return element.select(MEANINGFUL_CHILDREN_SELECTOR).isEmpty()
     }
 }

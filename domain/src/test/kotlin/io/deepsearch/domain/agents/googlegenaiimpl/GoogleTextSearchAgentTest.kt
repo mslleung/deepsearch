@@ -28,7 +28,7 @@ class GoogleTextSearchAgentTest : KoinTest {
     fun `basic site-restricted search returns at least one source`() = runTest(testCoroutineDispatcher) {
         // Given
         val query = SearchQuery(
-            query = "company overview",
+            rawQuery = "company overview",
             url = "https://www.egltours.com/"
         )
 

@@ -53,7 +53,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
     fun `test simple sample query on OT&P`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
-            query = "Tell me about the standard body check package",
+            rawQuery = "Tell me about the standard body check package",
             url = "https://www.otandp.com/"
         )
 
@@ -71,7 +71,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
     fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
-            query = "Does the standard body check package include testing \"Stool: Occult Blood?\"",  // no
+            rawQuery = "Does the standard body check package include testing \"Stool: Occult Blood?\"",  // no
             url = "https://www.otandp.com/"
         )
 
@@ -89,7 +89,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
     fun `test sample query on soschinmed`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
-            query = "How much is a video consultation with 潘健燊醫師?",
+            rawQuery = "How much is a video consultation with 潘健燊醫師?",
             url = "https://soschinmed.com/onlineconsultation/"
         )
 
@@ -108,7 +108,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.helmetking.com/"
         val searchQuery = SearchQuery(
-            query = "Are there any service package or plans for motorcycle maintenance?",  // yes
+            rawQuery = "Are there any service package or plans for motorcycle maintenance?",  // yes
             url = url
         )
 
@@ -127,7 +127,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(
-            query = "What is the main content of this webpage?",
+            rawQuery = "What is the main content of this webpage?",
             url = url
         )
 
@@ -146,7 +146,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.egltours.com/"
         val searchQuery = SearchQuery(
-            query = "Find pricing, enterprise plan limits, and SLA details",
+            rawQuery = "Find pricing, enterprise plan limits, and SLA details",
             url = url
         )
 
@@ -165,7 +165,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(
-            query = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
+            rawQuery = "Who is the men's singles table tennis champion of the 2024 Paris Olympics?",
             url = url
         )
 
@@ -184,7 +184,7 @@ class AgenticBrowserSearchOrchestratorTest : KoinTest {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(
-            query = "這個網站的主要內容是什麼？",
+            rawQuery = "這個網站的主要內容是什麼？",
             url = url
         )
 

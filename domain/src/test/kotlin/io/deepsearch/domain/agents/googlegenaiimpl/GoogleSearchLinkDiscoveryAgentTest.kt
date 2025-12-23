@@ -30,7 +30,7 @@ class GoogleSearchLinkDiscoveryAgentTest : KoinTest {
     fun `discovers relevant links from site using Google Search`() = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
-            query = "pricing information",
+            rawQuery = "pricing information",
             url = "https://www.egltours.com/"
         )
 

@@ -35,7 +35,7 @@ class SerperServiceTest : KoinTest {
     fun `discovers relevant links from site using SERP API`(query: String, url: String) = runTest(testCoroutineDispatcher) {
         // Given
         val searchQuery = SearchQuery(
-            query = query,
+            rawQuery = query,
             url = url
         )
 

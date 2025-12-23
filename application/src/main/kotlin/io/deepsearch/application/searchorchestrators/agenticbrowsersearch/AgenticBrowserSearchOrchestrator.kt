@@ -12,13 +12,12 @@ import io.deepsearch.domain.agents.AnswerStreamItem
 import io.deepsearch.domain.agents.AnswerSynthesisInput
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
-import io.deepsearch.domain.agents.IPreviewAnswerSynthesisAgent
-import io.deepsearch.domain.agents.IPreviewShortlistAgent
+import io.deepsearch.domain.agents.IPreviewQuickAnswerAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.ISerpQueryOptimizationAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
-import io.deepsearch.domain.agents.PreviewAnswerSynthesisInput
-import io.deepsearch.domain.agents.PreviewShortlistInput
+import io.deepsearch.domain.agents.PreviewQuickAnswerInput
+import io.deepsearch.domain.agents.PreviewQuickAnswerStreamItem
 import io.deepsearch.domain.agents.SerpQueryOptimizationInput
 import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
 import io.deepsearch.domain.agents.StreamingSourceShortlistInput
@@ -76,6 +75,7 @@ import kotlinx.coroutines.withTimeout
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -98,8 +98,7 @@ class AgenticBrowserSearchOrchestrator(
     private val answerReviewerAgent: IAnswerReviewerAgent,
     private val streamingSourceShortlistAgent: IStreamingSourceShortlistAgent,
     private val answerSynthesisAgent: IAnswerSynthesisAgent,
-    private val previewShortlistAgent: IPreviewShortlistAgent,
-    private val previewAnswerSynthesisAgent: IPreviewAnswerSynthesisAgent,
+    private val previewQuickAnswerAgent: IPreviewQuickAnswerAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
@@ -159,6 +158,24 @@ class AgenticBrowserSearchOrchestrator(
                     proxyConfig,
                     channel
                 ),
+                processSerperSearchLinksFlow(
+                    sessionId,
+                    searchQuery,
+                    seenUrls,
+                    serperSearchDiscoveredLinksChannel,
+                    maxCacheAge,
+                    proxyConfig,
+                    channel
+                ),
+                processHybridSearchFlow(
+                    sessionId,
+                    searchQuery,
+                    seenUrls,
+                    maxCacheAge,
+                    proxyConfig,
+                    hybridSearchDiscoveredLinksChannel,
+                    channel
+                ),
                 processFileSearchFlow(
                     sessionId,
                     searchQuery,
@@ -176,43 +193,17 @@ class AgenticBrowserSearchOrchestrator(
                 )
             )
 
-            // Flows that require query optimization - optimize once, then start both in parallel
-            val optimizedQueryFlows = flow {
-                val optimizedSearchQuery = optimizeQueryForSerp(sessionId, searchQuery)
-                emitAll(
-                    merge(
-                        processSerperSearchLinksFlow(
-                            sessionId,
-                            searchQuery,
-                            optimizedSearchQuery,
-                            seenUrls,
-                            serperSearchDiscoveredLinksChannel,
-                            maxCacheAge,
-                            proxyConfig,
-                            channel
-                        ),
-                        processHybridSearchFlow(
-                            sessionId,
-                            searchQuery,
-                            optimizedSearchQuery,
-                            seenUrls,
-                            maxCacheAge,
-                            proxyConfig,
-                            hybridSearchDiscoveredLinksChannel,
-                            channel
-                        )
-                    )
-                )
-            }
-
             // Share the source flow so both preview and main paths can consume it
-            val sourceFlow = merge(immediateFlows, optimizedQueryFlows)
+            val sourceFlow = merge(immediateFlows)
                 .cancellable()
                 .shareIn(this, SharingStarted.Eagerly)
 
             // Track state for both paths
             var previewAccumulator = PreviewAccumulator()
             var answerAccumulator = AnswerAccumulator()
+
+            // Ensure exactly-once session completion across concurrent paths
+            val sessionCompleted = AtomicBoolean(false)
 
             // Merge both paths: preview (fast HTML) and main (full markdown)
             merge(
@@ -228,8 +219,10 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { it.isConfidentForAnswer }
                     .take(1)
                     .onEach { confidentAccumulator ->
-                        logger.info("[{}] Preview path produced confident answer", sessionId.value)
-                        finishWithPreviewAnswer(sessionId, searchQuery, confidentAccumulator, channel)
+                        if (sessionCompleted.compareAndSet(false, true)) {
+                            logger.info("[{}] Preview path produced confident answer", sessionId.value)
+                            finishWithPreviewAnswer(sessionId, confidentAccumulator, channel)
+                        }
                     }
                     .map { AccumulatorUpdate.Preview(it) },
 
@@ -250,19 +243,22 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { it.isComplete }
                     .take(1)
                     .onEach { completedAccumulator ->
-                        finishQuerySession(sessionId, searchQuery, completedAccumulator, budget, channel)
+                        if (sessionCompleted.compareAndSet(false, true)) {
+                            finishQuerySession(sessionId, searchQuery, completedAccumulator, budget, channel)
+                        }
                     }
                     .map { AccumulatorUpdate.Main(it) }
             )
                 .onCompletion {
                     // Handle case where neither path completed via onEach (sources exhausted or interrupted)
-                    // The finish functions check DB to avoid duplicate finishing
-                    if (previewAccumulator.isConfidentForAnswer) {
-                        logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
-                        finishWithPreviewAnswer(sessionId, searchQuery, previewAccumulator, channel)
-                    } else {
-                        // Fall back to main path accumulator (may be incomplete)
-                        finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
+                    if (sessionCompleted.compareAndSet(false, true)) {
+                        if (previewAccumulator.isConfidentForAnswer) {
+                            logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
+                            finishWithPreviewAnswer(sessionId, previewAccumulator, channel)
+                        } else {
+                            // Fall back to main path accumulator (may be incomplete)
+                            finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
+                        }
                     }
                 }
                 .collect()
@@ -359,7 +355,12 @@ class AgenticBrowserSearchOrchestrator(
                     .map { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ->
-                                UrlContentResult.HtmlPreview(event.url, event.title, event.description, event.cleanedHtml)
+                                UrlContentResult.HtmlPreview(
+                                    event.url,
+                                    event.title,
+                                    event.description,
+                                    event.cleanedHtml
+                                )
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
                                 UrlContentResult.FullMarkdown(event.url, event.title, event.description, event.markdown)
@@ -373,12 +374,10 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Process discovered links from SERP search.
-     * @param optimizedSearchQuery The query optimized for search engines
      */
     private fun processSerperSearchLinksFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        optimizedSearchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         discoveredLinksChannel: Channel<WebpageLink>,
         maxCacheAge: Long?,
@@ -387,7 +386,7 @@ class AgenticBrowserSearchOrchestrator(
     ): Flow<UrlContentResult> {
         return processDiscoveredLinksFlow(
             sessionId, searchQuery, seenUrls,
-            createSerperSearchLinkDiscoveryFlow(sessionId, optimizedSearchQuery),
+            createSerperSearchLinkDiscoveryFlow(sessionId, searchQuery),
             discoveredLinksChannel, maxCacheAge, proxyConfig, eventChannel
         )
     }
@@ -503,10 +502,20 @@ class AgenticBrowserSearchOrchestrator(
                             .map { event ->
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ->
-                                        UrlContentResult.HtmlPreview(event.url, event.title, event.description, event.cleanedHtml)
+                                        UrlContentResult.HtmlPreview(
+                                            event.url,
+                                            event.title,
+                                            event.description,
+                                            event.cleanedHtml
+                                        )
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                                        UrlContentResult.FullMarkdown(event.url, event.title, event.description, event.markdown)
+                                        UrlContentResult.FullMarkdown(
+                                            event.url,
+                                            event.title,
+                                            event.description,
+                                            event.markdown
+                                        )
 
                                     else -> throw IllegalStateException("Unexpected event type")
                                 }
@@ -663,10 +672,20 @@ class AgenticBrowserSearchOrchestrator(
                             .map { event ->
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ->
-                                        UrlContentResult.HtmlPreview(event.url, event.title, event.description, event.cleanedHtml)
+                                        UrlContentResult.HtmlPreview(
+                                            event.url,
+                                            event.title,
+                                            event.description,
+                                            event.cleanedHtml
+                                        )
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                                        UrlContentResult.FullMarkdown(event.url, event.title, event.description, event.markdown)
+                                        UrlContentResult.FullMarkdown(
+                                            event.url,
+                                            event.title,
+                                            event.description,
+                                            event.markdown
+                                        )
 
                                     else -> throw IllegalStateException("Unexpected event type")
                                 }
@@ -679,12 +698,10 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Process hybrid search using cached webpages.
-     * @param optimizedSearchQuery The query optimized for search engines
      */
     private fun processHybridSearchFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        optimizedSearchQuery: SearchQuery,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         maxCacheAge: Long?,
         proxyConfig: ProxyConfiguration,
@@ -692,7 +709,7 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ): Flow<UrlContentResult> = flow {
         val webpages =
-            webpageCacheService.searchHybrid(optimizedSearchQuery.query, searchQuery.url, maxCacheAge, 15, sessionId)
+            webpageCacheService.searchHybrid(searchQuery.query, searchQuery.url, maxCacheAge, 15, sessionId)
                 .filter { !it.markdown.isNullOrBlank() && !it.html.isNullOrBlank() }
 
         seenUrls.addAll(webpages.map { it.url })
@@ -737,40 +754,47 @@ class AgenticBrowserSearchOrchestrator(
                     searchQuery.ocrLanguage,
                     proxyConfig
                 )
-                .catch { e ->
-                    when (e) {
-                        is CancellationException -> throw e
-                        else -> logger.warn("[{}] Hybrid search full extraction failed for {}: {}", sessionId.value, webpage.url, e.message)
-                    }
-                }
-                .filter { event ->
-                    event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
-                }
-                .onEach { event ->
-                    when (event) {
-                        is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                            // Emit UrlProcessed when full markdown is ready
-                            eventChannel.send(
-                                SearchEvent.UrlProcessed(
-                                    sessionId = sessionId,
-                                    url = event.url,
-                                    accessType = "CACHED",
-                                    title = event.title,
-                                    description = event.description,
-                                    markdownLength = event.markdown.length
-                                )
+                    .catch { e ->
+                        when (e) {
+                            is CancellationException -> throw e
+                            else -> logger.warn(
+                                "[{}] Hybrid search full extraction failed for {}: {}",
+                                sessionId.value,
+                                webpage.url,
+                                e.message
                             )
                         }
-                        else -> {} // Shouldn't happen due to filter
                     }
-                }
-                .map { event ->
-                    when (event) {
-                        is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                            UrlContentResult.FullMarkdown(event.url, event.title, event.description, event.markdown)
-                        else -> throw IllegalStateException("Unexpected event type")
+                    .filter { event ->
+                        event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
                     }
-                }
+                    .onEach { event ->
+                        when (event) {
+                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                // Emit UrlProcessed when full markdown is ready
+                                eventChannel.send(
+                                    SearchEvent.UrlProcessed(
+                                        sessionId = sessionId,
+                                        url = event.url,
+                                        accessType = "CACHED",
+                                        title = event.title,
+                                        description = event.description,
+                                        markdownLength = event.markdown.length
+                                    )
+                                )
+                            }
+
+                            else -> {} // Shouldn't happen due to filter
+                        }
+                    }
+                    .map { event ->
+                        when (event) {
+                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
+                                UrlContentResult.FullMarkdown(event.url, event.title, event.description, event.markdown)
+
+                            else -> throw IllegalStateException("Unexpected event type")
+                        }
+                    }
             }
             .collect { emit(it) }
 
@@ -780,7 +804,7 @@ class AgenticBrowserSearchOrchestrator(
                 flow<Unit> {
                     try {
                         val links = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
-                            optimizedSearchQuery.query,
+                            searchQuery.query,
                             webpage.html!!,
                             webpage.url,
                             sessionId
@@ -906,14 +930,13 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Creates a flow that discovers links via SERP search.
-     * @param optimizedSearchQuery The query already optimized for search engines
      */
     private fun createSerperSearchLinkDiscoveryFlow(
         sessionId: QuerySessionId,
-        optimizedSearchQuery: SearchQuery
+        searchQuery: SearchQuery
     ): Flow<WebpageLink> = flow {
         try {
-            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(optimizedSearchQuery).forEach { emit(it) }
+            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery).forEach { emit(it) }
         } catch (e: Exception) {
             logger.error("[{}] SERP search failed: {}", sessionId.value, e.message)
         }
@@ -964,11 +987,14 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Accumulator for preview path answer generation.
      * Tracks HTML preview sources and their shortlisted facts.
+     * With PreviewQuickAnswerAgent, the answer is streamed during shortlisting.
      */
     private data class PreviewAccumulator(
         val shortlist: List<PreviewShortlistedSource> = emptyList(),
         val htmlPreviewsByUrl: Map<String, UrlContentResult.HtmlPreview> = emptyMap(),
-        val isConfidentForAnswer: Boolean = false
+        val isConfidentForAnswer: Boolean = false,
+        val fullAnswer: String? = null,
+        val answerFound: Boolean = false
     )
 
     /**
@@ -1034,7 +1060,11 @@ class AgenticBrowserSearchOrchestrator(
         // Check if session is already finished (use DB as source of truth)
         val session = querySessionService.getSession(sessionId)
         if (session.finishReason != null) {
-            logger.debug("[{}] Session already finished with {}, skipping query session finish", sessionId.value, session.finishReason)
+            logger.debug(
+                "[{}] Session already finished with {}, skipping query session finish",
+                sessionId.value,
+                session.finishReason
+            )
             return
         }
 
@@ -1112,8 +1142,9 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Aggregate HTML preview sources into preview shortlist.
-     * Used by the preview path for early answer synthesis.
+     * Aggregate HTML preview sources into preview shortlist and generate answer.
+     * Uses PreviewQuickAnswerAgent which does shortlisting + answer in a single LLM call.
+     * Answer chunks are streamed to the event channel as they are generated.
      */
     private suspend fun aggregatePreviewIntoAnswer(
         sessionId: QuerySessionId,
@@ -1134,43 +1165,68 @@ class AgenticBrowserSearchOrchestrator(
             }
         }
 
-        val output = previewShortlistAgent.generate(
-            PreviewShortlistInput(searchQuery.query, state.shortlist, htmlBatch)
-        )
+        // Use streaming to get answer chunks as they are generated
+        var fullAnswer = StringBuilder()
+        var finalShortlist: List<PreviewShortlistedSource> = state.shortlist
+        var isConfident = false
+        var answerFound = false
 
-        tokenUsageService.recordTokenUsage(
-            sessionId, "PreviewShortlistAgent",
-            output.tokenUsage.modelName, output.tokenUsage.promptTokens,
-            output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
-        )
+        previewQuickAnswerAgent.generateStream(
+            PreviewQuickAnswerInput(searchQuery.query, state.shortlist, htmlBatch)
+        ).collect { item ->
+            when (item) {
+                is PreviewQuickAnswerStreamItem.AnswerChunk -> {
+                    fullAnswer.append(item.text)
+                    eventChannel.send(SearchEvent.AnswerChunk(sessionId, item.text))
+                }
+
+                is PreviewQuickAnswerStreamItem.Complete -> {
+                    tokenUsageService.recordTokenUsage(
+                        sessionId, "PreviewQuickAnswerAgent",
+                        item.tokenUsage.modelName, item.tokenUsage.promptTokens,
+                        item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
+                    )
+                    finalShortlist = item.updatedShortlist
+                    isConfident = item.isConfidentForAnswer
+                    answerFound = item.answerFound
+                }
+            }
+        }
 
         logger.debug(
-            "[{}] Preview shortlist updated: {} sources, isConfidentForAnswer: {}",
-            sessionId.value, output.updatedShortlist.size, output.isConfidentForAnswer
+            "[{}] Preview quick answer: {} sources, isConfidentForAnswer: {}, answerFound: {}, answer length: {}",
+            sessionId.value, finalShortlist.size, isConfident, answerFound, fullAnswer.length
         )
 
         return PreviewAccumulator(
-            shortlist = output.updatedShortlist,
+            shortlist = finalShortlist,
             htmlPreviewsByUrl = updatedPreviewsMap,
-            isConfidentForAnswer = output.isConfidentForAnswer
+            isConfidentForAnswer = isConfident,
+            fullAnswer = if (isConfident) fullAnswer.toString() else null,
+            answerFound = answerFound
         )
     }
 
     /**
      * Finish the query session with a preview answer.
      * Called when the preview path produces a confident answer.
+     * The answer has already been streamed by aggregatePreviewIntoAnswer,
+     * so this just completes the session.
      * Uses database as source of truth to check if session is already finished.
      */
     private suspend fun finishWithPreviewAnswer(
         sessionId: QuerySessionId,
-        searchQuery: SearchQuery,
         accumulator: PreviewAccumulator,
         eventChannel: SendChannel<SearchEvent>
     ) {
         // Check if session is already finished (use DB as source of truth)
         val session = querySessionService.getSession(sessionId)
         if (session.finishReason != null) {
-            logger.debug("[{}] Session already finished with {}, skipping preview answer", sessionId.value, session.finishReason)
+            logger.debug(
+                "[{}] Session already finished with {}, skipping preview answer",
+                sessionId.value,
+                session.finishReason
+            )
             return
         }
 
@@ -1187,46 +1243,26 @@ class AgenticBrowserSearchOrchestrator(
             )
         )
 
-        var fullAnswer = ""
-        previewAnswerSynthesisAgent.generateStream(
-            PreviewAnswerSynthesisInput(searchQuery.query, accumulator.shortlist)
-        ).collect { item ->
-            when (item) {
-                is AnswerStreamItem.Chunk -> {
-                    fullAnswer += item.text
-                    eventChannel.send(SearchEvent.AnswerChunk(sessionId, item.text))
-                }
-
-                is AnswerStreamItem.Complete -> {
-                    tokenUsageService.recordTokenUsage(
-                        sessionId, "PreviewAnswerSynthesisAgent",
-                        item.tokenUsage.modelName, item.tokenUsage.promptTokens,
-                        item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
-                    )
-
-                    val answerSources = accumulator.shortlist.map { it.url }
-                    if (answerSources.isNotEmpty()) {
-                        urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
-                    }
-
-                    querySessionService.completeSessionPreviewAnswerComplete(
-                        sessionId,
-                        fullAnswer,
-                        item.answerFound
-                    )
-
-                    val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
-
-                    eventChannel.send(
-                        SearchEvent.SessionCompleted(
-                            sessionId = sessionId,
-                            finishReason = "PREVIEW_ANSWER_COMPLETE",
-                            sessionDetail = sessionDetail,
-                            imageIds = emptyList()
-                        )
-                    )
-                }
-            }
+        val answerSources = accumulator.shortlist.map { it.url }
+        if (answerSources.isNotEmpty()) {
+            urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
         }
+
+        querySessionService.completeSessionPreviewAnswerComplete(
+            sessionId,
+            accumulator.fullAnswer ?: "",
+            accumulator.answerFound
+        )
+
+        val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
+
+        eventChannel.send(
+            SearchEvent.SessionCompleted(
+                sessionId = sessionId,
+                finishReason = "PREVIEW_ANSWER_COMPLETE",
+                sessionDetail = sessionDetail,
+                imageIds = emptyList()
+            )
+        )
     }
 }

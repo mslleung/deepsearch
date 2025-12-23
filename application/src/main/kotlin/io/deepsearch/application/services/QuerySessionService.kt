@@ -415,9 +415,9 @@ class QuerySessionService(
         } else 0.0
         
         // Answer found rate
-        val sessionsWithAnswerFound = allSessions.filter { it.answerFound != null }
+        val sessionsWithAnswerFound = allSessions.filter { true }
         val answerFoundRate = if (sessionsWithAnswerFound.isNotEmpty()) {
-            sessionsWithAnswerFound.count { it.answerFound == true }.toDouble() / sessionsWithAnswerFound.size
+            sessionsWithAnswerFound.count { it.answerFound }.toDouble() / sessionsWithAnswerFound.size
         } else 0.0
         
         // Average URLs per session
@@ -434,9 +434,9 @@ class QuerySessionService(
                 domainCompletedSessions.count { it.finishReason == FinishReason.ANSWER_COMPLETE }.toDouble() / domainCompletedSessions.size
             } else 0.0
             
-            val domainSessionsWithAnswerFound = sessions.filter { it.answerFound != null }
+            val domainSessionsWithAnswerFound = sessions.filter { true }
             val domainAnswerFoundRate = if (domainSessionsWithAnswerFound.isNotEmpty()) {
-                domainSessionsWithAnswerFound.count { it.answerFound == true }.toDouble() / domainSessionsWithAnswerFound.size
+                domainSessionsWithAnswerFound.count { it.answerFound }.toDouble() / domainSessionsWithAnswerFound.size
             } else 0.0
             
             val avgSearchTimeMs = sessions
