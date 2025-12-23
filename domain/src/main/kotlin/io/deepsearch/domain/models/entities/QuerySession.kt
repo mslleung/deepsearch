@@ -87,6 +87,7 @@ enum class FinishReason {
     TIME_BUDGET_EXCEEDED,
     MAX_LINKS_BUDGET_EXCEEDED,
     ANSWER_COMPLETE,
+    PREVIEW_ANSWER_COMPLETE, // Preview path produced a confident answer
     LINKS_EXHAUSTED,
     EXECUTION_TIME_EXCEEDED, // hard coded fallback timeout
 }

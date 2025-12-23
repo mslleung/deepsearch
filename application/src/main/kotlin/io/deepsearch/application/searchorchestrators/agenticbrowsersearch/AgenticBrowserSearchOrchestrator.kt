@@ -1209,11 +1209,10 @@ class AgenticBrowserSearchOrchestrator(
                         urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
                     }
 
-                    querySessionService.completeSessionAnswerComplete(
+                    querySessionService.completeSessionPreviewAnswerComplete(
                         sessionId,
                         fullAnswer,
-                        item.answerFound,
-                        emptyList() // Preview answers don't have images
+                        item.answerFound
                     )
 
                     val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
@@ -1221,7 +1220,7 @@ class AgenticBrowserSearchOrchestrator(
                     eventChannel.send(
                         SearchEvent.SessionCompleted(
                             sessionId = sessionId,
-                            finishReason = "PREVIEW_ANSWER",
+                            finishReason = "PREVIEW_ANSWER_COMPLETE",
                             sessionDetail = sessionDetail,
                             imageIds = emptyList()
                         )

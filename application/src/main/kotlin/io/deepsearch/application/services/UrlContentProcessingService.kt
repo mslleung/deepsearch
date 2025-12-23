@@ -295,22 +295,7 @@ class UrlContentProcessingService(
                 val result = htmlPreviewService.prepareHtmlPreview(extractedHtml, normalizedUrl)
                 logger.debug("HTML preview ready for {}: {} chars", normalizedUrl, result.cleanedHtml.length)
                 
-                // Cache the preview content so sources are available if search completes before full extraction
-                // When full markdown is extracted, it will replace this via upsert (isPreview=false overwrites isPreview=true)
-                // For preview, we store the cleaned HTML as markdown for embedding generation
-                webpageCacheService.cacheWebpage(
-                    url = normalizedUrl,
-                    title = result.title,
-                    description = result.description,
-                    markdown = result.cleanedHtml,  // Use cleaned HTML for preview embedding
-                    html = extractedHtml,
-                    httpStatus = 200,
-                    httpReason = "OK",
-                    mimeType = "text/html",
-                    sessionId = sessionId,
-                    isPreview = true
-                )
-                
+                // Emit FIRST for low latency - preview path shouldn't wait for DB operations
                 emit(
                     UrlProcessingEvent.HtmlPreviewReady(
                         normalizedUrl,
@@ -318,6 +303,23 @@ class UrlContentProcessingService(
                         result.title,
                         result.description
                     )
+                )
+                
+                // Cache the preview content so sources are available if search completes before full extraction
+                // When full markdown is extracted, it will replace this via upsert (isPreview=false overwrites isPreview=true)
+                // For preview, we store the cleaned HTML as markdown for embedding generation
+                // Note: html=null to avoid slow 1MB insert - full extraction will store it
+                webpageCacheService.cacheWebpage(
+                    url = normalizedUrl,
+                    title = result.title,
+                    description = result.description,
+                    markdown = result.cleanedHtml,  // Use cleaned HTML for preview embedding
+                    html = null,  // Skip raw HTML for preview - full extraction will store it
+                    httpStatus = 200,
+                    httpReason = "OK",
+                    mimeType = "text/html",
+                    sessionId = sessionId,
+                    isPreview = true
                 )
             }
 

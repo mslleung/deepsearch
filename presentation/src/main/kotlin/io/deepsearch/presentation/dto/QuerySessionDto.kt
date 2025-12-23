@@ -36,7 +36,8 @@ data class ContentSourceDto(
     val url: String,
     val title: String?,
     val description: String?,
-    val markdown: String
+    val markdown: String,
+    val isPreview: Boolean // true if content is from simple text extraction (no LLM processing)
 )
 
 /**
@@ -124,7 +125,8 @@ fun QuerySession.toDetailDto(
                     url = urlAccess.url,
                     title = webpage.title,
                     description = webpage.description,
-                    markdown = markdownContent
+                    markdown = markdownContent,
+                    isPreview = webpage.isPreview
                 )
             } else null
         }

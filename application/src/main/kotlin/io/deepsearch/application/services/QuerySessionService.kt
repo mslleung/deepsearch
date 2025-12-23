@@ -71,6 +71,16 @@ interface IQuerySessionService {
     )
 
     /**
+     * Complete the session with a preview answer (from the fast preview path).
+     * Preview answers use simpler text extraction without full LLM processing.
+     */
+    suspend fun completeSessionPreviewAnswerComplete(
+        sessionId: QuerySessionId,
+        answer: String,
+        answerFound: Boolean
+    )
+
+    /**
      * Check if the search budget has been exceeded.
      * Returns true if budget was exceeded, false otherwise.
      */
@@ -208,6 +218,22 @@ class QuerySessionService(
             sessionId.value,
             answer.length,
             imageIds.size,
+            answerFound
+        )
+    }
+
+    override suspend fun completeSessionPreviewAnswerComplete(
+        sessionId: QuerySessionId,
+        answer: String,
+        answerFound: Boolean
+    ) {
+        val session = getSessionOrThrow(sessionId)
+        session.completeWithAnswer(answer, FinishReason.PREVIEW_ANSWER_COMPLETE, answerFound, emptyList())
+        querySessionRepository.update(session)
+        logger.info(
+            "[{}] Session completed with preview answer: {} chars, answerFound={}",
+            sessionId.value,
+            answer.length,
             answerFound
         )
     }

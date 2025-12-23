@@ -196,7 +196,8 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
                             url = urlAccess.url,
                             title = webpage.title,
                             description = webpage.description,
-                            markdown = markdownContent
+                            markdown = markdownContent,
+                            isPreview = webpage.isPreview
                         )
                     } else null
                 }
