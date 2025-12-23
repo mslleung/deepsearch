@@ -17,7 +17,10 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import org.slf4j.LoggerFactory
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -44,6 +47,23 @@ class RemoteBrowserPool(
     }
 
     private val httpClient = HttpClient(OkHttp) {
+        engine {
+            config {
+                // Increase connection pool for concurrent browser requests
+                // Default is 5 connections per host which causes queuing
+                connectionPool(ConnectionPool(
+                    maxIdleConnections = 50,
+                    keepAliveDuration = 5,
+                    timeUnit = TimeUnit.MINUTES
+                ))
+                
+                // Increase dispatcher limits for concurrent requests
+                dispatcher(Dispatcher().apply {
+                    maxRequests = 100
+                    maxRequestsPerHost = 50
+                })
+            }
+        }
         install(ContentNegotiation) {
             json(json)
         }
@@ -62,6 +82,8 @@ class RemoteBrowserPool(
         proxyUrl: String?,
         block: suspend (IBrowserPage) -> T
     ): T {
+        val acquireStart = System.currentTimeMillis()
+        
         // Acquire session with proxy URL
         val acquireResponse = try {
             httpClient.post("$baseUrl/sessions") {
@@ -81,8 +103,9 @@ class RemoteBrowserPool(
 
         val sessionInfo = acquireResponse.body<AcquireResponse>()
         val sessionId = sessionInfo.sessionId
+        val acquireTime = System.currentTimeMillis() - acquireStart
 
-        logger.debug("Acquired session: {} with proxy: {}", sessionId, proxyUrl ?: "direct")
+        logger.debug("Acquired session: {} in {}ms with proxy: {}", sessionId, acquireTime, proxyUrl ?: "direct")
 
         val released = AtomicBoolean(false)
 
@@ -113,6 +136,9 @@ class RemoteBrowserPool(
     }
 
     private suspend fun sendCommand(sessionId: String, command: PageCommand): String {
+        val commandName = command::class.simpleName
+        val httpStart = System.currentTimeMillis()
+        
         val response = try {
             httpClient.post("$baseUrl/sessions/$sessionId/command") {
                 contentType(ContentType.Application.Json)
@@ -123,6 +149,8 @@ class RemoteBrowserPool(
         } catch (e: Exception) {
             throw ConnectionLostException("Command failed: ${e.message}")
         }
+        
+        val httpTime = System.currentTimeMillis() - httpStart
 
         if (!response.status.isSuccess()) {
             if (response.status == HttpStatusCode.NotFound) {
@@ -132,7 +160,29 @@ class RemoteBrowserPool(
             throw RemoteBrowserException("COMMAND_FAILED", "Command failed: $errorBody")
         }
 
-        val result = response.body<CommandResponse>()
+        // Measure body reading separately from JSON parsing
+        val bodyStart = System.currentTimeMillis()
+        val bodyText = response.bodyAsText()
+        val bodyReadTime = System.currentTimeMillis() - bodyStart
+        
+        val parseStart = System.currentTimeMillis()
+        val result = json.decodeFromString<CommandResponse>(bodyText)
+        val parseTime = System.currentTimeMillis() - parseStart
+        
+        val dataLength = result.data?.length ?: 0
+        val totalTime = httpTime + bodyReadTime + parseTime
+        
+        if (totalTime > 500) {
+            logger.info(
+                "sendCommand {} [{}]: http={}ms, bodyRead={}ms, parse={}ms, bodyLen={}, dataLen={}",
+                commandName, sessionId, httpTime, bodyReadTime, parseTime, bodyText.length, dataLength
+            )
+        } else {
+            logger.debug(
+                "sendCommand {} [{}]: http={}ms, bodyRead={}ms, parse={}ms, dataLen={}",
+                commandName, sessionId, httpTime, bodyReadTime, parseTime, dataLength
+            )
+        }
         
         if (!result.success) {
             throw RemoteBrowserException(
