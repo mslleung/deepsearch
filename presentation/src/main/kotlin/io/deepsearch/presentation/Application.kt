@@ -27,6 +27,7 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.plugins.callid.*
 import io.ktor.server.plugins.calllogging.*
+import io.ktor.server.plugins.compression.*
 import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.auth.Authentication
 import io.ktor.server.auth.AuthenticationConfig
@@ -61,6 +62,7 @@ fun Application.module() {
     configureCallId()
     configureCallLogging()
     configureSerialization()
+    configureCompression()
     configureCORS()
     configureDependencyInjection()
     configureStatusPages()
@@ -106,6 +108,19 @@ private fun Application.configureCallLogging() {
 private fun Application.configureSerialization() {
     install(ServerContentNegotiation) {
         json()
+    }
+}
+
+private fun Application.configureCompression() {
+    install(Compression) {
+        gzip {
+            priority = 1.0
+            minimumSize(1024) // Only compress responses > 1KB
+        }
+        deflate {
+            priority = 0.9
+            minimumSize(1024)
+        }
     }
 }
 
