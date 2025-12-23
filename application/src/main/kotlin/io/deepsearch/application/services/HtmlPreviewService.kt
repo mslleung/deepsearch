@@ -52,24 +52,41 @@ class HtmlPreviewService : IHtmlPreviewService {
     }
 
     override fun prepareHtmlPreview(html: String, url: String): HtmlPreviewResult {
+        val totalStart = System.currentTimeMillis()
+        
+        val parseStart = System.currentTimeMillis()
         val doc = Jsoup.parse(html)
+        val parseTime = System.currentTimeMillis() - parseStart
 
         val title = doc.title().takeIf { it.isNotBlank() }
         val description = doc.selectFirst("meta[name=description]")?.attr("content")?.takeIf { it.isNotBlank() }
 
         // Remove unwanted elements
+        val removeStart = System.currentTimeMillis()
         removeUnwantedElements(doc)
+        val removeTime = System.currentTimeMillis() - removeStart
 
         // Strip unnecessary attributes
+        val stripStart = System.currentTimeMillis()
         stripAttributes(doc)
+        val stripTime = System.currentTimeMillis() - stripStart
 
         // Remove empty elements
+        val emptyStart = System.currentTimeMillis()
         removeEmptyElements(doc)
+        val emptyTime = System.currentTimeMillis() - emptyStart
 
         // Get the cleaned body HTML
+        val serializeStart = System.currentTimeMillis()
         val cleanedHtml = doc.body().html()
+        val serializeTime = System.currentTimeMillis() - serializeStart
+        
+        val totalTime = System.currentTimeMillis() - totalStart
 
-        logger.debug("HTML preview for {}: {} -> {} chars", url, html.length, cleanedHtml.length)
+        logger.debug(
+            "HTML preview for {}: {} -> {} chars in {}ms (parse={}ms, remove={}ms, strip={}ms, empty={}ms, serialize={}ms)",
+            url, html.length, cleanedHtml.length, totalTime, parseTime, removeTime, stripTime, emptyTime, serializeTime
+        )
 
         return HtmlPreviewResult(
             cleanedHtml = cleanedHtml,

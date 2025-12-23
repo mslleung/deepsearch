@@ -219,7 +219,7 @@ class AgenticBrowserSearchOrchestrator(
                 // Preview path: fast HTML evaluation for early exit
                 sourceFlow
                     .filterIsInstance<UrlContentResult.HtmlPreview>()
-                    .chunkedWithTimeout(chunkSize = 10, timeoutMs = 800)
+                    .chunkedWithTimeout(chunkSize = 5, timeoutMs = 300)
                     .takeWhile { !answerAccumulator.isComplete }
                     .runningFold(PreviewAccumulator()) { state, htmlBatch ->
                         aggregatePreviewIntoAnswer(sessionId, searchQuery, state, htmlBatch, channel)

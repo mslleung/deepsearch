@@ -6,8 +6,10 @@ import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -286,8 +288,18 @@ class UrlContentProcessingService(
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
         // Resolve proxy config and execute with appropriate browser pool method (navigation is handled internally)
+        val navigateStart = System.currentTimeMillis()
         withResolvedPage(normalizedUrl, proxyConfig) { page ->
+            val navigateTime = System.currentTimeMillis() - navigateStart
+            
+            val getHtmlStart = System.currentTimeMillis()
             val extractedHtml = page.getFullHtml()
+            val getHtmlTime = System.currentTimeMillis() - getHtmlStart
+            
+            logger.debug(
+                "Browser timing for {}: navigate={}ms, getFullHtml={}ms ({} chars)",
+                normalizedUrl, navigateTime, getHtmlTime, extractedHtml.length
+            )
 
             // Emit HTML preview immediately (no LLM) for early evaluation by preview path
             // This allows the preview shortlist agent to start processing while full markdown is being extracted
