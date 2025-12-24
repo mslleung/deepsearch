@@ -19,13 +19,19 @@ data class HtmlPreviewResult(
 
 interface IHtmlPreviewService {
     /**
-     * Prepare a cleaned HTML preview for the preview shortlist agent.
+     * Prepare a cleaned HTML preview for the preview quick answer agent.
      * 
-     * Aggressive cleaning strategy:
-     * - Remove: script, style, noscript, link, meta, svg, iframe
-     * - Remove: nav, header, footer, aside (navigation elements)
-     * - Strip most attributes except semantic ones: class, id, role, aria-label
-     * - Preserve semantic structure: article, section, main, p, h1-h6, ul, ol, li
+     * Very aggressive cleaning strategy to extract ONLY prose content:
+     * - Remove: ALL media (images, video, audio, svg, canvas, etc.)
+     * - Remove: ALL tables (the agent explicitly skips sources with tables)
+     * - Remove: ALL forms, navigation, chrome elements
+     * - Remove: Code blocks, definition lists (structured data, not prose)
+     * - Remove: Icon elements (common CSS class patterns)
+     * - Remove: Navigation-like lists (lists of short links)
+     * - Preserve: Only prose paragraphs (p, article, section, headings, blockquotes)
+     * 
+     * The goal is to support quick answers for queries that don't require
+     * the full multi-modal markdown conversion pipeline.
      * 
      * @param html The raw HTML content
      * @param url The URL of the page (for logging)
@@ -39,26 +45,69 @@ class HtmlPreviewService : IHtmlPreviewService {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     companion object {
-        // Single combined selector for all elements to remove (avoids multiple DOM traversals)
+        // Aggressive removal - keep ONLY prose content
         private val REMOVE_SELECTOR = listOf(
-            "script", "style", "noscript", "link", "meta", "svg", "iframe",
-            "nav", "header", "footer", "aside", "form", "input", "button",
-            "select", "textarea", "canvas", "video", "audio", "object", "embed",
-            "[hidden]", "[style*='display: none']", "[style*='display:none']",
-            "[aria-hidden='true']"
+            // Scripts, styles, metadata
+            "script", "style", "noscript", "link", "meta", "template",
+
+            // Navigation and chrome
+            "nav", "header", "footer", "aside", "menu", "menuitem",
+
+            // Forms
+            "form", "input", "button", "select", "textarea", "label",
+            "fieldset", "legend", "output", "datalist",
+
+            // ALL media - we only want prose text
+            "img", "picture", "video", "audio", "svg", "canvas",
+            "object", "embed", "iframe", "figure", "figcaption", "map", "area",
+
+            // ALL tables - agent explicitly skips sources with tables
+            "table", "tr", "td", "th", "thead", "tbody", "tfoot",
+            "caption", "colgroup", "col",
+
+            // Definition lists (usually structured key-value data, not prose)
+            "dl", "dt", "dd",
+
+            // Code blocks (technical snippets, not prose paragraphs)
+            "pre", "code",
+
+            // Icon elements - common patterns
+            "i:empty", // Empty <i> tags are almost always icons
+            "[class*='icon']", "[class*='Icon']",
+            "[class*='fa-']", "[class*='fas ']", "[class*='far ']", "[class*='fab ']",
+            "[class*='bi-']",
+            "[class*='material-icons']", "[class*='material-symbols']",
+            "[class*='glyphicon']",
+            "[class*='feather']",
+
+            // Hidden elements
+            "[hidden]",
+            "[style*='display: none']", "[style*='display:none']",
+            "[aria-hidden='true']",
+
+            // Common non-content patterns
+            "[class*='breadcrumb']",
+            "[class*='pagination']",
+            "[class*='sidebar']",
+            "[role='navigation']",
+            "[role='banner']",
+            "[role='contentinfo']"
         ).joinToString(", ")
 
-        // Attributes to keep (all others are stripped)
+        // Stripped down - only attributes useful for semantic understanding
         private val KEEP_ATTRIBUTES = setOf(
-            "class", "id", "role", "aria-label", "aria-labelledby",
-            "href", "src", "alt", "title", "data-testid"
+            "class", "id", "role", "aria-label"
         )
 
         // Tags to check for emptiness
-        private val EMPTY_TAGS = setOf("div", "span", "p", "section", "article", "main")
+        private val EMPTY_TAGS = setOf("div", "span", "p", "section", "article", "main", "li", "ul", "ol")
 
-        // Selector for meaningful children (elements that make a container non-empty)
-        private const val MEANINGFUL_CHILDREN_SELECTOR = "img, table, ul, ol, dl, pre, code, blockquote"
+        // Only prose-containing elements are "meaningful"
+        private const val MEANINGFUL_CHILDREN_SELECTOR = "p, h1, h2, h3, h4, h5, h6, blockquote, article, section"
+
+        // Threshold for detecting navigation lists (lists where most items are just links)
+        private const val NAV_LIST_LINK_THRESHOLD = 0.7f
+        private const val NAV_LIST_MAX_TEXT_LENGTH = 50
     }
 
     override fun prepareHtmlPreview(html: String, url: String): HtmlPreviewResult {
@@ -74,6 +123,12 @@ class HtmlPreviewService : IHtmlPreviewService {
         // Remove unwanted elements with single combined selector
         val removeStart = System.currentTimeMillis()
         doc.select(REMOVE_SELECTOR).remove()
+        
+        // Remove navigation-like lists (lists of short links)
+        removeNavigationLists(doc)
+        
+        // Unwrap anchor tags - keep text but remove <a> wrapper (no value for prose extraction)
+        doc.select("a").unwrap()
         val removeTime = System.currentTimeMillis() - removeStart
 
         // Single traversal: strip attributes, remove comments, mark empty elements
@@ -98,6 +153,34 @@ class HtmlPreviewService : IHtmlPreviewService {
             title = title,
             description = description
         )
+    }
+
+    /**
+     * Remove navigation-like lists: lists where most items are just short links.
+     * These are typically navigation menus, not prose content.
+     */
+    private fun removeNavigationLists(doc: Document) {
+        val listsToRemove = mutableListOf<Element>()
+        
+        doc.select("ul, ol").forEach { list ->
+            val items = list.select("> li")
+            if (items.isEmpty()) return@forEach
+
+            // Count items that are "link-only" (just an <a> with short text)
+            val linkOnlyCount = items.count { li ->
+                val text = li.text().trim()
+                val children = li.children()
+                val hasOnlyLink = children.size == 1 && children.first()?.tagName() == "a"
+                hasOnlyLink && text.length < NAV_LIST_MAX_TEXT_LENGTH
+            }
+
+            // If most items are link-only, it's likely navigation
+            if (items.size > 0 && linkOnlyCount.toFloat() / items.size > NAV_LIST_LINK_THRESHOLD) {
+                listsToRemove.add(list)
+            }
+        }
+        
+        listsToRemove.forEach { it.remove() }
     }
 
     /**
@@ -144,7 +227,7 @@ class HtmlPreviewService : IHtmlPreviewService {
         // Check if element has any non-whitespace text
         if (element.text().trim().isNotEmpty()) return false
 
-        // Check if element has any meaningful children (images, tables, etc.)
+        // Check if element has any meaningful prose children
         return element.select(MEANINGFUL_CHILDREN_SELECTOR).isEmpty()
     }
 }
