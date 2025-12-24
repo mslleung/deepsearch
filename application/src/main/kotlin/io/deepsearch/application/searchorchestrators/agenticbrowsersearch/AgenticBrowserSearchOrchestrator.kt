@@ -70,6 +70,8 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.single
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.slf4j.Logger
@@ -193,10 +195,16 @@ class AgenticBrowserSearchOrchestrator(
                 )
             )
 
+            // Create a child job for source processing that can be cancelled
+            // when either path produces a confident answer
+            val sourceProcessingJob = Job(coroutineContext[Job])
+            val sourceProcessingScope = CoroutineScope(coroutineContext + sourceProcessingJob)
+
             // Share the source flow so both preview and main paths can consume it
+            // Uses sourceProcessingScope so cancelling sourceProcessingJob cancels all in-flight work
             val sourceFlow = merge(immediateFlows)
                 .cancellable()
-                .shareIn(this, SharingStarted.Eagerly)
+                .shareIn(sourceProcessingScope, SharingStarted.Eagerly)
 
             // Track state for both paths
             var previewAccumulator = PreviewAccumulator()
@@ -220,7 +228,8 @@ class AgenticBrowserSearchOrchestrator(
                     .take(1)
                     .onEach { confidentAccumulator ->
                         if (sessionCompleted.compareAndSet(false, true)) {
-                            logger.info("[{}] Preview path produced confident answer", sessionId.value)
+                            logger.info("[{}] Preview path produced confident answer, cancelling source processing", sessionId.value)
+                            sourceProcessingJob.cancel()
                             finishWithPreviewAnswer(sessionId, confidentAccumulator, channel)
                         }
                     }
@@ -244,6 +253,8 @@ class AgenticBrowserSearchOrchestrator(
                     .take(1)
                     .onEach { completedAccumulator ->
                         if (sessionCompleted.compareAndSet(false, true)) {
+                            logger.info("[{}] Main path completed, cancelling source processing", sessionId.value)
+                            sourceProcessingJob.cancel()
                             finishQuerySession(sessionId, searchQuery, completedAccumulator, budget, channel)
                         }
                     }
@@ -252,6 +263,8 @@ class AgenticBrowserSearchOrchestrator(
                 .onCompletion {
                     // Handle case where neither path completed via onEach (sources exhausted or interrupted)
                     if (sessionCompleted.compareAndSet(false, true)) {
+                        logger.info("[{}] Flow completed, cancelling source processing", sessionId.value)
+                        sourceProcessingJob.cancel()
                         if (previewAccumulator.isConfidentForAnswer) {
                             logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
                             finishWithPreviewAnswer(sessionId, previewAccumulator, channel)

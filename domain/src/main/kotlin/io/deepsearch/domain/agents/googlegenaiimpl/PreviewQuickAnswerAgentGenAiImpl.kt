@@ -451,7 +451,7 @@ class PreviewQuickAnswerAgentGenAiImpl(
             i++
         }
 
-        if (closingIdx > 0) {
+        if (closingIdx >= 0) {
             content = content.substring(0, closingIdx)
         }
 
