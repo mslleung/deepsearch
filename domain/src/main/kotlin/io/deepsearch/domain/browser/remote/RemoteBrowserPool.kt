@@ -75,7 +75,7 @@ class RemoteBrowserPool(
     }
 
     init {
-        logger.info("RemoteBrowserPool connecting to: {}", baseUrl)
+        logger.info("RemoteBrowserPool at: {}", baseUrl)
     }
 
     override suspend fun <T> withPage(
