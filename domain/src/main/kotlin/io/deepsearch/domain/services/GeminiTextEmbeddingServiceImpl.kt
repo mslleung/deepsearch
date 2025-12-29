@@ -3,10 +3,12 @@ package io.deepsearch.domain.services
 import com.google.genai.Client
 import com.google.genai.types.EmbedContentConfig
 import io.deepsearch.domain.agents.infra.withRateLimitRetry
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.math.sqrt
@@ -18,7 +20,8 @@ import kotlin.math.sqrt
  * suitable for development environments.
  */
 class GeminiTextEmbeddingServiceImpl(
-    private val client: Client
+    private val client: Client,
+    private val dispatchers: IDispatcherProvider
 ) : ITextEmbeddingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -102,7 +105,9 @@ class GeminiTextEmbeddingServiceImpl(
             .build()
 
         val response = withRateLimitRetry(this::class.simpleName!!) {
-            client.models.embedContent(modelName, text, config)
+            withContext(dispatchers.io) {
+                client.models.embedContent(modelName, text, config)
+            }
         }
 
         // Estimate token count (embedding responses may not have full usageMetadata)

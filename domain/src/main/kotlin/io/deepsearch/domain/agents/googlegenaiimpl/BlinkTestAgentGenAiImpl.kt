@@ -11,7 +11,9 @@ import io.deepsearch.domain.agents.BlinkTestOutput
 import io.deepsearch.domain.agents.IBlinkTestAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -21,7 +23,8 @@ import org.slf4j.LoggerFactory
  * Determines if the page is relevant to a search query based on visual inspection.
  */
 class BlinkTestAgentGenAiImpl(
-    private val client: Client
+    private val client: Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IBlinkTestAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -71,41 +74,43 @@ class BlinkTestAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
-        val response = retryLlmCall<BlinkTestResponse>(this::class.simpleName!!) {
-            val result = client.models.generateContent(
-                modelId,
-                listOf(
-                    Content.fromParts(
-                        Part.fromBytes(input.screenshotBytes, "image/jpeg"),
-                        Part.fromText(userPrompt)
-                    )
-                ),
-                GenerateContentConfig.builder()
-                    .temperature(0.1F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
-                    .thinkingConfig(
-                        ThinkingConfig.builder()
-                            .thinkingBudget(0)
-                            .build()
-                    )
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
-
-            result.checkFinishReason()
-            
-            // Extract token usage
-            result.usageMetadata().ifPresent { metadata ->
-                tokenUsage = TokenUsageMetrics(
-                    modelName = modelId,
-                    promptTokens = metadata.promptTokenCount().orElse(0),
-                    outputTokens = metadata.candidatesTokenCount().orElse(0),
-                    totalTokens = metadata.totalTokenCount().orElse(0)
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<BlinkTestResponse>(this@BlinkTestAgentGenAiImpl::class.simpleName!!) {
+                val result = client.models.generateContent(
+                    modelId,
+                    listOf(
+                        Content.fromParts(
+                            Part.fromBytes(input.screenshotBytes, "image/jpeg"),
+                            Part.fromText(userPrompt)
+                        )
+                    ),
+                    GenerateContentConfig.builder()
+                        .temperature(0.1F)
+                        .responseSchema(outputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
                 )
-            }
 
-            result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
         }
         
         val decision = when (response.decision.uppercase()) {

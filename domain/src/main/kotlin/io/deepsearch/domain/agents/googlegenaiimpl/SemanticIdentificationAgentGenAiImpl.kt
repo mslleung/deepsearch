@@ -12,11 +12,13 @@ import io.deepsearch.domain.agents.SemanticIdentificationBatchRequest
 import io.deepsearch.domain.agents.SemanticIdentificationInput
 import io.deepsearch.domain.agents.SemanticIdentificationOutput
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.IdentifiedElement
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.services.BatchContentRequest
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
@@ -26,7 +28,8 @@ import org.slf4j.LoggerFactory
 
 class SemanticIdentificationAgentGenAiImpl(
     private val client: com.google.genai.Client,
-    private val cssSelectorConstructionService: ICssSelectorConstructionService
+    private val cssSelectorConstructionService: ICssSelectorConstructionService,
+    private val dispatcherProvider: IDispatcherProvider
 ) : ISemanticIdentificationAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -150,36 +153,38 @@ class SemanticIdentificationAgentGenAiImpl(
 
         // Step 4: Pass to LLM
         
-        val response = retryLlmCall<SemanticIdentificationResponse>(this::class.simpleName!!) {
-            val result = client.models.generateContent(
-                modelId,
-                cleanedHtml,
-                GenerateContentConfig.builder()
-                    .temperature(0F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
-                    .thinkingConfig(
-                        ThinkingConfig.builder()
-                            .thinkingBudget(0)
-                            .build()
-                    )
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
-
-            result.checkFinishReason()
-            
-            // Extract token usage
-            result.usageMetadata().ifPresent { metadata ->
-                tokenUsage = TokenUsageMetrics(
-                    modelName = modelId,
-                    promptTokens = metadata.promptTokenCount().orElse(0),
-                    outputTokens = metadata.candidatesTokenCount().orElse(0),
-                    totalTokens = metadata.totalTokenCount().orElse(0)
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<SemanticIdentificationResponse>(this@SemanticIdentificationAgentGenAiImpl::class.simpleName!!) {
+                val result = client.models.generateContent(
+                    modelId,
+                    cleanedHtml,
+                    GenerateContentConfig.builder()
+                        .temperature(0F)
+                        .responseSchema(outputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
                 )
-            }
 
-            result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
         }
 
         // Step 5: Reconstruct CSS selectors for all identified elements using batch method (single HTML parse)

@@ -9,7 +9,9 @@ import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleCombinedSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.withRateLimitRetry
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -21,7 +23,8 @@ import org.slf4j.LoggerFactory
  * https://ai.google.dev/gemini-api/docs/url-context
  */
 class GoogleCombinedSearchAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IGoogleCombinedSearchAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -55,16 +58,18 @@ class GoogleCombinedSearchAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = withRateLimitRetry(this::class.simpleName!!) {
-            client.models.generateContent(
-                modelId,
-                userPrompt,
-                GenerateContentConfig.builder()
-                    .temperature(0.2F)
-                    .tools(listOf(searchTool, urlContextTool))
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
+        val response = withContext(dispatcherProvider.io) {
+            withRateLimitRetry(this@GoogleCombinedSearchAgentGenAiImpl::class.simpleName!!) {
+                client.models.generateContent(
+                    modelId,
+                    userPrompt,
+                    GenerateContentConfig.builder()
+                        .temperature(0.2F)
+                        .tools(listOf(searchTool, urlContextTool))
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
+                )
+            }
         }
         
         // Extract token usage

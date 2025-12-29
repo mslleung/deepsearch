@@ -10,9 +10,11 @@ import io.deepsearch.domain.agents.FileSearchQueryOutput
 import io.deepsearch.domain.agents.IFileSearchQueryAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.withRateLimitRetry
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.FileSearchChunk
 import io.deepsearch.domain.models.valueobjects.GeminiFileMetadata
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -25,7 +27,8 @@ import org.slf4j.LoggerFactory
  * Reference: https://ai.google.dev/gemini-api/docs/file-search
  */
 class FileSearchQueryAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IFileSearchQueryAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -60,16 +63,18 @@ class FileSearchQueryAgentGenAiImpl(
             .fileSearch(fileSearchBuilder.build())
             .build()
 
-        val response = withRateLimitRetry(this::class.simpleName!!) {
-            client.models.generateContent(
-                modelId,
-                query,
-                GenerateContentConfig.builder()
-                    .temperature(0F)
-                    .tools(listOf(fileSearchTool))
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
+        val response = withContext(dispatcherProvider.io) {
+            withRateLimitRetry(this@FileSearchQueryAgentGenAiImpl::class.simpleName!!) {
+                client.models.generateContent(
+                    modelId,
+                    query,
+                    GenerateContentConfig.builder()
+                        .temperature(0F)
+                        .tools(listOf(fileSearchTool))
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
+                )
+            }
         }
 
         // Extract token usage

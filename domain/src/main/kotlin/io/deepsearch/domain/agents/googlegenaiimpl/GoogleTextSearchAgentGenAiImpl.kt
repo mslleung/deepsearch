@@ -9,6 +9,7 @@ import io.deepsearch.domain.agents.GoogleTextSearchOutput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.withRateLimitRetry
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
@@ -23,7 +24,8 @@ import org.slf4j.LoggerFactory
  * An agent that uses Google GenAI SDK's native Google Search tool to fetch text snippets and sources.
  */
 class GoogleTextSearchAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IGoogleTextSearchAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -63,16 +65,18 @@ class GoogleTextSearchAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = withRateLimitRetry(this::class.simpleName!!) {
-            client.models.generateContent(
-                modelId,
-                userPrompt,
-                GenerateContentConfig.builder()
-                    .temperature(0.2F)
-                    .tools(listOf(searchTool))
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
+        val response = withContext(dispatcherProvider.io) {
+            withRateLimitRetry(this@GoogleTextSearchAgentGenAiImpl::class.simpleName!!) {
+                client.models.generateContent(
+                    modelId,
+                    userPrompt,
+                    GenerateContentConfig.builder()
+                        .temperature(0.2F)
+                        .tools(listOf(searchTool))
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
+                )
+            }
         }
         
         // Extract token usage

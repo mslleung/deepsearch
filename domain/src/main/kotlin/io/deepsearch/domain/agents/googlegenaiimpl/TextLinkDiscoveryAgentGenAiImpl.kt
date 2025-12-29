@@ -11,9 +11,11 @@ import io.deepsearch.domain.agents.TextLinkDiscoveryInput
 import io.deepsearch.domain.agents.TextLinkDiscoveryOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.models.valueobjects.WebpageLink
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -26,7 +28,8 @@ import java.net.URI
  * relevant to the user's query. Filters to same-domain URLs.
  */
 class TextLinkDiscoveryAgentGenAiImpl(
-    private val client: Client
+    private val client: Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : ITextLinkDiscoveryAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -113,35 +116,37 @@ class TextLinkDiscoveryAgentGenAiImpl(
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val links = try {
-            val response = retryLlmCall<LinkAnalysisResponse>(this::class.simpleName!!) {
-                val result = client.models.generateContent(
-                    modelId,
-                    userPrompt,
-                    GenerateContentConfig.builder()
-                        .temperature(0F)
-                        .responseSchema(outputSchema)
-                        .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingBudget(0)
-                                .build()
-                        )
-                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                        .build()
-                )
-
-                result.checkFinishReason()
-
-                result.usageMetadata().ifPresent { metadata ->
-                    tokenUsage = TokenUsageMetrics(
-                        modelName = modelId,
-                        promptTokens = metadata.promptTokenCount().orElse(0),
-                        outputTokens = metadata.candidatesTokenCount().orElse(0),
-                        totalTokens = metadata.totalTokenCount().orElse(0)
+            val response = withContext(dispatcherProvider.io) {
+                retryLlmCall<LinkAnalysisResponse>(this@TextLinkDiscoveryAgentGenAiImpl::class.simpleName!!) {
+                    val result = client.models.generateContent(
+                        modelId,
+                        userPrompt,
+                        GenerateContentConfig.builder()
+                            .temperature(0F)
+                            .responseSchema(outputSchema)
+                            .responseMimeType("application/json")
+                            .thinkingConfig(
+                                ThinkingConfig.builder()
+                                    .thinkingBudget(0)
+                                    .build()
+                            )
+                            .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                            .build()
                     )
-                }
 
-                result.text() ?: throw RuntimeException("No text response from model")
+                    result.checkFinishReason()
+
+                    result.usageMetadata().ifPresent { metadata ->
+                        tokenUsage = TokenUsageMetrics(
+                            modelName = modelId,
+                            promptTokens = metadata.promptTokenCount().orElse(0),
+                            outputTokens = metadata.candidatesTokenCount().orElse(0),
+                            totalTokens = metadata.totalTokenCount().orElse(0)
+                        )
+                    }
+
+                    result.text() ?: throw RuntimeException("No text response from model")
+                }
             }
 
             response.links

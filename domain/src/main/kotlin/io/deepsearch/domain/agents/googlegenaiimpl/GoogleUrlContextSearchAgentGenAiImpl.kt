@@ -7,7 +7,9 @@ import com.google.genai.types.Tool
 import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -19,7 +21,8 @@ import org.slf4j.LoggerFactory
  * https://ai.google.dev/gemini-api/docs/url-context
  */
 class GoogleUrlContextSearchAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IGoogleUrlContextSearchAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -52,15 +55,17 @@ class GoogleUrlContextSearchAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = client.models.generateContent(
-            modelId,
-            userPrompt,
-            GenerateContentConfig.builder()
-                .temperature(0.2F)
-                .tools(listOf(urlContextTool))
-                .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                .build()
-        )
+        val response = withContext(dispatcherProvider.io) {
+            client.models.generateContent(
+                modelId,
+                userPrompt,
+                GenerateContentConfig.builder()
+                    .temperature(0.2F)
+                    .tools(listOf(urlContextTool))
+                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                    .build()
+            )
+        }
         
         // Extract token usage
         response.usageMetadata().ifPresent { metadata ->

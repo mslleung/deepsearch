@@ -13,9 +13,11 @@ import io.deepsearch.domain.agents.TableIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.services.BatchContentRequest
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
@@ -25,7 +27,8 @@ import org.slf4j.LoggerFactory
 
 class TableIdentificationAgentGenAiImpl(
     private val client: com.google.genai.Client,
-    private val cssSelectorConstructionService: ICssSelectorConstructionService
+    private val cssSelectorConstructionService: ICssSelectorConstructionService,
+    private val dispatcherProvider: IDispatcherProvider
 ) : ITableIdentificationAgent {
 
     companion object {
@@ -148,36 +151,38 @@ class TableIdentificationAgentGenAiImpl(
 
         // Step 4: Pass to LLM
         
-        val response = retryLlmCall<TableIdentificationResponse>(this::class.simpleName!!) {
-            val result = client.models.generateContent(
-                modelId,
-                listOf(Content.fromParts(Part.fromText(cleanedHtml))),
-                GenerateContentConfig.builder()
-                    .temperature(0F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
-                    .thinkingConfig(
-                        ThinkingConfig.builder()
-                            .thinkingBudget(0)
-                            .build()
-                    )
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
-
-            result.checkFinishReason()
-            
-            // Extract token usage
-            result.usageMetadata().ifPresent { metadata ->
-                tokenUsage = TokenUsageMetrics(
-                    modelName = modelId,
-                    promptTokens = metadata.promptTokenCount().orElse(0),
-                    outputTokens = metadata.candidatesTokenCount().orElse(0),
-                    totalTokens = metadata.totalTokenCount().orElse(0)
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<TableIdentificationResponse>(this@TableIdentificationAgentGenAiImpl::class.simpleName!!) {
+                val result = client.models.generateContent(
+                    modelId,
+                    listOf(Content.fromParts(Part.fromText(cleanedHtml))),
+                    GenerateContentConfig.builder()
+                        .temperature(0F)
+                        .responseSchema(outputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
                 )
-            }
 
-            result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
         }
 
         val allTableResults = programmaticTables + response.tables

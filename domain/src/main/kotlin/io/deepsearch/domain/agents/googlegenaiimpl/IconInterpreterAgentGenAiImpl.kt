@@ -10,8 +10,10 @@ import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.agents.IconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -26,7 +28,8 @@ import javax.imageio.ImageIO
  * Given a small icon image, produce a short, human-friendly label, a confidence score, and optional synonyms.
  */
 class IconInterpreterAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IIconInterpreterAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -85,36 +88,38 @@ class IconInterpreterAgentGenAiImpl(
             )
         }
         
-        val response = retryLlmCall<IconInterpretationResponse>(this::class.simpleName!!) {
-            val result = client.models.generateContent(
-                modelId,
-                listOf(Content.fromParts(Part.fromBytes(input.bytes, input.mimeType.value))),
-                GenerateContentConfig.builder()
-                    .temperature(0.0F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
-                    .thinkingConfig(
-                        ThinkingConfig.builder()
-                            .thinkingBudget(0)
-                            .build()
-                    )
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
-
-            result.checkFinishReason()
-            
-            // Extract token usage
-            result.usageMetadata().ifPresent { metadata ->
-                tokenUsage = TokenUsageMetrics(
-                    modelName = modelId,
-                    promptTokens = metadata.promptTokenCount().orElse(0),
-                    outputTokens = metadata.candidatesTokenCount().orElse(0),
-                    totalTokens = metadata.totalTokenCount().orElse(0)
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<IconInterpretationResponse>(this@IconInterpreterAgentGenAiImpl::class.simpleName!!) {
+                val result = client.models.generateContent(
+                    modelId,
+                    listOf(Content.fromParts(Part.fromBytes(input.bytes, input.mimeType.value))),
+                    GenerateContentConfig.builder()
+                        .temperature(0.0F)
+                        .responseSchema(outputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
                 )
-            }
 
-            result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
         }
 
         logger.debug("Icon interpretation complete: label='{}'", response.label)

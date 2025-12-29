@@ -10,13 +10,16 @@ import io.deepsearch.domain.agents.SerpQueryOptimizationInput
 import io.deepsearch.domain.agents.SerpQueryOptimizationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 class SerpQueryOptimizationAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : ISerpQueryOptimizationAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -76,35 +79,37 @@ class SerpQueryOptimizationAgentGenAiImpl(
             Target website: ${input.targetUrl}
         """.trimIndent()
 
-        val response = retryLlmCall<SerpOptimizationResponse>(this::class.simpleName!!) {
-            val result = client.models.generateContent(
-                modelId,
-                userPrompt,
-                GenerateContentConfig.builder()
-                    .temperature(0.1F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
-                    .thinkingConfig(
-                        ThinkingConfig.builder()
-                            .thinkingBudget(0)
-                            .build()
-                    )
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
-
-            result.checkFinishReason()
-
-            result.usageMetadata().ifPresent { metadata ->
-                tokenUsage = TokenUsageMetrics(
-                    modelName = modelId,
-                    promptTokens = metadata.promptTokenCount().orElse(0),
-                    outputTokens = metadata.candidatesTokenCount().orElse(0),
-                    totalTokens = metadata.totalTokenCount().orElse(0)
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<SerpOptimizationResponse>(this@SerpQueryOptimizationAgentGenAiImpl::class.simpleName!!) {
+                val result = client.models.generateContent(
+                    modelId,
+                    userPrompt,
+                    GenerateContentConfig.builder()
+                        .temperature(0.1F)
+                        .responseSchema(outputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
                 )
-            }
 
-            result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
         }
 
         logger.debug("Optimized query: {} -> {}", input.query, response.optimizedQuery)

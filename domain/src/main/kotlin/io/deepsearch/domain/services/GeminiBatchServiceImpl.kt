@@ -16,6 +16,8 @@ import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.UploadFileConfig
 import io.deepsearch.domain.agents.infra.withRateLimitRetry
+import io.deepsearch.domain.config.IDispatcherProvider
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -48,7 +50,8 @@ import kotlin.io.path.readText
  * @see https://ai.google.dev/gemini-api/docs/batch-api
  */
 class GeminiBatchServiceImpl(
-    private val client: Client
+    private val client: Client,
+    private val dispatchers: IDispatcherProvider
 ) : IGeminiBatchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -199,7 +202,9 @@ class GeminiBatchServiceImpl(
                 .build()
             
             val uploadedFile = withRateLimitRetry(this::class.simpleName!!) {
-                client.files.upload(tempFile.toFile(), uploadConfig)
+                withContext(dispatchers.io) {
+                    client.files.upload(tempFile.toFile(), uploadConfig)
+                }
             }
             
             val uploadedFileName = uploadedFile.name().orElseThrow {
@@ -218,7 +223,9 @@ class GeminiBatchServiceImpl(
                 .build()
             
             val batchJob = withRateLimitRetry(this::class.simpleName!!) {
-                client.batches.create(modelId, source, config)
+                withContext(dispatchers.io) {
+                    client.batches.create(modelId, source, config)
+                }
             }
             
             val batchJobName = batchJob.name().orElseThrow {
@@ -264,7 +271,9 @@ class GeminiBatchServiceImpl(
         val modelId = requests.first().modelId
 
         val batchJob = withRateLimitRetry(this::class.simpleName!!) {
-            client.batches.create(modelId, source, config)
+            withContext(dispatchers.io) {
+                client.batches.create(modelId, source, config)
+            }
         }
 
         val batchJobName = batchJob.name().orElseThrow {
@@ -374,7 +383,9 @@ class GeminiBatchServiceImpl(
         val modelId = requests.first().modelId
 
         val batchJob = withRateLimitRetry(this::class.simpleName!!) {
-            client.batches.createEmbeddings(modelId, source, config)
+            withContext(dispatchers.io) {
+                client.batches.createEmbeddings(modelId, source, config)
+            }
         }
 
         val batchJobName = batchJob.name().orElseThrow {
@@ -418,7 +429,9 @@ class GeminiBatchServiceImpl(
                 .build()
             
             val uploadedFile = withRateLimitRetry(this::class.simpleName!!) {
-                client.files.upload(tempFile.toFile(), uploadConfig)
+                withContext(dispatchers.io) {
+                    client.files.upload(tempFile.toFile(), uploadConfig)
+                }
             }
             
             val uploadedFileName = uploadedFile.name().orElseThrow {
@@ -437,7 +450,9 @@ class GeminiBatchServiceImpl(
                 .build()
             
             val batchJob = withRateLimitRetry(this::class.simpleName!!) {
-                client.batches.createEmbeddings(modelId, source, config)
+                withContext(dispatchers.io) {
+                    client.batches.createEmbeddings(modelId, source, config)
+                }
             }
             
             val batchJobName = batchJob.name().orElseThrow {
@@ -461,7 +476,9 @@ class GeminiBatchServiceImpl(
         logger.debug("Polling batch job status: {}", batchJobId)
 
         val batchJob = withRateLimitRetry(this::class.simpleName!!) {
-            client.batches.get(batchJobId, null)
+            withContext(dispatchers.io) {
+                client.batches.get(batchJobId, null)
+            }
         }
 
         val state = mapJobState(batchJob)
@@ -503,7 +520,9 @@ class GeminiBatchServiceImpl(
         logger.debug("Fetching results for batch job: {}", batchJobId)
 
         val batchJob = withRateLimitRetry(this::class.simpleName!!) {
-            client.batches.get(batchJobId, null)
+            withContext(dispatchers.io) {
+                client.batches.get(batchJobId, null)
+            }
         }
 
         // Check if batch is complete
@@ -601,7 +620,9 @@ class GeminiBatchServiceImpl(
         try {
             // Download the file content to temp file
             withRateLimitRetry(this::class.simpleName!!) {
-                client.files.download(fileName, tempFile.absolutePathString(), null)
+                withContext(dispatchers.io) {
+                    client.files.download(fileName, tempFile.absolutePathString(), null)
+                }
             }
             
             val fileContent = tempFile.readText()
@@ -709,7 +730,9 @@ class GeminiBatchServiceImpl(
 
         try {
             withRateLimitRetry(this::class.simpleName!!) {
-                client.batches.cancel(batchJobId, null)
+                withContext(dispatchers.io) {
+                    client.batches.cancel(batchJobId, null)
+                }
             }
             logger.info("Successfully cancelled batch job: {}", batchJobId)
         } catch (e: Exception) {

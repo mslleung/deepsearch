@@ -10,7 +10,9 @@ import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.agents.IPopupContainerIdentificationAgent
 import io.deepsearch.domain.agents.PopupContainerIdentificationInput
 import io.deepsearch.domain.agents.PopupContainerIdentificationOutput
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -19,7 +21,8 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 class PopupContainerIdentificationAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IPopupContainerIdentificationAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -73,41 +76,43 @@ class PopupContainerIdentificationAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = retryLlmCall<PopupContainerIdentificationResponse>(this::class.simpleName!!) {
-            val result = client.models.generateContent(
-                modelId,
-                listOf(
-                    Content.fromParts(
-                        Part.fromBytes(input.screenshotBytes, input.mimetype.value),
-                        Part.fromText("CLEANED_HTML:\n" + cleanedHtml)
-                    )
-                ),
-                GenerateContentConfig.builder()
-                    .temperature(0F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
-                    .thinkingConfig(
-                        ThinkingConfig.builder()
-                            .thinkingBudget(0)
-                            .build()
-                    )
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
-
-            result.checkFinishReason()
-            
-            // Extract token usage
-            result.usageMetadata().ifPresent { metadata ->
-                tokenUsage = TokenUsageMetrics(
-                    modelName = modelId,
-                    promptTokens = metadata.promptTokenCount().orElse(0),
-                    outputTokens = metadata.candidatesTokenCount().orElse(0),
-                    totalTokens = metadata.totalTokenCount().orElse(0)
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<PopupContainerIdentificationResponse>(this@PopupContainerIdentificationAgentGenAiImpl::class.simpleName!!) {
+                val result = client.models.generateContent(
+                    modelId,
+                    listOf(
+                        Content.fromParts(
+                            Part.fromBytes(input.screenshotBytes, input.mimetype.value),
+                            Part.fromText("CLEANED_HTML:\n" + cleanedHtml)
+                        )
+                    ),
+                    GenerateContentConfig.builder()
+                        .temperature(0F)
+                        .responseSchema(outputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
                 )
-            }
 
-            result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
         }
 
         val validXPaths = response.popupContainerXPaths

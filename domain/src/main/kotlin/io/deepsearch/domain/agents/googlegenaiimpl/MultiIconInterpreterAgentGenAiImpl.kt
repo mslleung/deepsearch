@@ -10,12 +10,14 @@ import io.deepsearch.domain.agents.MultiIconInterpreterInput
 import io.deepsearch.domain.agents.MultiIconInterpreterOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.services.BatchContentRequest
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
@@ -37,7 +39,8 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  * - Pre-filtering plain color icons to reduce LLM usage
  */
 class MultiIconInterpreterAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IMultiIconInterpreterAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -207,36 +210,38 @@ class MultiIconInterpreterAgentGenAiImpl(
         // Add instruction text
         contentParts.add(Part.fromText("Interpret the above ${iconsToProcess.size} icons in order"))
 
-        val response = retryLlmCall<MultiIconInterpretationResponse>(this::class.simpleName!!) {
-            val result = client.models.generateContent(
-                modelId,
-                listOf(Content.fromParts(*(contentParts.toTypedArray()))),
-                GenerateContentConfig.builder()
-                    .temperature(0.0F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
-                    .thinkingConfig(
-                        ThinkingConfig.builder()
-                            .thinkingBudget(0)
-                            .build()
-                    )
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
-
-            result.checkFinishReason()
-            
-            // Extract token usage
-            result.usageMetadata().ifPresent { metadata ->
-                tokenUsage = TokenUsageMetrics(
-                    modelName = modelId,
-                    promptTokens = metadata.promptTokenCount().orElse(0),
-                    outputTokens = metadata.candidatesTokenCount().orElse(0),
-                    totalTokens = metadata.totalTokenCount().orElse(0)
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<MultiIconInterpretationResponse>(this@MultiIconInterpreterAgentGenAiImpl::class.simpleName!!) {
+                val result = client.models.generateContent(
+                    modelId,
+                    listOf(Content.fromParts(*(contentParts.toTypedArray()))),
+                    GenerateContentConfig.builder()
+                        .temperature(0.0F)
+                        .responseSchema(outputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
                 )
-            }
 
-            result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
         }
 
         // Reconstruct full batch output list, inserting null for plain color icons

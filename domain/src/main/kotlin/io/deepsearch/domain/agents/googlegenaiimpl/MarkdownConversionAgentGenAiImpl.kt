@@ -11,7 +11,9 @@ import io.deepsearch.domain.agents.MarkdownConversionInput
 import io.deepsearch.domain.agents.MarkdownConversionOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -25,7 +27,8 @@ import org.slf4j.LoggerFactory
  * that preserves the visual hierarchy, content structure, and semantic meaning of the original page.
  */
 class MarkdownConversionAgentGenAiImpl(
-    private val client: com.google.genai.Client
+    private val client: com.google.genai.Client,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IMarkdownConversionAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -80,41 +83,43 @@ class MarkdownConversionAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_3_PRO_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val response = retryLlmCall<MarkdownConversionResponse>(this::class.simpleName!!) {
-            val result = client.models.generateContent(
-                modelId,
-                listOf(
-                    Content.fromParts(
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<MarkdownConversionResponse>(this@MarkdownConversionAgentGenAiImpl::class.simpleName!!) {
+                val result = client.models.generateContent(
+                    modelId,
+                    listOf(
+                        Content.fromParts(
 //                        Part.fromBytes(input.screenshotBytes, "image/jpeg"),
-                        Part.fromText(cleanedHtml)
-                    )
-                ),
-                GenerateContentConfig.builder()
-                    .temperature(1F)
-                    .responseSchema(outputSchema)
-                    .responseMimeType("application/json")
-                    .thinkingConfig(
-                        ThinkingConfig.builder()
-                            .thinkingLevel(ThinkingLevel.Known.LOW)
-                            .build()
-                    )
-                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                    .build()
-            )
-
-            result.checkFinishReason()
-            
-            // Extract token usage
-            result.usageMetadata().ifPresent { metadata ->
-                tokenUsage = TokenUsageMetrics(
-                    modelName = modelId,
-                    promptTokens = metadata.promptTokenCount().orElse(0),
-                    outputTokens = metadata.candidatesTokenCount().orElse(0),
-                    totalTokens = metadata.totalTokenCount().orElse(0)
+                            Part.fromText(cleanedHtml)
+                        )
+                    ),
+                    GenerateContentConfig.builder()
+                        .temperature(1F)
+                        .responseSchema(outputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingLevel(ThinkingLevel.Known.LOW)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                        .build()
                 )
-            }
 
-            result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+                
+                // Extract token usage
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
         }
         
         logger.debug("Markdown conversion completed: {} characters", response.markdown.length)
