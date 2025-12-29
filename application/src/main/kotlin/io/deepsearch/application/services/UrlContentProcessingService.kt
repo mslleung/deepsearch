@@ -266,6 +266,20 @@ class UrlContentProcessingService(
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
         val cachedHtml = cached.html
+        
+        // Emit HtmlPreviewReady for preview path evaluation when HTML is available
+        if (cachedHtml != null) {
+            logger.debug("Emitting cached HTML preview for URL: {} ({} chars)", originalUrl, cachedHtml.length)
+            emit(
+                UrlProcessingEvent.HtmlPreviewReady(
+                    originalUrl,
+                    cachedHtml,
+                    cached.title,
+                    cached.description
+                )
+            )
+        }
+        
         val links = if (cachedHtml != null) discoverLinks(cachedHtml) else emptyList()
 
         // Emit links first, then markdown (consistent with non-cached flow)

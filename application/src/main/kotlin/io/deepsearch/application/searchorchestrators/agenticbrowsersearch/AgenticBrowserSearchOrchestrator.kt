@@ -749,10 +749,15 @@ class AgenticBrowserSearchOrchestrator(
         // Partition webpages by preview status
         val (previewPages, fullPages) = webpages.partition { it.isPreview }
 
-        // Emit full markdown pages directly (current behavior)
+        // Emit full markdown pages - emit preview first for preview path, then full markdown
         fullPages.forEach { webpage ->
             eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, webpage.url))
             urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
+            
+            // Emit HtmlPreview for preview path evaluation
+            emit(UrlContentResult.HtmlPreview(webpage.url, webpage.title, webpage.description, webpage.html!!))
+            
+            // Emit UrlProcessed and FullMarkdown for main path
             eventChannel.send(
                 SearchEvent.UrlProcessed(
                     sessionId = sessionId,
