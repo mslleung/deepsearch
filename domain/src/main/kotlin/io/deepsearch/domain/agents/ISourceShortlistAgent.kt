@@ -8,11 +8,16 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 /**
  * Input for source shortlist agent.
  * Provides current shortlist and new batch of markdown sources to evaluate.
+ * 
+ * @param includeImages When true, applies stricter isGoodEnough criteria to ensure
+ *                      thorough search before returning an answer. Used when images
+ *                      are requested in the response.
  */
 data class SourceShortlistInput(
     val query: String,
     val currentShortlist: List<ShortlistedSource>,
-    val newMarkdownBatch: List<MarkdownSource>
+    val newMarkdownBatch: List<MarkdownSource>,
+    val includeImages: Boolean = false
 ) : IAgent.IAgentInput
 
 /**

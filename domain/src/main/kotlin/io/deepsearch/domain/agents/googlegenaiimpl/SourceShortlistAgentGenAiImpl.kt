@@ -217,10 +217,11 @@ class SourceShortlistAgentGenAiImpl(
 
     override suspend fun generate(input: SourceShortlistInput): SourceShortlistOutput {
         logger.debug(
-            "Generating source shortlist for query: '{}', current shortlist size: {}, new batch size: {}",
+            "Generating source shortlist for query: '{}', current shortlist size: {}, new batch size: {}, includeImages: {}",
             input.query,
             input.currentShortlist.size,
-            input.newMarkdownBatch.size
+            input.newMarkdownBatch.size,
+            input.includeImages
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
@@ -331,17 +332,31 @@ class SourceShortlistAgentGenAiImpl(
         }
 
         // Force isGoodEnough=false if any selected images are placeholders
-        val finalIsGoodEnough = if (hasPlaceholderSelected) {
+        var finalIsGoodEnough = if (hasPlaceholderSelected) {
             logger.debug("Forcing isGoodEnough=false because placeholder images were selected")
             false
         } else {
             response.isGoodEnough
         }
 
-        val finalReason = if (hasPlaceholderSelected && response.isGoodEnough) {
+        var finalReason = if (hasPlaceholderSelected && response.isGoodEnough) {
             "${response.reason} [Waiting for full markdown with selected images]"
         } else {
             response.reason
+        }
+
+        // When includeImages is true, require an authoritative source before returning isGoodEnough=true
+        // An authoritative source is OFFICIAL_LIVING_DOC with DIRECT_ANSWER (e.g., exact product page)
+        if (input.includeImages && finalIsGoodEnough) {
+            val hasAuthoritativeSource = updatedShortlist.any { source ->
+                source.sourceClassification == io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC &&
+                source.answerType == io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER
+            }
+            if (!hasAuthoritativeSource) {
+                logger.debug("Forcing isGoodEnough=false because includeImages is enabled but no authoritative source found")
+                finalIsGoodEnough = false
+                finalReason = "$finalReason [Waiting for authoritative source with direct answer]"
+            }
         }
 
         logger.debug(

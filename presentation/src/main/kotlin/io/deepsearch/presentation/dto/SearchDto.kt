@@ -12,7 +12,8 @@ data class SearchRequest(
     val maxCacheAge: Long? = null,
     val mode: String? = null,  // "live-crawling" or "cache-only", defaults to "live-crawling"
     val languagePattern: String? = null,  // e.g., "/en-us/" or "?lang=en"
-    val ocrLanguage: String? = null  // OCR language code (e.g., "eng", "chi_sim"), defaults to "eng"
+    val ocrLanguage: String? = null,  // OCR language code (e.g., "eng", "chi_sim"), defaults to "eng"
+    val includeImages: Boolean? = false  // When true, disables preview path and requires authoritative source
 ) {
     /**
      * Parse the mode string to SearchMode enum.

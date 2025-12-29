@@ -114,7 +114,8 @@ class SearchController(
             apiKey.id!!,
             apiKey.userId,
             request.languagePattern,
-            request.toOcrLanguage()
+            request.toOcrLanguage(),
+            request.includeImages ?: false
         )
 
         // Consume usage after successful search
@@ -208,6 +209,7 @@ class SearchController(
             val modeParam = call.request.queryParameters["mode"]
             val languagePattern = call.request.queryParameters["languagePattern"]
             val ocrLanguageParam = call.request.queryParameters["ocrLanguage"]
+            val includeImages = call.request.queryParameters["includeImages"]?.toBoolean() ?: false
 
             if (query.isNullOrBlank() || url.isNullOrBlank()) {
                 sse.send(
@@ -245,7 +247,7 @@ class SearchController(
             }
 
             // Parse mode and validate language pattern
-            val searchRequest = SearchRequest(query, url, maxCacheAge, modeParam, languagePattern, ocrLanguageParam)
+            val searchRequest = SearchRequest(query, url, maxCacheAge, modeParam, languagePattern, ocrLanguageParam, includeImages)
             val searchMode = try {
                 searchRequest.toSearchMode()
             } catch (e: IllegalArgumentException) {
@@ -317,7 +319,8 @@ class SearchController(
                 apiKey.id!!,
                 apiKey.userId,
                 languagePattern,
-                searchRequest.toOcrLanguage()
+                searchRequest.toOcrLanguage(),
+                includeImages
             )
 
             eventFlow.collect { event ->

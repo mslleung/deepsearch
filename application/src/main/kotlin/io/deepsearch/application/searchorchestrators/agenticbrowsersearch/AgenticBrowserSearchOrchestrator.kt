@@ -206,47 +206,61 @@ class AgenticBrowserSearchOrchestrator(
             // Ensure exactly-once session completion across concurrent paths
             val sessionCompleted = AtomicBoolean(false)
 
-            // Merge both paths: preview (fast HTML) and main (full markdown)
-            merge(
-                // Preview path: fast HTML evaluation for early exit (stateless per batch)
-                sourceFlow
-                    .filterIsInstance<UrlContentResult.HtmlPreview>()
-                    .chunkedWithTimeout(chunkSize = 5, timeoutMs = 300)
-                    .takeWhile { !answerAccumulator.isComplete }
-                    .flatMapMerge(concurrency = 3) { htmlBatch ->
-                        flow {
-                            emit(processPreviewBatch(sessionId, searchQuery, htmlBatch))
-                        }
-                    }
-                    .onEach { lastPreviewResult = it }
-                    .filter { it.isAnswerFound }
-                    .take(1)
-                    .onEach { confidentResult ->
-                        if (sessionCompleted.compareAndSet(false, true)) {
-                            logger.info("[{}] Preview path produced confident answer, cancelling source processing", sessionId.value)
-                            // Emit the buffered answer chunk (only the winning batch emits)
-                            confidentResult.fullAnswer?.let { answer ->
-                                if (answer.isNotBlank()) {
-                                    channel.send(SearchEvent.AnswerChunk(sessionId, answer))
-                                }
-                            }
-                            sourceProcessingJob.cancel()
-                            finishWithPreviewAnswer(sessionId, confidentResult, channel)
-                        }
-                    }
-                    .map { AccumulatorUpdate.Preview(it) },
+            // When includeImages is enabled, skip preview path and use stricter criteria
+            val includeImages = searchQuery.includeImages
+            if (includeImages) {
+                logger.info("[{}] includeImages enabled, skipping preview path", sessionId.value)
+            }
 
-                // Main path: full markdown processing
+            // Build the list of flows to merge
+            val pathFlows = mutableListOf<Flow<AccumulatorUpdate>>()
+
+            // Preview path: fast HTML evaluation for early exit (stateless per batch)
+            // Only enabled when includeImages is false
+            if (!includeImages) {
+                pathFlows.add(
+                    sourceFlow
+                        .filterIsInstance<UrlContentResult.HtmlPreview>()
+                        .chunkedWithTimeout(chunkSize = 5, timeoutMs = 300)
+                        .takeWhile { !answerAccumulator.isComplete }
+                        .flatMapMerge(concurrency = 3) { htmlBatch ->
+                            flow {
+                                emit(processPreviewBatch(sessionId, searchQuery, htmlBatch))
+                            }
+                        }
+                        .onEach { lastPreviewResult = it }
+                        .filter { it.isAnswerFound }
+                        .take(1)
+                        .onEach { confidentResult ->
+                            if (sessionCompleted.compareAndSet(false, true)) {
+                                logger.info("[{}] Preview path produced confident answer, cancelling source processing", sessionId.value)
+                                // Emit the buffered answer chunk (only the winning batch emits)
+                                confidentResult.fullAnswer?.let { answer ->
+                                    if (answer.isNotBlank()) {
+                                        channel.send(SearchEvent.AnswerChunk(sessionId, answer))
+                                    }
+                                }
+                                sourceProcessingJob.cancel()
+                                finishWithPreviewAnswer(sessionId, confidentResult, channel)
+                            }
+                        }
+                        .map { AccumulatorUpdate.Preview(it) }
+                )
+            }
+
+            // Main path: full markdown processing
+            pathFlows.add(
                 sourceFlow
                     .filterIsInstance<UrlContentResult.FullMarkdown>()
                     .filter { it.markdown.isNotBlank() }
                     .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
                     .chunkedWithTimeout(chunkSize = 15, timeoutMs = 1000)
-                    .takeWhile { lastPreviewResult?.isAnswerFound != true }
+                    .takeWhile { !includeImages || lastPreviewResult?.isAnswerFound != true }
                     .runningFold(AnswerAccumulator()) { state, markdownResults ->
                         aggregateMarkdownResultIntoAnswer(
                             sessionId, searchQuery, state, markdownResults, channel,
-                            isPreviewConfident = { lastPreviewResult?.isAnswerFound == true }
+                            isPreviewConfident = { !includeImages && lastPreviewResult?.isAnswerFound == true },
+                            includeImages = includeImages
                         )
                     }
                     .onEach { answerAccumulator = it }
@@ -261,12 +275,15 @@ class AgenticBrowserSearchOrchestrator(
                     }
                     .map { AccumulatorUpdate.Main(it) }
             )
+
+            // Merge paths
+            merge(*pathFlows.toTypedArray())
                 .onCompletion {
                     // Handle case where neither path completed via onEach (sources exhausted or interrupted)
                     if (sessionCompleted.compareAndSet(false, true)) {
                         logger.info("[{}] Flow completed, cancelling source processing", sessionId.value)
                         sourceProcessingJob.cancel()
-                        val confidentPreview = lastPreviewResult?.takeIf { it.isAnswerFound }
+                        val confidentPreview = if (!includeImages) lastPreviewResult?.takeIf { it.isAnswerFound } else null
                         if (confidentPreview != null) {
                             logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
                             finishWithPreviewAnswer(sessionId, confidentPreview, channel)
@@ -1024,7 +1041,8 @@ class AgenticBrowserSearchOrchestrator(
         state: AnswerAccumulator,
         markdownSources: List<MarkdownSource>,
         eventChannel: SendChannel<SearchEvent>,
-        isPreviewConfident: () -> Boolean
+        isPreviewConfident: () -> Boolean,
+        includeImages: Boolean = false
     ): AnswerAccumulator {
         // Filter to only new URLs (deduplication)
         val sourcesToEvaluate = markdownSources.filter { it.url !in state.processedUrls }
@@ -1037,7 +1055,7 @@ class AgenticBrowserSearchOrchestrator(
         val updatedProcessedUrls = state.processedUrls + sourcesToEvaluate.map { it.url }
 
         val output = sourceShortlistAgent.generate(
-            SourceShortlistInput(searchQuery.query, state.currentShortlist, sourcesToEvaluate)
+            SourceShortlistInput(searchQuery.query, state.currentShortlist, sourcesToEvaluate, includeImages)
         )
 
         tokenUsageService.recordTokenUsage(
