@@ -213,8 +213,10 @@ class AgenticBrowserSearchOrchestrator(
                     .filterIsInstance<UrlContentResult.HtmlPreview>()
                     .chunkedWithTimeout(chunkSize = 5, timeoutMs = 300)
                     .takeWhile { !answerAccumulator.isComplete }
-                    .map { htmlBatch ->
-                        processPreviewBatch(sessionId, searchQuery, htmlBatch, channel)
+                    .flatMapMerge(concurrency = 3) { htmlBatch ->
+                        flow {
+                            emit(processPreviewBatch(sessionId, searchQuery, htmlBatch))
+                        }
                     }
                     .onEach { lastPreviewResult = it }
                     .filter { it.isAnswerFound }
@@ -222,6 +224,12 @@ class AgenticBrowserSearchOrchestrator(
                     .onEach { confidentResult ->
                         if (sessionCompleted.compareAndSet(false, true)) {
                             logger.info("[{}] Preview path produced confident answer, cancelling source processing", sessionId.value)
+                            // Emit the buffered answer chunk (only the winning batch emits)
+                            confidentResult.fullAnswer?.let { answer ->
+                                if (answer.isNotBlank()) {
+                                    channel.send(SearchEvent.AnswerChunk(sessionId, answer))
+                                }
+                            }
                             sourceProcessingJob.cancel()
                             finishWithPreviewAnswer(sessionId, confidentResult, channel)
                         }
@@ -1147,18 +1155,18 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Process a batch of HTML previews independently (stateless).
+     * Process a batch of HTML previews independently (stateless, side-effect-free).
      * Uses a 2-agent flow:
      * 1. PreviewSourceShortlistAgent (non-streaming) - extracts facts and classifies sources, filters table facts
      * 2. StreamingAnswerSynthesisAgent (streaming) - generates answer and determines answerFound
      * 
-     * If answerFound=false from synthesis, no events are emitted and we wait for the next batch.
+     * Returns a PreviewResult with buffered answer. The caller is responsible for emitting
+     * the answer to the event channel after .take(1) selects the winning batch.
      */
     private suspend fun processPreviewBatch(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        htmlBatch: List<UrlContentResult.HtmlPreview>,
-        eventChannel: SendChannel<SearchEvent>
+        htmlBatch: List<UrlContentResult.HtmlPreview>
     ): PreviewResult {
         if (htmlBatch.isEmpty()) {
             return PreviewResult()
@@ -1213,25 +1221,11 @@ class AgenticBrowserSearchOrchestrator(
             sessionId.value, answerFound, fullAnswer.length, reasoning
         )
 
-        // If answerFound=false, return without emitting events - wait for next batch
-        if (!answerFound) {
-            return PreviewResult(
-                shortlistedSources = shortlistOutput.shortlistedSources,
-                isAnswerFound = false,
-                fullAnswer = null
-            )
-        }
-
-        // answerFound=true: emit answer chunks now
-        val answerText = fullAnswer.toString()
-        if (answerText.isNotBlank()) {
-            eventChannel.send(SearchEvent.AnswerChunk(sessionId, answerText))
-        }
-
+        // Return result with buffered answer - emission happens after .take(1) selects the winner
         return PreviewResult(
             shortlistedSources = shortlistOutput.shortlistedSources,
-            isAnswerFound = true,
-            fullAnswer = answerText
+            isAnswerFound = answerFound,
+            fullAnswer = if (answerFound) fullAnswer.toString() else null
         )
     }
 
