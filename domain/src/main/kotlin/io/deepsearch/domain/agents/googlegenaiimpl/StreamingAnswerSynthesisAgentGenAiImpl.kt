@@ -89,10 +89,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         
         Answer Found Determination:
         - Set answerFound to TRUE if:
-          - The facts contain meaningful information that directly or partially addresses the query
+          - The facts contain meaningful information that directly and comprehensively addresses the query
           - You were able to provide substantive facts, data, or explanations
         - Set answerFound to FALSE if:
-          - The facts do not contain relevant information to answer the query
+          - The facts do not contain relevant information to answer the query or only contain partial information
           - You had to respond with "No information found" or similar
           - The answer is essentially "I don't know" or "information not available"
         
