@@ -126,7 +126,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
            - Set isGoodEnough=true only when you have high-quality, current sources that directly answer the query.
         
         Shortlist Management:
-        - Maximum ~20 sources in shortlist (remove less relevant ones if needed)
+        - Only keep the most relevant sources in the shortlist, the shortlist should be as minimal as possible
         - Each source must add unique value
         - Prioritize OFFICIAL_LIVING_DOC with DIRECT_ANSWER for factual queries
         - If new sources conflict with existing ones, keep the most authoritative and current

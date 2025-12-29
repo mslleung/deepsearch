@@ -2,8 +2,6 @@ package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googlegenaiimpl.*
-import io.deepsearch.domain.agents.googlegenaiimpl.PreviewShortlistAgentGenAiImpl
-import io.deepsearch.domain.agents.googlegenaiimpl.PreviewAnswerSynthesisAgentGenAiImpl
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.browser.remote.RemoteBrowserPool
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
@@ -116,9 +114,8 @@ val domainModule = module {
         scopedOf(::SerpQueryOptimizationAgentGenAiImpl) bind ISerpQueryOptimizationAgent::class
         scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
         scopedOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
-        scopedOf(::PreviewShortlistAgentGenAiImpl) bind IPreviewShortlistAgent::class
+        scopedOf(::PreviewClassificationAgentGenAiImpl) bind IPreviewClassificationAgent::class
         scopedOf(::PreviewAnswerSynthesisAgentGenAiImpl) bind IPreviewAnswerSynthesisAgent::class
-        scopedOf(::PreviewQuickAnswerAgentGenAiImpl) bind IPreviewQuickAnswerAgent::class
 
         // Request-scoped domain services (user/auth related)
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class

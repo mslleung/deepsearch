@@ -5,10 +5,13 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
-import io.deepsearch.domain.agents.AnswerStreamItem
+import io.deepsearch.domain.agents.ClassifiedSource
 import io.deepsearch.domain.agents.IPreviewAnswerSynthesisAgent
+import io.deepsearch.domain.agents.PreviewAnswerStreamItem
 import io.deepsearch.domain.agents.PreviewAnswerSynthesisInput
 import io.deepsearch.domain.agents.PreviewAnswerSynthesisOutput
+import io.deepsearch.domain.agents.RelevantFact
+import io.deepsearch.domain.agents.SourceClassification
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.flowWithRateLimitRetry
 import io.deepsearch.domain.agents.infra.retryLlmCall
@@ -20,20 +23,23 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * Preview Answer Synthesis agent that generates answers from preview shortlisted sources.
+ * Preview Answer Synthesis agent that generates answers from classified preview sources.
  * 
- * This agent is CONSERVATIVE - it:
- * - Only cites absolute facts from shortlisted sources
- * - Prefers "I cannot confidently answer" over guessing
- * - Does not speculate or infer from ambiguous data
+ * This agent performs internal filtering:
+ * - Only uses facts where isInTable=false AND classification=OFFICIAL_LIVING_DOC
+ * - Returns answerFound=false if no valid facts remain after filtering
  * 
- * The preview answer is meant as an early exit for simple static content.
+ * Supports streaming answer generation.
  */
 class PreviewAnswerSynthesisAgentGenAiImpl(
     private val client: com.google.genai.Client
 ) : IPreviewAnswerSynthesisAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    private val json = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+    }
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
@@ -42,42 +48,45 @@ class PreviewAnswerSynthesisAgentGenAiImpl(
             mapOf(
                 "answer" to Schema.builder()
                     .type("STRING")
-                    .description("The answer to the query based on extracted facts. Must be directly supported by the facts provided.")
+                    .description("The answer to the query based on the provided facts. Must be directly supported by the facts.")
                     .build(),
                 "answerFound" to Schema.builder()
                     .type("BOOLEAN")
                     .description("Whether a complete, confident answer was found. True only if the facts fully answer the query.")
                     .build(),
-                "confidence" to Schema.builder()
-                    .type("NUMBER")
-                    .description("Confidence in the answer (0.0-1.0). Must be >= 0.9 for the answer to be used.")
+                "reasoning" to Schema.builder()
+                    .type("STRING")
+                    .description("Brief explanation of how the answer was derived from the facts, or why the answer could not be found.")
                     .build()
             )
         )
-        .required(listOf("answer", "answerFound", "confidence"))
+        .required(listOf("answer", "answerFound", "reasoning"))
         .build()
 
     private val systemInstruction = """
-        You are an answer synthesis agent. You generate answers in response to a user query 
-        based on the given pre-extracted facts from a website.
+        You are an answer synthesis agent. You generate answers based on pre-extracted facts from a website.
 
         Instructions:
-        - ONLY use the extracted facts provided
+        - ONLY use the facts provided in the input
         - Set answerFound=true ONLY if the facts completely answer the query
-        - If the query asks for multiple items and you only have some, set answerFound=false
-        - Partial answers should have confidence < 0.9
+        - Partial answers should have answerFound=false
 
         - ANSWER FORMAT
            - Keep the answer concise and direct
            - Use markdown formatting where appropriate
            - Cite specific facts when possible
            - The answer should be in the same language as the query
+           - If answerFound=false, still provide whatever partial information is available
+
+        - REASONING
+           - Briefly explain how you derived the answer from the facts
+           - If answerFound=false, explain what's missing or uncertain
 
         Output Format:
         {
             "answer": "Your answer text",
             "answerFound": true/false,
-            "confidence": 0.95
+            "reasoning": "Brief explanation"
         }
     """.trimIndent()
 
@@ -85,30 +94,46 @@ class PreviewAnswerSynthesisAgentGenAiImpl(
     private data class SynthesisResponse(
         val answer: String,
         val answerFound: Boolean,
-        val confidence: Float
+        val reasoning: String
     )
+
+    /**
+     * Filters facts to only include those from OFFICIAL_LIVING_DOC sources that are not in tables.
+     */
+    private fun filterValidFacts(sources: List<ClassifiedSource>): List<Pair<String, RelevantFact>> {
+        return sources.flatMap { source ->
+            source.relevantFacts
+                .filter { fact ->
+                    !fact.isInTable && fact.classification == SourceClassification.OFFICIAL_LIVING_DOC
+                }
+                .map { fact -> source.url to fact }
+        }
+    }
 
     override suspend fun generate(input: PreviewAnswerSynthesisInput): PreviewAnswerSynthesisOutput {
         logger.debug(
-            "Generating preview answer for query: '{}', shortlist size: {}",
+            "Generating preview answer for query: '{}', sources: {}",
             input.query,
-            input.shortlistedSources.size
+            input.sourceClassifications.size
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        if (input.shortlistedSources.isEmpty()) {
-            logger.warn("No shortlisted sources provided, returning default message")
+        // Filter to valid facts only
+        val validFacts = filterValidFacts(input.sourceClassifications)
+
+        if (validFacts.isEmpty()) {
+            logger.debug("No valid facts after filtering, returning answerFound=false")
             return PreviewAnswerSynthesisOutput(
-                answer = "No confident preview information available.",
+                answer = "",
                 answerFound = false,
-                confidence = 0f,
+                reasoning = "No valid facts found from official living documents (non-table content).",
                 tokenUsage = tokenUsage
             )
         }
 
-        val userPrompt = buildUserPrompt(input)
+        val userPrompt = buildUserPrompt(input.query, validFacts)
 
         val response = retryLlmCall<SynthesisResponse>(this::class.simpleName!!) {
             val result = client.models.generateContent(
@@ -143,37 +168,44 @@ class PreviewAnswerSynthesisAgentGenAiImpl(
         }
 
         logger.debug(
-            "Preview answer complete: {} chars, answerFound: {}, confidence: {}",
+            "Preview answer complete: {} chars, answerFound: {}",
             response.answer.length,
-            response.answerFound,
-            response.confidence
+            response.answerFound
         )
 
         return PreviewAnswerSynthesisOutput(
             answer = response.answer,
             answerFound = response.answerFound,
-            confidence = response.confidence,
+            reasoning = response.reasoning,
             tokenUsage = tokenUsage
         )
     }
 
-    override fun generateStream(input: PreviewAnswerSynthesisInput): Flow<AnswerStreamItem> = flow {
+    override fun generateStream(input: PreviewAnswerSynthesisInput): Flow<PreviewAnswerStreamItem> = flow {
         logger.debug(
-            "Streaming preview answer for query: '{}', shortlist size: {}",
+            "Streaming preview answer for query: '{}', sources: {}",
             input.query,
-            input.shortlistedSources.size
+            input.sourceClassifications.size
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
 
-        if (input.shortlistedSources.isEmpty()) {
-            logger.warn("No shortlisted sources provided, emitting default message")
-            emit(AnswerStreamItem.Chunk("No confident preview information available."))
-            emit(AnswerStreamItem.Complete(TokenUsageMetrics.empty(modelId), answerFound = false))
+        // Filter to valid facts only
+        val validFacts = filterValidFacts(input.sourceClassifications)
+
+        if (validFacts.isEmpty()) {
+            logger.debug("No valid facts after filtering, emitting answerFound=false")
+            emit(
+                PreviewAnswerStreamItem.Complete(
+                    tokenUsage = TokenUsageMetrics.empty(modelId),
+                    answerFound = false,
+                    reasoning = "No valid facts found from official living documents (non-table content)."
+                )
+            )
             return@flow
         }
 
-        val userPrompt = buildUserPrompt(input)
+        val userPrompt = buildUserPrompt(input.query, validFacts)
 
         val config = GenerateContentConfig.builder()
             .temperature(0F)
@@ -206,7 +238,7 @@ class PreviewAnswerSynthesisAgentGenAiImpl(
             val answerDelta = extractAnswerDelta(accumulatedJson, lastAnswerLength)
             if (answerDelta.isNotEmpty()) {
                 lastAnswerLength += answerDelta.length
-                emit(AnswerStreamItem.Chunk(answerDelta))
+                emit(PreviewAnswerStreamItem.Chunk(answerDelta))
             }
 
             // Token usage is available in the last chunk
@@ -223,18 +255,50 @@ class PreviewAnswerSynthesisAgentGenAiImpl(
             }
         }
 
-        // Extract answerFound from the complete JSON
-        val answerFound = extractAnswerFound(accumulatedJson)
+        logger.debug(
+            "[{}] response: {}",
+            PreviewAnswerSynthesisAgentGenAiImpl::class.simpleName,
+            accumulatedJson
+        )
 
-        logger.debug("Streaming preview answer complete: {} chars, answerFound: {}", lastAnswerLength, answerFound)
-        emit(AnswerStreamItem.Complete(tokenUsage, answerFound))
+        // Parse the complete JSON to extract answerFound and reasoning
+        val parsedResult = parseCompleteResponse(accumulatedJson)
+
+        logger.debug(
+            "Streaming preview answer complete: {} chars, answerFound: {}",
+            lastAnswerLength,
+            parsedResult.answerFound
+        )
+
+        emit(
+            PreviewAnswerStreamItem.Complete(
+                tokenUsage = tokenUsage,
+                answerFound = parsedResult.answerFound,
+                reasoning = parsedResult.reasoning
+            )
+        )
     }
 
-    private fun extractAnswerFound(json: String): Boolean {
-        val regex = """"answerFound"\s*:\s*(true|false)""".toRegex(RegexOption.IGNORE_CASE)
-        val match = regex.find(json) ?: return false
-        return match.groupValues[1].equals("true", ignoreCase = true)
+    private fun parseCompleteResponse(jsonString: String): ParsedSynthesisResult {
+        return try {
+            val response = json.decodeFromString<SynthesisResponse>(jsonString)
+            ParsedSynthesisResult(
+                answerFound = response.answerFound,
+                reasoning = response.reasoning
+            )
+        } catch (e: Exception) {
+            logger.warn("Failed to parse complete response: {}", e.message)
+            ParsedSynthesisResult(
+                answerFound = false,
+                reasoning = "Failed to parse response"
+            )
+        }
     }
+
+    private data class ParsedSynthesisResult(
+        val answerFound: Boolean,
+        val reasoning: String
+    )
 
     private fun extractAnswerDelta(accumulatedJson: String, previousLength: Int): String {
         val prefixNoSpace = "\"answer\":\""
@@ -295,27 +359,29 @@ class PreviewAnswerSynthesisAgentGenAiImpl(
             .replace("\\\\", "\\")
     }
 
-    private fun buildUserPrompt(input: PreviewAnswerSynthesisInput): String {
+    private fun buildUserPrompt(query: String, validFacts: List<Pair<String, RelevantFact>>): String {
         return buildString {
+            appendLine("# Current Date")
+            appendLine(java.time.LocalDate.now().toString())
+            appendLine()
             appendLine("# Query")
-            appendLine(input.query)
+            appendLine(query)
             appendLine()
 
-            appendLine("# Extracted Facts from Preview Sources")
+            appendLine("# Extracted Facts from Official Living Documents")
             appendLine()
 
-            input.shortlistedSources.forEachIndexed { index, source ->
+            // Group facts by URL for readability
+            val factsByUrl = validFacts.groupBy({ it.first }, { it.second })
+            
+            factsByUrl.entries.forEachIndexed { index, (url, facts) ->
                 appendLine("## Source ${index + 1}")
-                appendLine("URL: ${source.url}")
-                if (source.title != null) {
-                    appendLine("Title: ${source.title}")
-                }
-                appendLine("Confidence: ${source.confidence}")
-                appendLine("Justification: ${source.relevanceJustification}")
+                appendLine("URL: $url")
                 appendLine()
                 appendLine("### Facts")
-                source.extractedFacts.forEach { fact ->
-                    appendLine("- $fact")
+                facts.forEach { fact ->
+                    appendLine("- ${fact.fact}")
+                    appendLine("- ${fact.fact}")
                 }
                 appendLine()
                 appendLine("---")
@@ -325,8 +391,9 @@ class PreviewAnswerSynthesisAgentGenAiImpl(
             appendLine()
             appendLine("# Instructions")
             appendLine("Generate an answer using ONLY the facts provided above.")
-            appendLine("If the facts do not completely answer the query, set answerFound=false and confidence < 0.9.")
+            appendLine("If the facts do not completely answer the query, set answerFound=false.")
             appendLine("Do not add any information not explicitly stated in the facts.")
         }
     }
 }
+

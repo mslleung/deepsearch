@@ -10,14 +10,17 @@ import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.services.IGeminiFileSearchService
 import io.deepsearch.domain.agents.AnswerStreamItem
 import io.deepsearch.domain.agents.AnswerSynthesisInput
+import io.deepsearch.domain.agents.ClassifiedSource
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
 import io.deepsearch.domain.agents.IAnswerSynthesisAgent
-import io.deepsearch.domain.agents.IPreviewQuickAnswerAgent
+import io.deepsearch.domain.agents.IPreviewAnswerSynthesisAgent
+import io.deepsearch.domain.agents.IPreviewClassificationAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.ISerpQueryOptimizationAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
-import io.deepsearch.domain.agents.PreviewQuickAnswerInput
-import io.deepsearch.domain.agents.PreviewQuickAnswerStreamItem
+import io.deepsearch.domain.agents.PreviewAnswerStreamItem
+import io.deepsearch.domain.agents.PreviewAnswerSynthesisInput
+import io.deepsearch.domain.agents.PreviewClassificationInput
 import io.deepsearch.domain.agents.SerpQueryOptimizationInput
 import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
 import io.deepsearch.domain.agents.StreamingSourceShortlistInput
@@ -31,9 +34,7 @@ import io.deepsearch.domain.ext.chunkedWithTimeout
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
-import io.deepsearch.domain.models.valueobjects.LanguagePattern
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
-import io.deepsearch.domain.models.valueobjects.PreviewShortlistedSource
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
@@ -53,7 +54,6 @@ import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flatMapMerge
@@ -67,13 +67,10 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.shareIn
-import kotlinx.coroutines.flow.single
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
@@ -100,7 +97,8 @@ class AgenticBrowserSearchOrchestrator(
     private val answerReviewerAgent: IAnswerReviewerAgent,
     private val streamingSourceShortlistAgent: IStreamingSourceShortlistAgent,
     private val answerSynthesisAgent: IAnswerSynthesisAgent,
-    private val previewQuickAnswerAgent: IPreviewQuickAnswerAgent,
+    private val previewClassificationAgent: IPreviewClassificationAgent,
+    private val previewAnswerSynthesisAgent: IPreviewAnswerSynthesisAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
@@ -207,7 +205,7 @@ class AgenticBrowserSearchOrchestrator(
                 .shareIn(sourceProcessingScope, SharingStarted.Eagerly)
 
             // Track state for both paths
-            var previewAccumulator = PreviewAccumulator()
+            var lastPreviewResult: PreviewResult? = null
             var answerAccumulator = AnswerAccumulator()
 
             // Ensure exactly-once session completion across concurrent paths
@@ -215,22 +213,22 @@ class AgenticBrowserSearchOrchestrator(
 
             // Merge both paths: preview (fast HTML) and main (full markdown)
             merge(
-                // Preview path: fast HTML evaluation for early exit
+                // Preview path: fast HTML evaluation for early exit (stateless per batch)
                 sourceFlow
                     .filterIsInstance<UrlContentResult.HtmlPreview>()
                     .chunkedWithTimeout(chunkSize = 5, timeoutMs = 300)
                     .takeWhile { !answerAccumulator.isComplete }
-                    .runningFold(PreviewAccumulator()) { state, htmlBatch ->
-                        aggregatePreviewIntoAnswer(sessionId, searchQuery, state, htmlBatch, channel)
+                    .map { htmlBatch ->
+                        processPreviewBatch(sessionId, searchQuery, htmlBatch, channel)
                     }
-                    .onEach { previewAccumulator = it }
-                    .filter { it.isConfidentForAnswer }
+                    .onEach { lastPreviewResult = it }
+                    .filter { it.isAnswerFound }
                     .take(1)
-                    .onEach { confidentAccumulator ->
+                    .onEach { confidentResult ->
                         if (sessionCompleted.compareAndSet(false, true)) {
                             logger.info("[{}] Preview path produced confident answer, cancelling source processing", sessionId.value)
                             sourceProcessingJob.cancel()
-                            finishWithPreviewAnswer(sessionId, confidentAccumulator, channel)
+                            finishWithPreviewAnswer(sessionId, confidentResult, channel)
                         }
                     }
                     .map { AccumulatorUpdate.Preview(it) },
@@ -241,11 +239,11 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { it.markdown.isNotBlank() }
                     .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
                     .chunkedWithTimeout(chunkSize = 15, timeoutMs = 1000)
-                    .takeWhile { !previewAccumulator.isConfidentForAnswer }
+                    .takeWhile { lastPreviewResult?.isAnswerFound != true }
                     .runningFold(AnswerAccumulator()) { state, markdownResults ->
                         aggregateMarkdownResultIntoAnswer(
                             sessionId, searchQuery, state, markdownResults, channel,
-                            isPreviewConfident = { previewAccumulator.isConfidentForAnswer }
+                            isPreviewConfident = { lastPreviewResult?.isAnswerFound == true }
                         )
                     }
                     .onEach { answerAccumulator = it }
@@ -265,9 +263,10 @@ class AgenticBrowserSearchOrchestrator(
                     if (sessionCompleted.compareAndSet(false, true)) {
                         logger.info("[{}] Flow completed, cancelling source processing", sessionId.value)
                         sourceProcessingJob.cancel()
-                        if (previewAccumulator.isConfidentForAnswer) {
+                        val confidentPreview = lastPreviewResult?.takeIf { it.isAnswerFound }
+                        if (confidentPreview != null) {
                             logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
-                            finishWithPreviewAnswer(sessionId, previewAccumulator, channel)
+                            finishWithPreviewAnswer(sessionId, confidentPreview, channel)
                         } else {
                             // Fall back to main path accumulator (may be incomplete)
                             finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
@@ -998,23 +997,21 @@ class AgenticBrowserSearchOrchestrator(
     )
 
     /**
-     * Accumulator for preview path answer generation.
-     * Tracks HTML preview sources and their shortlisted facts.
-     * With PreviewQuickAnswerAgent, the answer is streamed during shortlisting.
+     * Result from processing a preview batch.
+     * Stateless - each batch is processed independently.
+     * Uses a 2-agent flow: PreviewClassificationAgent -> PreviewAnswerSynthesisAgent.
      */
-    private data class PreviewAccumulator(
-        val shortlist: List<PreviewShortlistedSource> = emptyList(),
-        val htmlPreviewsByUrl: Map<String, UrlContentResult.HtmlPreview> = emptyMap(),
-        val isConfidentForAnswer: Boolean = false,
-        val fullAnswer: String? = null,
-        val answerFound: Boolean = false
+    private data class PreviewResult(
+        val classifiedSources: List<ClassifiedSource> = emptyList(),
+        val isAnswerFound: Boolean = false,
+        val fullAnswer: String? = null
     )
 
     /**
      * Sealed class to distinguish accumulator updates from different paths.
      */
     private sealed class AccumulatorUpdate {
-        data class Preview(val accumulator: PreviewAccumulator) : AccumulatorUpdate()
+        data class Preview(val result: PreviewResult) : AccumulatorUpdate()
         data class Main(val accumulator: AnswerAccumulator) : AccumulatorUpdate()
     }
 
@@ -1155,81 +1152,104 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Aggregate HTML preview sources into preview shortlist and generate answer.
-     * Uses PreviewQuickAnswerAgent which does shortlisting + answer in a single LLM call.
-     * Answer chunks are streamed to the event channel as they are generated.
+     * Process a batch of HTML previews independently (stateless).
+     * Uses a 2-agent flow:
+     * 1. PreviewClassificationAgent (non-streaming) - classifies facts and sources
+     * 2. PreviewAnswerSynthesisAgent (streaming) - generates answer with internal filtering
+     * 
+     * If answerFound=false from synthesis, no events are emitted and we wait for the next batch.
      */
-    private suspend fun aggregatePreviewIntoAnswer(
+    private suspend fun processPreviewBatch(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        state: PreviewAccumulator,
         htmlBatch: List<UrlContentResult.HtmlPreview>,
         eventChannel: SendChannel<SearchEvent>
-    ): PreviewAccumulator {
+    ): PreviewResult {
         if (htmlBatch.isEmpty()) {
-            return state
+            return PreviewResult()
         }
 
-        // Build updated HTML previews map
-        val updatedPreviewsMap = state.htmlPreviewsByUrl.toMutableMap()
-        for (preview in htmlBatch) {
-            if (preview.url !in updatedPreviewsMap) {
-                updatedPreviewsMap[preview.url] = preview
-            }
-        }
+        // Step 1: Classification (non-streaming)
+        val classificationOutput = previewClassificationAgent.generate(
+            PreviewClassificationInput(searchQuery.query, htmlBatch)
+        )
 
-        // Use streaming to get answer chunks as they are generated
-        var fullAnswer = StringBuilder()
-        var finalShortlist: List<PreviewShortlistedSource> = state.shortlist
-        var isConfident = false
+        tokenUsageService.recordTokenUsage(
+            sessionId, "PreviewClassificationAgent",
+            classificationOutput.tokenUsage.modelName, classificationOutput.tokenUsage.promptTokens,
+            classificationOutput.tokenUsage.outputTokens, classificationOutput.tokenUsage.totalTokens
+        )
+
+        logger.debug(
+            "[{}] Preview classification: {} sources classified, {} facts",
+            sessionId.value,
+            classificationOutput.sourceClassifications.size,
+            classificationOutput.sourceClassifications.sumOf { it.relevantFacts.size }
+        )
+
+        // Step 2: Answer Synthesis (streaming) with internal filtering
+        val fullAnswer = StringBuilder()
         var answerFound = false
+        var reasoning = ""
 
-        previewQuickAnswerAgent.generateStream(
-            PreviewQuickAnswerInput(searchQuery.query, state.shortlist, htmlBatch)
+        previewAnswerSynthesisAgent.generateStream(
+            PreviewAnswerSynthesisInput(searchQuery.query, classificationOutput.sourceClassifications)
         ).collect { item ->
             when (item) {
-                is PreviewQuickAnswerStreamItem.AnswerChunk -> {
+                is PreviewAnswerStreamItem.Chunk -> {
                     fullAnswer.append(item.text)
-                    eventChannel.send(SearchEvent.AnswerChunk(sessionId, item.text))
+                    // Buffer chunks - only emit if answerFound=true
                 }
 
-                is PreviewQuickAnswerStreamItem.Complete -> {
+                is PreviewAnswerStreamItem.Complete -> {
                     tokenUsageService.recordTokenUsage(
-                        sessionId, "PreviewQuickAnswerAgent",
+                        sessionId, "PreviewAnswerSynthesisAgent",
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
-                    finalShortlist = item.updatedShortlist
-                    isConfident = item.isConfidentForAnswer
                     answerFound = item.answerFound
+                    reasoning = item.reasoning
                 }
             }
         }
 
         logger.debug(
-            "[{}] Preview quick answer: {} sources, isConfidentForAnswer: {}, answerFound: {}, answer length: {}",
-            sessionId.value, finalShortlist.size, isConfident, answerFound, fullAnswer.length
+            "[{}] Preview answer synthesis: answerFound={}, answer length={}, reasoning={}",
+            sessionId.value, answerFound, fullAnswer.length, reasoning
         )
 
-        return PreviewAccumulator(
-            shortlist = finalShortlist,
-            htmlPreviewsByUrl = updatedPreviewsMap,
-            isConfidentForAnswer = isConfident,
-            fullAnswer = if (isConfident) fullAnswer.toString() else null,
-            answerFound = answerFound
+        // If answerFound=false, return without emitting events - wait for next batch
+        if (!answerFound) {
+            return PreviewResult(
+                classifiedSources = classificationOutput.sourceClassifications,
+                isAnswerFound = false,
+                fullAnswer = null
+            )
+        }
+
+        // answerFound=true: emit answer chunks now
+        val answerText = fullAnswer.toString()
+        if (answerText.isNotBlank()) {
+            eventChannel.send(SearchEvent.AnswerChunk(sessionId, answerText))
+        }
+
+        return PreviewResult(
+            classifiedSources = classificationOutput.sourceClassifications,
+            isAnswerFound = true,
+            fullAnswer = answerText
         )
     }
 
     /**
      * Finish the query session with a preview answer.
      * Called when the preview path produces a confident answer.
-     * The answer has already been streamed by aggregatePreviewIntoAnswer,
+     * The answer has already been streamed by processPreviewBatch,
      * so this just completes the session.
      * Uses database as source of truth to check if session is already finished.
      */
     private suspend fun finishWithPreviewAnswer(
         sessionId: QuerySessionId,
-        accumulator: PreviewAccumulator,
+        result: PreviewResult,
         eventChannel: SendChannel<SearchEvent>
     ) {
         // Check if session is already finished (use DB as source of truth)
@@ -1249,22 +1269,22 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel.send(
             SearchEvent.ShortlistUpdated(
                 sessionId = sessionId,
-                processedUrlCount = accumulator.htmlPreviewsByUrl.size,
-                shortlistedCount = accumulator.shortlist.size,
+                processedUrlCount = result.classifiedSources.size,
+                shortlistedCount = result.classifiedSources.size,
                 isGoodEnough = true, // Preview path only finishes when confident
                 reason = "Preview path confident answer"
             )
         )
 
-        val answerSources = accumulator.shortlist.map { it.url }
+        val answerSources = result.classifiedSources.map { it.url }
         if (answerSources.isNotEmpty()) {
             urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
         }
 
         querySessionService.completeSessionPreviewAnswerComplete(
             sessionId,
-            accumulator.fullAnswer ?: "",
-            accumulator.answerFound
+            result.fullAnswer ?: "",
+            result.fullAnswer?.isNotBlank() == true
         )
 
         val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
