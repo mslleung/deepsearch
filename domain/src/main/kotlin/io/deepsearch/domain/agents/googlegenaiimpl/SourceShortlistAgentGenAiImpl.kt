@@ -5,31 +5,52 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
-import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
-import io.deepsearch.domain.agents.StreamingSourceShortlistInput
-import io.deepsearch.domain.agents.StreamingSourceShortlistOutput
+import io.deepsearch.domain.agents.ISourceShortlistAgent
+import io.deepsearch.domain.agents.SourceShortlistInput
+import io.deepsearch.domain.agents.SourceShortlistOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
+import io.deepsearch.domain.models.valueobjects.RelevantFact
 import io.deepsearch.domain.models.valueobjects.ShortlistedSource
+import io.deepsearch.domain.models.valueobjects.SourceClassification
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * Streaming Source Shortlist agent that curates high-quality sources for answering a query.
+ * Source Shortlist agent that curates high-quality sources and extracts relevant facts.
  * Evaluates sources based on content relevance, temporal relevance, and authority.
  * Handles information conflicts by keeping the most relevant sources.
  */
-class StreamingSourceShortlistAgentGenAiImpl(
+class SourceShortlistAgentGenAiImpl(
     private val client: com.google.genai.Client
-) : IStreamingSourceShortlistAgent {
+) : ISourceShortlistAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
+    private val relevantFactSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .description("A fact extracted from the source")
+        .properties(
+            mapOf(
+                "fact" to Schema.builder()
+                    .type("STRING")
+                    .description("The extracted fact as a complete, standalone statement")
+                    .build(),
+                "classification" to Schema.builder()
+                    .type("STRING")
+                    .description("Source classification: OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, or OTHERS")
+                    .enum_(listOf("OFFICIAL_LIVING_DOC", "OFFICIAL_SNAPSHOT", "OTHERS"))
+                    .build()
+            )
+        )
+        .required(listOf("fact", "classification"))
+        .build()
+
     private val shortlistedSourceSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("A shortlisted source with classification metadata, reasoning, and relevant images")
+        .description("A shortlisted source with classification metadata, extracted facts, and relevant images")
         .properties(
             mapOf(
                 "url" to Schema.builder().type("STRING")
@@ -48,6 +69,11 @@ class StreamingSourceShortlistAgentGenAiImpl(
                 "relevanceJustification" to Schema.builder().type("STRING")
                     .description("Brief reason for inclusion in shortlist")
                     .build(),
+                "relevantFacts" to Schema.builder()
+                    .type("ARRAY")
+                    .items(relevantFactSchema)
+                    .description("List of facts extracted from the source that are relevant to answering the query")
+                    .build(),
                 "relevantImageIds" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
@@ -55,18 +81,18 @@ class StreamingSourceShortlistAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("url", "sourceClassification", "answerType", "relevanceJustification", "relevantImageIds"))
+        .required(listOf("url", "sourceClassification", "answerType", "relevanceJustification", "relevantFacts", "relevantImageIds"))
         .build()
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Updated shortlist of sources and sufficiency decision")
+        .description("Updated shortlist of sources with extracted facts and sufficiency decision")
         .properties(
             mapOf(
                 "shortlist" to Schema.builder()
                     .type("ARRAY")
                     .items(shortlistedSourceSchema)
-                    .description("Updated list of shortlisted sources (may add, remove, or modify sources)")
+                    .description("Updated list of shortlisted sources with extracted facts (may add, remove, or modify sources)")
                     .build(),
                 "isGoodEnough" to Schema.builder()
                     .type("BOOLEAN")
@@ -82,32 +108,43 @@ class StreamingSourceShortlistAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are a source classification agent. Your job is to extract metadata and categorize web content objectively and decide if the shortlist contains the critical information to answer the user query.
+        You are a source classification and fact extraction agent. Your job is to extract metadata, categorize web content, extract relevant facts, and decide if the shortlist contains enough information to answer the user query.
         
         Input: 
         - Current date
         - User query
-        - Current shortlist
+        - Current shortlist (with previously extracted facts)
         - New sources for shortlist evaluation/update (full markdown content with tables, images, and formatting)
         
         For each source, you must:
         
-        1. **Determine Source Type** (Choose one):
+        1. **Extract Relevant Facts**:
+           - Extract facts from the source that are directly relevant to answering the query
+           - Each fact should be a complete, standalone statement
+           - Only include facts that help answer the query
+           - If a source has no relevant facts, do not include it in the shortlist
+        
+        2. **Classify Each Fact**:
+           - OFFICIAL_LIVING_DOC: Fact from a main page (e.g., /pricing, /home, /features) intended to reflect current state
+           - OFFICIAL_SNAPSHOT: Fact from dated company content (e.g., /blog, /press, /news)
+           - OTHERS: Fact from external reviews, forums, UGC, etc.
+        
+        3. **Determine Source Type** (Choose one):
            - `OFFICIAL_LIVING_DOC`: A main page (e.g., /pricing, /home, /features) intended to reflect current state.
            - `OFFICIAL_SNAPSHOT`: A dated company update (e.g., /blog, /press, /news).
            - `THIRD_PARTY_REVIEW`: External review or news site.
            - `FORUM_DISCUSSION`: UGC, Reddit, StackOverflow.
         
-        2. **Determine Temporal State**:
+        4. **Determine Temporal State**:
            - Extract the `contentDate` (if available). Look for publication dates, update dates, or temporal indicators.
            - If no date is found, leave it null/empty.
         
-        3. **Determine Answer Type**:
+        5. **Determine Answer Type**:
            - `DIRECT_ANSWER`: The page explicitly lists the answer (e.g., a pricing table).
            - `INFERRED_ANSWER`: The answer must be guessed or calculated.
            - `PARTIAL_MENTION`: Mentions keywords but doesn't answer the core intent.
         
-        4. **Select Relevant Images** (relevantImageIds):
+        6. **Select Relevant Images** (relevantImageIds):
            - Sources may contain images in format: `<image id="N">description</image>` or `<image id="N" placeholder>alt text</image>`
            - For each source, identify images that would genuinely help answer the query (e.g., product screenshots, pricing tables, feature diagrams, charts)
            - Return an array of image IDs (the number only, e.g., ["1", "3"]) for images that add value
@@ -115,7 +152,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
            - Do NOT include decorative images, logos, icons, or generic stock photos
            - If you select a placeholder image as relevant, you MUST set isGoodEnough=false to wait for the full image
         
-        5. **Determine shortlist sufficiency** (isGoodEnough decision):
+        7. **Determine shortlist sufficiency** (isGoodEnough decision):
            - Set isGoodEnough=false if the best source is an `OFFICIAL_SNAPSHOT` (Blog/News) when the query asks for static facts (Price, Specs, Current Features), unless you have verified no Living Doc exists.
            - Set isGoodEnough=false if the answer relies on data that is too old.
            - **ALWAYS** set `isGoodEnough=false` if the source suggests a "New Update" but the URL indicates a blog post (e.g., /blog/pricing-update), as we must find the actual implementation page.
@@ -123,11 +160,11 @@ class StreamingSourceShortlistAgentGenAiImpl(
            - When isGoodEnough=false, the pipeline will fetch more sources for the next shortlist generation. 
              Since sources are not given to you in any order, prefer to process more sources if the sources seem to
              be biased and not directly answer the query.
-           - Set isGoodEnough=true only when you have high-quality, current sources that directly answer the query.
+           - Set isGoodEnough=true only when you have high-quality, current facts that directly answer the query.
         
         Shortlist Management:
         - Only keep the most relevant sources in the shortlist, the shortlist should be as minimal as possible
-        - Each source must add unique value
+        - Each source must add unique value through its extracted facts
         - Prioritize OFFICIAL_LIVING_DOC with DIRECT_ANSWER for factual queries
         - If new sources conflict with existing ones, keep the most authoritative and current
         
@@ -140,6 +177,9 @@ class StreamingSourceShortlistAgentGenAiImpl(
               "contentDate": "2024-07-25",
               "answerType": "DIRECT_ANSWER",
               "relevanceJustification": "Why this source is included",
+              "relevantFacts": [
+                {"fact": "The product costs $99/month", "classification": "OFFICIAL_LIVING_DOC"}
+              ],
               "relevantImageIds": ["1", "2"]
             }
           ],
@@ -149,12 +189,19 @@ class StreamingSourceShortlistAgentGenAiImpl(
     """.trimIndent()
 
     @Serializable
+    private data class LlmRelevantFact(
+        val fact: String,
+        val classification: String
+    )
+
+    @Serializable
     private data class LlmShortlistedSource(
         val url: String,
         val sourceClassification: String,
         val contentDate: String? = null,
         val answerType: String,
         val relevanceJustification: String,
+        val relevantFacts: List<LlmRelevantFact> = emptyList(),
         val relevantImageIds: List<String> = emptyList()
     )
 
@@ -165,7 +212,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
         val reason: String
     )
 
-    override suspend fun generate(input: StreamingSourceShortlistInput): StreamingSourceShortlistOutput {
+    override suspend fun generate(input: SourceShortlistInput): SourceShortlistOutput {
         logger.debug(
             "Generating source shortlist for query: '{}', current shortlist size: {}, new batch size: {}",
             input.query,
@@ -178,7 +225,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
 
         if (input.newMarkdownBatch.isEmpty()) {
             logger.debug("Empty markdown batch, returning current shortlist")
-            return StreamingSourceShortlistOutput(
+            return SourceShortlistOutput(
                 updatedShortlist = input.currentShortlist,
                 isGoodEnough = false,
                 reason = "No new sources to evaluate",
@@ -257,10 +304,18 @@ class StreamingSourceShortlistAgentGenAiImpl(
 
                 // Map numbered image IDs back to original hash-based IDs
                 val originalImageIds = mapNumberedIdsToOriginal(llmSource.relevantImageIds, sourceInfo.imageIdMapping)
+
+                // Convert LLM facts to domain facts
+                val relevantFacts = llmSource.relevantFacts.map { llmFact ->
+                    RelevantFact(
+                        fact = llmFact.fact,
+                        sourceClassification = parseSourceClassification(llmFact.classification)
+                    )
+                }
                 
                 ShortlistedSource(
                     url = llmSource.url,
-                    markdown = sourceInfo.markdown,
+                    relevantFacts = relevantFacts,
                     sourceClassification = sourceType,
                     contentDate = llmSource.contentDate,
                     answerType = answerType,
@@ -285,13 +340,14 @@ class StreamingSourceShortlistAgentGenAiImpl(
         }
 
         logger.debug(
-            "Shortlist updated: {} sources, isGoodEnough: {}, reason: {}",
+            "Shortlist updated: {} sources, {} total facts, isGoodEnough: {}, reason: {}",
             updatedShortlist.size,
+            updatedShortlist.sumOf { it.relevantFacts.size },
             finalIsGoodEnough,
             finalReason
         )
 
-        return StreamingSourceShortlistOutput(
+        return SourceShortlistOutput(
             updatedShortlist = updatedShortlist,
             isGoodEnough = finalIsGoodEnough,
             reason = finalReason,
@@ -299,7 +355,15 @@ class StreamingSourceShortlistAgentGenAiImpl(
         )
     }
 
-    private fun buildUserPrompt(input: StreamingSourceShortlistInput, urlToSourceInfo: Map<String, SourceInfo>): String {
+    private fun parseSourceClassification(value: String): SourceClassification {
+        return when (value.uppercase()) {
+            "OFFICIAL_LIVING_DOC" -> SourceClassification.OFFICIAL_LIVING_DOC
+            "OFFICIAL_SNAPSHOT" -> SourceClassification.OFFICIAL_SNAPSHOT
+            else -> SourceClassification.OTHERS
+        }
+    }
+
+    private fun buildUserPrompt(input: SourceShortlistInput, urlToSourceInfo: Map<String, SourceInfo>): String {
         return buildString {
             // Include current date for temporal context
             appendLine("# Current Date")
@@ -311,7 +375,7 @@ class StreamingSourceShortlistAgentGenAiImpl(
             appendLine()
 
             if (input.currentShortlist.isNotEmpty()) {
-                appendLine("# Current Shortlist")
+                appendLine("# Current Shortlist (with previously extracted facts)")
                 input.currentShortlist.forEachIndexed { index, source ->
                     val sourceInfo = urlToSourceInfo[source.url]
                     appendLine("## Source ${index + 1}")
@@ -324,16 +388,10 @@ class StreamingSourceShortlistAgentGenAiImpl(
                         appendLine("Previously Selected Images: ${source.relevantImageIds.joinToString(", ")}")
                     }
                     appendLine()
-                    // Include first part of transformed markdown for context (with numbered image IDs)
-                    val previewLength = 500
-                    val transformedMarkdown = sourceInfo?.transformedMarkdown ?: source.markdown
-                    val markdownPreview = if (transformedMarkdown.length > previewLength) {
-                        transformedMarkdown.take(previewLength) + "..."
-                    } else {
-                        transformedMarkdown
+                    appendLine("### Previously Extracted Facts")
+                    source.relevantFacts.forEach { fact ->
+                        appendLine("- [${fact.sourceClassification}] ${fact.fact}")
                     }
-                    appendLine("Markdown Preview:")
-                    appendLine(markdownPreview)
                     appendLine()
                     appendLine("---")
                     appendLine()
@@ -356,10 +414,11 @@ class StreamingSourceShortlistAgentGenAiImpl(
 
             appendLine()
             appendLine("# Instructions")
-            appendLine("Classify the new sources and update the shortlist. You may:")
-            appendLine("- Add valuable new sources to the shortlist")
+            appendLine("Classify the new sources, extract relevant facts, and update the shortlist. You may:")
+            appendLine("- Add valuable new sources with their extracted facts to the shortlist")
             appendLine("- Remove less relevant existing sources if new sources are better")
             appendLine("- Keep existing sources if they remain valuable")
+            appendLine("- Extract facts that are directly relevant to answering the query")
             appendLine("- Select relevant images for each source (use the numbered image IDs)")
             appendLine("- Decide if the current shortlist is sufficient to answer the query comprehensively")
         }
@@ -373,13 +432,17 @@ class StreamingSourceShortlistAgentGenAiImpl(
         val imageIdMapping: Map<String, String>
     )
 
-    private fun buildUrlToSourceInfoMap(input: StreamingSourceShortlistInput): Map<String, SourceInfo> {
+    private fun buildUrlToSourceInfoMap(input: SourceShortlistInput): Map<String, SourceInfo> {
         val map = mutableMapOf<String, SourceInfo>()
         
-        // Add existing shortlist markdowns
+        // For existing shortlist, we don't have raw markdown anymore (just facts)
+        // We need to track by URL for image mapping purposes
+        // Note: In a real implementation, we might want to keep original markdown
+        // For now, we'll just use an empty string for existing sources
         input.currentShortlist.forEach { source ->
-            val (transformedMarkdown, imageMapping) = transformImageIdsForLlm(source.markdown)
-            map[source.url] = SourceInfo(source.markdown, transformedMarkdown, imageMapping)
+            // Existing shortlist sources don't have raw markdown to transform
+            // We keep empty entries for tracking purposes
+            map[source.url] = SourceInfo("", "", emptyMap())
         }
         
         // Add new batch markdowns (skip duplicates)

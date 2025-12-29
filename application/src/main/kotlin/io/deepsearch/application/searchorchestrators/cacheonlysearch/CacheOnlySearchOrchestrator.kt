@@ -8,11 +8,11 @@ import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
-import io.deepsearch.domain.agents.AnswerStreamItem
-import io.deepsearch.domain.agents.AnswerSynthesisInput
-import io.deepsearch.domain.agents.IAnswerSynthesisAgent
-import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
-import io.deepsearch.domain.agents.StreamingSourceShortlistInput
+import io.deepsearch.domain.agents.ISourceShortlistAgent
+import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
+import io.deepsearch.domain.agents.SourceShortlistInput
+import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
+import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
@@ -49,8 +49,8 @@ interface ICacheOnlySearchOrchestrator : ISearchOrchestrator
 class CacheOnlySearchOrchestrator(
     private val webpageCacheService: WebpageCacheService,
     private val fileSearchService: IFileSearchService,
-    private val streamingSourceShortlistAgent: IStreamingSourceShortlistAgent,
-    private val answerSynthesisAgent: IAnswerSynthesisAgent,
+    private val sourceShortlistAgent: ISourceShortlistAgent,
+    private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val tokenUsageService: ILlmTokenUsageService
@@ -153,12 +153,12 @@ class CacheOnlySearchOrchestrator(
             val markdownSources = buildMarkdownSources(validWebpages, fileSearchResult, domain)
 
             // Step 2: Run through source shortlist agent
-            val shortlistOutput = streamingSourceShortlistAgent.generate(
-                StreamingSourceShortlistInput(searchQuery.query, emptyList(), markdownSources)
+            val shortlistOutput = sourceShortlistAgent.generate(
+                SourceShortlistInput(searchQuery.query, emptyList(), markdownSources)
             )
 
             tokenUsageService.recordTokenUsage(
-                sessionId, "StreamingSourceShortlistAgent",
+                sessionId, "SourceShortlistAgent",
                 shortlistOutput.tokenUsage.modelName,
                 shortlistOutput.tokenUsage.promptTokens,
                 shortlistOutput.tokenUsage.outputTokens,
@@ -179,18 +179,18 @@ class CacheOnlySearchOrchestrator(
             var fullAnswer = ""
             var answerFound = false
             var imageIds = emptyList<String>()
-            answerSynthesisAgent.generateStream(
-                AnswerSynthesisInput(searchQuery.query, shortlistOutput.updatedShortlist)
+            streamingAnswerSynthesisAgent.generateStream(
+                StreamingAnswerSynthesisInput(searchQuery.query, shortlistOutput.updatedShortlist)
             ).collect { item ->
                 when (item) {
-                    is AnswerStreamItem.Chunk -> {
+                    is StreamingAnswerStreamItem.Chunk -> {
                         fullAnswer += item.text
                         emit(SearchEvent.AnswerChunk(sessionId, item.text))
                     }
-                    is AnswerStreamItem.Complete -> {
+                    is StreamingAnswerStreamItem.Complete -> {
                         // Record token usage from the final streaming chunk
                         tokenUsageService.recordTokenUsage(
-                            sessionId, "AnswerSynthesisAgent",
+                            sessionId, "StreamingAnswerSynthesisAgent",
                             item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                             item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                         )

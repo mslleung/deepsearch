@@ -100,7 +100,7 @@ val domainModule = module {
     // Request-scoped domain agents (used by request-scoped application services)
     requestScope {
         scopedOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
-        scopedOf(::AnswerSynthesisAgentGenAiImpl) bind IAnswerSynthesisAgent::class
+        scopedOf(::StreamingAnswerSynthesisAgentGenAiImpl) bind IStreamingAnswerSynthesisAgent::class
         scopedOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class
         scopedOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
         scopedOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class
@@ -113,9 +113,8 @@ val domainModule = module {
         scopedOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
         scopedOf(::SerpQueryOptimizationAgentGenAiImpl) bind ISerpQueryOptimizationAgent::class
         scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
-        scopedOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
-        scopedOf(::PreviewClassificationAgentGenAiImpl) bind IPreviewClassificationAgent::class
-        scopedOf(::PreviewAnswerSynthesisAgentGenAiImpl) bind IPreviewAnswerSynthesisAgent::class
+        scopedOf(::SourceShortlistAgentGenAiImpl) bind ISourceShortlistAgent::class
+        scopedOf(::PreviewSourceShortlistAgentGenAiImpl) bind IPreviewSourceShortlistAgent::class
 
         // Request-scoped domain services (user/auth related)
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class

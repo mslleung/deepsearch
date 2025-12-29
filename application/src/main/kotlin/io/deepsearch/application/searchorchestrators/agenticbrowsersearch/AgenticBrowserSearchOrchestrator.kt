@@ -8,22 +8,18 @@ import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.services.IGeminiFileSearchService
-import io.deepsearch.domain.agents.AnswerStreamItem
-import io.deepsearch.domain.agents.AnswerSynthesisInput
-import io.deepsearch.domain.agents.ClassifiedSource
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
-import io.deepsearch.domain.agents.IAnswerSynthesisAgent
-import io.deepsearch.domain.agents.IPreviewAnswerSynthesisAgent
-import io.deepsearch.domain.agents.IPreviewClassificationAgent
+import io.deepsearch.domain.agents.IPreviewSourceShortlistAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.ISerpQueryOptimizationAgent
+import io.deepsearch.domain.agents.ISourceShortlistAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
-import io.deepsearch.domain.agents.PreviewAnswerStreamItem
-import io.deepsearch.domain.agents.PreviewAnswerSynthesisInput
-import io.deepsearch.domain.agents.PreviewClassificationInput
+import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
+import io.deepsearch.domain.agents.PreviewSourceShortlistInput
 import io.deepsearch.domain.agents.SerpQueryOptimizationInput
-import io.deepsearch.domain.agents.IStreamingSourceShortlistAgent
-import io.deepsearch.domain.agents.StreamingSourceShortlistInput
+import io.deepsearch.domain.agents.SourceShortlistInput
+import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
+import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.exceptions.MarkdownConversionException
@@ -95,10 +91,9 @@ class AgenticBrowserSearchOrchestrator(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
     private val answerReviewerAgent: IAnswerReviewerAgent,
-    private val streamingSourceShortlistAgent: IStreamingSourceShortlistAgent,
-    private val answerSynthesisAgent: IAnswerSynthesisAgent,
-    private val previewClassificationAgent: IPreviewClassificationAgent,
-    private val previewAnswerSynthesisAgent: IPreviewAnswerSynthesisAgent,
+    private val sourceShortlistAgent: ISourceShortlistAgent,
+    private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
+    private val previewSourceShortlistAgent: IPreviewSourceShortlistAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
@@ -999,10 +994,10 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Result from processing a preview batch.
      * Stateless - each batch is processed independently.
-     * Uses a 2-agent flow: PreviewClassificationAgent -> PreviewAnswerSynthesisAgent.
+     * Uses a 2-agent flow: PreviewSourceShortlistAgent -> StreamingAnswerSynthesisAgent.
      */
     private data class PreviewResult(
-        val classifiedSources: List<ClassifiedSource> = emptyList(),
+        val shortlistedSources: List<ShortlistedSource> = emptyList(),
         val isAnswerFound: Boolean = false,
         val fullAnswer: String? = null
     )
@@ -1033,12 +1028,12 @@ class AgenticBrowserSearchOrchestrator(
 
         val updatedProcessedUrls = state.processedUrls + sourcesToEvaluate.map { it.url }
 
-        val output = streamingSourceShortlistAgent.generate(
-            StreamingSourceShortlistInput(searchQuery.query, state.currentShortlist, sourcesToEvaluate)
+        val output = sourceShortlistAgent.generate(
+            SourceShortlistInput(searchQuery.query, state.currentShortlist, sourcesToEvaluate)
         )
 
         tokenUsageService.recordTokenUsage(
-            sessionId, "StreamingSourceShortlistAgent",
+            sessionId, "SourceShortlistAgent",
             output.tokenUsage.modelName, output.tokenUsage.promptTokens,
             output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
         )
@@ -1080,19 +1075,19 @@ class AgenticBrowserSearchOrchestrator(
 
         // Stream the answer and emit chunks
         var fullAnswer = ""
-        answerSynthesisAgent.generateStream(
-            AnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist)
+        streamingAnswerSynthesisAgent.generateStream(
+            StreamingAnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist)
         ).collect { item ->
             when (item) {
-                is AnswerStreamItem.Chunk -> {
+                is StreamingAnswerStreamItem.Chunk -> {
                     fullAnswer += item.text
                     eventChannel.send(SearchEvent.AnswerChunk(sessionId, item.text))
                 }
 
-                is AnswerStreamItem.Complete -> {
+                is StreamingAnswerStreamItem.Complete -> {
                     // Record token usage from the final streaming chunk
                     tokenUsageService.recordTokenUsage(
-                        sessionId, "AnswerSynthesisAgent",
+                        sessionId, "StreamingAnswerSynthesisAgent",
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
@@ -1154,8 +1149,8 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Process a batch of HTML previews independently (stateless).
      * Uses a 2-agent flow:
-     * 1. PreviewClassificationAgent (non-streaming) - classifies facts and sources
-     * 2. PreviewAnswerSynthesisAgent (streaming) - generates answer with internal filtering
+     * 1. PreviewSourceShortlistAgent (non-streaming) - extracts facts and classifies sources, filters table facts
+     * 2. StreamingAnswerSynthesisAgent (streaming) - generates answer and determines answerFound
      * 
      * If answerFound=false from synthesis, no events are emitted and we wait for the next batch.
      */
@@ -1169,41 +1164,41 @@ class AgenticBrowserSearchOrchestrator(
             return PreviewResult()
         }
 
-        // Step 1: Classification (non-streaming)
-        val classificationOutput = previewClassificationAgent.generate(
-            PreviewClassificationInput(searchQuery.query, htmlBatch)
+        // Step 1: Source Shortlist (non-streaming) - extracts facts, filters table facts
+        val shortlistOutput = previewSourceShortlistAgent.generate(
+            PreviewSourceShortlistInput(searchQuery.query, htmlBatch)
         )
 
         tokenUsageService.recordTokenUsage(
-            sessionId, "PreviewClassificationAgent",
-            classificationOutput.tokenUsage.modelName, classificationOutput.tokenUsage.promptTokens,
-            classificationOutput.tokenUsage.outputTokens, classificationOutput.tokenUsage.totalTokens
+            sessionId, "PreviewSourceShortlistAgent",
+            shortlistOutput.tokenUsage.modelName, shortlistOutput.tokenUsage.promptTokens,
+            shortlistOutput.tokenUsage.outputTokens, shortlistOutput.tokenUsage.totalTokens
         )
 
         logger.debug(
-            "[{}] Preview classification: {} sources classified, {} facts",
+            "[{}] Preview source shortlist: {} sources, {} facts",
             sessionId.value,
-            classificationOutput.sourceClassifications.size,
-            classificationOutput.sourceClassifications.sumOf { it.relevantFacts.size }
+            shortlistOutput.shortlistedSources.size,
+            shortlistOutput.shortlistedSources.sumOf { it.relevantFacts.size }
         )
 
-        // Step 2: Answer Synthesis (streaming) with internal filtering
+        // Step 2: Answer Synthesis (streaming) - uses unified agent, determines answerFound
         val fullAnswer = StringBuilder()
         var answerFound = false
         var reasoning = ""
 
-        previewAnswerSynthesisAgent.generateStream(
-            PreviewAnswerSynthesisInput(searchQuery.query, classificationOutput.sourceClassifications)
+        streamingAnswerSynthesisAgent.generateStream(
+            StreamingAnswerSynthesisInput(searchQuery.query, shortlistOutput.shortlistedSources)
         ).collect { item ->
             when (item) {
-                is PreviewAnswerStreamItem.Chunk -> {
+                is StreamingAnswerStreamItem.Chunk -> {
                     fullAnswer.append(item.text)
                     // Buffer chunks - only emit if answerFound=true
                 }
 
-                is PreviewAnswerStreamItem.Complete -> {
+                is StreamingAnswerStreamItem.Complete -> {
                     tokenUsageService.recordTokenUsage(
-                        sessionId, "PreviewAnswerSynthesisAgent",
+                        sessionId, "StreamingAnswerSynthesisAgent",
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
@@ -1221,7 +1216,7 @@ class AgenticBrowserSearchOrchestrator(
         // If answerFound=false, return without emitting events - wait for next batch
         if (!answerFound) {
             return PreviewResult(
-                classifiedSources = classificationOutput.sourceClassifications,
+                shortlistedSources = shortlistOutput.shortlistedSources,
                 isAnswerFound = false,
                 fullAnswer = null
             )
@@ -1234,7 +1229,7 @@ class AgenticBrowserSearchOrchestrator(
         }
 
         return PreviewResult(
-            classifiedSources = classificationOutput.sourceClassifications,
+            shortlistedSources = shortlistOutput.shortlistedSources,
             isAnswerFound = true,
             fullAnswer = answerText
         )
@@ -1269,14 +1264,14 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel.send(
             SearchEvent.ShortlistUpdated(
                 sessionId = sessionId,
-                processedUrlCount = result.classifiedSources.size,
-                shortlistedCount = result.classifiedSources.size,
+                processedUrlCount = result.shortlistedSources.size,
+                shortlistedCount = result.shortlistedSources.size,
                 isGoodEnough = true, // Preview path only finishes when confident
                 reason = "Preview path confident answer"
             )
         )
 
-        val answerSources = result.classifiedSources.map { it.url }
+        val answerSources = result.shortlistedSources.map { it.url }
         if (answerSources.isNotEmpty()) {
             urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
         }

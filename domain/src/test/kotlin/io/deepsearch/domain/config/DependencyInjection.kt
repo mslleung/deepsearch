@@ -84,7 +84,7 @@ private val domainCommonTestModule = module {
     // GenAI agents as singletons for tests
     singleOf(::FileSearchQueryAgentGenAiImpl) bind IFileSearchQueryAgent::class
     singleOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
-    singleOf(::AnswerSynthesisAgentGenAiImpl) bind IAnswerSynthesisAgent::class
+    singleOf(::StreamingAnswerSynthesisAgentGenAiImpl) bind IStreamingAnswerSynthesisAgent::class
     singleOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class
     singleOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
     singleOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class
@@ -104,9 +104,8 @@ private val domainCommonTestModule = module {
     singleOf(::SerpQueryOptimizationAgentGenAiImpl) bind ISerpQueryOptimizationAgent::class
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
     singleOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
-    singleOf(::StreamingSourceShortlistAgentGenAiImpl) bind IStreamingSourceShortlistAgent::class
-    singleOf(::PreviewClassificationAgentGenAiImpl) bind IPreviewClassificationAgent::class
-    singleOf(::PreviewAnswerSynthesisAgentGenAiImpl) bind IPreviewAnswerSynthesisAgent::class
+    singleOf(::SourceShortlistAgentGenAiImpl) bind ISourceShortlistAgent::class
+    singleOf(::PreviewSourceShortlistAgentGenAiImpl) bind IPreviewSourceShortlistAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
