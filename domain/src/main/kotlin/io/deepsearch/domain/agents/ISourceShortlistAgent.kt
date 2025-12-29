@@ -2,6 +2,7 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
+import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
@@ -9,15 +10,13 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
  * Input for source shortlist agent.
  * Provides current shortlist and new batch of markdown sources to evaluate.
  * 
- * @param includeImages When true, applies stricter isGoodEnough criteria to ensure
- *                      thorough search before returning an answer. Used when images
- *                      are requested in the response.
+ * The agent internally appends `site:<domain>` to the query for better context.
+ * When searchQuery.includeImages is true, applies stricter isGoodEnough criteria.
  */
 data class SourceShortlistInput(
-    val query: String,
+    val searchQuery: SearchQuery,
     val currentShortlist: List<ShortlistedSource>,
-    val newMarkdownBatch: List<MarkdownSource>,
-    val includeImages: Boolean = false
+    val newMarkdownBatch: List<MarkdownSource>
 ) : IAgent.IAgentInput
 
 /**

@@ -1,6 +1,7 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
+import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
@@ -8,9 +9,11 @@ import io.deepsearch.domain.models.valueobjects.UrlContentResult
 /**
  * Input for preview source shortlist agent.
  * Provides HTML preview sources to evaluate and extract facts from.
+ * 
+ * The agent internally appends `site:<domain>` to the query for better context.
  */
 data class PreviewSourceShortlistInput(
-    val query: String,
+    val searchQuery: SearchQuery,
     val htmlSources: List<UrlContentResult.HtmlPreview>
 ) : IAgent.IAgentInput
 

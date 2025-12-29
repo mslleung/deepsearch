@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import io.deepsearch.domain.agents.IPreviewSourceShortlistAgent
 import io.deepsearch.domain.agents.PreviewSourceShortlistInput
 import io.deepsearch.domain.config.domainTestModule
+import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SourceClassification
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import kotlinx.coroutines.CoroutineDispatcher
@@ -27,7 +28,7 @@ class PreviewSourceShortlistAgentTest : KoinTest {
     @Test
     fun `should return empty result when HTML sources is empty`() = runTest(testCoroutineDispatcher) {
         val input = PreviewSourceShortlistInput(
-            query = "Who is the CEO?",
+            searchQuery = SearchQuery("Who is the CEO?", "https://example.com"),
             htmlSources = emptyList()
         )
 
@@ -79,7 +80,7 @@ class PreviewSourceShortlistAgentTest : KoinTest {
         )
 
         val input = PreviewSourceShortlistInput(
-            query = "Who is the CEO of SleekFlow?",
+            searchQuery = SearchQuery("Who is the CEO of SleekFlow?", "https://sleekflow.io"),
             htmlSources = listOf(htmlSource)
         )
 
@@ -145,7 +146,7 @@ class PreviewSourceShortlistAgentTest : KoinTest {
         )
 
         val input = PreviewSourceShortlistInput(
-            query = "Does the Pro plan have any SLA guarantee?",
+            searchQuery = SearchQuery("Does the Pro plan have any SLA guarantee?", "https://sleekflow.io"),
             htmlSources = listOf(htmlSource)
         )
 
@@ -181,7 +182,7 @@ class PreviewSourceShortlistAgentTest : KoinTest {
         )
 
         val input = PreviewSourceShortlistInput(
-            query = "Does the platform support AI analytics?",
+            searchQuery = SearchQuery("Does the platform support AI analytics?", "https://example.com"),
             htmlSources = listOf(htmlSource)
         )
 
@@ -235,7 +236,7 @@ class PreviewSourceShortlistAgentTest : KoinTest {
         )
 
         val input = PreviewSourceShortlistInput(
-            query = "Tell me about Example Corp",
+            searchQuery = SearchQuery("Tell me about Example Corp", "https://example.com"),
             htmlSources = listOf(htmlSource1, htmlSource2)
         )
 

@@ -223,9 +223,9 @@ class AgenticBrowserSearchOrchestrator(
                 pathFlows.add(
                     sourceFlow
                         .filterIsInstance<UrlContentResult.HtmlPreview>()
-                        .chunkedWithTimeout(chunkSize = 5, timeoutMs = 300)
+                        .chunkedWithTimeout(chunkSize = 1, timeoutMs = 300)  // minimal chunk size (no chunk), this improves processPreviewBatch process time
                         .takeWhile { !answerAccumulator.isComplete }
-                        .flatMapMerge(concurrency = 3) { htmlBatch ->
+                        .flatMapMerge(concurrency = 100) { htmlBatch ->
                             flow {
                                 emit(processPreviewBatch(sessionId, searchQuery, htmlBatch))
                             }
@@ -1076,7 +1076,7 @@ class AgenticBrowserSearchOrchestrator(
         val updatedProcessedUrls = state.processedUrls + sourcesToEvaluate.map { it.url }
 
         val output = sourceShortlistAgent.generate(
-            SourceShortlistInput(searchQuery.query, state.currentShortlist, sourcesToEvaluate, includeImages)
+            SourceShortlistInput(searchQuery, state.currentShortlist, sourcesToEvaluate)
         )
 
         tokenUsageService.recordTokenUsage(
@@ -1213,7 +1213,7 @@ class AgenticBrowserSearchOrchestrator(
 
         // Step 1: Source Shortlist (non-streaming) - extracts facts, filters table facts
         val shortlistOutput = previewSourceShortlistAgent.generate(
-            PreviewSourceShortlistInput(searchQuery.query, htmlBatch)
+            PreviewSourceShortlistInput(searchQuery, htmlBatch)
         )
 
         tokenUsageService.recordTokenUsage(

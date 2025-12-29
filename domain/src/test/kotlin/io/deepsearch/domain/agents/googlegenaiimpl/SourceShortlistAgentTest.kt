@@ -5,6 +5,7 @@ import io.deepsearch.domain.agents.SourceShortlistInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
+import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.SourceClassification
 import kotlinx.coroutines.CoroutineDispatcher
@@ -31,7 +32,7 @@ class SourceShortlistAgentTest : KoinTest {
     @Test
     fun `should return empty shortlist when both current and new batch are empty`() = runTest(testCoroutineDispatcher) {
         val input = SourceShortlistInput(
-            query = "What is machine learning?",
+            searchQuery = SearchQuery("What is machine learning?", "https://example.com"),
             currentShortlist = emptyList(),
             newMarkdownBatch = emptyList()
         )
@@ -61,7 +62,7 @@ class SourceShortlistAgentTest : KoinTest {
         )
 
         val input = SourceShortlistInput(
-            query = "What is machine learning?",
+            searchQuery = SearchQuery("What is machine learning?", "https://example.com"),
             currentShortlist = listOf(existingSource),
             newMarkdownBatch = emptyList()
         )
@@ -102,7 +103,7 @@ class SourceShortlistAgentTest : KoinTest {
             )
 
             val input = SourceShortlistInput(
-                query = "What is machine learning?",
+                searchQuery = SearchQuery("What is machine learning?", "https://example.com"),
                 currentShortlist = emptyList(),
                 newMarkdownBatch = listOf(newSource)
             )
@@ -169,7 +170,7 @@ class SourceShortlistAgentTest : KoinTest {
             )
 
             val input = SourceShortlistInput(
-                query = "What is machine learning and how does it work?",
+                searchQuery = SearchQuery("What is machine learning and how does it work?", "https://example.com"),
                 currentShortlist = emptyList(),
                 newMarkdownBatch = listOf(comprehensiveSource)
             )
@@ -195,7 +196,7 @@ class SourceShortlistAgentTest : KoinTest {
         )
 
         val input = SourceShortlistInput(
-            query = "Explain machine learning in detail including types, algorithms, applications, and best practices",
+            searchQuery = SearchQuery("Explain machine learning in detail including types, algorithms, applications, and best practices", "https://example.com"),
             currentShortlist = emptyList(),
             newMarkdownBatch = listOf(minimalSource)
         )
@@ -240,7 +241,7 @@ class SourceShortlistAgentTest : KoinTest {
         )
 
         val input = SourceShortlistInput(
-            query = "What is machine learning?",
+            searchQuery = SearchQuery("What is machine learning?", "https://example.com"),
             currentShortlist = emptyList(),
             newMarkdownBatch = listOf(source1, source2)
         )

@@ -202,9 +202,12 @@ class PreviewSourceShortlistAgentGenAiImpl(
     )
 
     override suspend fun generate(input: PreviewSourceShortlistInput): PreviewSourceShortlistOutput {
+        val searchQuery = input.searchQuery
+        val queryWithSite = "${searchQuery.query} site:${extractDomain(searchQuery.url)}"
+        
         logger.debug(
             "Classifying preview sources for query: '{}', sources: {}",
-            input.query,
+            queryWithSite,
             input.htmlSources.size
         )
 
@@ -325,8 +328,20 @@ class PreviewSourceShortlistAgentGenAiImpl(
             else -> SourceClassification.OTHERS
         }
     }
+    
+    /**
+     * Extracts the domain from a URL string.
+     */
+    private fun extractDomain(url: String): String {
+        return try {
+            java.net.URI(url).host?.lowercase() ?: url
+        } catch (e: Exception) {
+            url
+        }
+    }
 
     private fun buildUserPrompt(input: PreviewSourceShortlistInput): String {
+        val queryWithSite = "${input.searchQuery.query} site:${extractDomain(input.searchQuery.url)}"
         return buildString {
             // Include current date for temporal context
             appendLine("# Current Date")
@@ -334,7 +349,7 @@ class PreviewSourceShortlistAgentGenAiImpl(
             appendLine()
 
             appendLine("# Query")
-            appendLine(input.query)
+            appendLine(queryWithSite)
             appendLine()
 
             appendLine("# HTML Sources to Evaluate")

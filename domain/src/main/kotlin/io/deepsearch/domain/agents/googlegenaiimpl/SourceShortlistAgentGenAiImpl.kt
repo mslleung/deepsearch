@@ -216,12 +216,15 @@ class SourceShortlistAgentGenAiImpl(
     )
 
     override suspend fun generate(input: SourceShortlistInput): SourceShortlistOutput {
+        val searchQuery = input.searchQuery
+        val queryWithSite = "${searchQuery.query} site:${extractDomain(searchQuery.url)}"
+        
         logger.debug(
             "Generating source shortlist for query: '{}', current shortlist size: {}, new batch size: {}, includeImages: {}",
-            input.query,
+            queryWithSite,
             input.currentShortlist.size,
             input.newMarkdownBatch.size,
-            input.includeImages
+            searchQuery.includeImages
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
@@ -347,7 +350,7 @@ class SourceShortlistAgentGenAiImpl(
 
         // When includeImages is true, require an authoritative source before returning isGoodEnough=true
         // An authoritative source is OFFICIAL_LIVING_DOC with DIRECT_ANSWER (e.g., exact product page)
-        if (input.includeImages && finalIsGoodEnough) {
+        if (searchQuery.includeImages && finalIsGoodEnough) {
             val hasAuthoritativeSource = updatedShortlist.any { source ->
                 source.sourceClassification == io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC &&
                 source.answerType == io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER
@@ -384,6 +387,7 @@ class SourceShortlistAgentGenAiImpl(
     }
 
     private fun buildUserPrompt(input: SourceShortlistInput, urlToSourceInfo: Map<String, SourceInfo>): String {
+        val queryWithSite = "${input.searchQuery.query} site:${extractDomain(input.searchQuery.url)}"
         return buildString {
             // Include current date for temporal context
             appendLine("# Current Date")
@@ -391,7 +395,7 @@ class SourceShortlistAgentGenAiImpl(
             appendLine()
             
             appendLine("# Query")
-            appendLine(input.query)
+            appendLine(queryWithSite)
             appendLine()
 
             if (input.currentShortlist.isNotEmpty()) {
@@ -479,6 +483,17 @@ class SourceShortlistAgentGenAiImpl(
     companion object {
         /** Marker used to identify placeholder images in the mapping */
         const val PLACEHOLDER_MARKER = "__PLACEHOLDER__"
+        
+        /**
+         * Extracts the domain from a URL string.
+         */
+        private fun extractDomain(url: String): String {
+            return try {
+                java.net.URI(url).host?.lowercase() ?: url
+            } catch (e: Exception) {
+                url
+            }
+        }
 
         // Regex patterns for image tag matching
         private val FULL_IMAGE_REGEX = """<image\s+id="(img-[^"]+)"(?:\s*>([^<]*)</image>|[^>]*/>)""".toRegex()

@@ -154,7 +154,7 @@ class CacheOnlySearchOrchestrator(
 
             // Step 2: Run through source shortlist agent
             val shortlistOutput = sourceShortlistAgent.generate(
-                SourceShortlistInput(searchQuery.query, emptyList(), markdownSources)
+                SourceShortlistInput(searchQuery, emptyList(), markdownSources)
             )
 
             tokenUsageService.recordTokenUsage(
