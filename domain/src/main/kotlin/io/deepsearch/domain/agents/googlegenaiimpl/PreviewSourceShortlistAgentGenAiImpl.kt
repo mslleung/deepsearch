@@ -98,9 +98,13 @@ class PreviewSourceShortlistAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Shortlisted sources with extracted facts")
+        .description("Shortlisted sources with extracted facts and expanded query")
         .properties(
             mapOf(
+                "expandedQuery" to Schema.builder()
+                    .type("STRING")
+                    .description("Clarified/expanded version of the user query that captures the CORE intent. Transform vague queries into specific, answerable questions. Example: 'tell me about the pricing' → 'What are the main subscription plans and pricing tiers for the product?'")
+                    .build(),
                 "shortlistedSources" to Schema.builder()
                     .type("ARRAY")
                     .items(shortlistedSourceSchema)
@@ -108,7 +112,7 @@ class PreviewSourceShortlistAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("shortlistedSources"))
+        .required(listOf("expandedQuery", "shortlistedSources"))
         .build()
 
     private val systemInstruction = """
@@ -118,6 +122,17 @@ class PreviewSourceShortlistAgentGenAiImpl(
         - Current date
         - User query
         - HTML sources (preview content with cleaned HTML structure)
+        
+        FIRST, you must expand the user query:
+        
+        **Expand the Query**:
+        - Transform the user's query into a clear, specific question that captures the CORE intent
+        - Vague queries should become precise, answerable questions
+        - Examples:
+          - "tell me about the pricing" → "What are the main subscription plans and pricing tiers for the product?"
+          - "pricing" → "What are the subscription plans, their prices, and what features are included in each tier?"
+          - "features" → "What are the main product features and capabilities?"
+          - "how does it work" → "How does the product work and what is the main workflow?"
         
         For each source, you must:
         
@@ -163,6 +178,7 @@ class PreviewSourceShortlistAgentGenAiImpl(
         
         Output Format:
         {
+          "expandedQuery": "What are the main subscription plans and pricing tiers for the product?",
           "shortlistedSources": [
             {
               "url": "String",
@@ -198,6 +214,7 @@ class PreviewSourceShortlistAgentGenAiImpl(
 
     @Serializable
     private data class ShortlistResponse(
+        val expandedQuery: String,
         val shortlistedSources: List<LlmShortlistedSource>
     )
 
@@ -218,6 +235,7 @@ class PreviewSourceShortlistAgentGenAiImpl(
             logger.debug("Empty HTML sources, returning empty result")
             return PreviewSourceShortlistOutput(
                 shortlistedSources = emptyList(),
+                expandedQuery = searchQuery.query, // Use original query as fallback
                 tokenUsage = tokenUsage
             )
         }
@@ -310,13 +328,15 @@ class PreviewSourceShortlistAgentGenAiImpl(
         }
 
         logger.debug(
-            "Preview source shortlist complete: {} sources, {} total facts (after filtering table data)",
+            "Preview source shortlist complete: {} sources, {} total facts (after filtering table data), expandedQuery: {}",
             shortlistedSources.size,
-            shortlistedSources.sumOf { it.relevantFacts.size }
+            shortlistedSources.sumOf { it.relevantFacts.size },
+            response.expandedQuery
         )
 
         return PreviewSourceShortlistOutput(
             shortlistedSources = shortlistedSources,
+            expandedQuery = response.expandedQuery,
             tokenUsage = tokenUsage
         )
     }

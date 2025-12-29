@@ -180,7 +180,11 @@ class CacheOnlySearchOrchestrator(
             var answerFound = false
             var imageIds = emptyList<String>()
             streamingAnswerSynthesisAgent.generateStream(
-                StreamingAnswerSynthesisInput(searchQuery.query, shortlistOutput.updatedShortlist)
+                StreamingAnswerSynthesisInput(
+                    query = searchQuery.query,
+                    shortlistedSources = shortlistOutput.updatedShortlist,
+                    expandedQuery = shortlistOutput.expandedQuery
+                )
             ).collect { item ->
                 when (item) {
                     is StreamingAnswerStreamItem.Chunk -> {

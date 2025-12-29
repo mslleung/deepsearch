@@ -89,9 +89,13 @@ class SourceShortlistAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Updated shortlist of sources with extracted facts and sufficiency decision")
+        .description("Updated shortlist of sources with extracted facts, expanded query, and sufficiency decision")
         .properties(
             mapOf(
+                "expandedQuery" to Schema.builder()
+                    .type("STRING")
+                    .description("Clarified/expanded version of the user query that captures the CORE intent. Transform vague queries into specific, answerable questions. Example: 'tell me about the pricing' → 'What are the main subscription plans and pricing tiers for the product?'")
+                    .build(),
                 "shortlist" to Schema.builder()
                     .type("ARRAY")
                     .items(shortlistedSourceSchema)
@@ -107,7 +111,7 @@ class SourceShortlistAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("shortlist", "isGoodEnough", "reason"))
+        .required(listOf("expandedQuery", "shortlist", "isGoodEnough", "reason"))
         .build()
 
     private val systemInstruction = """
@@ -118,6 +122,17 @@ class SourceShortlistAgentGenAiImpl(
         - User query
         - Current shortlist (with previously extracted facts)
         - New sources for shortlist evaluation/update (full markdown content with tables, images, and formatting)
+        
+        FIRST, you must expand the user query:
+        
+        **Expand the Query**:
+        - Transform the user's query into a clear, specific question that captures the CORE intent
+        - Vague queries should become precise, answerable questions
+        - Examples:
+          - "tell me about the pricing" → "What are the main subscription plans and pricing tiers for the product?"
+          - "pricing" → "What are the subscription plans, their prices, and what features are included in each tier?"
+          - "features" → "What are the main product features and capabilities?"
+          - "how does it work" → "How does the product work and what is the main workflow?"
         
         For each source, you must:
         
@@ -173,6 +188,7 @@ class SourceShortlistAgentGenAiImpl(
         
         Output Format:
         {
+          "expandedQuery": "What are the main subscription plans and pricing tiers for the product?",
           "shortlist": [
             {
               "url": "String",
@@ -210,6 +226,7 @@ class SourceShortlistAgentGenAiImpl(
 
     @Serializable
     private data class ShortlistResponse(
+        val expandedQuery: String,
         val shortlist: List<LlmShortlistedSource>,
         val isGoodEnough: Boolean,
         val reason: String
@@ -236,6 +253,7 @@ class SourceShortlistAgentGenAiImpl(
                 updatedShortlist = input.currentShortlist,
                 isGoodEnough = false,
                 reason = "No new sources to evaluate",
+                expandedQuery = searchQuery.query, // Use original query as fallback
                 tokenUsage = tokenUsage
             )
         }
@@ -363,17 +381,19 @@ class SourceShortlistAgentGenAiImpl(
         }
 
         logger.debug(
-            "Shortlist updated: {} sources, {} total facts, isGoodEnough: {}, reason: {}",
+            "Shortlist updated: {} sources, {} total facts, isGoodEnough: {}, reason: {}, expandedQuery: {}",
             updatedShortlist.size,
             updatedShortlist.sumOf { it.relevantFacts.size },
             finalIsGoodEnough,
-            finalReason
+            finalReason,
+            response.expandedQuery
         )
 
         return SourceShortlistOutput(
             updatedShortlist = updatedShortlist,
             isGoodEnough = finalIsGoodEnough,
             reason = finalReason,
+            expandedQuery = response.expandedQuery,
             tokenUsage = tokenUsage
         )
     }

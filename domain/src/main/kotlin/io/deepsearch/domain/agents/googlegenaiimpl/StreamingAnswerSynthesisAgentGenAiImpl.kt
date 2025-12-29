@@ -13,6 +13,7 @@ import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.flowWithRateLimitRetry
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.models.valueobjects.AnswerType
 import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.flow.Flow
@@ -36,16 +37,17 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Comprehensive answer to the query with referenced images, answer found indicator, and reasoning")
+        .description("Comprehensive answer to the query with answer type classification, reasoning, and referenced images")
         .properties(
             mapOf(
                 "answer" to Schema.builder()
                     .type("STRING")
                     .description("Comprehensive answer to the search query based on the extracted facts")
                     .build(),
-                "answerFound" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("Whether a meaningful answer to the query was found. True if the facts contain relevant information that addresses the query, false if insufficient or no relevant information was found.")
+                "answerType" to Schema.builder()
+                    .type("STRING")
+                    .description("Classification of how well the answer addresses the query: DIRECT_ANSWER (facts explicitly and comprehensively answer the query), INFERRED_ANSWER (answer derived from combining/interpreting facts), or PARTIAL_MENTION (facts only tangentially relate to the query)")
+                    .enum_(listOf("DIRECT_ANSWER", "INFERRED_ANSWER", "PARTIAL_MENTION"))
                     .build(),
                 "reasoning" to Schema.builder()
                     .type("STRING")
@@ -58,7 +60,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("answer", "answerFound", "reasoning", "imageIds"))
+        .required(listOf("answer", "answerType", "reasoning", "imageIds"))
         .build()
 
     private val systemInstruction = """
@@ -87,24 +89,43 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Only provide what can be substantiated by the facts
         - Do not speculate or fill gaps with external knowledge
         
-        Answer Found Determination:
-        - Set answerFound to TRUE if:
-          - The facts contain meaningful information that directly and comprehensively addresses the query
-          - You were able to provide substantive facts, data, or explanations
-        - Set answerFound to FALSE if:
-          - The facts do not contain relevant information to answer the query or only contain partial information
-          - You had to respond with "No information found" or similar
-          - The answer is essentially "I don't know" or "information not available"
+        Answer Type Classification:
+        Choose the answerType that best describes how the facts address the CORE INTENT of the query:
         
+        - DIRECT_ANSWER: Use ONLY when the facts explicitly and comprehensively answer the PRIMARY question.
+          Examples:
+          - Query "What is the pricing?" → Facts contain main subscription plans/tiers ($99/mo Pro, $299/mo Premium, etc.)
+          - Query "What are the features?" → Facts list the main product features with details
+          - The facts directly state the PRIMARY information the user is asking for
+          CRITICAL: Answering a narrow subset or tangential aspect does NOT qualify as DIRECT_ANSWER.
+          For example, if asked "What is the pricing?" and facts only contain API usage fees, add-on costs,
+          or third-party fees (not the main subscription plans), that is PARTIAL_MENTION, not DIRECT_ANSWER.
+        
+        - INFERRED_ANSWER: Use when the answer can be derived by combining or interpreting facts.
+          Examples:
+          - Query "Is it affordable?" → Facts show prices; you infer affordability
+          - Query "Can it integrate with Shopify?" → Facts mention e-commerce integrations
+          - The answer requires some interpretation but is well-supported by facts
+        
+        - PARTIAL_MENTION: Use when facts only tangentially relate to the query or answer only a SUBSET of what was asked. BE STRICT - this is the default when uncertain.
+          Examples:
+          - Query "What is the pricing?" → Facts only mention "start for free" without actual subscription tiers
+          - Query "What is the pricing?" → Facts only contain API/usage fees or third-party costs without main subscription plans
+          - Query "What are the features?" → Facts only mention the product name without listing features
+          - The facts touch on the topic but don't actually answer the CORE of what was asked
+          - You acknowledge "specific details are not available" or similar
+        
+        IMPORTANT: When in doubt, choose PARTIAL_MENTION. It's better to continue searching than to prematurely conclude with incomplete information. Answering a tangential aspect of a broad query (e.g., WhatsApp API fees when asked about overall product pricing) should be PARTIAL_MENTION.
+      
         Reasoning:
         - Briefly explain how you derived the answer from the facts
-        - If answerFound=false, explain what's missing or why the facts are insufficient
+        - If answerType is PARTIAL_MENTION, explain what specific information is missing
         
         Expected Output Shape:
         {
             "answer": "your comprehensive answer text",
-            "answerFound": boolean,  // true if meaningful answer found, false otherwise
-            "reasoning": "brief explanation of how the answer was derived or why it couldn't be found",
+            "answerType": "DIRECT_ANSWER" | "INFERRED_ANSWER" | "PARTIAL_MENTION",
+            "reasoning": "brief explanation of how the answer was derived and why this answerType was chosen",
             "imageIds": ["img-xxx"]  // IDs of relevant images from sources, empty array if none
         }
     """.trimIndent()
@@ -112,15 +133,16 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     @Serializable
     private data class SynthesisResponse(
         val answer: String,
-        val answerFound: Boolean,
+        val answerType: AnswerType,
         val reasoning: String,
         val imageIds: List<String> = emptyList()
     )
 
     override suspend fun generate(input: StreamingAnswerSynthesisInput): StreamingAnswerSynthesisOutput {
         logger.debug(
-            "Generating answer synthesis for query: '{}', shortlist size: {}, total facts: {}",
+            "Generating answer synthesis for query: '{}' (expanded: '{}'), shortlist size: {}, total facts: {}",
             input.query,
+            input.expandedQuery ?: "none",
             input.shortlistedSources.size,
             input.shortlistedSources.sumOf { it.relevantFacts.size }
         )
@@ -132,7 +154,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             logger.warn("No facts provided, returning default message")
             return StreamingAnswerSynthesisOutput(
                 answer = "No information found to answer the query.",
-                answerFound = false,
+                answerType = AnswerType.PARTIAL_MENTION,
                 reasoning = "No facts available from the provided sources.",
                 tokenUsage = tokenUsage
             )
@@ -181,15 +203,15 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         )
 
         logger.debug(
-            "Answer synthesis complete: {} chars, answerFound: {}, {} images",
+            "Answer synthesis complete: {} chars, answerType: {}, {} images",
             response.answer.length,
-            response.answerFound,
+            response.answerType,
             response.imageIds.size
         )
 
         return StreamingAnswerSynthesisOutput(
             answer = response.answer,
-            answerFound = response.answerFound,
+            answerType = response.answerType,
             reasoning = response.reasoning,
             imageIds = response.imageIds,
             tokenUsage = tokenUsage
@@ -198,8 +220,9 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
     override fun generateStream(input: StreamingAnswerSynthesisInput): Flow<StreamingAnswerStreamItem> = flow {
         logger.debug(
-            "Streaming answer synthesis for query: '{}', shortlist size: {}, total facts: {}",
+            "Streaming answer synthesis for query: '{}' (expanded: '{}'), shortlist size: {}, total facts: {}",
             input.query,
+            input.expandedQuery ?: "none",
             input.shortlistedSources.size,
             input.shortlistedSources.sumOf { it.relevantFacts.size }
         )
@@ -211,7 +234,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             emit(StreamingAnswerStreamItem.Chunk("No information found to answer the query."))
             emit(StreamingAnswerStreamItem.Complete(
                 tokenUsage = TokenUsageMetrics.empty(modelId),
-                answerFound = false,
+                answerType = AnswerType.PARTIAL_MENTION,
                 reasoning = "No facts available from the provided sources."
             ))
             return@flow
@@ -281,23 +304,28 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             accumulatedJson
         )
 
-        // Extract answerFound, reasoning, and imageIds from the complete JSON
-        val answerFound = extractAnswerFound(accumulatedJson)
+        // Extract answerType, reasoning, and imageIds from the complete JSON
+        val answerType = extractAnswerType(accumulatedJson)
         val reasoning = extractReasoning(accumulatedJson)
         val imageIds = extractImageIds(accumulatedJson)
         
-        logger.debug("Streaming answer synthesis complete: {} chars total, answerFound: {}, {} images", lastAnswerLength, answerFound, imageIds.size)
-        emit(StreamingAnswerStreamItem.Complete(tokenUsage, answerFound, reasoning, imageIds))
+        logger.debug("Streaming answer synthesis complete: {} chars total, answerType: {}, {} images", lastAnswerLength, answerType, imageIds.size)
+        emit(StreamingAnswerStreamItem.Complete(tokenUsage, answerType, reasoning, imageIds))
     }
 
     /**
-     * Extract answerFound boolean from accumulated JSON.
-     * The JSON format is: {"answer": "...", "answerFound": true, ...}
+     * Extract answerType enum from accumulated JSON.
+     * The JSON format is: {"answer": "...", "answerType": "DIRECT_ANSWER", ...}
+     * Defaults to PARTIAL_MENTION if not found or invalid.
      */
-    private fun extractAnswerFound(json: String): Boolean {
-        val regex = """"answerFound"\s*:\s*(true|false)""".toRegex(RegexOption.IGNORE_CASE)
-        val match = regex.find(json) ?: return false
-        return match.groupValues[1].equals("true", ignoreCase = true)
+    private fun extractAnswerType(json: String): AnswerType {
+        val regex = """"answerType"\s*:\s*"(DIRECT_ANSWER|INFERRED_ANSWER|PARTIAL_MENTION)"""".toRegex(RegexOption.IGNORE_CASE)
+        val match = regex.find(json) ?: return AnswerType.PARTIAL_MENTION
+        return try {
+            AnswerType.valueOf(match.groupValues[1].uppercase())
+        } catch (e: IllegalArgumentException) {
+            AnswerType.PARTIAL_MENTION
+        }
     }
 
     /**
@@ -403,7 +431,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     private fun buildUserPrompt(input: StreamingAnswerSynthesisInput): String {
         return buildString {
             appendLine("# Query")
-            appendLine(input.query)
+            appendLine(input.effectiveQuery)
             appendLine()
             appendLine("# Extracted Facts from Shortlisted Sources")
             appendLine()

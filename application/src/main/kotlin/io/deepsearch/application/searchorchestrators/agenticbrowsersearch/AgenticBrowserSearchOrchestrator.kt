@@ -28,6 +28,7 @@ import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.ext.chunkedWithTimeout
+import io.deepsearch.domain.models.valueobjects.AnswerType
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
@@ -1040,7 +1041,9 @@ class AgenticBrowserSearchOrchestrator(
         val currentShortlist: List<ShortlistedSource> = emptyList(),
         /** Set of URLs that have been processed (for deduplication) */
         val processedUrls: Set<String> = emptySet(),
-        val isComplete: Boolean = false
+        val isComplete: Boolean = false,
+        /** Expanded query from the shortlist agent that clarifies the user's core intent */
+        val expandedQuery: String? = null
     )
 
     /**
@@ -1050,9 +1053,15 @@ class AgenticBrowserSearchOrchestrator(
      */
     private data class PreviewResult(
         val shortlistedSources: List<ShortlistedSource> = emptyList(),
-        val isAnswerFound: Boolean = false,
+        val answerType: AnswerType = AnswerType.PARTIAL_MENTION,
         val fullAnswer: String? = null
-    )
+    ) {
+        /**
+         * Whether a confident answer was found (DIRECT_ANSWER or INFERRED_ANSWER).
+         * PARTIAL_MENTION is not considered confident enough for early exit.
+         */
+        val isAnswerFound: Boolean get() = answerType != AnswerType.PARTIAL_MENTION
+    }
 
     /**
      * Sealed class to distinguish accumulator updates from different paths.
@@ -1105,7 +1114,12 @@ class AgenticBrowserSearchOrchestrator(
             )
         }
 
-        return AnswerAccumulator(output.updatedShortlist, updatedProcessedUrls, output.isGoodEnough)
+        return AnswerAccumulator(
+            currentShortlist = output.updatedShortlist,
+            processedUrls = updatedProcessedUrls,
+            isComplete = output.isGoodEnough,
+            expandedQuery = output.expandedQuery
+        )
     }
 
     private suspend fun finishQuerySession(
@@ -1129,7 +1143,11 @@ class AgenticBrowserSearchOrchestrator(
         // Stream the answer and emit chunks
         var fullAnswer = ""
         streamingAnswerSynthesisAgent.generateStream(
-            StreamingAnswerSynthesisInput(searchQuery.query, accumulator.currentShortlist)
+            StreamingAnswerSynthesisInput(
+                query = searchQuery.query,
+                shortlistedSources = accumulator.currentShortlist,
+                expandedQuery = accumulator.expandedQuery
+            )
         ).collect { item ->
             when (item) {
                 is StreamingAnswerStreamItem.Chunk -> {
@@ -1229,24 +1247,29 @@ class AgenticBrowserSearchOrchestrator(
         )
 
         logger.debug(
-            "[{}] Preview source shortlist: {} sources, {} facts",
+            "[{}] Preview source shortlist: {} sources, {} facts, expandedQuery: {}",
             sessionId.value,
             shortlistOutput.shortlistedSources.size,
-            shortlistOutput.shortlistedSources.sumOf { it.relevantFacts.size }
+            shortlistOutput.shortlistedSources.sumOf { it.relevantFacts.size },
+            shortlistOutput.expandedQuery
         )
 
-        // Step 2: Answer Synthesis (streaming) - uses unified agent, determines answerFound
+        // Step 2: Answer Synthesis (streaming) - uses unified agent, determines answerType
         val fullAnswer = StringBuilder()
-        var answerFound = false
+        lateinit var answerType: AnswerType
         var reasoning = ""
 
         streamingAnswerSynthesisAgent.generateStream(
-            StreamingAnswerSynthesisInput(searchQuery.query, shortlistOutput.shortlistedSources)
+            StreamingAnswerSynthesisInput(
+                query = searchQuery.query,
+                shortlistedSources = shortlistOutput.shortlistedSources,
+                expandedQuery = shortlistOutput.expandedQuery
+            )
         ).collect { item ->
             when (item) {
                 is StreamingAnswerStreamItem.Chunk -> {
                     fullAnswer.append(item.text)
-                    // Buffer chunks - only emit if answerFound=true
+                    // Buffer chunks - only emit if answerType is DIRECT_ANSWER or INFERRED_ANSWER
                 }
 
                 is StreamingAnswerStreamItem.Complete -> {
@@ -1255,22 +1278,23 @@ class AgenticBrowserSearchOrchestrator(
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
-                    answerFound = item.answerFound
+                    answerType = item.answerType
                     reasoning = item.reasoning
                 }
             }
         }
 
+        val isConfident = answerType != AnswerType.PARTIAL_MENTION
         logger.debug(
-            "[{}] Preview answer synthesis: answerFound={}, answer length={}, reasoning={}",
-            sessionId.value, answerFound, fullAnswer.length, reasoning
+            "[{}] Preview answer synthesis: answerType={}, answer length={}, reasoning={}",
+            sessionId.value, answerType, fullAnswer.length, reasoning
         )
 
         // Return result with buffered answer - emission happens after .take(1) selects the winner
         return PreviewResult(
             shortlistedSources = shortlistOutput.shortlistedSources,
-            isAnswerFound = answerFound,
-            fullAnswer = if (answerFound) fullAnswer.toString() else null
+            answerType = answerType,
+            fullAnswer = if (isConfident) fullAnswer.toString() else null
         )
     }
 

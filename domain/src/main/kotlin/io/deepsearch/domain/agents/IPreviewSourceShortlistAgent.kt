@@ -26,9 +26,13 @@ data class PreviewSourceShortlistInput(
  * 
  * Facts where isInTable=true are filtered out before returning, since table
  * data in HTML previews may be inaccurate.
+ * 
+ * @property expandedQuery Clarified/expanded version of the user query that captures the core intent.
+ *           For example: "tell me about the pricing" → "What are the main subscription plans and pricing tiers?"
  */
 data class PreviewSourceShortlistOutput(
     val shortlistedSources: List<ShortlistedSource>,
+    val expandedQuery: String,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

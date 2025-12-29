@@ -22,11 +22,15 @@ data class SourceShortlistInput(
 /**
  * Output from source shortlist agent.
  * Contains updated shortlist with extracted facts, sufficiency decision, and reasoning.
+ * 
+ * @property expandedQuery Clarified/expanded version of the user query that captures the core intent.
+ *           For example: "tell me about the pricing" → "What are the main subscription plans and pricing tiers?"
  */
 data class SourceShortlistOutput(
     val updatedShortlist: List<ShortlistedSource>,
     val isGoodEnough: Boolean,
     val reason: String,
+    val expandedQuery: String,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
