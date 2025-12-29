@@ -268,14 +268,17 @@ class UrlContentProcessingService(
         val cachedHtml = cached.html
         
         // Emit HtmlPreviewReady for preview path evaluation when HTML is available
+        // Must clean cached HTML through HtmlPreviewService for consistency with live crawl path
         if (cachedHtml != null) {
-            logger.debug("Emitting cached HTML preview for URL: {} ({} chars)", originalUrl, cachedHtml.length)
+            val previewResult = htmlPreviewService.prepareHtmlPreview(cachedHtml, originalUrl)
+            logger.debug("Emitting cached HTML preview for URL: {} ({} -> {} chars)", 
+                originalUrl, cachedHtml.length, previewResult.cleanedHtml.length)
             emit(
                 UrlProcessingEvent.HtmlPreviewReady(
                     originalUrl,
-                    cachedHtml,
-                    cached.title,
-                    cached.description
+                    previewResult.cleanedHtml,
+                    previewResult.title ?: cached.title,
+                    previewResult.description ?: cached.description
                 )
             )
         }

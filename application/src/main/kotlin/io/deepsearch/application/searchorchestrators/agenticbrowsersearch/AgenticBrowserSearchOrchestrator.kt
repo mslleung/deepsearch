@@ -1,6 +1,7 @@
 package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
+import io.deepsearch.application.services.IHtmlPreviewService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
@@ -100,7 +101,8 @@ class AgenticBrowserSearchOrchestrator(
     private val geminiFileSearchService: IGeminiFileSearchService,
     private val dispatchers: IDispatcherProvider,
     private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService,
-    private val adaptiveRateLimiter: IAdaptiveRateLimiter
+    private val adaptiveRateLimiter: IAdaptiveRateLimiter,
+    private val htmlPreviewService: IHtmlPreviewService
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -755,7 +757,14 @@ class AgenticBrowserSearchOrchestrator(
             urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
             
             // Emit HtmlPreview for preview path evaluation
-            emit(UrlContentResult.HtmlPreview(webpage.url, webpage.title, webpage.description, webpage.html!!))
+            // Must clean cached HTML through HtmlPreviewService for consistency with live crawl path
+            val previewResult = htmlPreviewService.prepareHtmlPreview(webpage.html!!, webpage.url)
+            emit(UrlContentResult.HtmlPreview(
+                webpage.url, 
+                previewResult.title ?: webpage.title, 
+                previewResult.description ?: webpage.description, 
+                previewResult.cleanedHtml
+            ))
             
             // Emit UrlProcessed and FullMarkdown for main path
             eventChannel.send(
@@ -774,7 +783,14 @@ class AgenticBrowserSearchOrchestrator(
         // For preview pages: emit HtmlPreview for preview path (no SSE events), then trigger full extraction
         previewPages.forEach { webpage ->
             urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
-            emit(UrlContentResult.HtmlPreview(webpage.url, webpage.title, webpage.description, webpage.html!!))
+            // Must clean cached HTML through HtmlPreviewService for consistency with live crawl path
+            val previewResult = htmlPreviewService.prepareHtmlPreview(webpage.html!!, webpage.url)
+            emit(UrlContentResult.HtmlPreview(
+                webpage.url, 
+                previewResult.title ?: webpage.title, 
+                previewResult.description ?: webpage.description, 
+                previewResult.cleanedHtml
+            ))
         }
 
         // Process preview pages through full extraction
