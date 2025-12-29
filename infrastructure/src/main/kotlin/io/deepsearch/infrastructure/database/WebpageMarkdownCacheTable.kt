@@ -14,6 +14,7 @@ class WebpageMarkdownCacheTable(
     val markdown = text("markdown").nullable()
     val markdownSanitized = text("markdown_sanitized").nullable() // Sanitized markdown for full-text search (no emoji/special chars)
     val html = text("html").nullable()
+    val cleanedPreviewHtml = text("cleaned_preview_html").nullable() // Pre-cleaned HTML for preview path
     val httpStatus = integer("http_status").nullable()
     val httpReason = text("http_reason").nullable()
     val mimeType = varchar("mime_type", length = 256).nullable()

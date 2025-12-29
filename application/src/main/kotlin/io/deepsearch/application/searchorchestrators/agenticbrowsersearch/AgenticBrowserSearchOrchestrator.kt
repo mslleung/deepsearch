@@ -751,47 +751,53 @@ class AgenticBrowserSearchOrchestrator(
         // Partition webpages by preview status
         val (previewPages, fullPages) = webpages.partition { it.isPreview }
 
-        // Emit full markdown pages - emit preview first for preview path, then full markdown
-        fullPages.forEach { webpage ->
-            eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, webpage.url))
-            urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
-            
-            // Emit HtmlPreview for preview path evaluation
-            // Must clean cached HTML through HtmlPreviewService for consistency with live crawl path
-            val previewResult = htmlPreviewService.prepareHtmlPreview(webpage.html!!, webpage.url)
-            emit(UrlContentResult.HtmlPreview(
-                webpage.url, 
-                previewResult.title ?: webpage.title, 
-                previewResult.description ?: webpage.description, 
-                previewResult.cleanedHtml
-            ))
-            
-            // Emit UrlProcessed and FullMarkdown for main path
-            eventChannel.send(
-                SearchEvent.UrlProcessed(
-                    sessionId = sessionId,
-                    url = webpage.url,
-                    accessType = "CACHED",
-                    title = webpage.title,
-                    description = webpage.description,
-                    markdownLength = webpage.markdown?.length
-                )
-            )
-            emit(UrlContentResult.FullMarkdown(webpage.url, webpage.title, webpage.description, webpage.markdown!!))
-        }
+        // Emit full markdown pages in parallel - emit preview first for preview path, then full markdown
+        fullPages.asFlow()
+            .flatMapMerge(concurrency = 100) { webpage ->
+                flow {
+                    eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, webpage.url))
+                    urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
+                    
+                    // Use pre-computed cleaned preview HTML from cache (computed when HTML was first cached)
+                    emit(UrlContentResult.HtmlPreview(
+                        webpage.url, 
+                        webpage.title, 
+                        webpage.description, 
+                        webpage.cleanedPreviewHtml!!
+                    ))
+                    
+                    // Emit UrlProcessed and FullMarkdown for main path
+                    eventChannel.send(
+                        SearchEvent.UrlProcessed(
+                            sessionId = sessionId,
+                            url = webpage.url,
+                            accessType = "CACHED",
+                            title = webpage.title,
+                            description = webpage.description,
+                            markdownLength = webpage.markdown?.length
+                        )
+                    )
+                    emit(UrlContentResult.FullMarkdown(webpage.url, webpage.title, webpage.description, webpage.markdown!!))
+                }
+            }
+            .collect { emit(it) }
 
-        // For preview pages: emit HtmlPreview for preview path (no SSE events), then trigger full extraction
-        previewPages.forEach { webpage ->
-            urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
-            // Must clean cached HTML through HtmlPreviewService for consistency with live crawl path
-            val previewResult = htmlPreviewService.prepareHtmlPreview(webpage.html!!, webpage.url)
-            emit(UrlContentResult.HtmlPreview(
-                webpage.url, 
-                previewResult.title ?: webpage.title, 
-                previewResult.description ?: webpage.description, 
-                previewResult.cleanedHtml
-            ))
-        }
+        // For preview pages: emit HtmlPreview in parallel for preview path (no SSE events), then trigger full extraction
+        previewPages.asFlow()
+            .flatMapMerge(concurrency = 100) { webpage ->
+                flow {
+                    urlAccessService.recordUrlAccess(sessionId, CachedUrlAccess(webpage.url, Clock.System.now()))
+                    
+                    // Use pre-computed cleaned preview HTML from cache (computed when HTML was first cached)
+                    emit(UrlContentResult.HtmlPreview(
+                        webpage.url, 
+                        webpage.title, 
+                        webpage.description, 
+                        webpage.cleanedPreviewHtml!!
+                    ))
+                }
+            }
+            .collect { emit(it) }
 
         // Process preview pages through full extraction
         previewPages.asFlow()

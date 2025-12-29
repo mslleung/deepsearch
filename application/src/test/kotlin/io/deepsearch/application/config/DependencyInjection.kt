@@ -129,8 +129,8 @@ private val applicationCommonTestModule = module {
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
-    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
+    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
     singleOf(::UrlAccessService) bind IUrlAccessService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class

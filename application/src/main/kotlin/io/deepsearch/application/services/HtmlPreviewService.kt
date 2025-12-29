@@ -4,7 +4,10 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
+import org.jsoup.parser.Parser
+import org.jsoup.select.Evaluator
 import org.jsoup.select.NodeVisitor
+import org.jsoup.select.QueryParser
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -46,7 +49,7 @@ class HtmlPreviewService : IHtmlPreviewService {
 
     companion object {
         // Aggressive removal - keep ONLY prose content
-        private val REMOVE_SELECTOR = listOf(
+        private val REMOVE_SELECTOR_STRING = listOf(
             // Scripts, styles, metadata
             "script", "style", "noscript", "link", "meta", "template",
 
@@ -94,6 +97,16 @@ class HtmlPreviewService : IHtmlPreviewService {
             "[role='contentinfo']"
         ).joinToString(", ")
 
+        // Pre-compiled CSS selector evaluator for faster element removal
+        private val REMOVE_SELECTOR_EVALUATOR: Evaluator by lazy {
+            QueryParser.parse(REMOVE_SELECTOR_STRING)
+        }
+
+        // Pre-configured HTML parser with optimized settings (no error tracking)
+        private val HTML_PARSER: Parser by lazy {
+            Parser.htmlParser().setTrackErrors(0)
+        }
+
         // Stripped down - only attributes useful for semantic understanding
         private val KEEP_ATTRIBUTES = setOf(
             "class", "id", "role", "aria-label"
@@ -114,15 +127,15 @@ class HtmlPreviewService : IHtmlPreviewService {
         val totalStart = System.currentTimeMillis()
 
         val parseStart = System.currentTimeMillis()
-        val doc = Jsoup.parse(html)
+        val doc = Jsoup.parse(html, "", HTML_PARSER)
         val parseTime = System.currentTimeMillis() - parseStart
 
         val title = doc.title().takeIf { it.isNotBlank() }
         val description = doc.selectFirst("meta[name=description]")?.attr("content")?.takeIf { it.isNotBlank() }
 
-        // Remove unwanted elements with single combined selector
+        // Remove unwanted elements with pre-compiled selector evaluator
         val removeStart = System.currentTimeMillis()
-        doc.select(REMOVE_SELECTOR).remove()
+        doc.select(REMOVE_SELECTOR_EVALUATOR).remove()
         
         // Remove navigation-like lists (lists of short links)
         removeNavigationLists(doc)

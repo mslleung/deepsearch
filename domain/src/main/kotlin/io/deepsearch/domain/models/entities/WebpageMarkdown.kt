@@ -11,6 +11,7 @@ data class WebpageMarkdown(
     val description: String?,
     val markdown: String?,
     val html: String?,
+    val cleanedPreviewHtml: String? = null, // Pre-cleaned HTML for preview path (avoids CPU-heavy Jsoup processing)
     val httpStatus: Int?,
     val httpReason: String?,
     val mimeType: String?,

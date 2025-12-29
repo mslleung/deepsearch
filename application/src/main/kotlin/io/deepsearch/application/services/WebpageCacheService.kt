@@ -90,7 +90,8 @@ class WebpageCacheService(
     private val applicationScope: IApplicationCoroutineScope,
     private val textEmbeddingService: ITextEmbeddingService,
     private val normalizeUrlService: io.deepsearch.domain.services.INormalizeUrlService,
-    private val tokenUsageService: ILlmTokenUsageService
+    private val tokenUsageService: ILlmTokenUsageService,
+    private val htmlPreviewService: IHtmlPreviewService
 ) : IWebpageCacheService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -160,6 +161,14 @@ class WebpageCacheService(
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
 
+        // Pre-compute cleaned preview HTML when HTML is available
+        // This avoids CPU-heavy Jsoup processing during hybrid search
+        val cleanedPreviewHtml = if (!html.isNullOrBlank()) {
+            htmlPreviewService.prepareHtmlPreview(html, url).cleanedHtml
+        } else {
+            null
+        }
+
         // Store webpage without embedding first
         webpageMarkdownRepository.upsert(
             WebpageMarkdown(
@@ -168,6 +177,7 @@ class WebpageCacheService(
                 description = description,
                 markdown = markdown,
                 html = html,
+                cleanedPreviewHtml = cleanedPreviewHtml,
                 httpStatus = httpStatus,
                 httpReason = httpReason,
                 mimeType = mimeType,
@@ -180,10 +190,11 @@ class WebpageCacheService(
         )
 
         logger.debug(
-            "Cached webpage for URL: {} (status: {}, markdown: {} chars, isPreview: {})",
+            "Cached webpage for URL: {} (status: {}, markdown: {} chars, cleanedPreviewHtml: {} chars, isPreview: {})",
             url,
             httpStatus,
             markdown?.length ?: 0,
+            cleanedPreviewHtml?.length ?: 0,
             isPreview
         )
 

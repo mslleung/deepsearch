@@ -43,8 +43,8 @@ val applicationModule = module {
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
-    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
+    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
