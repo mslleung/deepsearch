@@ -61,12 +61,12 @@ sealed class SearchEvent {
     ) : SearchEvent()
 
     /**
-     * Emitted when the source shortlist is updated after processing a batch of URLs.
+     * Emitted when sources have been evaluated and relevance is determined.
      */
-    data class ShortlistUpdated(
+    data class SourcesEvaluated(
         override val sessionId: QuerySessionId,
         val processedUrlCount: Int,
-        val shortlistedCount: Int,
+        val relevantCount: Int,
         val isGoodEnough: Boolean,
         val reason: String? = null,
         override val timestampMs: Long = System.currentTimeMillis()

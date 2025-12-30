@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * Represents a webpage source with its URL, metadata, and full markdown content.
- * Used as input for source evaluation and shortlisting by the main path.
+ * Used as input for source evaluation by the main path.
  *
  * Note: Preview content (HTML) is handled separately via UrlContentResult.HtmlPreview
  * and goes through the preview agents path.

@@ -51,6 +51,9 @@ class DatabaseConfigurationService(
     private val batchPeriodicIndexJobTable: BatchPeriodicIndexJobTable,
     private val batchUrlStateTable: BatchUrlStateTable,
     private val proxyRuleTable: ProxyRuleTable,
+    private val kgEntityEmbeddingsTable: KgEntityEmbeddingsTable,
+    private val kgEntitySourcesTable: KgEntitySourcesTable,
+    private val kgRelationshipSourcesTable: KgRelationshipSourcesTable,
 ) : IDatabaseConfigurationService {
 
     private val logger = LoggerFactory.getLogger(DatabaseConfigurationService::class.java)
@@ -133,7 +136,39 @@ class DatabaseConfigurationService(
                     batchPeriodicIndexJobTable,
                     batchUrlStateTable,
                     proxyRuleTable,
+                    kgEntityEmbeddingsTable,
+                    kgEntitySourcesTable,
+                    kgRelationshipSourcesTable,
                 )
+                
+                // Enable Apache AGE extension for graph database functionality
+                // NOTE: Apache AGE must be installed on the PostgreSQL server
+                // See: https://age.apache.org/age-manual/master/intro/setup.html
+                exec("""
+                    DO $$
+                    BEGIN
+                        -- Check if AGE extension is available before trying to create it
+                        IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'age') THEN
+                            CREATE EXTENSION IF NOT EXISTS age;
+                            -- Set search path to include ag_catalog for AGE functions
+                            SET search_path = ag_catalog, "${'$'}user", public;
+                            -- Create the knowledge_graph if it doesn't exist
+                            IF NOT EXISTS (SELECT 1 FROM ag_graph WHERE name = 'knowledge_graph') THEN
+                                PERFORM create_graph('knowledge_graph');
+                            END IF;
+                        ELSE
+                            RAISE NOTICE 'Apache AGE extension is not available. Knowledge graph features will be disabled.';
+                        END IF;
+                    END $$;
+                """.trimIndent())
+                
+                // Create HNSW index for entity embeddings (semantic search)
+                exec("""
+                    CREATE INDEX IF NOT EXISTS kg_entity_embeddings_embedding_idx
+                    ON kg_entity_embeddings 
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
+                """.trimIndent())
 
                 // Migration: Add is_preview column to webpage_markdowns if it doesn't exist
                 // This column tracks whether content is from simple text extraction (preview) or full LLM processing

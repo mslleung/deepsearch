@@ -19,6 +19,8 @@ enum class BatchPeriodicIndexJobState {
     LLM_TABLE_INTERPRETATION,
     /** Stage 4: Finalize markdown and generate embeddings */
     FINALIZE_AND_CACHE_EMBEDDING,
+    /** Stage 5: LLM batch for knowledge graph entity extraction */
+    KNOWLEDGE_GRAPH_EXTRACTION,
     /** Successfully completed all stages */
     COMPLETED,
     /** Failed due to an error */
@@ -102,14 +104,15 @@ class BatchPeriodicIndexJob(
     var urlsCached: Int = 0
 ) {
     /**
-     * Get the current stage number (1-4).
+     * Get the current stage number (1-5).
      */
     fun currentStage(): Int = when (state) {
         BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> 1
         BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> 2
         BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> 3
         BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> 4
-        BatchPeriodicIndexJobState.COMPLETED -> 4
+        BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION -> 5
+        BatchPeriodicIndexJobState.COMPLETED -> 5
         BatchPeriodicIndexJobState.FAILED, BatchPeriodicIndexJobState.STOPPED -> currentStageFromProgress()
     }
 
@@ -128,6 +131,7 @@ class BatchPeriodicIndexJob(
         BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> "Processing with Gemini (content analysis)"
         BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> "Processing with Gemini (table interpretation)"
         BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> "Finalizing and caching"
+        BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION -> "Extracting knowledge graph"
         BatchPeriodicIndexJobState.COMPLETED -> "Completed"
         BatchPeriodicIndexJobState.FAILED -> "Failed: ${errorMessage ?: "Unknown error"}"
         BatchPeriodicIndexJobState.STOPPED -> "Stopped"
@@ -141,7 +145,8 @@ class BatchPeriodicIndexJob(
             BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> BatchPeriodicIndexJobState.CONTENT_LLM_BATCH
             BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION
             BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING
-            BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> BatchPeriodicIndexJobState.COMPLETED
+            BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION
+            BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION -> BatchPeriodicIndexJobState.COMPLETED
             else -> state // No transition for terminal states
         }
         updatedAt = Clock.System.now()
@@ -214,6 +219,7 @@ class BatchPeriodicIndexJob(
      */
     fun isWaitingForBatch(): Boolean = state in listOf(
         BatchPeriodicIndexJobState.CONTENT_LLM_BATCH,
-        BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION
+        BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION,
+        BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION
     ) && geminiBatchJobId != null
 }

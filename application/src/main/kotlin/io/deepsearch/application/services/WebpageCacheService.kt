@@ -1,13 +1,9 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.config.IApplicationCoroutineScope
-import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.domain.services.ITextEmbeddingService
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.time.Clock
@@ -33,7 +29,11 @@ interface IWebpageCacheService {
     suspend fun getCachedMarkdown(url: String, maxCacheAge: Long?): CachedWebpageResult
 
     /**
-     * Cache webpage markdown and metadata.
+     * Cache webpage markdown and metadata for interactive mode.
+     * 
+     * This method stores the webpage content and triggers async indexing for
+     * hybrid search embeddings and knowledge graph extraction.
+     * 
      * @param url The normalized URL
      * @param title The webpage title
      * @param description The webpage description
@@ -56,6 +56,34 @@ interface IWebpageCacheService {
         mimeType: String?,
         sessionId: SessionId,
         isPreview: Boolean = false
+    )
+
+    /**
+     * Cache webpage markdown and metadata for batch mode.
+     * 
+     * This method only stores the webpage content without triggering async indexing.
+     * Indexing is handled separately by batch pipeline stages.
+     * 
+     * @param url The normalized URL
+     * @param title The webpage title
+     * @param description The webpage description
+     * @param markdown The extracted markdown content (null if extraction failed)
+     * @param html The original HTML (null for non-HTML content)
+     * @param httpStatus HTTP status code
+     * @param httpReason HTTP reason phrase
+     * @param mimeType Content MIME type
+     * @param sessionId Session ID for token tracking
+     */
+    suspend fun cacheWebpageBatch(
+        url: String,
+        title: String?,
+        description: String?,
+        markdown: String?,
+        html: String?,
+        httpStatus: Int,
+        httpReason: String,
+        mimeType: String?,
+        sessionId: SessionId
     )
 
     /**
@@ -87,11 +115,12 @@ interface IWebpageCacheService {
 @OptIn(ExperimentalTime::class)
 class WebpageCacheService(
     private val webpageMarkdownRepository: IWebpageMarkdownRepository,
-    private val applicationScope: IApplicationCoroutineScope,
     private val textEmbeddingService: ITextEmbeddingService,
     private val normalizeUrlService: io.deepsearch.domain.services.INormalizeUrlService,
     private val tokenUsageService: ILlmTokenUsageService,
-    private val htmlPreviewService: IHtmlPreviewService
+    private val htmlPreviewService: IHtmlPreviewService,
+    private val hybridSearchIndexingService: IHybridSearchIndexingService,
+    private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService
 ) : IWebpageCacheService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -158,6 +187,46 @@ class WebpageCacheService(
         sessionId: SessionId,
         isPreview: Boolean
     ) {
+        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview)
+
+        // Trigger async indexing for interactive mode
+        if (!markdown.isNullOrBlank()) {
+            // Hybrid search embedding (both preview and full markdown)
+            hybridSearchIndexingService.indexAsync(url, markdown, sessionId, isPreview)
+
+            // Knowledge graph indexing (only for full content, not previews)
+            if (!isPreview) {
+                knowledgeGraphIndexingService.indexAsync(url, markdown, sessionId)
+            }
+        }
+    }
+
+    override suspend fun cacheWebpageBatch(
+        url: String,
+        title: String?,
+        description: String?,
+        markdown: String?,
+        html: String?,
+        httpStatus: Int,
+        httpReason: String,
+        mimeType: String?,
+        sessionId: SessionId
+    ) {
+        // Batch mode: only cache, no async indexing (handled by batch stages)
+        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview = false)
+    }
+
+    private suspend fun cacheWebpageInternal(
+        url: String,
+        title: String?,
+        description: String?,
+        markdown: String?,
+        html: String?,
+        httpStatus: Int,
+        httpReason: String,
+        mimeType: String?,
+        isPreview: Boolean
+    ) {
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
 
@@ -181,7 +250,7 @@ class WebpageCacheService(
                 httpStatus = httpStatus,
                 httpReason = httpReason,
                 mimeType = mimeType,
-                embedding = null, // Will be updated asynchronously
+                embedding = null, // Will be updated by indexing service
                 isPreview = isPreview,
                 createdAt = existing?.createdAt ?: currentTime,
                 updatedAt = currentTime,
@@ -197,113 +266,6 @@ class WebpageCacheService(
             cleanedPreviewHtml?.length ?: 0,
             isPreview
         )
-
-        // Generate and store embedding asynchronously if markdown is available
-        // Both preview and full markdown generate embeddings for hybrid search
-        if (!markdown.isNullOrBlank()) {
-            generateAndStoreEmbeddingAsync(url, markdown, sessionId, wasPreviewContent = isPreview)
-        }
-    }
-
-    /**
-     * Generate and store an embedding for a markdown document asynchronously.
-     * This method launches a coroutine and returns immediately (fire-and-forget).
-     *
-     * If embedding generation or storage fails, the error is logged but not propagated.
-     * This ensures that embedding failures don't break the main request flow.
-     *
-     * @param url The URL of the webpage
-     * @param markdown The markdown content to embed
-     * @param sessionId The session ID for token tracking
-     * @param wasPreviewContent Whether this embedding is for preview content (used for race protection)
-     */
-    private fun generateAndStoreEmbeddingAsync(
-        url: String,
-        markdown: String,
-        sessionId: SessionId,
-        wasPreviewContent: Boolean
-    ) {
-        // Launch in application scope (fire-and-forget)
-        applicationScope.scope.launch {
-            try {
-                logger.debug("Generating embedding for URL: {} (isPreview: {})", url, wasPreviewContent)
-
-                // Generate embedding (returns EmbeddingResult with embeddings and token usage)
-                val result = textEmbeddingService.embedDocuments(listOf(markdown))
-
-                if (result.embeddings.isEmpty()) {
-                    logger.error("No embedding returned for URL: {}", url)
-                    return@launch
-                }
-
-                val embedding = result.embeddings[0]
-                logger.debug("Generated embedding with {} dimensions for URL: {} (used {} tokens)", 
-                    embedding.size, url, result.tokenUsage.totalTokens)
-
-                // Record token usage
-                tokenUsageService.recordTokenUsage(
-                    sessionId = sessionId,
-                    agentName = "WebpageCacheService.embedDocuments",
-                    modelName = result.tokenUsage.modelName,
-                    promptTokens = result.tokenUsage.promptTokens,
-                    outputTokens = result.tokenUsage.outputTokens,
-                    totalTokens = result.tokenUsage.totalTokens
-                )
-
-                // Retry logic for optimistic lock exceptions
-                var retries = 0
-                val maxRetries = 3
-                while (retries < maxRetries) {
-                    try {
-                        // Fetch current webpage data and update with embedding
-                        val existing = webpageMarkdownRepository.findByUrl(url)
-                        if (existing != null) {
-                            // Race protection: don't let preview embedding overwrite full markdown embedding
-                            // If this was a preview embedding but the record is now full markdown,
-                            // skip storing as the full markdown embedding will be/was stored separately
-                            if (wasPreviewContent && !existing.isPreview) {
-                                logger.debug(
-                                    "Skipping preview embedding for URL {} - full markdown already stored",
-                                    url
-                                )
-                                return@launch
-                            }
-                            
-                            webpageMarkdownRepository.upsert(
-                                existing.copy(
-                                    embedding = embedding,
-                                    updatedAt = Clock.System.now()
-                                )
-                            )
-                            logger.debug("Successfully stored embedding for URL: {} (attempt {}, isPreview: {})", 
-                                url, retries + 1, wasPreviewContent)
-                            break // Success, exit retry loop
-                        } else {
-                            logger.warn("Webpage not found for URL {} when trying to store embedding", url)
-                            break // No point retrying if record doesn't exist
-                        }
-                    } catch (e: OptimisticLockException) {
-                        retries++
-                        if (retries < maxRetries) {
-                            logger.debug("Optimistic lock conflict storing embedding for URL {}, retrying (attempt {}/{})", url, retries + 1, maxRetries)
-                            delay(100L * retries) // Exponential backoff: 100ms, 200ms, 300ms
-                        } else {
-                            logger.warn("Failed to store embedding for URL {} after {} retries due to optimistic lock conflicts", url, maxRetries)
-                            throw e // Re-throw to be caught by outer catch block
-                        }
-                    }
-                }
-
-            } catch (e: Exception) {
-                // Log error but don't propagate - embedding generation is best-effort
-                logger.error(
-                    "Failed to generate/store embedding for URL {}: {}",
-                    url,
-                    e.message,
-                    e
-                )
-            }
-        }
     }
 
     override suspend fun searchHybrid(
@@ -323,8 +285,10 @@ class WebpageCacheService(
             // This is because pgvector applies filtering after retrieving from vector db
             val embeddingResult = textEmbeddingService.embedQuery("$query $baseUrl")
             val queryEmbedding = embeddingResult.embedding
-            logger.debug("Hybrid search: Generated query embedding with {} dimensions (used {} tokens)", 
-                queryEmbedding.size, embeddingResult.tokenUsage.totalTokens)
+            logger.debug(
+                "Hybrid search: Generated query embedding with {} dimensions (used {} tokens)",
+                queryEmbedding.size, embeddingResult.tokenUsage.totalTokens
+            )
 
             // Record token usage
             tokenUsageService.recordTokenUsage(
@@ -361,5 +325,3 @@ class WebpageCacheService(
         }
     }
 }
-
-

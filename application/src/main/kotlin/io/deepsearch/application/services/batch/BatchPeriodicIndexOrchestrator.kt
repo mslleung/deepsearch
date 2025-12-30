@@ -37,12 +37,13 @@ interface IBatchPeriodicIndexOrchestrator {
 }
 
 /**
- * Orchestrates the 4-stage batch periodic index pipeline.
+ * Orchestrates the 5-stage batch periodic index pipeline.
  * 
  * Stage 1: CRAWL_AND_EXTRACT - Browser-based crawl + extraction (single visit per URL)
  * Stage 2: CONTENT_LLM_BATCH - LLM batch for semantic/table/icon identification
  * Stage 3: LLM_TABLE_INTERPRETATION - LLM batch for table interpretation
  * Stage 4: FINALIZE_AND_CACHE_EMBEDDING - Finalize markdown and generate embeddings
+ * Stage 5: KNOWLEDGE_GRAPH_EXTRACTION - LLM batch for entity and relationship extraction
  * 
  * Each stage is handled by a dedicated handler class.
  * State is persisted at each stage for resumption after server restarts.
@@ -58,6 +59,7 @@ class BatchPeriodicIndexOrchestrator(
     private val contentLlmBatchHandler: ContentLlmBatchHandler,
     private val tableInterpretationHandler: TableInterpretationBatchHandler,
     private val finalizeAndCacheHandler: FinalizeAndCacheHandler,
+    private val knowledgeGraphExtractionHandler: KnowledgeGraphExtractionHandler,
     private val eventEmitter: BatchEventEmitter
 ) : IBatchPeriodicIndexOrchestrator {
 
@@ -141,6 +143,8 @@ class BatchPeriodicIndexOrchestrator(
                         tableInterpretationHandler.execute(job, eventFlow)
                     BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> 
                         finalizeAndCacheHandler.execute(job, eventFlow)
+                    BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION -> 
+                        knowledgeGraphExtractionHandler.execute(job, eventFlow)
                     else -> break
                 }
             }

@@ -96,6 +96,10 @@ val domainModule = module {
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
+    
+    // Knowledge Graph agents
+    singleOf(::EntityExtractionAgentGenAiImpl) bind IEntityExtractionAgent::class
+    singleOf(::TextToCypherAgentGenAiImpl) bind ITextToCypherAgent::class
 
     // Request-scoped domain agents (used by request-scoped application services)
     requestScope {

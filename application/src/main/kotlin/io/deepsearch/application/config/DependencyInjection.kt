@@ -44,11 +44,20 @@ val applicationModule = module {
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
-    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
     singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
+    
+    // Indexing services (handle both interactive fire-and-forget and batch modes)
+    singleOf(::HybridSearchIndexingService) bind IHybridSearchIndexingService::class
+    singleOf(::KnowledgeGraphIndexingService) bind IKnowledgeGraphIndexingService::class
+    
+    // WebpageCacheService depends on indexing services
+    singleOf(::WebpageCacheService) bind IWebpageCacheService::class
+    
+    // Knowledge Graph query services
+    singleOf(::KgHybridRetrievalService) bind IKgHybridRetrievalService::class
     
     // Batch periodic index services (uses Gemini Batch API for cost-effective processing)
     singleOf(::BatchEventEmitter)
@@ -56,6 +65,7 @@ val applicationModule = module {
     singleOf(::ContentLlmBatchHandler)
     singleOf(::TableInterpretationBatchHandler)
     singleOf(::FinalizeAndCacheHandler)
+    singleOf(::KnowledgeGraphExtractionHandler)
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 

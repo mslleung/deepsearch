@@ -13,7 +13,7 @@ interface ISearchOrchestrator {
      * The flow emits:
      * - SessionCreated: when search starts (includes sessionId)
      * - UrlProcessed: for each URL processed (optional, mainly for live crawling)
-     * - ShortlistUpdated: when source shortlist changes (optional)
+     * - SourcesEvaluated: when source evaluation completes (optional)
      * - SessionCompleted: when search finishes with answer
      * - SessionError: if an error occurs
      * 

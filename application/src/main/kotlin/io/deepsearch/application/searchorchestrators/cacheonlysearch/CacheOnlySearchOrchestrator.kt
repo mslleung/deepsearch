@@ -5,6 +5,7 @@ import io.deepsearch.application.services.FileQueryResult
 import io.deepsearch.application.services.IFileSearchService
 import io.deepsearch.application.services.ILlmTokenUsageService
 import io.deepsearch.application.services.IQuerySessionService
+import io.deepsearch.application.services.IKgHybridRetrievalService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
@@ -27,6 +28,7 @@ import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.knowledgegraph.KgHybridRetrievalResult
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -55,6 +57,7 @@ interface ICacheOnlySearchOrchestrator : ISearchOrchestrator
 class CacheOnlySearchOrchestrator(
     private val webpageCacheService: WebpageCacheService,
     private val fileSearchService: IFileSearchService,
+    private val kgHybridRetrievalService: IKgHybridRetrievalService,
     private val markdownSourceEvalAgent: IMarkdownSourceEvalAgent,
     private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
     private val querySessionService: IQuerySessionService,
@@ -91,10 +94,10 @@ class CacheOnlySearchOrchestrator(
         try {
             logger.debug("[{}] Executing cache-only search for query: {}", sessionId.value, searchQuery.query)
 
-            // Step 1: Perform hybrid search and file search in parallel
+            // Step 1: Perform hybrid search, file search, and KG retrieval in parallel
             val domain = extractDomain(searchQuery.url)
             
-            val (cachedWebpages, fileSearchResult) = coroutineScope {
+            val (cachedWebpages, fileSearchResult, kgResult) = coroutineScope {
                 val hybridSearchDeferred = async {
                     webpageCacheService.searchHybrid(
                         query = searchQuery.query,
@@ -109,12 +112,31 @@ class CacheOnlySearchOrchestrator(
                     queryFileSearch(domain, searchQuery.query, sessionId, maxCacheAge)
                 }
                 
-                Pair(hybridSearchDeferred.await(), fileSearchDeferred.await())
+                val kgSearchDeferred = async {
+                    try {
+                        if (kgHybridRetrievalService.hasDataForUrlPrefix(searchQuery.url)) {
+                            kgHybridRetrievalService.retrieve(
+                                query = searchQuery.query,
+                                baseUrl = searchQuery.url,
+                                maxCacheAge = maxCacheAge,
+                                sessionId = sessionId
+                            )
+                        } else null
+                    } catch (e: Exception) {
+                        logger.warn("[{}] KG search failed: {}", sessionId.value, e.message)
+                        null
+                    }
+                }
+                
+                Triple(hybridSearchDeferred.await(), fileSearchDeferred.await(), kgSearchDeferred.await())
             }
 
             logger.debug(
-                "[{}] Parallel search complete: {} cached webpages, file search: {}",
-                sessionId.value, cachedWebpages.size, if (fileSearchResult != null) "found" else "none"
+                "[{}] Parallel search complete: {} cached webpages, file search: {}, KG: {}",
+                sessionId.value, 
+                cachedWebpages.size, 
+                if (fileSearchResult != null) "found" else "none",
+                if (kgResult?.hasResults() == true) "found" else "none"
             )
 
             // Filter valid webpages with markdown content
@@ -155,8 +177,8 @@ class CacheOnlySearchOrchestrator(
                 }
             }
 
-            // Combine all markdown sources
-            val markdownSources = buildMarkdownSources(validWebpages, fileSearchResult, domain)
+            // Combine all markdown sources (including KG facts)
+            val markdownSources = buildMarkdownSources(validWebpages, fileSearchResult, kgResult, domain)
 
             // Step 2: Evaluate each markdown source in parallel
             var expandedQuery: String? = null
@@ -192,10 +214,10 @@ class CacheOnlySearchOrchestrator(
             )
 
             emit(
-                SearchEvent.ShortlistUpdated(
+                SearchEvent.SourcesEvaluated(
                     sessionId = sessionId,
                     processedUrlCount = markdownSources.size,
-                    shortlistedCount = evaluatedSources.size,
+                    relevantCount = evaluatedSources.size,
                     isGoodEnough = evaluatedSources.isNotEmpty(),
                     reason = if (evaluatedSources.isNotEmpty()) "Sources evaluated" else "No relevant sources found"
                 )
@@ -310,10 +332,20 @@ class CacheOnlySearchOrchestrator(
 
     /**
      * Build combined markdown sources from webpages and file search results.
+     * 
+     * Note: KG facts are intentionally NOT included here. While we query the KG,
+     * we don't use its facts directly because:
+     * 1. KG facts lack authority classification (OFFICIAL_LIVING_DOC, etc.)
+     * 2. They would duplicate content already in cached webpages
+     * 3. The synthetic "knowledge-graph://" URL can't be properly classified
+     * 
+     * The eval agent properly classifies sources from real URLs, handling
+     * staleness and conflicts appropriately.
      */
     private fun buildMarkdownSources(
         webpages: List<WebpageMarkdown>,
         fileSearchResult: FileQueryResult?,
+        @Suppress("UNUSED_PARAMETER") kgResult: KgHybridRetrievalResult?,
         domain: String
     ): List<MarkdownSource> {
         return buildList {
@@ -333,6 +365,8 @@ class CacheOnlySearchOrchestrator(
                     )
                 )
             }
+            
+            // KG facts are intentionally not included - see note above
         }
     }
 

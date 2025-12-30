@@ -1,5 +1,6 @@
 package io.deepsearch.application.services.batch
 
+import io.deepsearch.application.services.IHybridSearchIndexingService
 import io.deepsearch.application.services.IWebpageCacheService
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
@@ -7,7 +8,6 @@ import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
-import io.deepsearch.domain.services.BatchEmbeddingRequest
 import io.deepsearch.domain.services.BatchJobState
 import io.deepsearch.domain.services.CssSelectorReplacement
 import io.deepsearch.domain.services.IGeminiBatchService
@@ -22,7 +22,7 @@ import org.slf4j.LoggerFactory
 /**
  * Stage 4: Finalize and cache handler.
  * 
- * Finalizes markdown from processed HTML and generates embeddings.
+ * Finalizes markdown from processed HTML and generates embeddings via Gemini Batch API.
  * Caches the results to the webpage cache service.
  */
 class FinalizeAndCacheHandler(
@@ -31,6 +31,7 @@ class FinalizeAndCacheHandler(
     private val geminiBatchService: IGeminiBatchService,
     private val jsoupDomService: IJsoupDomService,
     private val webpageCacheService: IWebpageCacheService,
+    private val hybridSearchIndexingService: IHybridSearchIndexingService,
     private val eventEmitter: BatchEventEmitter
 ) : IBatchStageHandler {
 
@@ -57,7 +58,7 @@ class FinalizeAndCacheHandler(
         logger.info("[{}] {} URLs need caching", jobId, urlsNeedingCaching.size)
 
         if (urlsNeedingCaching.isEmpty()) {
-            job.markCompleted()
+            job.advanceToNextStage()
             batchJobRepository.update(job)
             eventEmitter.emit(job, eventFlow, "Stage 4 complete: No URLs to cache")
             return
@@ -65,9 +66,8 @@ class FinalizeAndCacheHandler(
 
         val sessionId = PeriodicIndexSessionId(jobId)
 
-        // Prepare markdown and embeddings
-        val urlMarkdownMap = mutableMapOf<Long, String>()
-        val embeddingRequests = mutableListOf<BatchEmbeddingRequest>()
+        // Step 1: Prepare markdown for each URL
+        val urlDataMap = mutableMapOf<Long, UrlCacheData>()
 
         urlsNeedingCaching.forEach { urlState ->
             try {
@@ -76,24 +76,26 @@ class FinalizeAndCacheHandler(
                 }
 
                 val markdown = buildFinalMarkdown(urlState, snapshotData)
-                urlMarkdownMap[urlState.id!!] = markdown
-
-                val requestId = "${jobId}-${urlState.id}-embed"
-                embeddingRequests.add(
-                    BatchEmbeddingRequest(
-                        requestId = requestId,
-                        modelId = "gemini-embedding-001",
-                        text = markdown,
-                        taskType = "RETRIEVAL_DOCUMENT",
-                        outputDimensionality = 1536
-                    )
+                urlDataMap[urlState.id!!] = UrlCacheData(
+                    urlState = urlState,
+                    markdown = markdown,
+                    snapshotData = snapshotData
                 )
             } catch (e: Exception) {
                 logger.warn("[{}] Failed to prepare markdown for {}: {}", jobId, urlState.url, e.message)
             }
         }
 
-        // Generate embeddings via batch API
+        // Step 2: Prepare embedding batch requests using the indexing service
+        val embeddingRequestMap = mutableMapOf<String, String>() // requestId -> URL
+        val embeddingRequests = urlDataMap.mapNotNull { (urlStateId, data) ->
+            val requestId = "${jobId}-${urlStateId}-embed"
+            embeddingRequestMap[requestId] = data.urlState.url
+            hybridSearchIndexingService.prepareBatchRequest(requestId, data.markdown)
+        }
+
+        // Step 3: Submit embedding batch and fetch results
+        val embeddingResults = mutableMapOf<String, List<Float>>() // URL -> embedding
         if (embeddingRequests.isNotEmpty()) {
             try {
                 eventEmitter.emit(job, eventFlow, "Generating embeddings for ${embeddingRequests.size} pages...")
@@ -106,6 +108,25 @@ class FinalizeAndCacheHandler(
 
                 try {
                     pollBatchUntilComplete(job, eventFlow, embeddingBatchId)
+
+                    // Fetch batch results
+                    val batchResults = geminiBatchService.fetchBatchResults(embeddingBatchId)
+                    logger.info("[{}] Retrieved {} embedding batch results", jobId, batchResults.size)
+
+                    // Map results back to URLs
+                    batchResults.forEachIndexed { index, result ->
+                        val requestId = embeddingRequests.getOrNull(index)?.requestId ?: return@forEachIndexed
+                        val url = embeddingRequestMap[requestId] ?: return@forEachIndexed
+
+                        if (result.success && result.embedding != null) {
+                            embeddingResults[url] = result.embedding!!
+                        } else {
+                            logger.warn("[{}] Embedding failed for {}: {}", jobId, url, result.errorMessage)
+                        }
+                    }
+
+                    logger.info("[{}] Successfully retrieved {} embeddings", jobId, embeddingResults.size)
+
                 } catch (e: Exception) {
                     logger.warn("[{}] Embedding batch failed, continuing without embeddings: {}", jobId, e.message)
                 } finally {
@@ -117,44 +138,53 @@ class FinalizeAndCacheHandler(
             }
         }
 
-        // Cache all pages
-        urlsNeedingCaching.forEach { urlState ->
+        // Step 4: Store embeddings using the indexing service
+        if (embeddingResults.isNotEmpty()) {
             try {
-                val snapshotData = urlState.snapshotData?.let {
-                    json.decodeFromString<BatchUrlSnapshotData>(it)
-                }
+                hybridSearchIndexingService.processBatchResults(embeddingResults)
+                logger.info("[{}] Stored {} embeddings via batch processing", jobId, embeddingResults.size)
+            } catch (e: Exception) {
+                logger.warn("[{}] Failed to store batch embeddings: {}", jobId, e.message)
+            }
+        }
 
-                val markdown = urlMarkdownMap[urlState.id] ?: buildFinalMarkdown(urlState, snapshotData)
-
-                webpageCacheService.cacheWebpage(
-                    url = urlState.url,
-                    title = urlState.title,
-                    description = urlState.description,
-                    markdown = markdown,
-                    html = snapshotData?.html,
+        // Step 5: Cache all pages (without triggering async indexing - handled by batch stages)
+        urlDataMap.values.forEach { data ->
+            try {
+                webpageCacheService.cacheWebpageBatch(
+                    url = data.urlState.url,
+                    title = data.urlState.title,
+                    description = data.urlState.description,
+                    markdown = data.markdown,
+                    html = data.snapshotData?.html,
                     httpStatus = 200,
                     httpReason = "OK",
                     mimeType = "text/html",
-                    sessionId = sessionId,
-                    isPreview = false
+                    sessionId = sessionId
                 )
 
-                urlState.markCached()
-                batchUrlStateRepository.update(urlState)
+                data.urlState.markCached()
+                batchUrlStateRepository.update(data.urlState)
                 job.urlsCached++
             } catch (e: Exception) {
-                logger.warn("[{}] Failed to cache {}: {}", jobId, urlState.url, e.message)
-                urlState.markFailed(e.message ?: "Caching failed")
-                batchUrlStateRepository.update(urlState)
+                logger.warn("[{}] Failed to cache {}: {}", jobId, data.urlState.url, e.message)
+                data.urlState.markFailed(e.message ?: "Caching failed")
+                batchUrlStateRepository.update(data.urlState)
             }
         }
 
         batchJobRepository.update(job)
 
-        job.markCompleted()
+        job.advanceToNextStage()
         batchJobRepository.update(job)
-        eventEmitter.emit(job, eventFlow, "Stage 4 complete: ${job.urlsCached} pages cached")
+        eventEmitter.emit(job, eventFlow, "Stage 4 complete: ${job.urlsCached} pages cached, ${embeddingResults.size} embeddings")
     }
+
+    private data class UrlCacheData(
+        val urlState: BatchUrlState,
+        val markdown: String,
+        val snapshotData: BatchUrlSnapshotData?
+    )
 
     private fun buildFinalMarkdown(urlState: BatchUrlState, snapshotData: BatchUrlSnapshotData?): String {
         if (snapshotData == null) {
@@ -312,4 +342,3 @@ class FinalizeAndCacheHandler(
         throw RuntimeException("Batch job polling timed out after $MAX_BATCH_POLL_ATTEMPTS attempts")
     }
 }
-

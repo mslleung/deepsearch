@@ -33,6 +33,7 @@ import io.deepsearch.domain.models.valueobjects.AnswerType
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
+import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
@@ -103,7 +104,8 @@ class AgenticBrowserSearchOrchestrator(
     private val dispatchers: IDispatcherProvider,
     private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService,
     private val adaptiveRateLimiter: IAdaptiveRateLimiter,
-    private val htmlPreviewService: IHtmlPreviewService
+    private val htmlPreviewService: IHtmlPreviewService,
+    private val kgHybridRetrievalService: io.deepsearch.application.services.IKgHybridRetrievalService
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -143,6 +145,7 @@ class AgenticBrowserSearchOrchestrator(
             val serperSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val hybridSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val fileSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+            val kgDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
             // Flows that don't require query optimization - start immediately
@@ -182,10 +185,19 @@ class AgenticBrowserSearchOrchestrator(
                     fileSearchDiscoveredLinksChannel,
                     channel
                 ),
+                processKnowledgeGraphSearchFlow(
+                    sessionId,
+                    searchQuery,
+                    seenUrls,
+                    maxCacheAge,
+                    kgDiscoveredLinksChannel,
+                    channel
+                ),
                 processRecursiveDiscoveredLinksFlow(
                     sessionId, searchQuery, seenUrls, budget,
                     initialDiscoveredLinksChannel, serperSearchDiscoveredLinksChannel,
                     hybridSearchDiscoveredLinksChannel, fileSearchDiscoveredLinksChannel,
+                    kgDiscoveredLinksChannel,
                     recursiveDiscoveredLinksChannel,
                     maxCacheAge, proxyConfig, channel
                 )
@@ -579,6 +591,7 @@ class AgenticBrowserSearchOrchestrator(
         serperChannel: Channel<WebpageLink>,
         hybridChannel: Channel<WebpageLink>,
         fileSearchChannel: Channel<WebpageLink>,
+        kgChannel: Channel<WebpageLink>,
         recursiveChannel: Channel<WebpageLink>,
         maxCacheAge: Long?,
         proxyConfig: ProxyConfiguration,
@@ -591,7 +604,8 @@ class AgenticBrowserSearchOrchestrator(
                 initialChannel.receiveAsFlow(),
                 serperChannel.receiveAsFlow(),
                 hybridChannel.receiveAsFlow(),
-                fileSearchChannel.receiveAsFlow()
+                fileSearchChannel.receiveAsFlow(),
+                kgChannel.receiveAsFlow()
             )
                 .onCompletion { if (inFlight.isEmpty()) recursiveChannel.close() },
             recursiveChannel.receiveAsFlow()
@@ -881,6 +895,78 @@ class AgenticBrowserSearchOrchestrator(
             }
             .onCompletion { hybridChannel.close() }
             .collect()
+    }
+
+    /**
+     * Process Knowledge Graph for URL discovery.
+     * 
+     * Uses semantic entity matching + graph traversal to find relevant source URLs.
+     * These URLs are emitted for processing through the normal crawl → Source Eval Agent flow,
+     * which properly handles authority classification (OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, OTHERS)
+     * and conflict resolution.
+     * 
+     * Note: KG is used ONLY for URL discovery, NOT for direct fact retrieval.
+     * This ensures all facts go through the Source Eval Agent for proper authority ranking
+     * and staleness handling.
+     */
+    private fun processKnowledgeGraphSearchFlow(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        maxCacheAge: Long?,
+        kgDiscoveredLinksChannel: Channel<WebpageLink>,
+        @Suppress("UNUSED_PARAMETER") eventChannel: SendChannel<SearchEvent>
+    ): Flow<UrlContentResult> = flow {
+        try {
+            // Check if KG has data for this URL prefix
+            val urlPrefix = normalizeUrlService.normalize(searchQuery.url) ?: searchQuery.url
+            if (!kgHybridRetrievalService.hasDataForUrlPrefix(urlPrefix)) {
+                logger.debug("[{}] No KG data for URL prefix: {}", sessionId.value, urlPrefix)
+                kgDiscoveredLinksChannel.close()
+                return@flow
+            }
+            
+            // Run semantic graph + text-to-cypher in parallel
+            val kgResult = kgHybridRetrievalService.retrieve(
+                query = searchQuery.query,
+                baseUrl = urlPrefix,
+                maxCacheAge = maxCacheAge,
+                sessionId = sessionId
+            )
+            
+            if (!kgResult.hasResults()) {
+                logger.debug("[{}] KG retrieval returned no results", sessionId.value)
+                kgDiscoveredLinksChannel.close()
+                return@flow
+            }
+            
+            logger.debug(
+                "[{}] KG retrieval found {} entities - emitting source URLs for Source Eval Agent processing",
+                sessionId.value,
+                kgResult.subgraph?.entities?.size ?: 0
+            )
+            
+            // Emit discovered URLs from KG subgraph as links for processing
+            // These URLs will go through the normal crawl → Source Eval Agent flow
+            // which handles authority classification and conflict resolution
+            kgResult.subgraph?.entities?.forEach { entity ->
+                entity.sourceUrls.forEach { url ->
+                    if (seenUrls.add(url)) {
+                        kgDiscoveredLinksChannel.send(
+                            WebpageLink(url, LinkSource.KNOWLEDGE_GRAPH, "KG entity: ${entity.name}")
+                        )
+                    }
+                }
+            }
+            
+            // Note: We intentionally do NOT emit KG facts directly.
+            // All facts should come from the Source Eval Agent which properly classifies
+            // source authority and handles stale/conflicting information.
+        } catch (e: Exception) {
+            logger.warn("[{}] KG search failed: {}", sessionId.value, e.message)
+        } finally {
+            kgDiscoveredLinksChannel.close()
+        }
     }
 
     /**
@@ -1209,13 +1295,13 @@ class AgenticBrowserSearchOrchestrator(
             sessionId.value, updatedSources.size, synthesis.answerType, synthesis.isGoodEnough, synthesis.citedSourceUrls.size
         )
 
-        // Only emit ShortlistUpdated if preview path hasn't already produced a confident answer
+        // Only emit SourcesEvaluated if preview path hasn't already produced a confident answer
         if (!isPreviewConfident()) {
             eventChannel.send(
-                SearchEvent.ShortlistUpdated(
+                SearchEvent.SourcesEvaluated(
                     sessionId = sessionId,
                     processedUrlCount = updatedProcessedUrls.size,
-                    shortlistedCount = updatedSources.size,
+                    relevantCount = updatedSources.size,
                     isGoodEnough = synthesis.isGoodEnough,
                     reason = if (synthesis.isGoodEnough) "Answer is comprehensive (${synthesis.answerType})" else "Collecting more sources"
                 )
@@ -1393,12 +1479,12 @@ class AgenticBrowserSearchOrchestrator(
 
         logger.info("[{}] Finishing with preview answer (early exit)", sessionId.value)
 
-        // Emit shortlist update for preview path (so frontend knows about preview sources)
+        // Emit sources evaluated update for preview path (so frontend knows about preview sources)
         eventChannel.send(
-            SearchEvent.ShortlistUpdated(
+            SearchEvent.SourcesEvaluated(
                 sessionId = sessionId,
                 processedUrlCount = result.evaluatedSources.size,
-                shortlistedCount = result.evaluatedSources.size,
+                relevantCount = result.evaluatedSources.size,
                 isGoodEnough = true, // Preview path only finishes when confident
                 reason = "Preview path confident answer"
             )

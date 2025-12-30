@@ -65,11 +65,11 @@ sealed class SearchEventDto {
     ) : SearchEventDto()
 
     @Serializable
-    @SerialName("shortlist_updated")
-    data class ShortlistUpdatedDto(
+    @SerialName("sources_evaluated")
+    data class SourcesEvaluatedDto(
         override val sessionId: String,
         val processedUrlCount: Int,
-        val shortlistedCount: Int,
+        val relevantCount: Int,
         val isGoodEnough: Boolean,
         val reason: String? = null,
         override val timestampMs: Long
@@ -161,10 +161,10 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
             timestampMs = timestampMs
         )
 
-        is SearchEvent.ShortlistUpdated -> SearchEventDto.ShortlistUpdatedDto(
+        is SearchEvent.SourcesEvaluated -> SearchEventDto.SourcesEvaluatedDto(
             sessionId = sessionId.value,
             processedUrlCount = processedUrlCount,
-            shortlistedCount = shortlistedCount,
+            relevantCount = relevantCount,
             isGoodEnough = isGoodEnough,
             reason = reason,
             timestampMs = timestampMs

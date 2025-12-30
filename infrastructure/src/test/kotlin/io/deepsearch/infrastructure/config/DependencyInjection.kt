@@ -32,8 +32,20 @@ private val infrastructureCommonTestModule = module {
         )
     }
     
-    // Database encryption service
-    singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
+    // Database encryption service - manual injection due to >22 parameters
+    single<IDatabaseConfigurationService>(createdAtStart = true) {
+        DatabaseConfigurationService(
+            get(), get(),  // environmentConfig, postgresConfig
+            get(), get(), get(),  // userTable, apiKeyTable, userSubscriptionTable
+            get(), get(), get(),  // webpageIconCacheTable, webpageImageCacheTable, webpageImageLinkageTable
+            get(), get(), get(),  // webpagePopupCacheTable, webpageTableCacheTable, webpageTableInterpretationCacheTable
+            get(), get(), get(),  // webpageSemanticElementCacheTable, webpageMarkdownCacheTable, querySessionTable
+            get(), get(), get(),  // periodicIndexJobTable, sitemapCacheTable, urlAccessTable
+            get(), get(), get(),  // llmTokenUsageTable, periodicIndexConfigTable, batchPeriodicIndexJobTable
+            get(), get(),  // batchUrlStateTable, proxyRuleTable
+            get(), get(), get()  // kgEntityEmbeddingsTable, kgEntitySourcesTable, kgRelationshipSourcesTable
+        )
+    }
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
     singleOf(::TransactionService) bind ITransactionService::class
 
@@ -58,6 +70,11 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ProxyRuleTable)
     singleOf(::BatchPeriodicIndexJobTable)
     singleOf(::BatchUrlStateTable)
+    
+    // Knowledge Graph tables
+    singleOf(::KgEntityEmbeddingsTable)
+    singleOf(::KgEntitySourcesTable)
+    singleOf(::KgRelationshipSourcesTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -78,6 +95,9 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ExposedProxyRuleRepository) bind IProxyRuleRepository::class
     singleOf(::ExposedBatchPeriodicIndexJobRepository) bind IBatchPeriodicIndexJobRepository::class
     singleOf(::ExposedBatchUrlStateRepository) bind IBatchUrlStateRepository::class
+    
+    // Knowledge Graph repository
+    singleOf(::AgeKnowledgeGraphRepository) bind IKnowledgeGraphRepository::class
 }
 
 val infrastructureTestModule = module {

@@ -20,7 +20,20 @@ import org.koin.module.requestScope
 
 val infrastructureModule = module {
 
-    singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
+    // DatabaseConfigurationService has too many parameters for singleOf (>22), so we use manual injection
+    single<IDatabaseConfigurationService>(createdAtStart = true) {
+        DatabaseConfigurationService(
+            get(), get(),  // environmentConfig, postgresConfig
+            get(), get(), get(),  // userTable, apiKeyTable, userSubscriptionTable
+            get(), get(), get(),  // webpageIconCacheTable, webpageImageCacheTable, webpageImageLinkageTable
+            get(), get(), get(),  // webpagePopupCacheTable, webpageTableCacheTable, webpageTableInterpretationCacheTable
+            get(), get(), get(),  // webpageSemanticElementCacheTable, webpageMarkdownCacheTable, querySessionTable
+            get(), get(), get(),  // periodicIndexJobTable, sitemapCacheTable, urlAccessTable
+            get(), get(), get(),  // llmTokenUsageTable, periodicIndexConfigTable, batchPeriodicIndexJobTable
+            get(), get(),  // batchUrlStateTable, proxyRuleTable
+            get(), get(), get()  // kgEntityEmbeddingsTable, kgEntitySourcesTable, kgRelationshipSourcesTable
+        )
+    }
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
     singleOf(::TransactionService) bind ITransactionService::class
 
@@ -46,6 +59,11 @@ val infrastructureModule = module {
     singleOf(::BatchPeriodicIndexJobTable)
     singleOf(::BatchUrlStateTable)
     
+    // Knowledge Graph tables
+    singleOf(::KgEntityEmbeddingsTable)
+    singleOf(::KgEntitySourcesTable)
+    singleOf(::KgRelationshipSourcesTable)
+    
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
@@ -63,6 +81,9 @@ val infrastructureModule = module {
     singleOf(::ExposedBatchPeriodicIndexJobRepository) bind IBatchPeriodicIndexJobRepository::class
     singleOf(::ExposedBatchUrlStateRepository) bind IBatchUrlStateRepository::class
     singleOf(::ExposedProxyRuleRepository) bind IProxyRuleRepository::class
+    
+    // Knowledge Graph repository
+    singleOf(::AgeKnowledgeGraphRepository) bind IKnowledgeGraphRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {

@@ -50,7 +50,7 @@ interface IUrlContentProcessingService {
 
         /**
          * Emitted immediately after HTML is loaded, before LLM processing.
-         * Contains cleaned HTML for preview shortlist evaluation.
+         * Contains cleaned HTML for preview source evaluation.
          * Only emitted for uncached HTML URLs.
          */
         data class HtmlPreviewReady(
