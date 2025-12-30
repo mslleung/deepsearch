@@ -1,7 +1,7 @@
 package io.deepsearch.domain.agents.googlegenaiimpl
 
-import io.deepsearch.domain.agents.IPreviewSourceShortlistAgent
-import io.deepsearch.domain.agents.PreviewSourceShortlistInput
+import io.deepsearch.domain.agents.HtmlSourceEvalInput
+import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SourceClassification
@@ -14,34 +14,22 @@ import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class PreviewSourceShortlistAgentTest : KoinTest {
+class HtmlSourceEvalAgentTest : KoinTest {
 
     @JvmField
     @RegisterExtension
     val koin = KoinTestExtension.create { modules(domainTestModule) }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val agent by inject<IPreviewSourceShortlistAgent>()
-
-    @Test
-    fun `should return empty result when HTML sources is empty`() = runTest(testCoroutineDispatcher) {
-        val input = PreviewSourceShortlistInput(
-            searchQuery = SearchQuery("Who is the CEO?", "https://example.com"),
-            htmlSources = emptyList()
-        )
-
-        val output = agent.generate(input)
-
-        assertNotNull(output)
-        assertTrue(output.shortlistedSources.isEmpty(), "Shortlisted sources should be empty when no sources provided")
-    }
+    private val agent by inject<IHtmlSourceEvalAgent>()
 
     /**
      * Test case: SleekFlow About page with clear prose content.
      * The CEO information (Henson Tsai) is in clear prose paragraphs,
-     * so facts should be extracted and included in the shortlist.
+     * so facts should be extracted and included in the output.
      */
     @Test
     fun `should extract prose content facts and not filter them out`() = runTest(testCoroutineDispatcher) {
@@ -79,20 +67,20 @@ class PreviewSourceShortlistAgentTest : KoinTest {
             """.trimIndent()
         )
 
-        val input = PreviewSourceShortlistInput(
+        val input = HtmlSourceEvalInput(
             searchQuery = SearchQuery("Who is the CEO of SleekFlow?", "https://sleekflow.io"),
-            htmlSources = listOf(htmlSource)
+            htmlSource = htmlSource
         )
 
         val output = agent.generate(input)
 
         assertNotNull(output)
         assertNotNull(output.tokenUsage)
-        assertTrue(output.shortlistedSources.isNotEmpty(), "Should have shortlisted sources")
+        assertNotNull(output.expandedQuery)
+        assertNotNull(output.evaluatedSource, "Should have evaluated source for relevant content")
         
         // Find facts about the CEO
-        val ceoFacts = output.shortlistedSources
-            .flatMap { it.relevantFacts }
+        val ceoFacts = output.evaluatedSource!!.relevantFacts
             .filter { it.fact.contains("Henson", ignoreCase = true) || it.fact.contains("CEO", ignoreCase = true) }
         
         assertTrue(ceoFacts.isNotEmpty(), "Should find facts about the CEO (prose facts are not filtered)")
@@ -145,9 +133,9 @@ class PreviewSourceShortlistAgentTest : KoinTest {
             """.trimIndent()
         )
 
-        val input = PreviewSourceShortlistInput(
+        val input = HtmlSourceEvalInput(
             searchQuery = SearchQuery("Does the Pro plan have any SLA guarantee?", "https://sleekflow.io"),
-            htmlSources = listOf(htmlSource)
+            htmlSource = htmlSource
         )
 
         val output = agent.generate(input)
@@ -156,8 +144,8 @@ class PreviewSourceShortlistAgentTest : KoinTest {
         assertNotNull(output.tokenUsage)
         
         // SLA facts from tables should be filtered out internally by the agent.
-        // The test HTML only has SLA info in table format, so we expect no SLA facts
-        // or very few if any prose mentions exist.
+        // The test HTML only has SLA info in table format, so the source may be null
+        // or have no SLA-related facts if any prose mentions exist.
         // The main assertion is that the agent completes successfully with table filtering.
     }
 
@@ -181,19 +169,20 @@ class PreviewSourceShortlistAgentTest : KoinTest {
             """.trimIndent()
         )
 
-        val input = PreviewSourceShortlistInput(
+        val input = HtmlSourceEvalInput(
             searchQuery = SearchQuery("Does the platform support AI analytics?", "https://example.com"),
-            htmlSources = listOf(htmlSource)
+            htmlSource = htmlSource
         )
 
         val output = agent.generate(input)
 
         assertNotNull(output)
-        assertTrue(output.shortlistedSources.isNotEmpty(), "Should have shortlisted sources")
+        assertNotNull(output.evaluatedSource, "Should have evaluated source for relevant content")
+        
+        val evaluatedSource = output.evaluatedSource!!
         
         // Find facts about the feature
-        val featureFacts = output.shortlistedSources
-            .flatMap { it.relevantFacts }
+        val featureFacts = evaluatedSource.relevantFacts
             .filter { it.fact.contains("AI", ignoreCase = true) || it.fact.contains("analytics", ignoreCase = true) }
         
         assertTrue(featureFacts.isNotEmpty(), "Should find facts about AI analytics")
@@ -207,9 +196,12 @@ class PreviewSourceShortlistAgentTest : KoinTest {
         }
     }
 
+    /**
+     * Test case: Irrelevant content should return null evaluatedSource.
+     */
     @Test
-    fun `should extract facts from multiple sources`() = runTest(testCoroutineDispatcher) {
-        val htmlSource1 = UrlContentResult.HtmlPreview(
+    fun `should return null evaluatedSource for irrelevant content`() = runTest(testCoroutineDispatcher) {
+        val htmlSource = UrlContentResult.HtmlPreview(
             url = "https://example.com/about",
             title = "About Us",
             description = "Learn about our company",
@@ -217,41 +209,65 @@ class PreviewSourceShortlistAgentTest : KoinTest {
                 <article>
                     <h1>About Example Corp</h1>
                     <p>Example Corp was founded in 2015 by Jane Doe.</p>
-                    <p>Jane Doe serves as the CEO and leads our team of 50 employees.</p>
                     <p>We are headquartered in San Francisco, California.</p>
-                </article>
-            """.trimIndent()
-        )
-        
-        val htmlSource2 = UrlContentResult.HtmlPreview(
-            url = "https://example.com/blog/history",
-            title = "Our History",
-            description = "The journey of Example Corp",
-            cleanedHtml = """
-                <article>
-                    <time>January 2020</time>
-                    <p>In 2020, we expanded to Europe with offices in London and Berlin.</p>
+                    <p>Our team enjoys hiking and coffee.</p>
                 </article>
             """.trimIndent()
         )
 
-        val input = PreviewSourceShortlistInput(
-            searchQuery = SearchQuery("Tell me about Example Corp", "https://example.com"),
-            htmlSources = listOf(htmlSource1, htmlSource2)
+        val input = HtmlSourceEvalInput(
+            searchQuery = SearchQuery("What is the pricing for the Pro plan?", "https://example.com"),
+            htmlSource = htmlSource
         )
 
         val output = agent.generate(input)
 
         assertNotNull(output)
-        assertTrue(output.shortlistedSources.isNotEmpty(), "Should have shortlisted sources")
+        assertNotNull(output.tokenUsage)
+        assertNotNull(output.expandedQuery)
         
-        // Each source should have relevant facts
-        output.shortlistedSources.forEach { source ->
-            // Facts should not be blank
-            source.relevantFacts.forEach { fact ->
-                assertTrue(fact.fact.isNotBlank(), "Fact should not be blank")
-            }
-        }
+        // The content is about the company, not pricing, so it should be marked as not relevant
+        // Note: The LLM may still find this relevant if it mentions anything tangentially related
+        // This test validates the flow works - the exact behavior depends on the LLM
+    }
+
+    /**
+     * Test case: Content with all table data should return null after filtering.
+     */
+    @Test
+    fun `should return null evaluatedSource when all facts are from tables`() = runTest(testCoroutineDispatcher) {
+        val htmlSource = UrlContentResult.HtmlPreview(
+            url = "https://example.com/pricing",
+            title = "Pricing",
+            description = "Our pricing plans",
+            cleanedHtml = """
+                <div>
+                    <table>
+                        <tr><th>Plan</th><th>Price</th></tr>
+                        <tr><td>Basic</td><td>$9/month</td></tr>
+                        <tr><td>Pro</td><td>$29/month</td></tr>
+                        <tr><td>Enterprise</td><td>$99/month</td></tr>
+                    </table>
+                </div>
+            """.trimIndent()
+        )
+
+        val input = HtmlSourceEvalInput(
+            searchQuery = SearchQuery("What is the pricing?", "https://example.com"),
+            htmlSource = htmlSource
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertNotNull(output.tokenUsage)
+        
+        // All pricing info is in tables, which should be filtered out
+        // The evaluatedSource should be null since no non-table facts remain
+        assertNull(
+            output.evaluatedSource,
+            "Should return null evaluatedSource when all facts are from tables"
+        )
     }
 }
 

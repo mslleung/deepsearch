@@ -5,15 +5,17 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
-import io.deepsearch.domain.agents.IPreviewSourceShortlistAgent
-import io.deepsearch.domain.agents.PreviewSourceShortlistInput
-import io.deepsearch.domain.agents.PreviewSourceShortlistOutput
+import io.deepsearch.domain.agents.HtmlSourceEvalInput
+import io.deepsearch.domain.agents.HtmlSourceEvalOutput
+import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.models.valueobjects.AnswerType
+import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
-import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.SourceClassification
+import io.deepsearch.domain.models.valueobjects.SourceType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -21,9 +23,9 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * Preview Source Shortlist agent that evaluates HTML sources and extracts classified facts.
+ * HTML Source Evaluation agent that evaluates a single HTML preview source and extracts classified facts.
  * 
- * For each source, the agent:
+ * For the source, the agent:
  * - Extracts facts relevant to the query
  * - Marks whether each fact is from a table/grid (isInTable)
  * - Classifies the source type (OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, OTHERS)
@@ -31,13 +33,13 @@ import org.slf4j.LoggerFactory
  * Facts where isInTable=true are filtered out before returning, since table
  * data in HTML previews may be inaccurate.
  * 
- * Unlike the full markdown shortlist agent, this does NOT determine isGoodEnough.
- * The answer synthesis agent determines flow completion via answerFound.
+ * This is a stateless agent that processes one source at a time, enabling parallel processing.
+ * Used in the preview path for early exit with conservative fact extraction.
  */
-class PreviewSourceShortlistAgentGenAiImpl(
+class HtmlSourceEvalAgentGenAiImpl(
     private val client: com.google.genai.Client,
     private val dispatcherProvider: IDispatcherProvider
-) : IPreviewSourceShortlistAgent {
+) : IHtmlSourceEvalAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -64,14 +66,18 @@ class PreviewSourceShortlistAgentGenAiImpl(
         .required(listOf("fact", "isInTable", "classification"))
         .build()
 
-    private val shortlistedSourceSchema: Schema = Schema.builder()
+    private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("A source with its classified relevant facts")
+        .description("Evaluated source with extracted facts and expanded query")
         .properties(
             mapOf(
-                "url" to Schema.builder()
+                "expandedQuery" to Schema.builder()
                     .type("STRING")
-                    .description("The URL of the source")
+                    .description("Clarified/expanded version of the user query that captures the CORE intent. Transform vague queries into specific, answerable questions. Example: 'tell me about the pricing' → 'What are the main subscription plans and pricing tiers for the product?'")
+                    .build(),
+                "isRelevant" to Schema.builder()
+                    .type("BOOLEAN")
+                    .description("Whether this source has any relevant facts for the query")
                     .build(),
                 "sourceClassification" to Schema.builder().type("STRING")
                     .description("Source type classification (OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, THIRD_PARTY_REVIEW, FORUM_DISCUSSION)")
@@ -84,7 +90,7 @@ class PreviewSourceShortlistAgentGenAiImpl(
                     .description("How directly the source answers the query (DIRECT_ANSWER, INFERRED_ANSWER, PARTIAL_MENTION)")
                     .build(),
                 "relevanceJustification" to Schema.builder().type("STRING")
-                    .description("Brief reason for inclusion in shortlist")
+                    .description("Brief reason for why this source is or is not relevant")
                     .build(),
                 "relevantFacts" to Schema.builder()
                     .type("ARRAY")
@@ -93,35 +99,16 @@ class PreviewSourceShortlistAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("url", "sourceClassification", "answerType", "relevanceJustification", "relevantFacts"))
-        .build()
-
-    private val outputSchema: Schema = Schema.builder()
-        .type("OBJECT")
-        .description("Shortlisted sources with extracted facts and expanded query")
-        .properties(
-            mapOf(
-                "expandedQuery" to Schema.builder()
-                    .type("STRING")
-                    .description("Clarified/expanded version of the user query that captures the CORE intent. Transform vague queries into specific, answerable questions. Example: 'tell me about the pricing' → 'What are the main subscription plans and pricing tiers for the product?'")
-                    .build(),
-                "shortlistedSources" to Schema.builder()
-                    .type("ARRAY")
-                    .items(shortlistedSourceSchema)
-                    .description("List of sources with their classified facts")
-                    .build()
-            )
-        )
-        .required(listOf("expandedQuery", "shortlistedSources"))
+        .required(listOf("expandedQuery", "isRelevant", "sourceClassification", "answerType", "relevanceJustification", "relevantFacts"))
         .build()
 
     private val systemInstruction = """
-        You are a source classification and fact extraction agent. Your job is to extract metadata, categorize web content, and extract relevant facts from HTML preview sources.
+        You are a source classification and fact extraction agent. Your job is to extract metadata, categorize web content, and extract relevant facts from a single HTML preview source.
         
         Input: 
         - Current date
         - User query
-        - HTML sources (preview content with cleaned HTML structure)
+        - Single HTML source (preview content with cleaned HTML structure)
         
         FIRST, you must expand the user query:
         
@@ -134,15 +121,19 @@ class PreviewSourceShortlistAgentGenAiImpl(
           - "features" → "What are the main product features and capabilities?"
           - "how does it work" → "How does the product work and what is the main workflow?"
         
-        For each source, you must:
+        For the source, you must:
         
-        1. **Extract Relevant Facts**:
+        1. **Determine if Relevant**:
+           - Set isRelevant=true if the source contains facts that help answer the query
+           - Set isRelevant=false if the source has no relevant information
+        
+        2. **Extract Relevant Facts**:
            - Extract facts from the source that are directly relevant to answering the query
            - Each fact should be a complete, standalone statement
            - Only include facts that help answer the query
-           - If a source has no relevant facts, do not include it in the shortlist
+           - If a source has no relevant facts, set isRelevant=false and return empty facts array
         
-        2. **Mark Table Origin (isInTable)**:
+        3. **Mark Table Origin (isInTable)**:
            - Mark isInTable=true if the fact comes from:
              - <table>, <tr>, <td>, <th> elements
              - Pricing grids or comparison matrices
@@ -151,46 +142,37 @@ class PreviewSourceShortlistAgentGenAiImpl(
            - Mark isInTable=false for facts from prose paragraphs, headings, or regular text
            - IMPORTANT: Table data in HTML previews may be inaccurate, so this flag is used to filter
         
-        3. **Classify Each Fact**:
+        4. **Classify Each Fact**:
            - OFFICIAL_LIVING_DOC: Fact from a main page (e.g., /pricing, /home, /features) intended to reflect current state
            - OFFICIAL_SNAPSHOT: Fact from dated company content (e.g., /blog, /press, /news)
            - OTHERS: Fact from external reviews, forums, UGC, etc.
         
-        4. **Determine Source Type** (Choose one):
+        5. **Determine Source Type** (Choose one):
            - `OFFICIAL_LIVING_DOC`: A main page (e.g., /pricing, /home, /features) intended to reflect current state.
            - `OFFICIAL_SNAPSHOT`: A dated company update (e.g., /blog, /press, /news).
            - `THIRD_PARTY_REVIEW`: External review or news site.
            - `FORUM_DISCUSSION`: UGC, Reddit, StackOverflow.
         
-        5. **Determine Temporal State**:
+        6. **Determine Temporal State**:
            - Extract the `contentDate` (if available). Look for publication dates, update dates, or temporal indicators.
            - If no date is found, leave it null/empty.
         
-        6. **Determine Answer Type**:
+        7. **Determine Answer Type**:
            - `DIRECT_ANSWER`: The page explicitly lists the answer (e.g., a pricing table).
            - `INFERRED_ANSWER`: The answer must be guessed or calculated.
            - `PARTIAL_MENTION`: Mentions keywords but doesn't answer the core intent.
         
-        Shortlist Management:
-        - Only include sources that have relevant facts for the query
-        - Prioritize OFFICIAL_LIVING_DOC with DIRECT_ANSWER for factual queries
-        - Each source should add unique value through its extracted facts
-        
         Output Format:
         {
           "expandedQuery": "What are the main subscription plans and pricing tiers for the product?",
-          "shortlistedSources": [
-            {
-              "url": "String",
-              "sourceClassification": "OFFICIAL_LIVING_DOC",
-              "contentDate": "2024-07-25",
-              "answerType": "DIRECT_ANSWER",
-              "relevanceJustification": "Why this source is included",
-              "relevantFacts": [
-                {"fact": "The product costs $99/month", "isInTable": true, "classification": "OFFICIAL_LIVING_DOC"},
-                {"fact": "The CEO is Jane Doe", "isInTable": false, "classification": "OFFICIAL_LIVING_DOC"}
-              ]
-            }
+          "isRelevant": true,
+          "sourceClassification": "OFFICIAL_LIVING_DOC",
+          "contentDate": "2024-07-25",
+          "answerType": "DIRECT_ANSWER",
+          "relevanceJustification": "Why this source is relevant or not",
+          "relevantFacts": [
+            {"fact": "The product costs ${'$'}99/month", "isInTable": true, "classification": "OFFICIAL_LIVING_DOC"},
+            {"fact": "The CEO is Jane Doe", "isInTable": false, "classification": "OFFICIAL_LIVING_DOC"}
           ]
         }
     """.trimIndent()
@@ -203,8 +185,9 @@ class PreviewSourceShortlistAgentGenAiImpl(
     )
 
     @Serializable
-    private data class LlmShortlistedSource(
-        val url: String,
+    private data class EvalResponse(
+        val expandedQuery: String,
+        val isRelevant: Boolean,
         val sourceClassification: String,
         val contentDate: String? = null,
         val answerType: String,
@@ -212,38 +195,24 @@ class PreviewSourceShortlistAgentGenAiImpl(
         val relevantFacts: List<LlmRelevantFact>
     )
 
-    @Serializable
-    private data class ShortlistResponse(
-        val expandedQuery: String,
-        val shortlistedSources: List<LlmShortlistedSource>
-    )
-
-    override suspend fun generate(input: PreviewSourceShortlistInput): PreviewSourceShortlistOutput {
+    override suspend fun generate(input: HtmlSourceEvalInput): HtmlSourceEvalOutput {
         val searchQuery = input.searchQuery
+        val htmlSource = input.htmlSource
         val queryWithSite = "${searchQuery.query} site:${extractDomain(searchQuery.url)}"
         
         logger.debug(
-            "Classifying preview sources for query: '{}', sources: {}",
+            "Evaluating HTML source for query: '{}', url: {}",
             queryWithSite,
-            input.htmlSources.size
+            htmlSource.url
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        if (input.htmlSources.isEmpty()) {
-            logger.debug("Empty HTML sources, returning empty result")
-            return PreviewSourceShortlistOutput(
-                shortlistedSources = emptyList(),
-                expandedQuery = searchQuery.query, // Use original query as fallback
-                tokenUsage = tokenUsage
-            )
-        }
-
         val userPrompt = buildUserPrompt(input)
 
         val response = withContext(dispatcherProvider.io) {
-            retryLlmCall<ShortlistResponse>(this@PreviewSourceShortlistAgentGenAiImpl::class.simpleName!!) {
+            retryLlmCall<EvalResponse>(this@HtmlSourceEvalAgentGenAiImpl::class.simpleName!!) {
                 val result = client.models.generateContent(
                     modelId,
                     userPrompt,
@@ -277,65 +246,80 @@ class PreviewSourceShortlistAgentGenAiImpl(
         }
 
         logger.debug(
-            "[{}] response: {}",
-            PreviewSourceShortlistAgentGenAiImpl::class.simpleName,
-            response
+            "[{}] response for {}: isRelevant={}, facts={}",
+            HtmlSourceEvalAgentGenAiImpl::class.simpleName,
+            htmlSource.url,
+            response.isRelevant,
+            response.relevantFacts.size
         )
 
-        // Convert LLM response to domain model and filter out isInTable=true facts
-        val shortlistedSources = response.shortlistedSources.mapNotNull { llmSource ->
-            // Parse source type
-            val sourceType = try {
-                io.deepsearch.domain.models.valueobjects.SourceType.valueOf(llmSource.sourceClassification)
-            } catch (e: IllegalArgumentException) {
-                logger.warn("Invalid source classification '{}', defaulting to OFFICIAL_LIVING_DOC", llmSource.sourceClassification)
-                io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC
-            }
-            
-            // Parse answer type
-            val answerType = try {
-                io.deepsearch.domain.models.valueobjects.AnswerType.valueOf(llmSource.answerType)
-            } catch (e: IllegalArgumentException) {
-                logger.warn("Invalid answer type '{}', defaulting to PARTIAL_MENTION", llmSource.answerType)
-                io.deepsearch.domain.models.valueobjects.AnswerType.PARTIAL_MENTION
-            }
-
-            // Filter out facts where isInTable=true (tables in preview HTML are inaccurate)
-            val filteredFacts = llmSource.relevantFacts
-                .filter { !it.isInTable }
-                .map { llmFact ->
-                    RelevantFact(
-                        fact = llmFact.fact,
-                        sourceClassification = parseClassification(llmFact.classification)
-                    )
-                }
-
-            // Only include sources that have at least one fact after filtering
-            if (filteredFacts.isEmpty()) {
-                logger.debug("Source {} has no facts after filtering out table data, excluding from shortlist", llmSource.url)
-                null
-            } else {
-                ShortlistedSource(
-                    url = llmSource.url,
-                    relevantFacts = filteredFacts,
-                    sourceClassification = sourceType,
-                    contentDate = llmSource.contentDate,
-                    answerType = answerType,
-                    relevanceJustification = llmSource.relevanceJustification,
-                    relevantImageIds = emptyList() // Preview path doesn't handle images
-                )
-            }
+        // If not relevant, return null evaluated source
+        if (!response.isRelevant) {
+            logger.debug("Source {} is not relevant, returning null", htmlSource.url)
+            return HtmlSourceEvalOutput(
+                evaluatedSource = null,
+                expandedQuery = response.expandedQuery,
+                tokenUsage = tokenUsage
+            )
         }
 
+        // Parse source type
+        val sourceType = try {
+            SourceType.valueOf(response.sourceClassification)
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Invalid source classification '{}', defaulting to OFFICIAL_LIVING_DOC", response.sourceClassification)
+            SourceType.OFFICIAL_LIVING_DOC
+        }
+        
+        // Parse answer type
+        val answerType = try {
+            AnswerType.valueOf(response.answerType)
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Invalid answer type '{}', defaulting to PARTIAL_MENTION", response.answerType)
+            AnswerType.PARTIAL_MENTION
+        }
+
+        // Filter out facts where isInTable=true (tables in preview HTML are inaccurate)
+        val filteredFacts = response.relevantFacts
+            .filter { !it.isInTable }
+            .map { llmFact ->
+                RelevantFact(
+                    fact = llmFact.fact,
+                    sourceClassification = parseClassification(llmFact.classification)
+                )
+            }
+
+        // If no facts remain after filtering, return null
+        if (filteredFacts.isEmpty()) {
+            logger.debug("Source {} has no facts after filtering out table data, returning null", htmlSource.url)
+            return HtmlSourceEvalOutput(
+                evaluatedSource = null,
+                expandedQuery = response.expandedQuery,
+                tokenUsage = tokenUsage
+            )
+        }
+
+        val evaluatedSource = EvaluatedSource(
+            url = htmlSource.url,
+            title = htmlSource.title,
+            description = htmlSource.description,
+            relevantFacts = filteredFacts,
+            sourceClassification = sourceType,
+            contentDate = response.contentDate,
+            answerType = answerType,
+            relevanceJustification = response.relevanceJustification,
+            relevantImageIds = emptyList() // Preview path doesn't handle images
+        )
+
         logger.debug(
-            "Preview source shortlist complete: {} sources, {} total facts (after filtering table data), expandedQuery: {}",
-            shortlistedSources.size,
-            shortlistedSources.sumOf { it.relevantFacts.size },
+            "HTML source evaluation complete for {}: {} facts (after filtering table data), expandedQuery: {}",
+            htmlSource.url,
+            filteredFacts.size,
             response.expandedQuery
         )
 
-        return PreviewSourceShortlistOutput(
-            shortlistedSources = shortlistedSources,
+        return HtmlSourceEvalOutput(
+            evaluatedSource = evaluatedSource,
             expandedQuery = response.expandedQuery,
             tokenUsage = tokenUsage
         )
@@ -360,8 +344,9 @@ class PreviewSourceShortlistAgentGenAiImpl(
         }
     }
 
-    private fun buildUserPrompt(input: PreviewSourceShortlistInput): String {
+    private fun buildUserPrompt(input: HtmlSourceEvalInput): String {
         val queryWithSite = "${input.searchQuery.query} site:${extractDomain(input.searchQuery.url)}"
+        val source = input.htmlSource
         return buildString {
             // Include current date for temporal context
             appendLine("# Current Date")
@@ -372,25 +357,19 @@ class PreviewSourceShortlistAgentGenAiImpl(
             appendLine(queryWithSite)
             appendLine()
 
-            appendLine("# HTML Sources to Evaluate")
-            input.htmlSources.forEachIndexed { index, source ->
-                appendLine("## Source ${index + 1}")
-                appendLine("URL: ${source.url}")
-                if (source.title != null) {
-                    appendLine("Title: ${source.title}")
-                }
-                if (source.description != null) {
-                    appendLine("Description: ${source.description}")
-                }
-                appendLine()
-                appendLine("### HTML Content")
-                appendLine("```html")
-                appendLine(source.cleanedHtml)
-                appendLine("```")
-                appendLine()
-                appendLine("---")
-                appendLine()
+            appendLine("# HTML Source to Evaluate")
+            appendLine("URL: ${source.url}")
+            if (source.title != null) {
+                appendLine("Title: ${source.title}")
             }
+            if (source.description != null) {
+                appendLine("Description: ${source.description}")
+            }
+            appendLine()
+            appendLine("## HTML Content")
+            appendLine("```html")
+            appendLine(source.cleanedHtml)
+            appendLine("```")
         }
     }
 }

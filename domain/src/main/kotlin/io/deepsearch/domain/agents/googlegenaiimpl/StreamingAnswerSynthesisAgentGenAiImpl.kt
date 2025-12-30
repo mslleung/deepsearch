@@ -14,7 +14,6 @@ import io.deepsearch.domain.agents.infra.flowWithRateLimitRetry
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.AnswerType
-import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -26,7 +25,11 @@ import org.slf4j.LoggerFactory
 
 /**
  * Streaming Answer Synthesis agent that generates comprehensive answers from extracted facts.
- * Receives facts (not full markdown content) from the shortlist agent and synthesizes them into an answer.
+ * Receives facts (not full markdown content) from the source eval agents and synthesizes them into an answer.
+ * 
+ * The orchestrator uses answerType to determine if the answer is acceptable:
+ * - Preview path: only accepts DIRECT_ANSWER
+ * - Main path: accepts DIRECT_ANSWER or INFERRED_ANSWER
  */
 class StreamingAnswerSynthesisAgentGenAiImpl(
     private val client: com.google.genai.Client,
@@ -37,7 +40,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Comprehensive answer to the query with answer type classification, reasoning, and referenced images")
+        .description("Comprehensive answer with answer type classification and cited sources")
         .properties(
             mapOf(
                 "answer" to Schema.builder()
@@ -57,13 +60,18 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .type("ARRAY")
                     .description("List of image IDs from the sources that should be displayed with the answer.")
                     .items(Schema.builder().type("STRING").build())
+                    .build(),
+                "citedSourceUrls" to Schema.builder()
+                    .type("ARRAY")
+                    .description("URLs of sources whose facts were actually used/cited in generating the answer. Only include sources that contributed to the answer content.")
+                    .items(Schema.builder().type("STRING").build())
                     .build()
             )
         )
-        .required(listOf("answer", "answerType", "reasoning", "imageIds"))
+        .required(listOf("answer", "answerType", "reasoning", "imageIds", "citedSourceUrls"))
         .build()
 
-    private val systemInstruction = """
+    private val systemInstruction = $$"""
         You are an answer synthesis agent that generates comprehensive answers from pre-extracted facts.
         
         Answer Quality:
@@ -117,6 +125,11 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         
         IMPORTANT: When in doubt, choose PARTIAL_MENTION. It's better to continue searching than to prematurely conclude with incomplete information. Answering a tangential aspect of a broad query (e.g., WhatsApp API fees when asked about overall product pricing) should be PARTIAL_MENTION.
       
+        Citation Source URLs:
+        - List the URLs of sources whose facts you actually used in generating the answer
+        - Only include sources that contributed information to the answer
+        - This helps filter out irrelevant sources from the final response
+        
         Reasoning:
         - Briefly explain how you derived the answer from the facts
         - If answerType is PARTIAL_MENTION, explain what specific information is missing
@@ -126,7 +139,8 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             "answer": "your comprehensive answer text",
             "answerType": "DIRECT_ANSWER" | "INFERRED_ANSWER" | "PARTIAL_MENTION",
             "reasoning": "brief explanation of how the answer was derived and why this answerType was chosen",
-            "imageIds": ["img-xxx"]  // IDs of relevant images from sources, empty array if none
+            "imageIds": ["img-xxx"],
+            "citedSourceUrls": ["https://example.com/pricing", "https://example.com/features"]
         }
     """.trimIndent()
 
@@ -135,22 +149,23 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val answer: String,
         val answerType: AnswerType,
         val reasoning: String,
-        val imageIds: List<String> = emptyList()
+        val imageIds: List<String> = emptyList(),
+        val citedSourceUrls: List<String> = emptyList()
     )
 
     override suspend fun generate(input: StreamingAnswerSynthesisInput): StreamingAnswerSynthesisOutput {
         logger.debug(
-            "Generating answer synthesis for query: '{}' (expanded: '{}'), shortlist size: {}, total facts: {}",
+            "Generating answer synthesis for query: '{}' (expanded: '{}'), sources: {}, total facts: {}",
             input.query,
             input.expandedQuery ?: "none",
-            input.shortlistedSources.size,
-            input.shortlistedSources.sumOf { it.relevantFacts.size }
+            input.evaluatedSources.size,
+            input.evaluatedSources.sumOf { it.relevantFacts.size }
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        if (input.shortlistedSources.isEmpty() || input.shortlistedSources.all { it.relevantFacts.isEmpty() }) {
+        if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No facts provided, returning default message")
             return StreamingAnswerSynthesisOutput(
                 answer = "No information found to answer the query.",
@@ -203,10 +218,11 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         )
 
         logger.debug(
-            "Answer synthesis complete: {} chars, answerType: {}, {} images",
+            "Answer synthesis complete: {} chars, answerType: {}, {} images, citedSources: {}",
             response.answer.length,
             response.answerType,
-            response.imageIds.size
+            response.imageIds.size,
+            response.citedSourceUrls.size
         )
 
         return StreamingAnswerSynthesisOutput(
@@ -214,28 +230,30 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             answerType = response.answerType,
             reasoning = response.reasoning,
             imageIds = response.imageIds,
-            tokenUsage = tokenUsage
+            tokenUsage = tokenUsage,
+            citedSourceUrls = response.citedSourceUrls
         )
     }
 
     override fun generateStream(input: StreamingAnswerSynthesisInput): Flow<StreamingAnswerStreamItem> = flow {
         logger.debug(
-            "Streaming answer synthesis for query: '{}' (expanded: '{}'), shortlist size: {}, total facts: {}",
+            "Streaming answer synthesis for query: '{}' (expanded: '{}'), sources: {}, total facts: {}",
             input.query,
             input.expandedQuery ?: "none",
-            input.shortlistedSources.size,
-            input.shortlistedSources.sumOf { it.relevantFacts.size }
+            input.evaluatedSources.size,
+            input.evaluatedSources.sumOf { it.relevantFacts.size }
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
 
-        if (input.shortlistedSources.isEmpty() || input.shortlistedSources.all { it.relevantFacts.isEmpty() }) {
+        if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No facts provided, emitting default message")
             emit(StreamingAnswerStreamItem.Chunk("No information found to answer the query."))
             emit(StreamingAnswerStreamItem.Complete(
                 tokenUsage = TokenUsageMetrics.empty(modelId),
                 answerType = AnswerType.PARTIAL_MENTION,
-                reasoning = "No facts available from the provided sources."
+                reasoning = "No facts available from the provided sources.",
+                citedSourceUrls = emptyList()
             ))
             return@flow
         }
@@ -304,13 +322,15 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             accumulatedJson
         )
 
-        // Extract answerType, reasoning, and imageIds from the complete JSON
+        // Extract answerType, reasoning, imageIds, and citedSourceUrls from the complete JSON
         val answerType = extractAnswerType(accumulatedJson)
         val reasoning = extractReasoning(accumulatedJson)
         val imageIds = extractImageIds(accumulatedJson)
+        val citedSourceUrls = extractCitedSourceUrls(accumulatedJson)
         
-        logger.debug("Streaming answer synthesis complete: {} chars total, answerType: {}, {} images", lastAnswerLength, answerType, imageIds.size)
-        emit(StreamingAnswerStreamItem.Complete(tokenUsage, answerType, reasoning, imageIds))
+        logger.debug("Streaming answer synthesis complete: {} chars total, answerType: {}, {} images, citedSources: {}", 
+            lastAnswerLength, answerType, imageIds.size, citedSourceUrls.size)
+        emit(StreamingAnswerStreamItem.Complete(tokenUsage, answerType, reasoning, imageIds, citedSourceUrls))
     }
 
     /**
@@ -344,6 +364,24 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
      */
     private fun extractImageIds(json: String): List<String> {
         val regex = """"imageIds"\s*:\s*\[([^\]]*)\]""".toRegex()
+        val match = regex.find(json) ?: return emptyList()
+        
+        val arrayContent = match.groupValues[1]
+        if (arrayContent.isBlank()) return emptyList()
+        
+        // Extract individual string values from the array
+        val stringRegex = """"([^"]+)"""".toRegex()
+        return stringRegex.findAll(arrayContent)
+            .map { it.groupValues[1] }
+            .toList()
+    }
+
+    /**
+     * Extract citedSourceUrls array from accumulated JSON.
+     * The JSON format is: {"answer": "...", "citedSourceUrls": ["https://..."]}
+     */
+    private fun extractCitedSourceUrls(json: String): List<String> {
+        val regex = """"citedSourceUrls"\s*:\s*\[([^\]]*)\]""".toRegex()
         val match = regex.find(json) ?: return emptyList()
         
         val arrayContent = match.groupValues[1]
@@ -433,10 +471,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             appendLine("# Query")
             appendLine(input.effectiveQuery)
             appendLine()
-            appendLine("# Extracted Facts from Shortlisted Sources")
+            appendLine("# Extracted Facts from Sources")
             appendLine()
 
-            input.shortlistedSources.forEachIndexed { index, source ->
+            input.evaluatedSources.forEachIndexed { index, source ->
                 if (source.relevantFacts.isNotEmpty()) {
                     appendLine("## Source ${index + 1}")
                     appendLine("URL: ${source.url}")
@@ -468,4 +506,3 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         }
     }
 }
-

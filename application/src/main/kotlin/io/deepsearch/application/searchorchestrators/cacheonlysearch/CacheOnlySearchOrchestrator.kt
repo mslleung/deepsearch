@@ -8,11 +8,17 @@ import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
-import io.deepsearch.domain.agents.ISourceShortlistAgent
+import io.deepsearch.domain.agents.IMarkdownSourceEvalAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
-import io.deepsearch.domain.agents.SourceShortlistInput
+import io.deepsearch.domain.agents.MarkdownSourceEvalInput
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerStreamItem
+import io.deepsearch.domain.models.valueobjects.EvaluatedSource
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flatMapMerge
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.toList
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
@@ -45,11 +51,11 @@ interface ICacheOnlySearchOrchestrator : ISearchOrchestrator
  * 
  * Returns a Flow<SearchEvent> that emits session start and completion events.
  */
-@OptIn(ExperimentalTime::class)
+@OptIn(ExperimentalTime::class, ExperimentalCoroutinesApi::class)
 class CacheOnlySearchOrchestrator(
     private val webpageCacheService: WebpageCacheService,
     private val fileSearchService: IFileSearchService,
-    private val sourceShortlistAgent: ISourceShortlistAgent,
+    private val markdownSourceEvalAgent: IMarkdownSourceEvalAgent,
     private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
@@ -152,26 +158,46 @@ class CacheOnlySearchOrchestrator(
             // Combine all markdown sources
             val markdownSources = buildMarkdownSources(validWebpages, fileSearchResult, domain)
 
-            // Step 2: Run through source shortlist agent
-            val shortlistOutput = sourceShortlistAgent.generate(
-                SourceShortlistInput(searchQuery, emptyList(), markdownSources)
-            )
+            // Step 2: Evaluate each markdown source in parallel
+            var expandedQuery: String? = null
+            val evaluatedSources: List<EvaluatedSource> = markdownSources.asFlow()
+                .flatMapMerge(concurrency = 100) { source ->
+                    flow {
+                        val output = markdownSourceEvalAgent.generate(
+                            MarkdownSourceEvalInput(searchQuery, source)
+                        )
+                        
+                        tokenUsageService.recordTokenUsage(
+                            sessionId, "MarkdownSourceEvalAgent",
+                            output.tokenUsage.modelName,
+                            output.tokenUsage.promptTokens,
+                            output.tokenUsage.outputTokens,
+                            output.tokenUsage.totalTokens
+                        )
+                        
+                        // Capture expanded query from first non-null result
+                        if (expandedQuery == null) {
+                            expandedQuery = output.expandedQuery
+                        }
+                        
+                        emit(output.evaluatedSource)
+                    }
+                }
+                .mapNotNull { it }
+                .toList()
 
-            tokenUsageService.recordTokenUsage(
-                sessionId, "SourceShortlistAgent",
-                shortlistOutput.tokenUsage.modelName,
-                shortlistOutput.tokenUsage.promptTokens,
-                shortlistOutput.tokenUsage.outputTokens,
-                shortlistOutput.tokenUsage.totalTokens
+            logger.debug(
+                "[{}] Evaluated {} sources, {} relevant",
+                sessionId.value, markdownSources.size, evaluatedSources.size
             )
 
             emit(
                 SearchEvent.ShortlistUpdated(
                     sessionId = sessionId,
                     processedUrlCount = markdownSources.size,
-                    shortlistedCount = shortlistOutput.updatedShortlist.size,
-                    isGoodEnough = shortlistOutput.isGoodEnough,
-                    reason = shortlistOutput.reason
+                    shortlistedCount = evaluatedSources.size,
+                    isGoodEnough = evaluatedSources.isNotEmpty(),
+                    reason = if (evaluatedSources.isNotEmpty()) "Sources evaluated" else "No relevant sources found"
                 )
             )
 
@@ -179,11 +205,12 @@ class CacheOnlySearchOrchestrator(
             var fullAnswer = ""
             var answerFound = false
             var imageIds = emptyList<String>()
+            var citedSourceUrls = emptyList<String>()
             streamingAnswerSynthesisAgent.generateStream(
                 StreamingAnswerSynthesisInput(
                     query = searchQuery.query,
-                    shortlistedSources = shortlistOutput.updatedShortlist,
-                    expandedQuery = shortlistOutput.expandedQuery
+                    evaluatedSources = evaluatedSources,
+                    expandedQuery = expandedQuery
                 )
             ).collect { item ->
                 when (item) {
@@ -198,15 +225,16 @@ class CacheOnlySearchOrchestrator(
                             item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                             item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                         )
-                        // Capture answerFound and image IDs from answer synthesis
+                        // Capture answerFound, image IDs, and cited sources from answer synthesis
                         answerFound = item.answerFound
                         imageIds = item.imageIds
+                        citedSourceUrls = item.citedSourceUrls
                     }
                 }
             }
 
-            // Mark answer sources
-            val answerSources = shortlistOutput.updatedShortlist.map { it.url }
+            // Mark answer sources - prefer cited sources if available
+            val answerSources = citedSourceUrls.ifEmpty { evaluatedSources.map { it.url } }
             if (answerSources.isNotEmpty()) {
                 urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
             }

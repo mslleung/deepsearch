@@ -3,8 +3,8 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.config.domainTestModule
+import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
-import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.SourceClassification
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -27,10 +27,10 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     private val agent by inject<IStreamingAnswerSynthesisAgent>()
 
     @Test
-    fun `should return default message when shortlisted sources are empty`() = runTest(testCoroutineDispatcher) {
+    fun `should return default message when evaluated sources are empty`() = runTest(testCoroutineDispatcher) {
         val input = StreamingAnswerSynthesisInput(
             query = "What is machine learning?",
-            shortlistedSources = emptyList()
+            evaluatedSources = emptyList()
         )
 
         val output = agent.generate(input)
@@ -43,8 +43,10 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
     @Test
     fun `should generate comprehensive answer from extracted facts`() = runTest(testCoroutineDispatcher) {
-        val source = ShortlistedSource(
+        val source = EvaluatedSource(
             url = "https://example.com/machine-learning",
+            title = "Machine Learning Guide",
+            description = "A comprehensive guide to ML",
             relevantFacts = listOf(
                 RelevantFact(
                     fact = "Machine learning is a subset of artificial intelligence (AI) that enables systems to learn and improve from experience without being explicitly programmed.",
@@ -67,7 +69,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         val input = StreamingAnswerSynthesisInput(
             query = "What is machine learning?",
-            shortlistedSources = listOf(source)
+            evaluatedSources = listOf(source)
         )
 
         val output = agent.generate(input)
@@ -80,8 +82,10 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
     @Test
     fun `should synthesize information from multiple sources with facts`() = runTest(testCoroutineDispatcher) {
-        val source1 = ShortlistedSource(
+        val source1 = EvaluatedSource(
             url = "https://example.com/ml-definition",
+            title = "ML Definition",
+            description = null,
             relevantFacts = listOf(
                 RelevantFact(
                     fact = "Machine learning is a branch of artificial intelligence and computer science that focuses on the use of data and algorithms to imitate the way humans learn.",
@@ -94,8 +98,10 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             relevanceJustification = "Clear definition of machine learning"
         )
 
-        val source2 = ShortlistedSource(
+        val source2 = EvaluatedSource(
             url = "https://example.com/ml-types",
+            title = "ML Types",
+            description = null,
             relevantFacts = listOf(
                 RelevantFact(
                     fact = "Supervised learning algorithms learn from labeled training data.",
@@ -118,7 +124,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         val input = StreamingAnswerSynthesisInput(
             query = "What is machine learning and what are its types?",
-            shortlistedSources = listOf(source1, source2)
+            evaluatedSources = listOf(source1, source2)
         )
 
         val output = agent.generate(input)
@@ -131,8 +137,10 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
     @Test
     fun `should prioritize facts from OFFICIAL_LIVING_DOC sources`() = runTest(testCoroutineDispatcher) {
-        val highRelevanceSource = ShortlistedSource(
+        val highRelevanceSource = EvaluatedSource(
             url = "https://example.com/deep-learning-official",
+            title = "Official Deep Learning Docs",
+            description = null,
             relevantFacts = listOf(
                 RelevantFact(
                     fact = "Deep learning is a subset of machine learning that uses neural networks with multiple layers.",
@@ -149,8 +157,10 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             relevanceJustification = "Official documentation on deep learning"
         )
 
-        val lowRelevanceSource = ShortlistedSource(
+        val lowRelevanceSource = EvaluatedSource(
             url = "https://example.com/ml-blog-post",
+            title = "Personal Blog",
+            description = null,
             relevantFacts = listOf(
                 RelevantFact(
                     fact = "I started learning machine learning last month.",
@@ -165,7 +175,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         val input = StreamingAnswerSynthesisInput(
             query = "What is deep learning?",
-            shortlistedSources = listOf(lowRelevanceSource, highRelevanceSource)
+            evaluatedSources = listOf(lowRelevanceSource, highRelevanceSource)
         )
 
         val output = agent.generate(input)
@@ -177,8 +187,10 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
     @Test
     fun `should indicate answerFound false when facts are not relevant`() = runTest(testCoroutineDispatcher) {
-        val irrelevantSource = ShortlistedSource(
+        val irrelevantSource = EvaluatedSource(
             url = "https://example.com/cooking-recipes",
+            title = "Cooking Recipes",
+            description = null,
             relevantFacts = listOf(
                 RelevantFact(
                     fact = "Chocolate chip cookies need 2 cups flour and 1 cup sugar.",
@@ -197,7 +209,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         val input = StreamingAnswerSynthesisInput(
             query = "What is quantum computing?",
-            shortlistedSources = listOf(irrelevantSource)
+            evaluatedSources = listOf(irrelevantSource)
         )
 
         val output = agent.generate(input)
@@ -207,4 +219,3 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 }
-

@@ -10,17 +10,18 @@ import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.services.IGeminiFileSearchService
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
-import io.deepsearch.domain.agents.IPreviewSourceShortlistAgent
+import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
+import io.deepsearch.domain.agents.IMarkdownSourceEvalAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.ISerpQueryOptimizationAgent
-import io.deepsearch.domain.agents.ISourceShortlistAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
-import io.deepsearch.domain.agents.PreviewSourceShortlistInput
+import io.deepsearch.domain.agents.HtmlSourceEvalInput
+import io.deepsearch.domain.agents.MarkdownSourceEvalInput
 import io.deepsearch.domain.agents.SerpQueryOptimizationInput
-import io.deepsearch.domain.agents.SourceShortlistInput
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerStreamItem
+import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.exceptions.MarkdownConversionException
@@ -38,7 +39,6 @@ import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.models.valueobjects.ShortlistedSource
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.services.INormalizeUrlService
@@ -93,9 +93,9 @@ class AgenticBrowserSearchOrchestrator(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
     private val answerReviewerAgent: IAnswerReviewerAgent,
-    private val sourceShortlistAgent: ISourceShortlistAgent,
+    private val htmlSourceEvalAgent: IHtmlSourceEvalAgent,
+    private val markdownSourceEvalAgent: IMarkdownSourceEvalAgent,
     private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
-    private val previewSourceShortlistAgent: IPreviewSourceShortlistAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
@@ -218,17 +218,16 @@ class AgenticBrowserSearchOrchestrator(
             // Build the list of flows to merge
             val pathFlows = mutableListOf<Flow<AccumulatorUpdate>>()
 
-            // Preview path: fast HTML evaluation for early exit (stateless per batch)
+            // Preview path: fast HTML evaluation for early exit (stateless per source)
             // Only enabled when includeImages is false
             if (!includeImages) {
                 pathFlows.add(
                     sourceFlow
                         .filterIsInstance<UrlContentResult.HtmlPreview>()
-                        .chunkedWithTimeout(chunkSize = 1, timeoutMs = 300)  // minimal chunk size (no chunk), this improves processPreviewBatch process time
                         .takeWhile { !answerAccumulator.isComplete }
-                        .flatMapMerge(concurrency = 100) { htmlBatch ->
+                        .flatMapMerge(concurrency = 100) { htmlSource ->
                             flow {
-                                emit(processPreviewBatch(sessionId, searchQuery, htmlBatch))
+                                emit(processHtmlSource(sessionId, searchQuery, htmlSource))
                             }
                         }
                         .onEach { lastPreviewResult = it }
@@ -251,19 +250,24 @@ class AgenticBrowserSearchOrchestrator(
                 )
             }
 
-            // Main path: full markdown processing
+            // Main path: full markdown processing (parallel evaluation, then answer synthesis)
             pathFlows.add(
                 sourceFlow
                     .filterIsInstance<UrlContentResult.FullMarkdown>()
                     .filter { it.markdown.isNotBlank() }
                     .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
-                    .chunkedWithTimeout(chunkSize = 15, timeoutMs = 1000)
                     .takeWhile { !includeImages || lastPreviewResult?.isAnswerFound != true }
-                    .runningFold(AnswerAccumulator()) { state, markdownResults ->
+                    .flatMapMerge(concurrency = 100) { markdownSource ->
+                        flow {
+                            emit(evaluateMarkdownSource(sessionId, searchQuery, markdownSource))
+                        }
+                    }
+                    .filter { it != null }
+                    .map { it!! }
+                    .runningFold(AnswerAccumulator()) { state, evalResult ->
                         aggregateMarkdownResultIntoAnswer(
-                            sessionId, searchQuery, state, markdownResults, channel,
-                            isPreviewConfident = { !includeImages && lastPreviewResult?.isAnswerFound == true },
-                            includeImages = includeImages
+                            sessionId, searchQuery, state, evalResult, channel,
+                            isPreviewConfident = { !includeImages && lastPreviewResult?.isAnswerFound == true }
                         )
                     }
                     .onEach { answerAccumulator = it }
@@ -1038,29 +1042,37 @@ class AgenticBrowserSearchOrchestrator(
      * Tracks markdown sources by URL to enable preview-to-full-markdown upgrades.
      */
     private data class AnswerAccumulator(
-        val currentShortlist: List<ShortlistedSource> = emptyList(),
+        /** Evaluated sources accumulated from parallel markdown evaluation */
+        val evaluatedSources: List<EvaluatedSource> = emptyList(),
         /** Set of URLs that have been processed (for deduplication) */
         val processedUrls: Set<String> = emptySet(),
         val isComplete: Boolean = false,
-        /** Expanded query from the shortlist agent that clarifies the user's core intent */
-        val expandedQuery: String? = null
+        /** Expanded query from the eval agent that clarifies the user's core intent */
+        val expandedQuery: String? = null,
+        /** Full answer from the last answer synthesis attempt */
+        val fullAnswer: String? = null,
+        /** URLs of sources that were actually cited in the answer */
+        val citedSourceUrls: List<String> = emptyList(),
+        /** Image IDs from the answer */
+        val imageIds: List<String> = emptyList()
     )
 
     /**
-     * Result from processing a preview batch.
-     * Stateless - each batch is processed independently.
-     * Uses a 2-agent flow: PreviewSourceShortlistAgent -> StreamingAnswerSynthesisAgent.
+     * Result from processing a preview source.
+     * Stateless - each source is processed independently.
+     * Uses a 2-agent flow: HtmlSourceEvalAgent -> StreamingAnswerSynthesisAgent.
      */
     private data class PreviewResult(
-        val shortlistedSources: List<ShortlistedSource> = emptyList(),
+        val evaluatedSources: List<EvaluatedSource> = emptyList(),
         val answerType: AnswerType = AnswerType.PARTIAL_MENTION,
         val fullAnswer: String? = null
     ) {
         /**
-         * Whether a confident answer was found (DIRECT_ANSWER or INFERRED_ANSWER).
-         * PARTIAL_MENTION is not considered confident enough for early exit.
+         * Whether a confident answer was found.
+         * Preview path only accepts DIRECT_ANSWER to avoid hallucination.
+         * INFERRED_ANSWER and PARTIAL_MENTION are not confident enough for early exit.
          */
-        val isAnswerFound: Boolean get() = answerType != AnswerType.PARTIAL_MENTION
+        val isAnswerFound: Boolean get() = answerType == AnswerType.DIRECT_ANSWER
     }
 
     /**
@@ -1071,54 +1083,153 @@ class AgenticBrowserSearchOrchestrator(
         data class Main(val accumulator: AnswerAccumulator) : AccumulatorUpdate()
     }
 
-    private suspend fun aggregateMarkdownResultIntoAnswer(
+    /**
+     * Result from evaluating a single markdown source.
+     */
+    private data class MarkdownEvalResult(
+        val evaluatedSource: EvaluatedSource,
+        val expandedQuery: String
+    )
+
+    /**
+     * Result from answer synthesis, containing all relevant data from the streaming response.
+     */
+    private data class SynthesisResult(
+        val answer: String,
+        val answerType: AnswerType,
+        val reasoning: String,
+        val citedSourceUrls: List<String>,
+        val imageIds: List<String>
+    ) {
+        /** Whether the answer is good enough (DIRECT_ANSWER or INFERRED_ANSWER) */
+        val isGoodEnough: Boolean get() = answerType != AnswerType.PARTIAL_MENTION
+    }
+
+    /**
+     * Evaluate a single markdown source using the stateless MarkdownSourceEvalAgent.
+     * Returns null if the source is not relevant.
+     */
+    private suspend fun evaluateMarkdownSource(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        state: AnswerAccumulator,
-        markdownSources: List<MarkdownSource>,
-        eventChannel: SendChannel<SearchEvent>,
-        isPreviewConfident: () -> Boolean,
-        includeImages: Boolean = false
-    ): AnswerAccumulator {
-        // Filter to only new URLs (deduplication)
-        val sourcesToEvaluate = markdownSources.filter { it.url !in state.processedUrls }
-
-        // If no new sources to evaluate, return current state unchanged
-        if (sourcesToEvaluate.isEmpty()) {
-            return state
-        }
-
-        val updatedProcessedUrls = state.processedUrls + sourcesToEvaluate.map { it.url }
-
-        val output = sourceShortlistAgent.generate(
-            SourceShortlistInput(searchQuery, state.currentShortlist, sourcesToEvaluate)
+        markdownSource: MarkdownSource
+    ): MarkdownEvalResult? {
+        val output = markdownSourceEvalAgent.generate(
+            MarkdownSourceEvalInput(searchQuery, markdownSource)
         )
 
         tokenUsageService.recordTokenUsage(
-            sessionId, "SourceShortlistAgent",
+            sessionId, "MarkdownSourceEvalAgent",
             output.tokenUsage.modelName, output.tokenUsage.promptTokens,
             output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
         )
 
+        return output.evaluatedSource?.let { 
+            MarkdownEvalResult(it, output.expandedQuery) 
+        }
+    }
+
+    /**
+     * Synthesize an answer from evaluated sources.
+     * Handles streaming collection and token usage recording.
+     */
+    private suspend fun synthesizeAnswer(
+        sessionId: QuerySessionId,
+        query: String,
+        evaluatedSources: List<EvaluatedSource>,
+        expandedQuery: String?
+    ): SynthesisResult {
+        val answerBuilder = StringBuilder()
+        lateinit var answerType: AnswerType
+        var reasoning = ""
+        var citedSourceUrls = emptyList<String>()
+        var imageIds = emptyList<String>()
+
+        streamingAnswerSynthesisAgent.generateStream(
+            StreamingAnswerSynthesisInput(
+                query = query,
+                evaluatedSources = evaluatedSources,
+                expandedQuery = expandedQuery
+            )
+        ).collect { item ->
+            when (item) {
+                is StreamingAnswerStreamItem.Chunk -> answerBuilder.append(item.text)
+                is StreamingAnswerStreamItem.Complete -> {
+                    tokenUsageService.recordTokenUsage(
+                        sessionId, "StreamingAnswerSynthesisAgent",
+                        item.tokenUsage.modelName, item.tokenUsage.promptTokens,
+                        item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
+                    )
+                    answerType = item.answerType
+                    reasoning = item.reasoning
+                    citedSourceUrls = item.citedSourceUrls
+                    imageIds = item.imageIds
+                }
+            }
+        }
+
+        return SynthesisResult(
+            answer = answerBuilder.toString(),
+            answerType = answerType,
+            reasoning = reasoning,
+            citedSourceUrls = citedSourceUrls,
+            imageIds = imageIds
+        )
+    }
+
+    /**
+     * Aggregate a newly evaluated markdown source and attempt answer synthesis.
+     * Uses answerType to determine if the answer is "good enough":
+     * - DIRECT_ANSWER or INFERRED_ANSWER = good enough, stop collecting
+     * - PARTIAL_MENTION = keep collecting sources
+     */
+    private suspend fun aggregateMarkdownResultIntoAnswer(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery,
+        state: AnswerAccumulator,
+        evalResult: MarkdownEvalResult,
+        eventChannel: SendChannel<SearchEvent>,
+        isPreviewConfident: () -> Boolean
+    ): AnswerAccumulator {
+        // Skip if already processed (deduplication)
+        if (evalResult.evaluatedSource.url in state.processedUrls) {
+            return state
+        }
+
+        val updatedSources = state.evaluatedSources + evalResult.evaluatedSource
+        val updatedProcessedUrls = state.processedUrls + evalResult.evaluatedSource.url
+
+        // Synthesize answer with accumulated sources
+        val synthesis = synthesizeAnswer(
+            sessionId, searchQuery.query, updatedSources, evalResult.expandedQuery
+        )
+
+        logger.debug(
+            "[{}] Main path synthesis: {} sources, answerType={}, isGoodEnough={}, citedSources={}",
+            sessionId.value, updatedSources.size, synthesis.answerType, synthesis.isGoodEnough, synthesis.citedSourceUrls.size
+        )
+
         // Only emit ShortlistUpdated if preview path hasn't already produced a confident answer
-        // This prevents race condition where main path emits events after preview answer starts streaming
         if (!isPreviewConfident()) {
             eventChannel.send(
                 SearchEvent.ShortlistUpdated(
                     sessionId = sessionId,
                     processedUrlCount = updatedProcessedUrls.size,
-                    shortlistedCount = output.updatedShortlist.size,
-                    isGoodEnough = output.isGoodEnough,
-                    reason = output.reason
+                    shortlistedCount = updatedSources.size,
+                    isGoodEnough = synthesis.isGoodEnough,
+                    reason = if (synthesis.isGoodEnough) "Answer is comprehensive (${synthesis.answerType})" else "Collecting more sources"
                 )
             )
         }
 
         return AnswerAccumulator(
-            currentShortlist = output.updatedShortlist,
+            evaluatedSources = updatedSources,
             processedUrls = updatedProcessedUrls,
-            isComplete = output.isGoodEnough,
-            expandedQuery = output.expandedQuery
+            isComplete = synthesis.isGoodEnough,
+            expandedQuery = evalResult.expandedQuery,
+            fullAnswer = synthesis.answer,
+            citedSourceUrls = synthesis.citedSourceUrls,
+            imageIds = synthesis.imageIds
         )
     }
 
@@ -1140,161 +1251,120 @@ class AgenticBrowserSearchOrchestrator(
             return
         }
 
-        // Stream the answer and emit chunks
-        var fullAnswer = ""
-        streamingAnswerSynthesisAgent.generateStream(
-            StreamingAnswerSynthesisInput(
-                query = searchQuery.query,
-                shortlistedSources = accumulator.currentShortlist,
-                expandedQuery = accumulator.expandedQuery
-            )
-        ).collect { item ->
-            when (item) {
-                is StreamingAnswerStreamItem.Chunk -> {
-                    fullAnswer += item.text
-                    eventChannel.send(SearchEvent.AnswerChunk(sessionId, item.text))
-                }
+        val fullAnswer = accumulator.fullAnswer ?: "No information found to answer the query."
+        val imageIds = accumulator.imageIds
+        val answerFound = accumulator.fullAnswer?.isNotBlank() == true
 
-                is StreamingAnswerStreamItem.Complete -> {
-                    // Record token usage from the final streaming chunk
-                    tokenUsageService.recordTokenUsage(
-                        sessionId, "StreamingAnswerSynthesisAgent",
-                        item.tokenUsage.modelName, item.tokenUsage.promptTokens,
-                        item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
-                    )
-                    // Capture answerFound and image IDs from answer synthesis
-                    val answerFound = item.answerFound
-                    val imageIds = item.imageIds
+        eventChannel.send(SearchEvent.AnswerChunk(sessionId, fullAnswer))
+        finishSessionWithAnswer(sessionId, accumulator, budget, eventChannel, fullAnswer, answerFound, imageIds)
+    }
 
-                    val answerSources = accumulator.currentShortlist.map { it.url }
-                    if (answerSources.isNotEmpty()) {
-                        urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
-                    }
-
-                    val finishReason = when {
-                        accumulator.isComplete -> "ANSWER_COMPLETE"
-                        querySessionService.isBudgetExceeded(sessionId, budget) -> "BUDGET_EXCEEDED"
-                        else -> "LINKS_EXHAUSTED"
-                    }
-
-                    when (finishReason) {
-                        "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(
-                            sessionId,
-                            fullAnswer,
-                            answerFound,
-                            imageIds
-                        )
-
-                        "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(
-                            sessionId,
-                            fullAnswer,
-                            answerFound,
-                            budget,
-                            imageIds
-                        )
-
-                        else -> querySessionService.completeSessionLinksExhausted(
-                            sessionId,
-                            fullAnswer,
-                            answerFound,
-                            imageIds
-                        )
-                    }
-
-                    // Fetch full session detail for the completed event
-                    val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
-
-                    eventChannel.send(
-                        SearchEvent.SessionCompleted(
-                            sessionId = sessionId,
-                            finishReason = finishReason,
-                            sessionDetail = sessionDetail,
-                            imageIds = imageIds
-                        )
-                    )
-                }
-            }
+    private suspend fun finishSessionWithAnswer(
+        sessionId: QuerySessionId,
+        accumulator: AnswerAccumulator,
+        budget: SearchBudget,
+        eventChannel: SendChannel<SearchEvent>,
+        fullAnswer: String,
+        answerFound: Boolean,
+        imageIds: List<String>
+    ) {
+        // Use cited sources if available, otherwise fall back to all sources
+        val answerSources = accumulator.citedSourceUrls.ifEmpty { 
+            accumulator.evaluatedSources.map { it.url } 
         }
+        if (answerSources.isNotEmpty()) {
+            urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
+        }
+
+        val finishReason = when {
+            accumulator.isComplete -> "ANSWER_COMPLETE"
+            querySessionService.isBudgetExceeded(sessionId, budget) -> "BUDGET_EXCEEDED"
+            else -> "LINKS_EXHAUSTED"
+        }
+
+        when (finishReason) {
+            "ANSWER_COMPLETE" -> querySessionService.completeSessionAnswerComplete(
+                sessionId,
+                fullAnswer,
+                answerFound,
+                imageIds
+            )
+
+            "BUDGET_EXCEEDED" -> querySessionService.completeSessionBudgetExceeded(
+                sessionId,
+                fullAnswer,
+                answerFound,
+                budget,
+                imageIds
+            )
+
+            else -> querySessionService.completeSessionLinksExhausted(
+                sessionId,
+                fullAnswer,
+                answerFound,
+                imageIds
+            )
+        }
+
+        // Fetch full session detail for the completed event
+        val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
+
+        eventChannel.send(
+            SearchEvent.SessionCompleted(
+                sessionId = sessionId,
+                finishReason = finishReason,
+                sessionDetail = sessionDetail,
+                imageIds = imageIds
+            )
+        )
     }
 
     /**
-     * Process a batch of HTML previews independently (stateless, side-effect-free).
+     * Process a single HTML preview source independently (stateless, side-effect-free).
      * Uses a 2-agent flow:
-     * 1. PreviewSourceShortlistAgent (non-streaming) - extracts facts and classifies sources, filters table facts
+     * 1. HtmlSourceEvalAgent (non-streaming) - extracts facts and classifies source, filters table facts
      * 2. StreamingAnswerSynthesisAgent (streaming) - generates answer and determines answerFound
      * 
      * Returns a PreviewResult with buffered answer. The caller is responsible for emitting
-     * the answer to the event channel after .take(1) selects the winning batch.
+     * the answer to the event channel after .take(1) selects the winning source.
      */
-    private suspend fun processPreviewBatch(
+    private suspend fun processHtmlSource(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        htmlBatch: List<UrlContentResult.HtmlPreview>
+        htmlSource: UrlContentResult.HtmlPreview
     ): PreviewResult {
-        if (htmlBatch.isEmpty()) {
+        // Step 1: Source Eval - extracts facts, filters table facts
+        val evalOutput = htmlSourceEvalAgent.generate(HtmlSourceEvalInput(searchQuery, htmlSource))
+        tokenUsageService.recordTokenUsage(
+            sessionId, "HtmlSourceEvalAgent",
+            evalOutput.tokenUsage.modelName, evalOutput.tokenUsage.promptTokens,
+            evalOutput.tokenUsage.outputTokens, evalOutput.tokenUsage.totalTokens
+        )
+
+        val evaluatedSource = evalOutput.evaluatedSource ?: run {
+            logger.debug("[{}] HTML source not relevant: {}", sessionId.value, htmlSource.url)
             return PreviewResult()
         }
 
-        // Step 1: Source Shortlist (non-streaming) - extracts facts, filters table facts
-        val shortlistOutput = previewSourceShortlistAgent.generate(
-            PreviewSourceShortlistInput(searchQuery, htmlBatch)
+        logger.debug(
+            "[{}] HTML source evaluation: url={}, {} facts",
+            sessionId.value, htmlSource.url, evaluatedSource.relevantFacts.size
         )
 
-        tokenUsageService.recordTokenUsage(
-            sessionId, "PreviewSourceShortlistAgent",
-            shortlistOutput.tokenUsage.modelName, shortlistOutput.tokenUsage.promptTokens,
-            shortlistOutput.tokenUsage.outputTokens, shortlistOutput.tokenUsage.totalTokens
+        // Step 2: Answer Synthesis
+        val synthesis = synthesizeAnswer(
+            sessionId, searchQuery.query, listOf(evaluatedSource), evalOutput.expandedQuery
         )
 
         logger.debug(
-            "[{}] Preview source shortlist: {} sources, {} facts, expandedQuery: {}",
-            sessionId.value,
-            shortlistOutput.shortlistedSources.size,
-            shortlistOutput.shortlistedSources.sumOf { it.relevantFacts.size },
-            shortlistOutput.expandedQuery
+            "[{}] Preview synthesis: answerType={}, {} chars, reasoning={}",
+            sessionId.value, synthesis.answerType, synthesis.answer.length, synthesis.reasoning
         )
 
-        // Step 2: Answer Synthesis (streaming) - uses unified agent, determines answerType
-        val fullAnswer = StringBuilder()
-        lateinit var answerType: AnswerType
-        var reasoning = ""
-
-        streamingAnswerSynthesisAgent.generateStream(
-            StreamingAnswerSynthesisInput(
-                query = searchQuery.query,
-                shortlistedSources = shortlistOutput.shortlistedSources,
-                expandedQuery = shortlistOutput.expandedQuery
-            )
-        ).collect { item ->
-            when (item) {
-                is StreamingAnswerStreamItem.Chunk -> {
-                    fullAnswer.append(item.text)
-                    // Buffer chunks - only emit if answerType is DIRECT_ANSWER or INFERRED_ANSWER
-                }
-
-                is StreamingAnswerStreamItem.Complete -> {
-                    tokenUsageService.recordTokenUsage(
-                        sessionId, "StreamingAnswerSynthesisAgent",
-                        item.tokenUsage.modelName, item.tokenUsage.promptTokens,
-                        item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
-                    )
-                    answerType = item.answerType
-                    reasoning = item.reasoning
-                }
-            }
-        }
-
-        val isConfident = answerType != AnswerType.PARTIAL_MENTION
-        logger.debug(
-            "[{}] Preview answer synthesis: answerType={}, answer length={}, reasoning={}",
-            sessionId.value, answerType, fullAnswer.length, reasoning
-        )
-
-        // Return result with buffered answer - emission happens after .take(1) selects the winner
         return PreviewResult(
-            shortlistedSources = shortlistOutput.shortlistedSources,
-            answerType = answerType,
-            fullAnswer = if (isConfident) fullAnswer.toString() else null
+            evaluatedSources = listOf(evaluatedSource),
+            answerType = synthesis.answerType,
+            fullAnswer = if (synthesis.isGoodEnough) synthesis.answer else null
         )
     }
 
@@ -1327,14 +1397,14 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel.send(
             SearchEvent.ShortlistUpdated(
                 sessionId = sessionId,
-                processedUrlCount = result.shortlistedSources.size,
-                shortlistedCount = result.shortlistedSources.size,
+                processedUrlCount = result.evaluatedSources.size,
+                shortlistedCount = result.evaluatedSources.size,
                 isGoodEnough = true, // Preview path only finishes when confident
                 reason = "Preview path confident answer"
             )
         )
 
-        val answerSources = result.shortlistedSources.map { it.url }
+        val answerSources = result.evaluatedSources.map { it.url }
         if (answerSources.isNotEmpty()) {
             urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
         }

@@ -104,8 +104,8 @@ private val domainCommonTestModule = module {
     singleOf(::SerpQueryOptimizationAgentGenAiImpl) bind ISerpQueryOptimizationAgent::class
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
     singleOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
-    singleOf(::SourceShortlistAgentGenAiImpl) bind ISourceShortlistAgent::class
-    singleOf(::PreviewSourceShortlistAgentGenAiImpl) bind IPreviewSourceShortlistAgent::class
+    singleOf(::HtmlSourceEvalAgentGenAiImpl) bind IHtmlSourceEvalAgent::class
+    singleOf(::MarkdownSourceEvalAgentGenAiImpl) bind IMarkdownSourceEvalAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class

@@ -113,8 +113,8 @@ val domainModule = module {
         scopedOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
         scopedOf(::SerpQueryOptimizationAgentGenAiImpl) bind ISerpQueryOptimizationAgent::class
         scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
-        scopedOf(::SourceShortlistAgentGenAiImpl) bind ISourceShortlistAgent::class
-        scopedOf(::PreviewSourceShortlistAgentGenAiImpl) bind IPreviewSourceShortlistAgent::class
+        scopedOf(::HtmlSourceEvalAgentGenAiImpl) bind IHtmlSourceEvalAgent::class
+        scopedOf(::MarkdownSourceEvalAgentGenAiImpl) bind IMarkdownSourceEvalAgent::class
 
         // Request-scoped domain services (user/auth related)
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class
