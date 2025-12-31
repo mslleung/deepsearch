@@ -20,22 +20,13 @@ import org.koin.module.requestScope
 
 val infrastructureModule = module {
 
-    // DatabaseConfigurationService has too many parameters for singleOf (>22), so we use manual injection
-    single<IDatabaseConfigurationService>(createdAtStart = true) {
-        DatabaseConfigurationService(
-            get(), get(),  // environmentConfig, postgresConfig
-            get(), get(), get(),  // userTable, apiKeyTable, userSubscriptionTable
-            get(), get(), get(),  // webpageIconCacheTable, webpageImageCacheTable, webpageImageLinkageTable
-            get(), get(), get(),  // webpagePopupCacheTable, webpageTableCacheTable, webpageTableInterpretationCacheTable
-            get(), get(), get(),  // webpageSemanticElementCacheTable, webpageMarkdownCacheTable, querySessionTable
-            get(), get(), get(),  // periodicIndexJobTable, sitemapCacheTable, urlAccessTable
-            get(), get(), get(),  // llmTokenUsageTable, periodicIndexConfigTable, batchPeriodicIndexJobTable
-            get(), get(),  // batchUrlStateTable, proxyRuleTable
-            get(), get(), get()  // kgEntityEmbeddingsTable, kgEntitySourcesTable, kgRelationshipSourcesTable
-        )
-    }
+    // Database services
+    singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
     singleOf(::TransactionService) bind ITransactionService::class
+    
+    // DatabaseTables container (lazily resolves all tables via KoinComponent)
+    singleOf(::DatabaseTables)
 
     // All table instances (singletons, depend on DatabaseCryptoService)
     singleOf(::UserTable)

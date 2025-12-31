@@ -2,13 +2,12 @@ package io.deepsearch.infrastructure.services
 
 import io.deepsearch.domain.config.EnvironmentConfig
 import io.deepsearch.domain.config.PostgresConfig
-import io.deepsearch.infrastructure.database.*
+import io.deepsearch.infrastructure.database.DatabaseTables
 import io.r2dbc.pool.ConnectionPool
 import io.r2dbc.pool.ConnectionPoolConfiguration
 import io.r2dbc.postgresql.PostgresqlConnectionConfiguration
 import io.r2dbc.postgresql.PostgresqlConnectionFactory
 import io.r2dbc.spi.IsolationLevel
-import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.core.vendors.PostgreSQLDialect
 import org.jetbrains.exposed.v1.r2dbc.*
@@ -31,29 +30,7 @@ interface IDatabaseConfigurationService {
 class DatabaseConfigurationService(
     private val environmentConfig: EnvironmentConfig,
     private val postgresConfig: PostgresConfig,
-    private val userTable: UserTable,
-    private val apiKeyTable: ApiKeyTable,
-    private val userSubscriptionTable: UserSubscriptionTable,
-    private val webpageIconCacheTable: WebpageIconCacheTable,
-    private val webpageImageCacheTable: WebpageImageCacheTable,
-    private val webpageImageLinkageTable: WebpageImageLinkageTable,
-    private val webpagePopupCacheTable: WebpagePopupCacheTable,
-    private val webpageTableCacheTable: WebpageTableCacheTable,
-    private val webpageTableInterpretationCacheTable: WebpageTableInterpretationCacheTable,
-    private val webpageSemanticElementCacheTable: WebpageSemanticElementCacheTable,
-    private val webpageMarkdownCacheTable: WebpageMarkdownCacheTable,
-    private val querySessionTable: QuerySessionTable,
-    private val periodicIndexJobTable: PeriodicIndexJobTable,
-    private val sitemapCacheTable: SitemapCacheTable,
-    private val urlAccessTable: UrlAccessTable,
-    private val llmTokenUsageTable: LlmTokenUsageTable,
-    private val periodicIndexConfigTable: PeriodicIndexConfigTable,
-    private val batchPeriodicIndexJobTable: BatchPeriodicIndexJobTable,
-    private val batchUrlStateTable: BatchUrlStateTable,
-    private val proxyRuleTable: ProxyRuleTable,
-    private val kgEntityEmbeddingsTable: KgEntityEmbeddingsTable,
-    private val kgEntitySourcesTable: KgEntitySourcesTable,
-    private val kgRelationshipSourcesTable: KgRelationshipSourcesTable,
+    private val tables: DatabaseTables,
 ) : IDatabaseConfigurationService {
 
     private val logger = LoggerFactory.getLogger(DatabaseConfigurationService::class.java)
@@ -115,31 +92,7 @@ class DatabaseConfigurationService(
                     END $$;
                 """.trimIndent())
 
-                SchemaUtils.create(
-                    userTable,
-                    apiKeyTable,
-                    userSubscriptionTable,
-                    webpageIconCacheTable,
-                    webpageImageCacheTable,
-                    webpageImageLinkageTable,
-                    webpagePopupCacheTable,
-                    webpageTableCacheTable,
-                    webpageTableInterpretationCacheTable,
-                    webpageSemanticElementCacheTable,
-                    webpageMarkdownCacheTable,
-                    querySessionTable,
-                    periodicIndexJobTable,
-                    sitemapCacheTable,
-                    urlAccessTable,
-                    llmTokenUsageTable,
-                    periodicIndexConfigTable,
-                    batchPeriodicIndexJobTable,
-                    batchUrlStateTable,
-                    proxyRuleTable,
-                    kgEntityEmbeddingsTable,
-                    kgEntitySourcesTable,
-                    kgRelationshipSourcesTable,
-                )
+                SchemaUtils.create(*tables.allTables)
                 
                 // Enable Apache AGE extension for graph database functionality
                 // NOTE: Apache AGE must be installed on the PostgreSQL server
