@@ -1,6 +1,7 @@
 package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
+import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.AnswerType
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
@@ -12,40 +13,42 @@ import kotlinx.coroutines.flow.Flow
  * 
  * @property query The original user query
  * @property evaluatedSources Sources with extracted facts to synthesize the answer from
- * @property expandedQuery Optional clarified/expanded version of the query that captures the core intent.
- *           If provided, this is used for answer synthesis instead of the original query.
- *           For example: "tell me about the pricing" → "What are the main subscription plans and pricing tiers?"
+ * @property previouslySearchedQueries List of queries that have already been searched.
+ *           Used to prevent the agent from suggesting duplicate follow-up queries.
+ * @property targetDomain The target domain for the search (used for site: prefixing follow-up queries)
  */
 data class StreamingAnswerSynthesisInput(
     val query: String,
     val evaluatedSources: List<EvaluatedSource>,
-    val expandedQuery: String? = null
-) : IAgent.IAgentInput {
-    /**
-     * Returns the effective query to use for answer synthesis.
-     * Prefers expandedQuery if available, otherwise falls back to the original query.
-     */
-    val effectiveQuery: String get() = expandedQuery ?: query
-}
+    val previouslySearchedQueries: List<String> = emptyList(),
+    val targetDomain: String = ""
+) : IAgent.IAgentInput
 
 /**
  * Output from streaming answer synthesis agent.
- * Contains the generated comprehensive answer, answer type classification, reasoning, and referenced image IDs.
+ * Contains the generated comprehensive answer, status, and optional follow-up queries for the feedback loop.
+ * 
+ * @property answer The synthesized answer text
+ * @property status COMPLETE if the answer is sufficient, NEEDS_MORE_SOURCES if more searching is needed
+ * @property answerType Quality classification (DIRECT_ANSWER, INFERRED_ANSWER, PARTIAL_MENTION) - for logging only
+ * @property reasoning Explanation of how the answer was derived and why status was chosen
+ * @property followUpQueries Targeted search queries to find missing information (required when status=NEEDS_MORE_SOURCES)
+ * @property whatsMissing Description of what information is missing (required when status=NEEDS_MORE_SOURCES)
+ * @property imageIds List of image IDs referenced in the answer
+ * @property citedSourceUrls URLs of sources that were actually cited in the answer
+ * @property tokenUsage Token usage metrics for this synthesis call
  */
 data class StreamingAnswerSynthesisOutput(
     val answer: String,
+    val status: AnswerStatus,
     val answerType: AnswerType,
     val reasoning: String,
+    val followUpQueries: List<String> = emptyList(),
+    val whatsMissing: String? = null,
     val imageIds: List<String> = emptyList(),
-    val tokenUsage: TokenUsageMetrics,
-    val citedSourceUrls: List<String> = emptyList()
-) : IAgent.IAgentOutput {
-    /**
-     * Whether a meaningful answer was found (DIRECT_ANSWER or INFERRED_ANSWER).
-     * PARTIAL_MENTION is not considered a found answer.
-     */
-    val answerFound: Boolean get() = answerType != AnswerType.PARTIAL_MENTION
-}
+    val citedSourceUrls: List<String> = emptyList(),
+    val tokenUsage: TokenUsageMetrics
+) : IAgent.IAgentOutput
 
 /**
  * Items emitted during streaming answer generation.
@@ -57,32 +60,27 @@ sealed class StreamingAnswerStreamItem {
     data class Chunk(val text: String) : StreamingAnswerStreamItem()
 
     /**
-     * Emitted after all chunks, contains token usage, answer type, reasoning, and referenced image IDs.
+     * Emitted after all chunks, contains status, token usage, and feedback loop data.
      * 
      * @property tokenUsage Token usage metrics for this synthesis call
-     * @property answerType Classification of how well the answer addresses the query.
-     *           Use this to determine if answer is acceptable:
-     *           - DIRECT_ANSWER: Confident answer (acceptable for both preview and main paths)
-     *           - INFERRED_ANSWER: Reasonable answer (acceptable for main path only)
-     *           - PARTIAL_MENTION: Incomplete (continue collecting sources)
-     * @property reasoning Explanation of how the answer was derived
+     * @property status COMPLETE if the answer is sufficient, NEEDS_MORE_SOURCES if more searching is needed
+     * @property answerType Quality classification (DIRECT_ANSWER, INFERRED_ANSWER, PARTIAL_MENTION) - for logging only
+     * @property reasoning Explanation of how the answer was derived and why status was chosen
+     * @property followUpQueries Targeted search queries to find missing information (when status=NEEDS_MORE_SOURCES)
+     * @property whatsMissing Description of what information is missing (when status=NEEDS_MORE_SOURCES)
      * @property imageIds List of image IDs referenced in the answer
-     * @property citedSourceUrls URLs of sources that were actually cited in the answer.
-     *           Used to filter the final source list to only include sources that contributed to the answer.
+     * @property citedSourceUrls URLs of sources that were actually cited in the answer
      */
     data class Complete(
         val tokenUsage: TokenUsageMetrics,
+        val status: AnswerStatus,
         val answerType: AnswerType,
         val reasoning: String,
+        val followUpQueries: List<String> = emptyList(),
+        val whatsMissing: String? = null,
         val imageIds: List<String> = emptyList(),
         val citedSourceUrls: List<String> = emptyList()
-    ) : StreamingAnswerStreamItem() {
-        /**
-         * Whether a meaningful answer was found (DIRECT_ANSWER or INFERRED_ANSWER).
-         * PARTIAL_MENTION is not considered a found answer.
-         */
-        val answerFound: Boolean get() = answerType != AnswerType.PARTIAL_MENTION
-    }
+    ) : StreamingAnswerStreamItem()
 }
 
 /**

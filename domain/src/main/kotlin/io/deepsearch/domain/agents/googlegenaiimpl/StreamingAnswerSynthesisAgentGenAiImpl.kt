@@ -13,6 +13,7 @@ import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.flowWithRateLimitRetry
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.AnswerType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.flow.Flow
@@ -40,12 +41,17 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Comprehensive answer with answer type classification and cited sources")
+        .description("Comprehensive answer with status for feedback loop, answer type for quality classification, and optional follow-up queries")
         .properties(
             mapOf(
                 "answer" to Schema.builder()
                     .type("STRING")
                     .description("Comprehensive answer to the search query based on the extracted facts")
+                    .build(),
+                "status" to Schema.builder()
+                    .type("STRING")
+                    .description("COMPLETE if the answer fully addresses the query with sufficient authoritative sources. NEEDS_MORE_SOURCES if the answer is partial or lacks authoritative sources and more searching is needed.")
+                    .enum_(listOf("COMPLETE", "NEEDS_MORE_SOURCES"))
                     .build(),
                 "answerType" to Schema.builder()
                     .type("STRING")
@@ -54,7 +60,17 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .build(),
                 "reasoning" to Schema.builder()
                     .type("STRING")
-                    .description("Brief explanation of how the answer was derived from the facts, or why the answer could not be found.")
+                    .description("Brief explanation of how the answer was derived from the facts, why this status was chosen, and what information is missing (if applicable).")
+                    .build(),
+                "followUpQueries" to Schema.builder()
+                    .type("ARRAY")
+                    .description("Targeted search queries to find missing information. Required when status=NEEDS_MORE_SOURCES. Each query should be specific and focused on a gap in the current answer. Do NOT include queries that have already been searched.")
+                    .items(Schema.builder().type("STRING").build())
+                    .build(),
+                "whatsMissing" to Schema.builder()
+                    .type("STRING")
+                    .description("Description of what specific information is missing from the current answer. Required when status=NEEDS_MORE_SOURCES.")
+                    .nullable(true)
                     .build(),
                 "imageIds" to Schema.builder()
                     .type("ARRAY")
@@ -68,11 +84,12 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("answer", "answerType", "reasoning", "imageIds", "citedSourceUrls"))
+        .required(listOf("answer", "status", "answerType", "reasoning", "followUpQueries", "imageIds", "citedSourceUrls"))
         .build()
 
     private val systemInstruction = $$"""
         You are an answer synthesis agent that generates comprehensive answers from pre-extracted facts.
+        You are part of a feedback loop that continues searching until the answer is complete.
         
         Answer Quality:
         - The answer should be as comprehensive as possible based on the provided facts
@@ -93,11 +110,41 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Synthesize information across facts when they complement each other
         
         Handling Insufficient Information:
-        - If the facts lack sufficient information to answer the query, state that clearly
+        - If the facts lack sufficient information to answer the query, provide the best answer possible with available facts
         - Only provide what can be substantiated by the facts
         - Do not speculate or fill gaps with external knowledge
+        - Set status=NEEDS_MORE_SOURCES and suggest targeted follow-up queries
         
-        Answer Type Classification:
+        ## Status Decision (CRITICAL - drives the feedback loop):
+        
+        - **COMPLETE**: The answer fully addresses the query with sufficient authoritative sources.
+          Use COMPLETE when:
+          - The core question is answered comprehensively
+          - Information comes from authoritative sources (preferably OFFICIAL_LIVING_DOC)
+          - No critical gaps remain in the answer
+          - Additional searching would not significantly improve the answer
+        
+        - **NEEDS_MORE_SOURCES**: The answer is partial or lacks authoritative sources.
+          Use NEEDS_MORE_SOURCES when:
+          - The answer only addresses a subset of what was asked
+          - Information is from lower-quality sources when official sources likely exist
+          - There are obvious gaps that targeted searches could fill
+          - The query has multiple facets and not all are covered
+          
+          When NEEDS_MORE_SOURCES, you MUST provide:
+          - whatsMissing: What specific information is lacking
+          - followUpQueries: 1-3 targeted search queries to find the missing info
+          
+        ## Follow-up Query Guidelines:
+        - Make queries specific and focused on the gap
+        - Do NOT suggest queries that have already been searched (check the "Previously Searched Queries" list)
+        - Queries will be automatically prefixed with site: for the target domain
+        - Examples:
+          - "pricing plans subscription tiers"
+          - "enterprise features comparison"
+          - "API rate limits documentation"
+        
+        ## Answer Type Classification (for quality logging):
         Choose the answerType that best describes how the facts address the CORE INTENT of the query:
         
         - DIRECT_ANSWER: Use ONLY when the facts explicitly and comprehensively answer the PRIMARY question.
@@ -106,8 +153,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
           - Query "What are the features?" → Facts list the main product features with details
           - The facts directly state the PRIMARY information the user is asking for
           CRITICAL: Answering a narrow subset or tangential aspect does NOT qualify as DIRECT_ANSWER.
-          For example, if asked "What is the pricing?" and facts only contain API usage fees, add-on costs,
-          or third-party fees (not the main subscription plans), that is PARTIAL_MENTION, not DIRECT_ANSWER.
         
         - INFERRED_ANSWER: Use when the answer can be derived by combining or interpreting facts.
           Examples:
@@ -115,30 +160,29 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
           - Query "Can it integrate with Shopify?" → Facts mention e-commerce integrations
           - The answer requires some interpretation but is well-supported by facts
         
-        - PARTIAL_MENTION: Use when facts only tangentially relate to the query or answer only a SUBSET of what was asked. BE STRICT - this is the default when uncertain.
+        - PARTIAL_MENTION: Use when facts only tangentially relate to the query or answer only a SUBSET of what was asked.
           Examples:
           - Query "What is the pricing?" → Facts only mention "start for free" without actual subscription tiers
-          - Query "What is the pricing?" → Facts only contain API/usage fees or third-party costs without main subscription plans
           - Query "What are the features?" → Facts only mention the product name without listing features
           - The facts touch on the topic but don't actually answer the CORE of what was asked
-          - You acknowledge "specific details are not available" or similar
-        
-        IMPORTANT: When in doubt, choose PARTIAL_MENTION. It's better to continue searching than to prematurely conclude with incomplete information. Answering a tangential aspect of a broad query (e.g., WhatsApp API fees when asked about overall product pricing) should be PARTIAL_MENTION.
       
-        Citation Source URLs:
+        ## Citation Source URLs:
         - List the URLs of sources whose facts you actually used in generating the answer
         - Only include sources that contributed information to the answer
-        - This helps filter out irrelevant sources from the final response
         
-        Reasoning:
+        ## Reasoning:
         - Briefly explain how you derived the answer from the facts
-        - If answerType is PARTIAL_MENTION, explain what specific information is missing
+        - Explain why you chose the status (COMPLETE vs NEEDS_MORE_SOURCES)
+        - If NEEDS_MORE_SOURCES, explain what is missing
         
         Expected Output Shape:
         {
             "answer": "your comprehensive answer text",
+            "status": "COMPLETE" | "NEEDS_MORE_SOURCES",
             "answerType": "DIRECT_ANSWER" | "INFERRED_ANSWER" | "PARTIAL_MENTION",
-            "reasoning": "brief explanation of how the answer was derived and why this answerType was chosen",
+            "reasoning": "brief explanation of how the answer was derived and why this status was chosen",
+            "followUpQueries": ["query1", "query2"],
+            "whatsMissing": "description of missing information or null",
             "imageIds": ["img-xxx"],
             "citedSourceUrls": ["https://example.com/pricing", "https://example.com/features"]
         }
@@ -147,19 +191,22 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     @Serializable
     private data class SynthesisResponse(
         val answer: String,
+        val status: AnswerStatus,
         val answerType: AnswerType,
         val reasoning: String,
+        val followUpQueries: List<String> = emptyList(),
+        val whatsMissing: String? = null,
         val imageIds: List<String> = emptyList(),
         val citedSourceUrls: List<String> = emptyList()
     )
 
     override suspend fun generate(input: StreamingAnswerSynthesisInput): StreamingAnswerSynthesisOutput {
         logger.debug(
-            "Generating answer synthesis for query: '{}' (expanded: '{}'), sources: {}, total facts: {}",
+            "Generating answer synthesis for query: '{}', sources: {}, total facts: {}, previouslySearched: {}",
             input.query,
-            input.expandedQuery ?: "none",
             input.evaluatedSources.size,
-            input.evaluatedSources.sumOf { it.relevantFacts.size }
+            input.evaluatedSources.sumOf { it.relevantFacts.size },
+            input.previouslySearchedQueries.size
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
@@ -169,8 +216,11 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             logger.warn("No facts provided, returning default message")
             return StreamingAnswerSynthesisOutput(
                 answer = "No information found to answer the query.",
+                status = AnswerStatus.NEEDS_MORE_SOURCES,
                 answerType = AnswerType.PARTIAL_MENTION,
                 reasoning = "No facts available from the provided sources.",
+                followUpQueries = listOf(input.query), // Retry the original query
+                whatsMissing = "No sources have been found yet",
                 tokenUsage = tokenUsage
             )
         }
@@ -218,30 +268,35 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         )
 
         logger.debug(
-            "Answer synthesis complete: {} chars, answerType: {}, {} images, citedSources: {}",
+            "Answer synthesis complete: {} chars, status: {}, answerType: {}, {} images, citedSources: {}, followUpQueries: {}",
             response.answer.length,
+            response.status,
             response.answerType,
             response.imageIds.size,
-            response.citedSourceUrls.size
+            response.citedSourceUrls.size,
+            response.followUpQueries.size
         )
 
         return StreamingAnswerSynthesisOutput(
             answer = response.answer,
+            status = response.status,
             answerType = response.answerType,
             reasoning = response.reasoning,
+            followUpQueries = response.followUpQueries,
+            whatsMissing = response.whatsMissing,
             imageIds = response.imageIds,
-            tokenUsage = tokenUsage,
-            citedSourceUrls = response.citedSourceUrls
+            citedSourceUrls = response.citedSourceUrls,
+            tokenUsage = tokenUsage
         )
     }
 
     override fun generateStream(input: StreamingAnswerSynthesisInput): Flow<StreamingAnswerStreamItem> = flow {
         logger.debug(
-            "Streaming answer synthesis for query: '{}' (expanded: '{}'), sources: {}, total facts: {}",
+            "Streaming answer synthesis for query: '{}', sources: {}, total facts: {}, previouslySearched: {}",
             input.query,
-            input.expandedQuery ?: "none",
             input.evaluatedSources.size,
-            input.evaluatedSources.sumOf { it.relevantFacts.size }
+            input.evaluatedSources.sumOf { it.relevantFacts.size },
+            input.previouslySearchedQueries.size
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
@@ -251,8 +306,11 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             emit(StreamingAnswerStreamItem.Chunk("No information found to answer the query."))
             emit(StreamingAnswerStreamItem.Complete(
                 tokenUsage = TokenUsageMetrics.empty(modelId),
+                status = AnswerStatus.NEEDS_MORE_SOURCES,
                 answerType = AnswerType.PARTIAL_MENTION,
                 reasoning = "No facts available from the provided sources.",
+                followUpQueries = listOf(input.query),
+                whatsMissing = "No sources have been found yet",
                 citedSourceUrls = emptyList()
             ))
             return@flow
@@ -322,15 +380,42 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             accumulatedJson
         )
 
-        // Extract answerType, reasoning, imageIds, and citedSourceUrls from the complete JSON
+        // Extract status, answerType, reasoning, followUpQueries, whatsMissing, imageIds, and citedSourceUrls from the complete JSON
+        val status = extractStatus(accumulatedJson)
         val answerType = extractAnswerType(accumulatedJson)
         val reasoning = extractReasoning(accumulatedJson)
+        val followUpQueries = extractFollowUpQueries(accumulatedJson)
+        val whatsMissing = extractWhatsMissing(accumulatedJson)
         val imageIds = extractImageIds(accumulatedJson)
         val citedSourceUrls = extractCitedSourceUrls(accumulatedJson)
         
-        logger.debug("Streaming answer synthesis complete: {} chars total, answerType: {}, {} images, citedSources: {}", 
-            lastAnswerLength, answerType, imageIds.size, citedSourceUrls.size)
-        emit(StreamingAnswerStreamItem.Complete(tokenUsage, answerType, reasoning, imageIds, citedSourceUrls))
+        logger.debug("Streaming answer synthesis complete: {} chars total, status: {}, answerType: {}, {} images, citedSources: {}, followUpQueries: {}", 
+            lastAnswerLength, status, answerType, imageIds.size, citedSourceUrls.size, followUpQueries.size)
+        emit(StreamingAnswerStreamItem.Complete(
+            tokenUsage = tokenUsage,
+            status = status,
+            answerType = answerType,
+            reasoning = reasoning,
+            followUpQueries = followUpQueries,
+            whatsMissing = whatsMissing,
+            imageIds = imageIds,
+            citedSourceUrls = citedSourceUrls
+        ))
+    }
+
+    /**
+     * Extract status enum from accumulated JSON.
+     * The JSON format is: {"answer": "...", "status": "COMPLETE", ...}
+     * Defaults to NEEDS_MORE_SOURCES if not found or invalid.
+     */
+    private fun extractStatus(json: String): AnswerStatus {
+        val regex = """"status"\s*:\s*"(COMPLETE|NEEDS_MORE_SOURCES)"""".toRegex(RegexOption.IGNORE_CASE)
+        val match = regex.find(json) ?: return AnswerStatus.NEEDS_MORE_SOURCES
+        return try {
+            AnswerStatus.valueOf(match.groupValues[1].uppercase())
+        } catch (e: IllegalArgumentException) {
+            AnswerStatus.NEEDS_MORE_SOURCES
+        }
     }
 
     /**
@@ -392,6 +477,39 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         return stringRegex.findAll(arrayContent)
             .map { it.groupValues[1] }
             .toList()
+    }
+
+    /**
+     * Extract followUpQueries array from accumulated JSON.
+     * The JSON format is: {"answer": "...", "followUpQueries": ["query1", "query2"]}
+     */
+    private fun extractFollowUpQueries(json: String): List<String> {
+        val regex = """"followUpQueries"\s*:\s*\[([^\]]*)\]""".toRegex()
+        val match = regex.find(json) ?: return emptyList()
+        
+        val arrayContent = match.groupValues[1]
+        if (arrayContent.isBlank()) return emptyList()
+        
+        // Extract individual string values from the array
+        val stringRegex = """"((?:[^"\\]|\\.)*)"""".toRegex()
+        return stringRegex.findAll(arrayContent)
+            .map { unescapeJsonString(it.groupValues[1]) }
+            .toList()
+    }
+
+    /**
+     * Extract whatsMissing string from accumulated JSON.
+     * The JSON format is: {"answer": "...", "whatsMissing": "..."}
+     */
+    private fun extractWhatsMissing(json: String): String? {
+        // Check for null value
+        val nullRegex = """"whatsMissing"\s*:\s*null""".toRegex()
+        if (nullRegex.containsMatchIn(json)) return null
+        
+        val regex = """"whatsMissing"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
+        val match = regex.find(json) ?: return null
+        val value = unescapeJsonString(match.groupValues[1])
+        return value.ifBlank { null }
     }
 
     /**
@@ -468,9 +586,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
     private fun buildUserPrompt(input: StreamingAnswerSynthesisInput): String {
         return buildString {
-            appendLine("# Query")
-            appendLine(input.effectiveQuery)
-            appendLine()
+            // Static content first (for cache optimization)
             appendLine("# Extracted Facts from Sources")
             appendLine()
 
@@ -498,11 +614,35 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 }
             }
 
+            // Previously searched queries (for deduplication)
+            if (input.previouslySearchedQueries.isNotEmpty()) {
+                appendLine()
+                appendLine("# Previously Searched Queries")
+                appendLine("Do NOT suggest these as follow-up queries (they have already been searched):")
+                input.previouslySearchedQueries.forEach { query ->
+                    appendLine("- $query")
+                }
+                appendLine()
+            }
+
+            // Dynamic content at the end (query)
             appendLine()
+            appendLine("# Query")
+            appendLine(input.query)
+            appendLine()
+            
+            // Target domain for follow-up queries
+            if (input.targetDomain.isNotBlank()) {
+                appendLine("# Target Domain")
+                appendLine("Follow-up queries will be searched with site:${input.targetDomain}")
+                appendLine()
+            }
+
             appendLine("# Instructions")
             appendLine("Generate a comprehensive answer to the query using the extracted facts above.")
             appendLine("Prioritize facts from OFFICIAL_LIVING_DOC sources when synthesizing information.")
             appendLine("If relevant images are listed, include their IDs in the imageIds array.")
+            appendLine("Decide if the answer is COMPLETE or needs more sources.")
         }
     }
 }

@@ -29,6 +29,7 @@ import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.ext.chunkedWithTimeout
+import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.AnswerType
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
@@ -72,8 +73,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import io.deepsearch.application.services.FeedbackLoopReport
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -139,6 +143,13 @@ class AgenticBrowserSearchOrchestrator(
             logger.debug("[{}] Executing search for query: {}", sessionId.value, searchQuery.query)
 
             val seenUrls = ConcurrentHashMap.newKeySet<String>()
+            
+            // Channel for follow-up queries from the feedback loop
+            val followUpQueryChannel = Channel<String>(Channel.UNLIMITED)
+            
+            // Track searched queries to avoid duplicates
+            val searchedQueries = ConcurrentHashMap.newKeySet<String>()
+            searchedQueries.add(searchQuery.query)
 
             // Channels for discovered links
             val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
@@ -147,6 +158,7 @@ class AgenticBrowserSearchOrchestrator(
             val fileSearchDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val kgDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
             val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+            val followUpDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
 
             // Flows that don't require query optimization - start immediately
             val immediateFlows = merge(
@@ -200,6 +212,17 @@ class AgenticBrowserSearchOrchestrator(
                     kgDiscoveredLinksChannel,
                     recursiveDiscoveredLinksChannel,
                     maxCacheAge, proxyConfig, channel
+                ),
+                processFollowUpQueriesFlow(
+                    sessionId,
+                    searchQuery,
+                    seenUrls,
+                    searchedQueries,
+                    followUpQueryChannel,
+                    followUpDiscoveredLinksChannel,
+                    maxCacheAge,
+                    proxyConfig,
+                    channel
                 )
             )
 
@@ -263,6 +286,7 @@ class AgenticBrowserSearchOrchestrator(
             }
 
             // Main path: full markdown processing (parallel evaluation, then answer synthesis)
+            // Includes feedback loop that triggers follow-up searches via followUpQueryChannel
             pathFlows.add(
                 sourceFlow
                     .filterIsInstance<UrlContentResult.FullMarkdown>()
@@ -276,9 +300,10 @@ class AgenticBrowserSearchOrchestrator(
                     }
                     .filter { it != null }
                     .map { it!! }
-                    .runningFold(AnswerAccumulator()) { state, evalResult ->
+                    .runningFold(AnswerAccumulator(searchedQueries = listOf(searchQuery.query))) { state, evalResult ->
                         aggregateMarkdownResultIntoAnswer(
                             sessionId, searchQuery, state, evalResult, channel,
+                            followUpQueryChannel, searchedQueries,
                             isPreviewConfident = { !includeImages && lastPreviewResult?.isAnswerFound == true }
                         )
                     }
@@ -287,8 +312,9 @@ class AgenticBrowserSearchOrchestrator(
                     .take(1)
                     .onEach { completedAccumulator ->
                         if (sessionCompleted.compareAndSet(false, true)) {
-                            logger.info("[{}] Main path completed, cancelling source processing", sessionId.value)
+                            logger.info("[{}] Main path completed with COMPLETE status, cancelling source processing", sessionId.value)
                             sourceProcessingJob.cancel()
+                            followUpQueryChannel.close() // Stop follow-up query processing
                             finishQuerySession(sessionId, searchQuery, completedAccumulator, budget, channel)
                         }
                     }
@@ -1093,6 +1119,160 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
+     * Process follow-up queries from the feedback loop.
+     * Each follow-up query triggers a new SERP search to discover additional links.
+     */
+    private fun processFollowUpQueriesFlow(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        searchedQueries: MutableSet<String>,
+        followUpQueryChannel: Channel<String>,
+        discoveredLinksChannel: Channel<WebpageLink>,
+        maxCacheAge: Long?,
+        proxyConfig: ProxyConfiguration,
+        eventChannel: SendChannel<SearchEvent>
+    ): Flow<UrlContentResult> {
+        return followUpQueryChannel.receiveAsFlow()
+            .flatMapMerge(concurrency = 3) { followUpQuery ->
+                flow {
+                    logger.info("[{}] Processing follow-up query: '{}'", sessionId.value, followUpQuery)
+                    
+                    // Create a new SearchQuery with the follow-up query but same URL context
+                    val followUpSearchQuery = SearchQuery(
+                        rawQuery = followUpQuery,
+                        url = searchQuery.url,
+                        languagePattern = searchQuery.languagePattern,
+                        ocrLanguage = searchQuery.ocrLanguage,
+                        includeImages = searchQuery.includeImages
+                    )
+                    
+                    // Discover links using SERP search for the follow-up query
+                    try {
+                        val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(followUpSearchQuery)
+                        logger.debug(
+                            "[{}] Follow-up query '{}' discovered {} links",
+                            sessionId.value, followUpQuery, discoveredLinks.size
+                        )
+                        
+                        // Send discovered links to the channel for recursive processing
+                        discoveredLinks.forEach { link ->
+                            discoveredLinksChannel.send(link)
+                        }
+                        
+                        // Also emit the links directly to the processing flow
+                        discoveredLinks.forEach { link ->
+                            val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                            // Apply language filter if configured
+                            val languagePattern = searchQuery.parsedLanguagePattern
+                            if (languagePattern != null && !languagePattern.matches(normalizedUrl, searchQuery.url)) {
+                                logger.debug("[{}] Follow-up link filtered by language pattern: {}", sessionId.value, normalizedUrl)
+                                return@forEach
+                            }
+                            // Use atomic add() which returns true only if element was NOT already present
+                            if (!seenUrls.add(normalizedUrl)) {
+                                return@forEach  // Skip already seen URLs
+                            }
+                            
+                            eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
+                            
+                            // Use adaptive rate limiter to respect website rate limits
+                            adaptiveRateLimiter.withRateLimit(normalizedUrl) {
+                                urlContentProcessingService.processUrlAsFlow(
+                                    normalizedUrl,
+                                    followUpQuery,
+                                    maxCacheAge,
+                                    sessionId,
+                                    searchQuery.ocrLanguage,
+                                    proxyConfig
+                                )
+                                    .catch { e ->
+                                        when (e) {
+                                            is CancellationException -> throw e
+                                            is NetworkConnectionException, is MarkdownConversionException -> {
+                                                urlAccessService.recordUrlAccess(
+                                                    sessionId, FailedUrlAccess(
+                                                        url = e.url, timestamp = Clock.System.now(),
+                                                        exceptionType = e::class.simpleName!!, message = e.reason
+                                                    )
+                                                )
+                                                eventChannel.send(
+                                                    SearchEvent.UrlProcessed(
+                                                        sessionId,
+                                                        e.url,
+                                                        "FAILED",
+                                                        errorMessage = e.reason
+                                                    )
+                                                )
+                                            }
+                                            else -> throw e
+                                        }
+                                    }
+                                    .onEach { event ->
+                                        when (event) {
+                                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                                if (event.wasCached) {
+                                                    urlAccessService.recordUrlAccess(
+                                                        sessionId,
+                                                        CachedUrlAccess(event.url, Clock.System.now())
+                                                    )
+                                                }
+                                                eventChannel.send(
+                                                    SearchEvent.UrlProcessed(
+                                                        sessionId = sessionId,
+                                                        url = event.url,
+                                                        accessType = if (event.wasCached) "CACHED" else "UNCACHED",
+                                                        title = event.title,
+                                                        description = event.description,
+                                                        markdownLength = event.markdown.length
+                                                    )
+                                                )
+                                            }
+                                            is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
+                                                urlAccessService.recordUrlAccess(
+                                                    sessionId,
+                                                    UncachedUrlAccess(event.url, Clock.System.now())
+                                                )
+                                            }
+                                            else -> {}
+                                        }
+                                    }
+                                    .filter { event ->
+                                        event is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ||
+                                                event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
+                                    }
+                                    .map { event ->
+                                        when (event) {
+                                            is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ->
+                                                UrlContentResult.HtmlPreview(
+                                                    event.url,
+                                                    event.title,
+                                                    event.description,
+                                                    event.cleanedHtml
+                                                )
+                                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
+                                                UrlContentResult.FullMarkdown(
+                                                    event.url,
+                                                    event.title,
+                                                    event.description,
+                                                    event.markdown
+                                                )
+                                            else -> throw IllegalStateException("Unexpected event type")
+                                        }
+                                    }
+                                    .collect { result -> emit(result) }
+                            }
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.error("[{}] Follow-up query '{}' failed: {}", sessionId.value, followUpQuery, e.message)
+                    }
+                }
+            }
+    }
+
+    /**
      * Optimizes the query for SERP search if it's long (> 10 words).
      * Short queries are already well-suited for Google, while longer natural language
      * queries benefit from optimization to extract key terms.
@@ -1124,24 +1304,186 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Accumulator for streaming answer generation.
-     * Tracks markdown sources by URL to enable preview-to-full-markdown upgrades.
+     * Accumulator for streaming answer generation with feedback loop support.
+     * Tracks sources, queries, and synthesis iterations.
      */
     private data class AnswerAccumulator(
         /** Evaluated sources accumulated from parallel markdown evaluation */
         val evaluatedSources: List<EvaluatedSource> = emptyList(),
         /** Set of URLs that have been processed (for deduplication) */
         val processedUrls: Set<String> = emptySet(),
+        /** Whether the answer is complete (status=COMPLETE from synthesis agent) */
         val isComplete: Boolean = false,
-        /** Expanded query from the eval agent that clarifies the user's core intent */
-        val expandedQuery: String? = null,
         /** Full answer from the last answer synthesis attempt */
         val fullAnswer: String? = null,
         /** URLs of sources that were actually cited in the answer */
         val citedSourceUrls: List<String> = emptyList(),
         /** Image IDs from the answer */
-        val imageIds: List<String> = emptyList()
+        val imageIds: List<String> = emptyList(),
+        /** All queries that have been searched (for deduplication) */
+        val searchedQueries: List<String> = emptyList(),
+        /** Current synthesis iteration number */
+        val iterationNumber: Int = 0,
+        /** Sources count per iteration for loop report */
+        val sourcesPerIteration: List<Int> = emptyList(),
+        /** Answer status from last synthesis */
+        val status: AnswerStatus = AnswerStatus.NEEDS_MORE_SOURCES
     )
+
+    /**
+     * Thread-safe source accumulator for concurrent source collection.
+     * Provides atomic operations for adding sources and reading accumulated state.
+     */
+    private class SourceAccumulator(
+        initialQuery: String,
+        private val targetDomain: String
+    ) {
+        private val lock = Any()
+        private val sources = mutableListOf<EvaluatedSource>()
+        private val processedUrls = mutableSetOf<String>()
+        private val searchedQueries = mutableListOf(initialQuery)
+        private val sourcesPerIteration = mutableListOf<Int>()
+        
+        private var currentAnswer: String? = null
+        private var currentStatus: AnswerStatus = AnswerStatus.NEEDS_MORE_SOURCES
+        private var currentAnswerType: AnswerType = AnswerType.PARTIAL_MENTION
+        private var currentCitedUrls: List<String> = emptyList()
+        private var currentImageIds: List<String> = emptyList()
+        private var iterationCount = 0
+        private var synthesisCalls = 0
+        
+        val startTimeMs = System.currentTimeMillis()
+
+        /**
+         * Add a new evaluated source. Returns true if the source was new.
+         */
+        fun addSource(source: EvaluatedSource): Boolean = synchronized(lock) {
+            if (source.url in processedUrls) return false
+            processedUrls.add(source.url)
+            sources.add(source)
+            true
+        }
+
+        /**
+         * Add multiple queries that have been searched.
+         */
+        fun addSearchedQueries(queries: List<String>) = synchronized(lock) {
+            queries.forEach { query ->
+                if (query !in searchedQueries) {
+                    searchedQueries.add(query)
+                }
+            }
+        }
+
+        /**
+         * Record synthesis iteration result.
+         */
+        fun recordSynthesisResult(
+            answer: String,
+            status: AnswerStatus,
+            answerType: AnswerType,
+            citedUrls: List<String>,
+            imageIds: List<String>
+        ) = synchronized(lock) {
+            currentAnswer = answer
+            currentStatus = status
+            currentAnswerType = answerType
+            currentCitedUrls = citedUrls
+            currentImageIds = imageIds
+            iterationCount++
+            synthesisCalls++
+            sourcesPerIteration.add(sources.size)
+        }
+
+        /**
+         * Get current snapshot of all accumulated sources.
+         */
+        fun getSources(): List<EvaluatedSource> = synchronized(lock) { sources.toList() }
+
+        /**
+         * Get searched queries for deduplication.
+         */
+        fun getSearchedQueries(): List<String> = synchronized(lock) { searchedQueries.toList() }
+
+        /**
+         * Get current answer.
+         */
+        fun getCurrentAnswer(): String? = synchronized(lock) { currentAnswer }
+
+        /**
+         * Get current status.
+         */
+        fun getStatus(): AnswerStatus = synchronized(lock) { currentStatus }
+
+        /**
+         * Check if answer is complete.
+         */
+        fun isComplete(): Boolean = synchronized(lock) { currentStatus == AnswerStatus.COMPLETE }
+
+        /**
+         * Get citation URLs.
+         */
+        fun getCitedUrls(): List<String> = synchronized(lock) { currentCitedUrls.toList() }
+
+        /**
+         * Get image IDs.
+         */
+        fun getImageIds(): List<String> = synchronized(lock) { currentImageIds.toList() }
+
+        /**
+         * Get iteration count.
+         */
+        fun getIterationCount(): Int = synchronized(lock) { iterationCount }
+
+        /**
+         * Build the feedback loop report.
+         */
+        fun buildLoopReport(): FeedbackLoopReport = synchronized(lock) {
+            FeedbackLoopReport(
+                totalIterations = iterationCount,
+                followUpQueries = searchedQueries.drop(1), // Exclude original query
+                sourcesPerIteration = sourcesPerIteration.toList(),
+                finalStatus = currentStatus.name,
+                totalSynthesisCalls = synthesisCalls,
+                durationMs = System.currentTimeMillis() - startTimeMs
+            )
+        }
+
+        /**
+         * Build an AnswerAccumulator snapshot for finishing the session.
+         */
+        fun toAnswerAccumulator(): AnswerAccumulator = synchronized(lock) {
+            AnswerAccumulator(
+                evaluatedSources = sources.toList(),
+                processedUrls = processedUrls.toSet(),
+                isComplete = currentStatus == AnswerStatus.COMPLETE,
+                fullAnswer = currentAnswer,
+                citedSourceUrls = currentCitedUrls.toList(),
+                imageIds = currentImageIds.toList(),
+                searchedQueries = searchedQueries.toList(),
+                iterationNumber = iterationCount,
+                sourcesPerIteration = sourcesPerIteration.toList(),
+                status = currentStatus
+            )
+        }
+
+        /**
+         * Get the target domain for site: prefixing.
+         */
+        fun getTargetDomain(): String = targetDomain
+    }
+
+    /**
+     * Scored link for priority queue processing.
+     * Higher scores are processed first.
+     */
+    private data class ScoredLink(
+        val link: WebpageLink,
+        val score: Int,  // 1-10, higher = more relevant
+        val sourceQuery: String  // The query that discovered this link
+    ) : Comparable<ScoredLink> {
+        override fun compareTo(other: ScoredLink): Int = other.score.compareTo(score) // Descending order
+    }
 
     /**
      * Result from processing a preview source.
@@ -1173,8 +1515,7 @@ class AgenticBrowserSearchOrchestrator(
      * Result from evaluating a single markdown source.
      */
     private data class MarkdownEvalResult(
-        val evaluatedSource: EvaluatedSource,
-        val expandedQuery: String
+        val evaluatedSource: EvaluatedSource
     )
 
     /**
@@ -1182,13 +1523,16 @@ class AgenticBrowserSearchOrchestrator(
      */
     private data class SynthesisResult(
         val answer: String,
+        val status: AnswerStatus,
         val answerType: AnswerType,
         val reasoning: String,
+        val followUpQueries: List<String>,
+        val whatsMissing: String?,
         val citedSourceUrls: List<String>,
         val imageIds: List<String>
     ) {
-        /** Whether the answer is good enough (DIRECT_ANSWER or INFERRED_ANSWER) */
-        val isGoodEnough: Boolean get() = answerType != AnswerType.PARTIAL_MENTION
+        /** Whether the answer is complete (status=COMPLETE from synthesis agent) */
+        val isComplete: Boolean get() = status == AnswerStatus.COMPLETE
     }
 
     /**
@@ -1211,23 +1555,28 @@ class AgenticBrowserSearchOrchestrator(
         )
 
         return output.evaluatedSource?.let { 
-            MarkdownEvalResult(it, output.expandedQuery) 
+            MarkdownEvalResult(it) 
         }
     }
 
     /**
      * Synthesize an answer from evaluated sources.
      * Handles streaming collection and token usage recording.
+     * Supports the feedback loop with previouslySearchedQueries and targetDomain.
      */
     private suspend fun synthesizeAnswer(
         sessionId: QuerySessionId,
         query: String,
         evaluatedSources: List<EvaluatedSource>,
-        expandedQuery: String?
+        previouslySearchedQueries: List<String> = emptyList(),
+        targetDomain: String = ""
     ): SynthesisResult {
         val answerBuilder = StringBuilder()
+        lateinit var status: AnswerStatus
         lateinit var answerType: AnswerType
         var reasoning = ""
+        var followUpQueries = emptyList<String>()
+        var whatsMissing: String? = null
         var citedSourceUrls = emptyList<String>()
         var imageIds = emptyList<String>()
 
@@ -1235,7 +1584,8 @@ class AgenticBrowserSearchOrchestrator(
             StreamingAnswerSynthesisInput(
                 query = query,
                 evaluatedSources = evaluatedSources,
-                expandedQuery = expandedQuery
+                previouslySearchedQueries = previouslySearchedQueries,
+                targetDomain = targetDomain
             )
         ).collect { item ->
             when (item) {
@@ -1246,8 +1596,11 @@ class AgenticBrowserSearchOrchestrator(
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
+                    status = item.status
                     answerType = item.answerType
                     reasoning = item.reasoning
+                    followUpQueries = item.followUpQueries
+                    whatsMissing = item.whatsMissing
                     citedSourceUrls = item.citedSourceUrls
                     imageIds = item.imageIds
                 }
@@ -1256,8 +1609,11 @@ class AgenticBrowserSearchOrchestrator(
 
         return SynthesisResult(
             answer = answerBuilder.toString(),
+            status = status,
             answerType = answerType,
             reasoning = reasoning,
+            followUpQueries = followUpQueries,
+            whatsMissing = whatsMissing,
             citedSourceUrls = citedSourceUrls,
             imageIds = imageIds
         )
@@ -1265,9 +1621,9 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Aggregate a newly evaluated markdown source and attempt answer synthesis.
-     * Uses answerType to determine if the answer is "good enough":
-     * - DIRECT_ANSWER or INFERRED_ANSWER = good enough, stop collecting
-     * - PARTIAL_MENTION = keep collecting sources
+     * Uses status from synthesis agent to determine if the answer is complete:
+     * - COMPLETE = answer is sufficient, stop collecting
+     * - NEEDS_MORE_SOURCES = keep collecting sources and trigger follow-up searches
      */
     private suspend fun aggregateMarkdownResultIntoAnswer(
         sessionId: QuerySessionId,
@@ -1275,6 +1631,8 @@ class AgenticBrowserSearchOrchestrator(
         state: AnswerAccumulator,
         evalResult: MarkdownEvalResult,
         eventChannel: SendChannel<SearchEvent>,
+        followUpQueryChannel: SendChannel<String>,
+        searchedQueries: MutableSet<String>,
         isPreviewConfident: () -> Boolean
     ): AnswerAccumulator {
         // Skip if already processed (deduplication)
@@ -1285,14 +1643,38 @@ class AgenticBrowserSearchOrchestrator(
         val updatedSources = state.evaluatedSources + evalResult.evaluatedSource
         val updatedProcessedUrls = state.processedUrls + evalResult.evaluatedSource.url
 
+        // Extract target domain for follow-up queries
+        val targetDomain = try {
+            java.net.URI(searchQuery.url).host ?: ""
+        } catch (e: Exception) { "" }
+
         // Synthesize answer with accumulated sources
         val synthesis = synthesizeAnswer(
-            sessionId, searchQuery.query, updatedSources, evalResult.expandedQuery
+            sessionId = sessionId, 
+            query = searchQuery.query, 
+            evaluatedSources = updatedSources, 
+            previouslySearchedQueries = state.searchedQueries,
+            targetDomain = targetDomain
         )
 
+        val newIterationNumber = state.iterationNumber + 1
+        val updatedSourcesPerIteration = state.sourcesPerIteration + updatedSources.size
+
         logger.debug(
-            "[{}] Main path synthesis: {} sources, answerType={}, isGoodEnough={}, citedSources={}",
-            sessionId.value, updatedSources.size, synthesis.answerType, synthesis.isGoodEnough, synthesis.citedSourceUrls.size
+            "[{}] Main path synthesis iteration {}: {} sources, status={}, answerType={}, citedSources={}, followUpQueries={}",
+            sessionId.value, newIterationNumber, updatedSources.size, synthesis.status, synthesis.answerType, 
+            synthesis.citedSourceUrls.size, synthesis.followUpQueries.size
+        )
+
+        // Emit synthesis iteration event
+        eventChannel.send(
+            SearchEvent.SynthesisIteration(
+                sessionId = sessionId,
+                iterationNumber = newIterationNumber,
+                status = synthesis.status.name,
+                sourceCount = updatedSources.size,
+                followUpQueries = synthesis.followUpQueries
+            )
         )
 
         // Only emit SourcesEvaluated if preview path hasn't already produced a confident answer
@@ -1302,20 +1684,53 @@ class AgenticBrowserSearchOrchestrator(
                     sessionId = sessionId,
                     processedUrlCount = updatedProcessedUrls.size,
                     relevantCount = updatedSources.size,
-                    isGoodEnough = synthesis.isGoodEnough,
-                    reason = if (synthesis.isGoodEnough) "Answer is comprehensive (${synthesis.answerType})" else "Collecting more sources"
+                    isGoodEnough = synthesis.isComplete,
+                    reason = if (synthesis.isComplete) "Answer is complete (${synthesis.answerType})" 
+                             else "Collecting more sources: ${synthesis.whatsMissing ?: "more information needed"}"
                 )
             )
+        }
+
+        // Track searched queries including new follow-up queries
+        val updatedSearchedQueries = state.searchedQueries + synthesis.followUpQueries.filter { it !in state.searchedQueries }
+
+        // Send follow-up queries to the channel for processing (if status is NEEDS_MORE_SOURCES)
+        if (synthesis.status == AnswerStatus.NEEDS_MORE_SOURCES && synthesis.followUpQueries.isNotEmpty()) {
+            val newQueries = synthesis.followUpQueries.filter { searchedQueries.add(it) }
+            if (newQueries.isNotEmpty()) {
+                logger.info(
+                    "[{}] Feedback loop iteration {}: Triggering {} follow-up queries: {}",
+                    sessionId.value, newIterationNumber, newQueries.size, newQueries
+                )
+                
+                // Emit follow-up search started event
+                eventChannel.send(
+                    SearchEvent.FollowUpSearchStarted(
+                        sessionId = sessionId,
+                        followUpQueries = newQueries,
+                        whatsMissing = synthesis.whatsMissing,
+                        iterationNumber = newIterationNumber
+                    )
+                )
+                
+                // Send queries to the follow-up channel
+                newQueries.forEach { query ->
+                    followUpQueryChannel.send(query)
+                }
+            }
         }
 
         return AnswerAccumulator(
             evaluatedSources = updatedSources,
             processedUrls = updatedProcessedUrls,
-            isComplete = synthesis.isGoodEnough,
-            expandedQuery = evalResult.expandedQuery,
+            isComplete = synthesis.isComplete,
             fullAnswer = synthesis.answer,
             citedSourceUrls = synthesis.citedSourceUrls,
-            imageIds = synthesis.imageIds
+            imageIds = synthesis.imageIds,
+            searchedQueries = updatedSearchedQueries,
+            iterationNumber = newIterationNumber,
+            sourcesPerIteration = updatedSourcesPerIteration,
+            status = synthesis.status
         )
     }
 
@@ -1324,7 +1739,8 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         accumulator: AnswerAccumulator,
         budget: SearchBudget,
-        eventChannel: SendChannel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>,
+        loopReport: FeedbackLoopReport? = null
     ) {
         // Check if session is already finished (use DB as source of truth)
         val session = querySessionService.getSession(sessionId)
@@ -1341,8 +1757,29 @@ class AgenticBrowserSearchOrchestrator(
         val imageIds = accumulator.imageIds
         val answerFound = accumulator.fullAnswer?.isNotBlank() == true
 
+        // Build loop report from accumulator if not provided
+        val finalLoopReport = loopReport ?: FeedbackLoopReport(
+            totalIterations = accumulator.iterationNumber,
+            followUpQueries = accumulator.searchedQueries.drop(1),  // Exclude original query
+            sourcesPerIteration = accumulator.sourcesPerIteration,
+            finalStatus = accumulator.status.name,
+            totalSynthesisCalls = accumulator.iterationNumber,
+            durationMs = 0  // Will be calculated in sessionDetail
+        )
+
+        // Log the loop report
+        logger.info(
+            "[{}] Feedback Loop Report: iterations={}, followUpQueries={}, sourcesPerIteration={}, finalStatus={}, synthesisCalls={}",
+            sessionId.value,
+            finalLoopReport.totalIterations,
+            finalLoopReport.followUpQueries,
+            finalLoopReport.sourcesPerIteration,
+            finalLoopReport.finalStatus,
+            finalLoopReport.totalSynthesisCalls
+        )
+
         eventChannel.send(SearchEvent.AnswerChunk(sessionId, fullAnswer))
-        finishSessionWithAnswer(sessionId, accumulator, budget, eventChannel, fullAnswer, answerFound, imageIds)
+        finishSessionWithAnswer(sessionId, accumulator, budget, eventChannel, fullAnswer, answerFound, imageIds, finalLoopReport)
     }
 
     private suspend fun finishSessionWithAnswer(
@@ -1352,7 +1789,8 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>,
         fullAnswer: String,
         answerFound: Boolean,
-        imageIds: List<String>
+        imageIds: List<String>,
+        loopReport: FeedbackLoopReport? = null
     ) {
         // Use cited sources if available, otherwise fall back to all sources
         val answerSources = accumulator.citedSourceUrls.ifEmpty { 
@@ -1400,7 +1838,8 @@ class AgenticBrowserSearchOrchestrator(
                 sessionId = sessionId,
                 finishReason = finishReason,
                 sessionDetail = sessionDetail,
-                imageIds = imageIds
+                imageIds = imageIds,
+                loopReport = loopReport
             )
         )
     }
@@ -1437,20 +1876,27 @@ class AgenticBrowserSearchOrchestrator(
             sessionId.value, htmlSource.url, evaluatedSource.relevantFacts.size
         )
 
-        // Step 2: Answer Synthesis
+        // Step 2: Answer Synthesis (no previous queries for preview path)
         val synthesis = synthesizeAnswer(
-            sessionId, searchQuery.query, listOf(evaluatedSource), evalOutput.expandedQuery
+            sessionId = sessionId, 
+            query = searchQuery.query, 
+            evaluatedSources = listOf(evaluatedSource),
+            previouslySearchedQueries = emptyList(),
+            targetDomain = ""
         )
 
         logger.debug(
-            "[{}] Preview synthesis: answerType={}, {} chars, reasoning={}",
-            sessionId.value, synthesis.answerType, synthesis.answer.length, synthesis.reasoning
+            "[{}] Preview synthesis: status={}, answerType={}, {} chars, reasoning={}",
+            sessionId.value, synthesis.status, synthesis.answerType, synthesis.answer.length, synthesis.reasoning
         )
+
+        // Preview path only accepts DIRECT_ANSWER with COMPLETE status
+        val isConfident = synthesis.status == AnswerStatus.COMPLETE && synthesis.answerType == AnswerType.DIRECT_ANSWER
 
         return PreviewResult(
             evaluatedSources = listOf(evaluatedSource),
             answerType = synthesis.answerType,
-            fullAnswer = if (synthesis.isGoodEnough) synthesis.answer else null
+            fullAnswer = if (isConfident) synthesis.answer else null
         )
     }
 

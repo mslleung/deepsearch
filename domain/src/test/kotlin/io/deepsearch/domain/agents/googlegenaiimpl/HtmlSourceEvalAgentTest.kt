@@ -76,7 +76,6 @@ class HtmlSourceEvalAgentTest : KoinTest {
 
         assertNotNull(output)
         assertNotNull(output.tokenUsage)
-        assertNotNull(output.expandedQuery)
         assertNotNull(output.evaluatedSource, "Should have evaluated source for relevant content")
         
         // Find facts about the CEO
@@ -224,7 +223,6 @@ class HtmlSourceEvalAgentTest : KoinTest {
 
         assertNotNull(output)
         assertNotNull(output.tokenUsage)
-        assertNotNull(output.expandedQuery)
         
         // The content is about the company, not pricing, so it should be marked as not relevant
         // Note: The LLM may still find this relevant if it mentions anything tangentially related

@@ -181,7 +181,6 @@ class CacheOnlySearchOrchestrator(
             val markdownSources = buildMarkdownSources(validWebpages, fileSearchResult, kgResult, domain)
 
             // Step 2: Evaluate each markdown source in parallel
-            var expandedQuery: String? = null
             val evaluatedSources: List<EvaluatedSource> = markdownSources.asFlow()
                 .flatMapMerge(concurrency = 100) { source ->
                     flow {
@@ -196,11 +195,6 @@ class CacheOnlySearchOrchestrator(
                             output.tokenUsage.outputTokens,
                             output.tokenUsage.totalTokens
                         )
-                        
-                        // Capture expanded query from first non-null result
-                        if (expandedQuery == null) {
-                            expandedQuery = output.expandedQuery
-                        }
                         
                         emit(output.evaluatedSource)
                     }
@@ -228,11 +222,18 @@ class CacheOnlySearchOrchestrator(
             var answerFound = false
             var imageIds = emptyList<String>()
             var citedSourceUrls = emptyList<String>()
+            
+            // Extract target domain for follow-up queries
+            val targetDomain = try {
+                java.net.URI(searchQuery.url).host ?: ""
+            } catch (e: Exception) { "" }
+            
             streamingAnswerSynthesisAgent.generateStream(
                 StreamingAnswerSynthesisInput(
                     query = searchQuery.query,
                     evaluatedSources = evaluatedSources,
-                    expandedQuery = expandedQuery
+                    previouslySearchedQueries = emptyList(),
+                    targetDomain = targetDomain
                 )
             ).collect { item ->
                 when (item) {
@@ -247,8 +248,8 @@ class CacheOnlySearchOrchestrator(
                             item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                             item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                         )
-                        // Capture answerFound, image IDs, and cited sources from answer synthesis
-                        answerFound = item.answerFound
+                        // For cache-only search, we don't use feedback loop - just check status
+                        answerFound = item.status == io.deepsearch.domain.models.valueobjects.AnswerStatus.COMPLETE
                         imageIds = item.imageIds
                         citedSourceUrls = item.citedSourceUrls
                     }

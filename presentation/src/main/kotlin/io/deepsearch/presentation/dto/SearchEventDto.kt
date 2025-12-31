@@ -88,6 +88,33 @@ sealed class SearchEventDto {
     ) : SearchEventDto()
 
     /**
+     * Emitted when the feedback loop triggers a follow-up search based on synthesis agent's request.
+     */
+    @Serializable
+    @SerialName("follow_up_search_started")
+    data class FollowUpSearchStartedDto(
+        override val sessionId: String,
+        val followUpQueries: List<String>,
+        val whatsMissing: String?,
+        val iterationNumber: Int,
+        override val timestampMs: Long
+    ) : SearchEventDto()
+
+    /**
+     * Emitted after each synthesis iteration to report progress.
+     */
+    @Serializable
+    @SerialName("synthesis_iteration")
+    data class SynthesisIterationDto(
+        override val sessionId: String,
+        val iterationNumber: Int,
+        val status: String,
+        val sourceCount: Int,
+        val followUpQueries: List<String>,
+        override val timestampMs: Long
+    ) : SearchEventDto()
+
+    /**
      * Session completed event with full session detail for the frontend.
      * Includes contentSources, answerSources, traversedUrls, and images.
      */
@@ -173,6 +200,23 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
         is SearchEvent.AnswerChunk -> SearchEventDto.AnswerChunkDto(
             sessionId = sessionId.value,
             chunk = chunk,
+            timestampMs = timestampMs
+        )
+
+        is SearchEvent.FollowUpSearchStarted -> SearchEventDto.FollowUpSearchStartedDto(
+            sessionId = sessionId.value,
+            followUpQueries = followUpQueries,
+            whatsMissing = whatsMissing,
+            iterationNumber = iterationNumber,
+            timestampMs = timestampMs
+        )
+
+        is SearchEvent.SynthesisIteration -> SearchEventDto.SynthesisIterationDto(
+            sessionId = sessionId.value,
+            iterationNumber = iterationNumber,
+            status = status,
+            sourceCount = sourceCount,
+            followUpQueries = followUpQueries,
             timestampMs = timestampMs
         )
 

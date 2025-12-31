@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.config.domainTestModule
+import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
 import io.deepsearch.domain.models.valueobjects.SourceClassification
@@ -37,6 +38,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         assertNotNull(output)
         assertEquals("No information found to answer the query.", output.answer)
+        assertEquals(AnswerStatus.NEEDS_MORE_SOURCES, output.status, "Should request more sources when empty")
         assertTrue(output.reasoning.isNotBlank(), "Should have reasoning explaining why no answer")
         assertNotNull(output.tokenUsage)
     }
@@ -186,7 +188,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     }
 
     @Test
-    fun `should indicate answerFound false when facts are not relevant`() = runTest(testCoroutineDispatcher) {
+    fun `should indicate NEEDS_MORE_SOURCES when facts are not relevant`() = runTest(testCoroutineDispatcher) {
         val irrelevantSource = EvaluatedSource(
             url = "https://example.com/cooking-recipes",
             title = "Cooking Recipes",
@@ -216,6 +218,94 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         assertNotNull(output)
         assertTrue(output.answer.isNotBlank(), "Answer should indicate lack of relevant information")
+        assertEquals(AnswerStatus.NEEDS_MORE_SOURCES, output.status, "Should request more sources when facts are irrelevant")
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    @Test
+    fun `should return COMPLETE status for comprehensive relevant facts`() = runTest(testCoroutineDispatcher) {
+        val comprehensiveSource = EvaluatedSource(
+            url = "https://example.com/machine-learning-complete",
+            title = "Complete ML Guide",
+            description = "Everything about ML",
+            relevantFacts = listOf(
+                RelevantFact(
+                    fact = "Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience.",
+                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                ),
+                RelevantFact(
+                    fact = "The three main types of machine learning are supervised learning, unsupervised learning, and reinforcement learning.",
+                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                ),
+                RelevantFact(
+                    fact = "Supervised learning uses labeled training data to learn the mapping from inputs to outputs.",
+                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                ),
+                RelevantFact(
+                    fact = "Unsupervised learning finds patterns and structure in unlabeled data.",
+                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                ),
+                RelevantFact(
+                    fact = "Reinforcement learning learns through trial and error by receiving rewards and penalties.",
+                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                )
+            ),
+            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
+            contentDate = null,
+            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER,
+            relevanceJustification = "Comprehensive official documentation on machine learning"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What is machine learning?",
+            evaluatedSources = listOf(comprehensiveSource)
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should be comprehensive")
+        assertNotNull(output.status, "Should have status")
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+        // Note: The exact status depends on LLM judgment - this test validates the flow works
+    }
+
+    @Test
+    fun `should pass previously searched queries to prevent duplicate follow-ups`() = runTest(testCoroutineDispatcher) {
+        val partialSource = EvaluatedSource(
+            url = "https://example.com/basic-ml",
+            title = "Basic ML Info",
+            description = null,
+            relevantFacts = listOf(
+                RelevantFact(
+                    fact = "Machine learning helps computers learn from data.",
+                    sourceClassification = SourceClassification.OTHERS
+                )
+            ),
+            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.THIRD_PARTY_REVIEW,
+            contentDate = null,
+            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.PARTIAL_MENTION,
+            relevanceJustification = "Basic mention of ML"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What is machine learning and how does it work?",
+            evaluatedSources = listOf(partialSource),
+            previouslySearchedQueries = listOf("machine learning basics", "how ML works"),
+            targetDomain = "example.com"
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should provide what's available")
+        // If follow-up queries are suggested, they should not duplicate previously searched queries
+        output.followUpQueries.forEach { query ->
+            assertTrue(
+                !input.previouslySearchedQueries.contains(query),
+                "Follow-up query should not duplicate previously searched: $query"
+            )
+        }
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 }

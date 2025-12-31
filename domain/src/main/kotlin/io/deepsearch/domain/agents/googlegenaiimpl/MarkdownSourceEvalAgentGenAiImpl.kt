@@ -65,13 +65,9 @@ class MarkdownSourceEvalAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Evaluated source with extracted facts, expanded query, and relevant images")
+        .description("Evaluated source with extracted facts and relevant images")
         .properties(
             mapOf(
-                "expandedQuery" to Schema.builder()
-                    .type("STRING")
-                    .description("Clarified/expanded version of the user query that captures the CORE intent. Transform vague queries into specific, answerable questions. Example: 'tell me about the pricing' → 'What are the main subscription plans and pricing tiers for the product?'")
-                    .build(),
                 "isRelevant" to Schema.builder()
                     .type("BOOLEAN")
                     .description("Whether this source has any relevant facts for the query")
@@ -101,7 +97,7 @@ class MarkdownSourceEvalAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("expandedQuery", "isRelevant", "sourceClassification", "answerType", "relevanceJustification", "relevantFacts", "relevantImageIds"))
+        .required(listOf("isRelevant", "sourceClassification", "answerType", "relevanceJustification", "relevantFacts", "relevantImageIds"))
         .build()
 
     private val systemInstruction = """
@@ -109,19 +105,8 @@ class MarkdownSourceEvalAgentGenAiImpl(
         
         Input: 
         - Current date
-        - User query
+        - User query (with site: context)
         - Single markdown source (full markdown content with tables, images, and formatting)
-        
-        FIRST, you must expand the user query:
-        
-        **Expand the Query**:
-        - Transform the user's query into a clear, specific question that captures the CORE intent
-        - Vague queries should become precise, answerable questions
-        - Examples:
-          - "tell me about the pricing" → "What are the main subscription plans and pricing tiers for the product?"
-          - "pricing" → "What are the subscription plans, their prices, and what features are included in each tier?"
-          - "features" → "What are the main product features and capabilities?"
-          - "how does it work" → "How does the product work and what is the main workflow?"
         
         For the source, you must:
         
@@ -164,7 +149,6 @@ class MarkdownSourceEvalAgentGenAiImpl(
         
         Output Format:
         {
-          "expandedQuery": "What are the main subscription plans and pricing tiers for the product?",
           "isRelevant": true,
           "sourceClassification": "OFFICIAL_LIVING_DOC",
           "contentDate": "2024-07-25",
@@ -185,7 +169,6 @@ class MarkdownSourceEvalAgentGenAiImpl(
 
     @Serializable
     private data class EvalResponse(
-        val expandedQuery: String,
         val isRelevant: Boolean,
         val sourceClassification: String,
         val contentDate: String? = null,
@@ -261,7 +244,6 @@ class MarkdownSourceEvalAgentGenAiImpl(
             logger.debug("Source {} is not relevant, returning null", markdownSource.url)
             return MarkdownSourceEvalOutput(
                 evaluatedSource = null,
-                expandedQuery = response.expandedQuery,
                 tokenUsage = tokenUsage
             )
         }
@@ -306,16 +288,14 @@ class MarkdownSourceEvalAgentGenAiImpl(
         )
 
         logger.debug(
-            "Markdown source evaluation complete for {}: {} facts, {} images, expandedQuery: {}",
+            "Markdown source evaluation complete for {}: {} facts, {} images",
             markdownSource.url,
             relevantFacts.size,
-            originalImageIds.size,
-            response.expandedQuery
+            originalImageIds.size
         )
 
         return MarkdownSourceEvalOutput(
             evaluatedSource = evaluatedSource,
-            expandedQuery = response.expandedQuery,
             tokenUsage = tokenUsage
         )
     }

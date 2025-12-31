@@ -48,7 +48,6 @@ class MarkdownSourceEvalAgentTest : KoinTest {
 
         assertNotNull(output)
         assertNotNull(output.tokenUsage)
-        assertNotNull(output.expandedQuery)
         
         // The content is about the company, not pricing, so it should be marked as not relevant
         // Note: The LLM behavior may vary - this tests the flow works correctly
@@ -92,7 +91,6 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertNotNull(output)
         assertNotNull(output.evaluatedSource, "Should have evaluated source for relevant content")
         assertTrue(output.evaluatedSource!!.relevantFacts.isNotEmpty(), "Should extract relevant facts")
-        assertNotNull(output.expandedQuery)
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 
@@ -159,7 +157,6 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertNotNull(output)
         assertNotNull(output.evaluatedSource, "Should have evaluated source")
         assertTrue(output.evaluatedSource!!.relevantFacts.isNotEmpty(), "Should have extracted facts")
-        assertNotNull(output.expandedQuery)
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 
@@ -253,33 +250,5 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertTrue(evaluatedSource.relevanceJustification.isNotBlank(), "Should have relevance justification")
     }
 
-    @Test
-    fun `should extract expanded query from response`() = runTest(testCoroutineDispatcher) {
-        val source = MarkdownSource(
-            url = "https://example.com/pricing",
-            title = "Pricing",
-            description = "Our plans",
-            markdown = """
-                # Pricing
-                
-                We offer three plans: Basic at $9/month, Pro at $29/month, and Enterprise at $99/month.
-            """.trimIndent()
-        )
-
-        val input = MarkdownSourceEvalInput(
-            searchQuery = SearchQuery("pricing", "https://example.com"),
-            markdownSource = source
-        )
-
-        val output = agent.generate(input)
-
-        assertNotNull(output)
-        assertNotNull(output.expandedQuery)
-        assertTrue(output.expandedQuery.isNotBlank(), "Expanded query should not be blank")
-        assertTrue(
-            output.expandedQuery.length >= input.searchQuery.query.length,
-            "Expanded query should be at least as long as original query"
-        )
-    }
 }
 

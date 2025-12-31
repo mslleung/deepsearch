@@ -3,6 +3,18 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 
 /**
+ * Summary of the feedback loop execution for logging and debugging.
+ */
+data class FeedbackLoopReport(
+    val totalIterations: Int,
+    val followUpQueries: List<String>,
+    val sourcesPerIteration: List<Int>,
+    val finalStatus: String,
+    val totalSynthesisCalls: Int,
+    val durationMs: Long
+)
+
+/**
  * Events emitted during search execution to provide real-time progress updates.
  * 
  * These events are application-layer domain concepts using proper value objects.
@@ -83,6 +95,29 @@ sealed class SearchEvent {
     ) : SearchEvent()
 
     /**
+     * Emitted when the feedback loop triggers a follow-up search based on synthesis agent's request.
+     */
+    data class FollowUpSearchStarted(
+        override val sessionId: QuerySessionId,
+        val followUpQueries: List<String>,
+        val whatsMissing: String?,
+        val iterationNumber: Int,
+        override val timestampMs: Long = System.currentTimeMillis()
+    ) : SearchEvent()
+
+    /**
+     * Emitted after each synthesis iteration to report progress.
+     */
+    data class SynthesisIteration(
+        override val sessionId: QuerySessionId,
+        val iterationNumber: Int,
+        val status: String,  // "COMPLETE" or "NEEDS_MORE_SOURCES"
+        val sourceCount: Int,
+        val followUpQueries: List<String>,
+        override val timestampMs: Long = System.currentTimeMillis()
+    ) : SearchEvent()
+
+    /**
      * Emitted when the search session completes successfully with an answer.
      * Contains the full session detail for the presentation layer to serialize.
      */
@@ -99,7 +134,11 @@ sealed class SearchEvent {
          * Image IDs referenced in the answer (format: "img-xxx").
          * These can be used to fetch image bytes from the repository.
          */
-        val imageIds: List<String> = emptyList()
+        val imageIds: List<String> = emptyList(),
+        /**
+         * Feedback loop report data for logging and debugging.
+         */
+        val loopReport: FeedbackLoopReport? = null
     ) : SearchEvent()
 
     /**

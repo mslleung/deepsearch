@@ -25,13 +25,10 @@ data class HtmlSourceEvalInput(
  * data in HTML previews may be inaccurate.
  * 
  * @property evaluatedSource The evaluated source with extracted facts, or null if not relevant
- * @property expandedQuery Clarified/expanded version of the user query that captures the core intent.
- *           For example: "tell me about the pricing" → "What are the main subscription plans and pricing tiers?"
  * @property tokenUsage Token usage metrics for this evaluation
  */
 data class HtmlSourceEvalOutput(
     val evaluatedSource: EvaluatedSource?,
-    val expandedQuery: String,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
