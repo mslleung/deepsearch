@@ -51,12 +51,15 @@ interface IKnowledgeGraphRepository {
      * @param queryEmbedding The embedding vector of the search query
      * @param limit Maximum number of entities to return
      * @param urlPrefix Optional URL prefix to filter entities by source URL
+     * @param minExtractedAtEpochMs Optional minimum extraction timestamp - only includes entities 
+     *        with at least one source extracted at or after this timestamp
      * @return List of matching entities ordered by similarity
      */
     suspend fun semanticEntitySearch(
         queryEmbedding: FloatArray,
         limit: Int,
-        urlPrefix: String? = null
+        urlPrefix: String? = null,
+        minExtractedAtEpochMs: Long? = null
     ): List<KgEntity>
     
     /**

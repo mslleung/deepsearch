@@ -351,5 +351,138 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             "Should track source URLs"
         )
     }
+
+    @Test
+    fun `semanticEntitySearch filters by minExtractedAtEpochMs`() = runTest(testCoroutineDispatcher) {
+        // Given: an indexed document
+        val timestampBeforeIndexing = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        
+        val sourceUrl = "https://example.com/kg-test/cache-age-test"
+        val extraction = KgExtractionResult(
+            entities = listOf(
+                ExtractedEntity(
+                    name = "CacheAgeTestEntity",
+                    type = EntityType.PRODUCT,
+                    facts = listOf("Test entity for cache age filtering")
+                )
+            ),
+            relationships = emptyList()
+        )
+
+        knowledgeGraphRepository.indexDocument(sourceUrl, extraction)
+
+        val timestampAfterIndexing = kotlin.time.Clock.System.now().toEpochMilliseconds()
+
+        val queryEmbedding = textEmbeddingService.embedQuery("CacheAgeTestEntity")
+
+        // When: searching with minExtractedAtEpochMs before indexing time
+        val resultsWithOldTimestamp = knowledgeGraphRepository.semanticEntitySearch(
+            queryEmbedding = queryEmbedding.embedding.toFloatArray(),
+            limit = 10,
+            urlPrefix = "https://example.com/kg-test/cache-age-test",
+            minExtractedAtEpochMs = timestampBeforeIndexing
+        )
+
+        // Then: entity should be found (extraction time is after the filter timestamp)
+        assertTrue(
+            resultsWithOldTimestamp.any { it.name == "CacheAgeTestEntity" },
+            "Should find entity when minExtractedAtEpochMs is before extraction time"
+        )
+
+        // When: searching with minExtractedAtEpochMs after indexing time (in the future)
+        val futureTimestamp = timestampAfterIndexing + 60_000 // 1 minute in the future
+        val resultsWithFutureTimestamp = knowledgeGraphRepository.semanticEntitySearch(
+            queryEmbedding = queryEmbedding.embedding.toFloatArray(),
+            limit = 10,
+            urlPrefix = "https://example.com/kg-test/cache-age-test",
+            minExtractedAtEpochMs = futureTimestamp
+        )
+
+        // Then: entity should NOT be found (extraction time is before the filter timestamp)
+        assertFalse(
+            resultsWithFutureTimestamp.any { it.name == "CacheAgeTestEntity" },
+            "Should NOT find entity when minExtractedAtEpochMs is after extraction time"
+        )
+
+        // When: searching without minExtractedAtEpochMs filter
+        val resultsWithoutFilter = knowledgeGraphRepository.semanticEntitySearch(
+            queryEmbedding = queryEmbedding.embedding.toFloatArray(),
+            limit = 10,
+            urlPrefix = "https://example.com/kg-test/cache-age-test",
+            minExtractedAtEpochMs = null
+        )
+
+        // Then: entity should be found (no filtering)
+        assertTrue(
+            resultsWithoutFilter.any { it.name == "CacheAgeTestEntity" },
+            "Should find entity when no cache age filter is applied"
+        )
+    }
+
+    @Test
+    fun `semanticEntitySearch combines urlPrefix and minExtractedAtEpochMs filters`() = runTest(testCoroutineDispatcher) {
+        // Given: indexed documents with different URLs
+        val timestampBeforeIndexing = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        
+        val extraction1 = KgExtractionResult(
+            entities = listOf(
+                ExtractedEntity(
+                    name = "CombinedFilterEntity1",
+                    type = EntityType.PRODUCT,
+                    facts = listOf("Entity 1")
+                )
+            ),
+            relationships = emptyList()
+        )
+        
+        val extraction2 = KgExtractionResult(
+            entities = listOf(
+                ExtractedEntity(
+                    name = "CombinedFilterEntity2",
+                    type = EntityType.PRODUCT,
+                    facts = listOf("Entity 2")
+                )
+            ),
+            relationships = emptyList()
+        )
+
+        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/combined-filter/path-a", extraction1)
+        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/combined-filter/path-b", extraction2)
+
+        val queryEmbedding = textEmbeddingService.embedQuery("CombinedFilterEntity")
+
+        // When: searching with both urlPrefix AND minExtractedAtEpochMs
+        val results = knowledgeGraphRepository.semanticEntitySearch(
+            queryEmbedding = queryEmbedding.embedding.toFloatArray(),
+            limit = 10,
+            urlPrefix = "https://example.com/kg-test/combined-filter/path-a",
+            minExtractedAtEpochMs = timestampBeforeIndexing
+        )
+
+        // Then: should only find Entity1 (matches both URL prefix AND time filter)
+        assertTrue(
+            results.any { it.name == "CombinedFilterEntity1" },
+            "Should find Entity1 matching both filters"
+        )
+        assertFalse(
+            results.any { it.name == "CombinedFilterEntity2" },
+            "Should NOT find Entity2 (wrong URL prefix)"
+        )
+
+        // When: searching with matching URL but future timestamp
+        val futureTimestamp = kotlin.time.Clock.System.now().toEpochMilliseconds() + 60_000
+        val resultsWithFutureTime = knowledgeGraphRepository.semanticEntitySearch(
+            queryEmbedding = queryEmbedding.embedding.toFloatArray(),
+            limit = 10,
+            urlPrefix = "https://example.com/kg-test/combined-filter/path-a",
+            minExtractedAtEpochMs = futureTimestamp
+        )
+
+        // Then: should find nothing (URL matches but time doesn't)
+        assertFalse(
+            resultsWithFutureTime.any { it.name == "CombinedFilterEntity1" },
+            "Should NOT find Entity1 when time filter excludes it"
+        )
+    }
 }
 

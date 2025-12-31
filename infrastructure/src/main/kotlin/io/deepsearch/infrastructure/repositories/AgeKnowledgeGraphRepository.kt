@@ -156,7 +156,8 @@ class AgeKnowledgeGraphRepository(
     override suspend fun semanticEntitySearch(
         queryEmbedding: FloatArray,
         limit: Int,
-        urlPrefix: String?
+        urlPrefix: String?,
+        minExtractedAtEpochMs: Long?
     ): List<KgEntity> {
         return transactionService.withTransaction {
             // Get all entities with embeddings
@@ -170,12 +171,23 @@ class AgeKnowledgeGraphRepository(
                 }
                 .toList()
             
-            // Filter by URL prefix if specified
-            val filteredEntities = if (urlPrefix != null) {
+            // Filter by URL prefix and/or cache age if specified
+            // An entity is included if ANY of its sources match the criteria
+            val filteredEntities = if (urlPrefix != null || minExtractedAtEpochMs != null) {
                 val validEntityIds = entitySourcesTable.selectAll()
-                    .map { it[entitySourcesTable.entityId] to it[entitySourcesTable.sourceUrl] }
+                    .map { row -> 
+                        Triple(
+                            row[entitySourcesTable.entityId],
+                            row[entitySourcesTable.sourceUrl],
+                            row[entitySourcesTable.extractedAtEpochMs]
+                        )
+                    }
                     .toList()
-                    .filter { it.second.startsWith(urlPrefix) }
+                    .filter { (_, sourceUrl, extractedAt) ->
+                        val urlMatches = urlPrefix == null || sourceUrl.startsWith(urlPrefix)
+                        val ageMatches = minExtractedAtEpochMs == null || extractedAt >= minExtractedAtEpochMs
+                        urlMatches && ageMatches
+                    }
                     .map { it.first }
                     .toSet()
                 

@@ -13,6 +13,8 @@ import kotlinx.coroutines.coroutineScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.UUID
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 /**
  * Service for hybrid retrieval from the knowledge graph.
@@ -49,6 +51,7 @@ interface IKgHybridRetrievalService {
  * Implementation of KG hybrid retrieval service.
  * Runs semantic search + graph traversal and text-to-cypher in parallel.
  */
+@OptIn(ExperimentalTime::class)
 class KgHybridRetrievalService(
     private val knowledgeGraphRepository: IKnowledgeGraphRepository,
     private val textToCypherAgent: ITextToCypherAgent,
@@ -74,7 +77,7 @@ class KgHybridRetrievalService(
         return coroutineScope {
             // Run both strategies in parallel
             val graphResultDeferred = async {
-                performSemanticGraphRetrieval(query, baseUrl, sessionId)
+                performSemanticGraphRetrieval(query, baseUrl, maxCacheAge, sessionId)
             }
             
             val cypherResultDeferred = async {
@@ -115,6 +118,7 @@ class KgHybridRetrievalService(
     private suspend fun performSemanticGraphRetrieval(
         query: String,
         urlPrefix: String?,
+        maxCacheAge: Long?,
         sessionId: SessionId
     ): Pair<KgSubgraph?, Boolean> {
         return try {
@@ -131,11 +135,21 @@ class KgHybridRetrievalService(
                 totalTokens = embeddingResult.tokenUsage.totalTokens
             )
             
+            // Calculate minimum extraction timestamp for cache age filtering
+            val minExtractedAtEpochMs = if (maxCacheAge != null) {
+                val timestamp = Clock.System.now().toEpochMilliseconds() - maxCacheAge
+                logger.debug("KG semantic search: filtering entities extracted after {}", timestamp)
+                timestamp
+            } else {
+                null
+            }
+            
             // Semantic entity search
             val entities = knowledgeGraphRepository.semanticEntitySearch(
                 queryEmbedding = embeddingResult.embedding.toFloatArray(),
                 limit = SEMANTIC_SEARCH_LIMIT,
-                urlPrefix = urlPrefix
+                urlPrefix = urlPrefix,
+                minExtractedAtEpochMs = minExtractedAtEpochMs
             )
             
             if (entities.isEmpty()) {
