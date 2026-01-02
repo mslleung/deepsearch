@@ -119,7 +119,7 @@ sleep 3
 # Enter password: password
 ```
 
-##### Step 6: Enable Extensions and Create Graph
+##### Step 6: Enable Extensions and Configure Database
 
 ```bash
 /Library/PostgreSQL/17/bin/psql -U postgres -d deepsearch << 'EOF'
@@ -127,9 +127,12 @@ sleep 3
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS age;
 
--- Load AGE and set search path
-LOAD 'age';
-SET search_path = ag_catalog, "$user", public;
+-- Configure database to auto-load AGE for all connections (required for R2DBC)
+ALTER DATABASE deepsearch SET session_preload_libraries = 'age';
+ALTER DATABASE deepsearch SET search_path = ag_catalog, "$user", public;
+
+-- Reconnect to apply settings
+\c deepsearch
 
 -- Create the knowledge graph (required for Cypher queries)
 SELECT create_graph('knowledge_graph');

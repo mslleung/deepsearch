@@ -290,21 +290,15 @@ class AgeKnowledgeGraphRepository(
             return emptyList()
         }
         
-        // Check if AGE extension is available before attempting to execute
-        if (!isAgeAvailable()) {
-            logger.debug("Apache AGE is not installed - Cypher queries are not supported")
-            return emptyList()
-        }
-        
         // Build Apache AGE SQL query
-        // Using dollar-quoting ($$) to safely embed the Cypher query
-        // The SET search_path is needed for AGE functions
         val sql = buildAgeCypherSql(cypherQuery)
         
         logger.debug("Executing Cypher query via AGE: {}", cypherQuery)
+        logger.debug("Generated SQL: {}", sql)
         
         return try {
             val rawResults = transactionService.executeRawQuery(sql, timeoutSeconds)
+            logger.debug("Raw results count: {}", rawResults.size)
             
             // Parse agtype results into simple string maps
             rawResults.map { row ->
@@ -317,36 +311,12 @@ class AgeKnowledgeGraphRepository(
     }
     
     /**
-     * Check if Apache AGE extension is installed and available.
-     * Caches the result to avoid repeated database queries.
-     */
-    private var ageAvailableCache: Boolean? = null
-    
-    private suspend fun isAgeAvailable(): Boolean {
-        // Return cached result if available
-        ageAvailableCache?.let { return it }
-        
-        return try {
-            val result = transactionService.executeRawQuery(
-                "SELECT 1 FROM pg_extension WHERE extname = 'age'",
-                timeoutSeconds = 5
-            )
-            val available = result.isNotEmpty()
-            ageAvailableCache = available
-            if (!available) {
-                logger.info("Apache AGE extension is not installed. Cypher query support is disabled.")
-            }
-            available
-        } catch (e: Exception) {
-            logger.warn("Could not check AGE availability: {}", e.message)
-            ageAvailableCache = false
-            false
-        }
-    }
-    
-    /**
      * Build the SQL statement to execute a Cypher query via Apache AGE.
      * Uses dollar-quoting to safely embed the Cypher query.
+     * 
+     * NOTE: The database must be configured with:
+     *   ALTER DATABASE deepsearch SET session_preload_libraries = 'age';
+     *   ALTER DATABASE deepsearch SET search_path = ag_catalog, "$user", public;
      */
     private fun buildAgeCypherSql(cypherQuery: String): String {
         // Extract column names from the RETURN clause for the AS definition
@@ -360,12 +330,8 @@ class AgeKnowledgeGraphRepository(
             "result agtype"
         }
         
-        return $$"""
-            SET search_path = ag_catalog, "$user", public;
-            SELECT * FROM cypher('knowledge_graph', $$
-                $$cypherQuery
-            $$) AS ($$columnDefs);
-        """.trimIndent()
+        // Single statement query - AGE is auto-loaded via session_preload_libraries
+        return """SELECT * FROM cypher('knowledge_graph', ${'$'}${'$'}$cypherQuery${'$'}${'$'}) AS ($columnDefs)"""
     }
     
     /**
