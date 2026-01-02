@@ -244,10 +244,10 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertTrue(evaluatedSource.title == source.title, "Title should be preserved")
         assertTrue(evaluatedSource.description == source.description, "Description should be preserved")
         
-        // Verify classification and answer type are set
+        // Verify classification and relevance are set
         assertNotNull(evaluatedSource.sourceClassification, "Should have source classification")
-        assertNotNull(evaluatedSource.answerType, "Should have answer type")
-        assertTrue(evaluatedSource.relevanceJustification.isNotBlank(), "Should have relevance justification")
+        assertNotNull(evaluatedSource.relevance, "Should have relevance")
+        assertTrue(evaluatedSource.relevanceReasoning.isNotBlank(), "Should have relevance justification")
     }
 
 }

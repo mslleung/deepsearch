@@ -223,17 +223,11 @@ class CacheOnlySearchOrchestrator(
             var imageIds = emptyList<String>()
             var citedSourceUrls = emptyList<String>()
             
-            // Extract target domain for follow-up queries
-            val targetDomain = try {
-                java.net.URI(searchQuery.url).host ?: ""
-            } catch (e: Exception) { "" }
-            
             streamingAnswerSynthesisAgent.generateStream(
                 StreamingAnswerSynthesisInput(
                     query = searchQuery.query,
                     evaluatedSources = evaluatedSources,
-                    previouslySearchedQueries = emptyList(),
-                    targetDomain = targetDomain
+                    previouslySearchedQueries = emptyList()
                 )
             ).collect { item ->
                 when (item) {

@@ -3,7 +3,7 @@ package io.deepsearch.domain.models.valueobjects
 import kotlinx.serialization.Serializable
 
 /**
- * Status indicating whether the answer synthesis is complete or needs more sources.
+ * Status indicating whether the answer synthesis is complete or needs more information.
  * Used by the feedback loop to determine if additional searching is required.
  */
 @Serializable
@@ -15,9 +15,9 @@ enum class AnswerStatus {
     COMPLETE,
 
     /**
-     * The answer is partial or lacks authoritative sources.
+     * The answer is partial or lacks sufficient information.
      * Additional targeted searches should be performed using the provided follow-up queries.
      */
-    NEEDS_MORE_SOURCES
+    NEED_MORE_INFORMATION
 }
 

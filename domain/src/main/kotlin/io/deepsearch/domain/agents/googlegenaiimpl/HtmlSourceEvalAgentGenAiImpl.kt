@@ -11,10 +11,10 @@ import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
-import io.deepsearch.domain.models.valueobjects.AnswerType
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
 import io.deepsearch.domain.models.valueobjects.SourceClassification
+import io.deepsearch.domain.models.valueobjects.SourceRelevance
 import io.deepsearch.domain.models.valueobjects.SourceType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.withContext
@@ -71,10 +71,6 @@ class HtmlSourceEvalAgentGenAiImpl(
         .description("Evaluated source with extracted facts")
         .properties(
             mapOf(
-                "isRelevant" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("Whether this source has any relevant facts for the query")
-                    .build(),
                 "sourceClassification" to Schema.builder().type("STRING")
                     .description("Source type classification (OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, THIRD_PARTY_REVIEW, FORUM_DISCUSSION)")
                     .build(),
@@ -82,20 +78,21 @@ class HtmlSourceEvalAgentGenAiImpl(
                     .description("Date extracted from content (null/empty if no date found)")
                     .nullable(true)
                     .build(),
-                "answerType" to Schema.builder().type("STRING")
-                    .description("How directly the source answers the query (DIRECT_ANSWER, INFERRED_ANSWER, PARTIAL_MENTION)")
+                "relevanceReasoning" to Schema.builder().type("STRING")
+                    .description("Brief reasoning for why this source is or is not relevant")
                     .build(),
-                "relevanceJustification" to Schema.builder().type("STRING")
-                    .description("Brief reason for why this source is or is not relevant")
+                "relevance" to Schema.builder().type("STRING")
+                    .description("How relevant the source is to the query (CANONICAL, PARTIAL_MENTION, NOT_RELEVANT)")
+                    .enum_(listOf("CANONICAL", "PARTIAL_MENTION", "NOT_RELEVANT"))
                     .build(),
                 "relevantFacts" to Schema.builder()
                     .type("ARRAY")
                     .items(relevantFactSchema)
-                    .description("List of relevant facts extracted from the source")
+                    .description("List of relevant facts extracted from the source (empty if NOT_RELEVANT)")
                     .build()
             )
         )
-        .required(listOf("isRelevant", "sourceClassification", "answerType", "relevanceJustification", "relevantFacts"))
+        .required(listOf("sourceClassification", "relevanceReasoning", "relevance", "relevantFacts"))
         .build()
 
     private val systemInstruction = """
@@ -106,54 +103,41 @@ class HtmlSourceEvalAgentGenAiImpl(
         - User query (with site: context)
         - Single HTML source (preview content with cleaned HTML structure)
         
-        For the source, you must:
+        For the source, you must (output fields in this order):
         
-        1. **Determine if Relevant**:
-           - Set isRelevant=true if the source contains facts that help answer the query
-           - Set isRelevant=false if the source has no relevant information
-        
-        2. **Extract Relevant Facts**:
-           - Extract facts from the source that are directly relevant to answering the query
-           - Each fact should be a complete, standalone statement
-           - Only include facts that help answer the query
-           - If a source has no relevant facts, set isRelevant=false and return empty facts array
-        
-        3. **Mark Table Origin (isInTable)**:
-           - Mark isInTable=true if the fact comes from:
-             - <table>, <tr>, <td>, <th> elements
-             - Pricing grids or comparison matrices
-             - Repeated <div>-soup patterns that form rows/columns
-             - Any tabular data structure
-           - Mark isInTable=false for facts from prose paragraphs, headings, or regular text
-           - IMPORTANT: Table data in HTML previews may be inaccurate, so this flag is used to filter
-        
-        4. **Classify Each Fact**:
-           - OFFICIAL_LIVING_DOC: Fact from a main page (e.g., /pricing, /home, /features) intended to reflect current state
-           - OFFICIAL_SNAPSHOT: Fact from dated company content (e.g., /blog, /press, /news)
-           - OTHERS: Fact from external reviews, forums, UGC, etc.
-        
-        5. **Determine Source Type** (Choose one):
+        1. **Determine Source Type** (sourceClassification):
            - `OFFICIAL_LIVING_DOC`: A main page (e.g., /pricing, /home, /features) intended to reflect current state.
            - `OFFICIAL_SNAPSHOT`: A dated company update (e.g., /blog, /press, /news).
            - `THIRD_PARTY_REVIEW`: External review or news site.
            - `FORUM_DISCUSSION`: UGC, Reddit, StackOverflow.
         
-        6. **Determine Temporal State**:
+        2. **Determine Temporal State** (contentDate):
            - Extract the `contentDate` (if available). Look for publication dates, update dates, or temporal indicators.
            - If no date is found, leave it null/empty.
         
-        7. **Determine Answer Type**:
-           - `DIRECT_ANSWER`: The page explicitly lists the answer (e.g., a pricing table).
-           - `INFERRED_ANSWER`: The answer must be guessed or calculated.
-           - `PARTIAL_MENTION`: Mentions keywords but doesn't answer the core intent.
+        3. **Relevance Reasoning** (relevanceReasoning):
+           - Briefly explain why this source is or is not relevant to the query.
+           - This reasoning helps determine the relevance classification.
+        
+        4. **Determine Relevance** (relevance):
+           - `CANONICAL`: The page is a canonical/authoritative source for the query (e.g., official pricing page for a pricing query).
+           - `PARTIAL_MENTION`: The page contains some relevant information but isn't the primary source.
+           - `NOT_RELEVANT`: The page has no relevant information for the query. Return empty facts array.
+        
+        5. **Extract Relevant Facts** (relevantFacts - if relevance is CANONICAL or PARTIAL_MENTION):
+           - Extract facts from the source that are directly relevant to answering the query
+           - Each fact should be a complete, standalone statement
+           - Only include facts that help answer the query
+           - For each fact, include:
+             - `isInTable`: true if from table/grid structure, false otherwise (table data may be inaccurate)
+             - `classification`: OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, or OTHERS
         
         Output Format:
         {
-          "isRelevant": true,
           "sourceClassification": "OFFICIAL_LIVING_DOC",
           "contentDate": "2024-07-25",
-          "answerType": "DIRECT_ANSWER",
-          "relevanceJustification": "Why this source is relevant or not",
+          "relevanceReasoning": "Why this source is relevant or not",
+          "relevance": "CANONICAL",
           "relevantFacts": [
             {"fact": "The product costs ${'$'}99/month", "isInTable": true, "classification": "OFFICIAL_LIVING_DOC"},
             {"fact": "The CEO is Jane Doe", "isInTable": false, "classification": "OFFICIAL_LIVING_DOC"}
@@ -170,12 +154,11 @@ class HtmlSourceEvalAgentGenAiImpl(
 
     @Serializable
     private data class EvalResponse(
-        val isRelevant: Boolean,
         val sourceClassification: String,
         val contentDate: String? = null,
-        val answerType: String,
-        val relevanceJustification: String,
-        val relevantFacts: List<LlmRelevantFact>
+        val relevanceReasoning: String,
+        val relevance: String,
+        val relevantFacts: List<LlmRelevantFact> = emptyList()
     )
 
     override suspend fun generate(input: HtmlSourceEvalInput): HtmlSourceEvalOutput {
@@ -228,16 +211,24 @@ class HtmlSourceEvalAgentGenAiImpl(
             }
         }
 
+        // Parse relevance first to check if source is relevant
+        val relevance = try {
+            SourceRelevance.valueOf(response.relevance)
+        } catch (e: IllegalArgumentException) {
+            logger.warn("Invalid relevance '{}', defaulting to NOT_RELEVANT", response.relevance)
+            SourceRelevance.NOT_RELEVANT
+        }
+
         logger.debug(
-            "[{}] response for {}: isRelevant={}, facts={}",
+            "[{}] response for {}: relevance={}, facts={}",
             HtmlSourceEvalAgentGenAiImpl::class.simpleName,
             htmlSource.url,
-            response.isRelevant,
+            relevance,
             response.relevantFacts.size
         )
 
         // If not relevant, return null evaluated source
-        if (!response.isRelevant) {
+        if (relevance == SourceRelevance.NOT_RELEVANT) {
             logger.debug("Source {} is not relevant, returning null", htmlSource.url)
             return HtmlSourceEvalOutput(
                 evaluatedSource = null,
@@ -251,14 +242,6 @@ class HtmlSourceEvalAgentGenAiImpl(
         } catch (e: IllegalArgumentException) {
             logger.warn("Invalid source classification '{}', defaulting to OFFICIAL_LIVING_DOC", response.sourceClassification)
             SourceType.OFFICIAL_LIVING_DOC
-        }
-        
-        // Parse answer type
-        val answerType = try {
-            AnswerType.valueOf(response.answerType)
-        } catch (e: IllegalArgumentException) {
-            logger.warn("Invalid answer type '{}', defaulting to PARTIAL_MENTION", response.answerType)
-            AnswerType.PARTIAL_MENTION
         }
 
         // Filter out facts where isInTable=true (tables in preview HTML are inaccurate)
@@ -287,8 +270,8 @@ class HtmlSourceEvalAgentGenAiImpl(
             relevantFacts = filteredFacts,
             sourceClassification = sourceType,
             contentDate = response.contentDate,
-            answerType = answerType,
-            relevanceJustification = response.relevanceJustification,
+            relevance = relevance,
+            relevanceReasoning = response.relevanceReasoning,
             relevantImageIds = emptyList() // Preview path doesn't handle images
         )
 

@@ -38,7 +38,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         assertNotNull(output)
         assertEquals("No information found to answer the query.", output.answer)
-        assertEquals(AnswerStatus.NEEDS_MORE_SOURCES, output.status, "Should request more sources when empty")
+            assertEquals(AnswerStatus.NEED_MORE_INFORMATION, output.status, "Should request more information when empty")
         assertTrue(output.reasoning.isNotBlank(), "Should have reasoning explaining why no answer")
         assertNotNull(output.tokenUsage)
     }
@@ -65,8 +65,8 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER,
-            relevanceJustification = "Comprehensive introduction to machine learning"
+            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
+            relevanceReasoning = "Comprehensive introduction to machine learning"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -96,8 +96,8 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER,
-            relevanceJustification = "Clear definition of machine learning"
+            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
+            relevanceReasoning = "Clear definition of machine learning"
         )
 
         val source2 = EvaluatedSource(
@@ -120,8 +120,8 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER,
-            relevanceJustification = "Comprehensive overview of ML types"
+            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
+            relevanceReasoning = "Comprehensive overview of ML types"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -155,8 +155,8 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER,
-            relevanceJustification = "Official documentation on deep learning"
+            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
+            relevanceReasoning = "Official documentation on deep learning"
         )
 
         val lowRelevanceSource = EvaluatedSource(
@@ -171,8 +171,8 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_SNAPSHOT,
             contentDate = null,
-            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.PARTIAL_MENTION,
-            relevanceJustification = "Personal blog post"
+            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.PARTIAL_MENTION,
+            relevanceReasoning = "Personal blog post"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -188,7 +188,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     }
 
     @Test
-    fun `should indicate NEEDS_MORE_SOURCES when facts are not relevant`() = runTest(testCoroutineDispatcher) {
+    fun `should indicate NEED_MORE_INFORMATION when facts are not relevant`() = runTest(testCoroutineDispatcher) {
         val irrelevantSource = EvaluatedSource(
             url = "https://example.com/cooking-recipes",
             title = "Cooking Recipes",
@@ -205,8 +205,8 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.FORUM_DISCUSSION,
             contentDate = null,
-            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.PARTIAL_MENTION,
-            relevanceJustification = "Not relevant to query but kept for context"
+            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.PARTIAL_MENTION,
+            relevanceReasoning = "Not relevant to query but kept for context"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -218,7 +218,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         assertNotNull(output)
         assertTrue(output.answer.isNotBlank(), "Answer should indicate lack of relevant information")
-        assertEquals(AnswerStatus.NEEDS_MORE_SOURCES, output.status, "Should request more sources when facts are irrelevant")
+        assertEquals(AnswerStatus.NEED_MORE_INFORMATION, output.status, "Should request more information when facts are irrelevant")
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 
@@ -252,8 +252,8 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.DIRECT_ANSWER,
-            relevanceJustification = "Comprehensive official documentation on machine learning"
+            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
+            relevanceReasoning = "Comprehensive official documentation on machine learning"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -284,15 +284,14 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.THIRD_PARTY_REVIEW,
             contentDate = null,
-            answerType = io.deepsearch.domain.models.valueobjects.AnswerType.PARTIAL_MENTION,
-            relevanceJustification = "Basic mention of ML"
+            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.PARTIAL_MENTION,
+            relevanceReasoning = "Basic mention of ML"
         )
 
         val input = StreamingAnswerSynthesisInput(
             query = "What is machine learning and how does it work?",
             evaluatedSources = listOf(partialSource),
-            previouslySearchedQueries = listOf("machine learning basics", "how ML works"),
-            targetDomain = "example.com"
+            previouslySearchedQueries = listOf("machine learning basics", "how ML works")
         )
 
         val output = agent.generate(input)

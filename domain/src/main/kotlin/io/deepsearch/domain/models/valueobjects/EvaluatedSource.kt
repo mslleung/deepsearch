@@ -14,8 +14,8 @@ import kotlinx.serialization.Serializable
  * @property relevantFacts List of facts extracted from the source that are relevant to the query
  * @property sourceClassification Classification of the source type
  * @property contentDate Date extracted from content (nullable if no date found)
- * @property answerType How directly the source answers the query
- * @property relevanceJustification Brief reason for inclusion
+ * @property relevance How relevant the source is to the query (CANONICAL, PARTIAL_MENTION, NOT_RELEVANT)
+ * @property relevanceReasoning Brief reason for inclusion
  * @property relevantImageIds List of image IDs (format: "img-xxx") deemed relevant for this source
  */
 @Serializable
@@ -26,7 +26,7 @@ data class EvaluatedSource(
     val relevantFacts: List<RelevantFact>,
     val sourceClassification: SourceType,
     val contentDate: String?,
-    val answerType: AnswerType,
-    val relevanceJustification: String,
+    val relevance: SourceRelevance,
+    val relevanceReasoning: String,
     val relevantImageIds: List<String> = emptyList()
 )

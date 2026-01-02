@@ -30,7 +30,6 @@ import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.ext.chunkedWithTimeout
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
-import io.deepsearch.domain.models.valueobjects.AnswerType
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
@@ -1327,7 +1326,7 @@ class AgenticBrowserSearchOrchestrator(
         /** Sources count per iteration for loop report */
         val sourcesPerIteration: List<Int> = emptyList(),
         /** Answer status from last synthesis */
-        val status: AnswerStatus = AnswerStatus.NEEDS_MORE_SOURCES
+        val status: AnswerStatus = AnswerStatus.NEED_MORE_INFORMATION
     )
 
     /**
@@ -1335,8 +1334,7 @@ class AgenticBrowserSearchOrchestrator(
      * Provides atomic operations for adding sources and reading accumulated state.
      */
     private class SourceAccumulator(
-        initialQuery: String,
-        private val targetDomain: String
+        initialQuery: String
     ) {
         private val lock = Any()
         private val sources = mutableListOf<EvaluatedSource>()
@@ -1345,8 +1343,7 @@ class AgenticBrowserSearchOrchestrator(
         private val sourcesPerIteration = mutableListOf<Int>()
         
         private var currentAnswer: String? = null
-        private var currentStatus: AnswerStatus = AnswerStatus.NEEDS_MORE_SOURCES
-        private var currentAnswerType: AnswerType = AnswerType.PARTIAL_MENTION
+        private var currentStatus: AnswerStatus = AnswerStatus.NEED_MORE_INFORMATION
         private var currentCitedUrls: List<String> = emptyList()
         private var currentImageIds: List<String> = emptyList()
         private var iterationCount = 0
@@ -1381,13 +1378,11 @@ class AgenticBrowserSearchOrchestrator(
         fun recordSynthesisResult(
             answer: String,
             status: AnswerStatus,
-            answerType: AnswerType,
             citedUrls: List<String>,
             imageIds: List<String>
         ) = synchronized(lock) {
             currentAnswer = answer
             currentStatus = status
-            currentAnswerType = answerType
             currentCitedUrls = citedUrls
             currentImageIds = imageIds
             iterationCount++
@@ -1466,11 +1461,6 @@ class AgenticBrowserSearchOrchestrator(
                 status = currentStatus
             )
         }
-
-        /**
-         * Get the target domain for site: prefixing.
-         */
-        fun getTargetDomain(): String = targetDomain
     }
 
     /**
@@ -1492,15 +1482,14 @@ class AgenticBrowserSearchOrchestrator(
      */
     private data class PreviewResult(
         val evaluatedSources: List<EvaluatedSource> = emptyList(),
-        val answerType: AnswerType = AnswerType.PARTIAL_MENTION,
+        val status: AnswerStatus = AnswerStatus.NEED_MORE_INFORMATION,
         val fullAnswer: String? = null
     ) {
         /**
          * Whether a confident answer was found.
-         * Preview path only accepts DIRECT_ANSWER to avoid hallucination.
-         * INFERRED_ANSWER and PARTIAL_MENTION are not confident enough for early exit.
+         * Preview path only accepts COMPLETE status for early exit.
          */
-        val isAnswerFound: Boolean get() = answerType == AnswerType.DIRECT_ANSWER
+        val isAnswerFound: Boolean get() = status == AnswerStatus.COMPLETE
     }
 
     /**
@@ -1522,13 +1511,11 @@ class AgenticBrowserSearchOrchestrator(
      * Result from answer synthesis, containing all relevant data from the streaming response.
      */
     private data class SynthesisResult(
-        val answer: String,
-        val status: AnswerStatus,
-        val answerType: AnswerType,
         val reasoning: String,
-        val followUpQueries: List<String>,
-        val whatsMissing: String?,
+        val answer: String,
         val citedSourceUrls: List<String>,
+        val status: AnswerStatus,
+        val followUpQueries: List<String>,
         val imageIds: List<String>
     ) {
         /** Whether the answer is complete (status=COMPLETE from synthesis agent) */
@@ -1562,21 +1549,18 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Synthesize an answer from evaluated sources.
      * Handles streaming collection and token usage recording.
-     * Supports the feedback loop with previouslySearchedQueries and targetDomain.
+     * Supports the feedback loop with previouslySearchedQueries.
      */
     private suspend fun synthesizeAnswer(
         sessionId: QuerySessionId,
         query: String,
         evaluatedSources: List<EvaluatedSource>,
-        previouslySearchedQueries: List<String> = emptyList(),
-        targetDomain: String = ""
+        previouslySearchedQueries: List<String> = emptyList()
     ): SynthesisResult {
         val answerBuilder = StringBuilder()
         lateinit var status: AnswerStatus
-        lateinit var answerType: AnswerType
         var reasoning = ""
         var followUpQueries = emptyList<String>()
-        var whatsMissing: String? = null
         var citedSourceUrls = emptyList<String>()
         var imageIds = emptyList<String>()
 
@@ -1584,8 +1568,7 @@ class AgenticBrowserSearchOrchestrator(
             StreamingAnswerSynthesisInput(
                 query = query,
                 evaluatedSources = evaluatedSources,
-                previouslySearchedQueries = previouslySearchedQueries,
-                targetDomain = targetDomain
+                previouslySearchedQueries = previouslySearchedQueries
             )
         ).collect { item ->
             when (item) {
@@ -1596,25 +1579,21 @@ class AgenticBrowserSearchOrchestrator(
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
-                    status = item.status
-                    answerType = item.answerType
                     reasoning = item.reasoning
-                    followUpQueries = item.followUpQueries
-                    whatsMissing = item.whatsMissing
                     citedSourceUrls = item.citedSourceUrls
+                    status = item.status
+                    followUpQueries = item.followUpQueries
                     imageIds = item.imageIds
                 }
             }
         }
 
         return SynthesisResult(
-            answer = answerBuilder.toString(),
-            status = status,
-            answerType = answerType,
             reasoning = reasoning,
-            followUpQueries = followUpQueries,
-            whatsMissing = whatsMissing,
+            answer = answerBuilder.toString(),
             citedSourceUrls = citedSourceUrls,
+            status = status,
+            followUpQueries = followUpQueries,
             imageIds = imageIds
         )
     }
@@ -1623,7 +1602,7 @@ class AgenticBrowserSearchOrchestrator(
      * Aggregate a newly evaluated markdown source and attempt answer synthesis.
      * Uses status from synthesis agent to determine if the answer is complete:
      * - COMPLETE = answer is sufficient, stop collecting
-     * - NEEDS_MORE_SOURCES = keep collecting sources and trigger follow-up searches
+     * - NEED_MORE_INFORMATION = keep collecting sources and trigger follow-up searches
      */
     private suspend fun aggregateMarkdownResultIntoAnswer(
         sessionId: QuerySessionId,
@@ -1643,26 +1622,20 @@ class AgenticBrowserSearchOrchestrator(
         val updatedSources = state.evaluatedSources + evalResult.evaluatedSource
         val updatedProcessedUrls = state.processedUrls + evalResult.evaluatedSource.url
 
-        // Extract target domain for follow-up queries
-        val targetDomain = try {
-            java.net.URI(searchQuery.url).host ?: ""
-        } catch (e: Exception) { "" }
-
         // Synthesize answer with accumulated sources
         val synthesis = synthesizeAnswer(
             sessionId = sessionId, 
             query = searchQuery.query, 
             evaluatedSources = updatedSources, 
-            previouslySearchedQueries = state.searchedQueries,
-            targetDomain = targetDomain
+            previouslySearchedQueries = state.searchedQueries
         )
 
         val newIterationNumber = state.iterationNumber + 1
         val updatedSourcesPerIteration = state.sourcesPerIteration + updatedSources.size
 
         logger.debug(
-            "[{}] Main path synthesis iteration {}: {} sources, status={}, answerType={}, citedSources={}, followUpQueries={}",
-            sessionId.value, newIterationNumber, updatedSources.size, synthesis.status, synthesis.answerType, 
+            "[{}] Main path synthesis iteration {}: {} sources, status={}, citedSources={}, followUpQueries={}",
+            sessionId.value, newIterationNumber, updatedSources.size, synthesis.status,
             synthesis.citedSourceUrls.size, synthesis.followUpQueries.size
         )
 
@@ -1685,8 +1658,8 @@ class AgenticBrowserSearchOrchestrator(
                     processedUrlCount = updatedProcessedUrls.size,
                     relevantCount = updatedSources.size,
                     isGoodEnough = synthesis.isComplete,
-                    reason = if (synthesis.isComplete) "Answer is complete (${synthesis.answerType})" 
-                             else "Collecting more sources: ${synthesis.whatsMissing ?: "more information needed"}"
+                    reason = if (synthesis.isComplete) "Answer is complete" 
+                             else "Collecting more sources: ${synthesis.reasoning.take(100)}"
                 )
             )
         }
@@ -1694,8 +1667,8 @@ class AgenticBrowserSearchOrchestrator(
         // Track searched queries including new follow-up queries
         val updatedSearchedQueries = state.searchedQueries + synthesis.followUpQueries.filter { it !in state.searchedQueries }
 
-        // Send follow-up queries to the channel for processing (if status is NEEDS_MORE_SOURCES)
-        if (synthesis.status == AnswerStatus.NEEDS_MORE_SOURCES && synthesis.followUpQueries.isNotEmpty()) {
+        // Send follow-up queries to the channel for processing (if status is NEED_MORE_INFORMATION)
+        if (synthesis.status == AnswerStatus.NEED_MORE_INFORMATION && synthesis.followUpQueries.isNotEmpty()) {
             val newQueries = synthesis.followUpQueries.filter { searchedQueries.add(it) }
             if (newQueries.isNotEmpty()) {
                 logger.info(
@@ -1708,7 +1681,7 @@ class AgenticBrowserSearchOrchestrator(
                     SearchEvent.FollowUpSearchStarted(
                         sessionId = sessionId,
                         followUpQueries = newQueries,
-                        whatsMissing = synthesis.whatsMissing,
+                        whatsMissing = synthesis.reasoning,
                         iterationNumber = newIterationNumber
                     )
                 )
@@ -1881,21 +1854,20 @@ class AgenticBrowserSearchOrchestrator(
             sessionId = sessionId, 
             query = searchQuery.query, 
             evaluatedSources = listOf(evaluatedSource),
-            previouslySearchedQueries = emptyList(),
-            targetDomain = ""
+            previouslySearchedQueries = emptyList()
         )
 
         logger.debug(
-            "[{}] Preview synthesis: status={}, answerType={}, {} chars, reasoning={}",
-            sessionId.value, synthesis.status, synthesis.answerType, synthesis.answer.length, synthesis.reasoning
+            "[{}] Preview synthesis: status={}, {} chars, reasoning={}",
+            sessionId.value, synthesis.status, synthesis.answer.length, synthesis.reasoning
         )
 
-        // Preview path only accepts DIRECT_ANSWER with COMPLETE status
-        val isConfident = synthesis.status == AnswerStatus.COMPLETE && synthesis.answerType == AnswerType.DIRECT_ANSWER
+        // Preview path only accepts COMPLETE status
+        val isConfident = synthesis.status == AnswerStatus.COMPLETE
 
         return PreviewResult(
             evaluatedSources = listOf(evaluatedSource),
-            answerType = synthesis.answerType,
+            status = synthesis.status,
             fullAnswer = if (isConfident) synthesis.answer else null
         )
     }
