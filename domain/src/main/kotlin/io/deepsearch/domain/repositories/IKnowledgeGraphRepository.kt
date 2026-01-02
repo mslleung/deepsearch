@@ -6,8 +6,33 @@ import io.deepsearch.domain.knowledgegraph.KgSubgraph
 import java.util.UUID
 
 /**
+ * Pre-computed embeddings for entity names.
+ * Used for entity resolution (finding similar entities) and semantic search.
+ */
+data class EntityEmbeddings(
+    private val embeddings: Map<String, List<Float>>
+) {
+    /** Get embedding for an entity name, or null if not present */
+    operator fun get(entityName: String): List<Float>? = embeddings[entityName]
+    
+    /** Check if embeddings exist for an entity name */
+    operator fun contains(entityName: String): Boolean = entityName in embeddings
+    
+    companion object {
+        /** Create from a map of entity names to embedding vectors */
+        fun fromMap(map: Map<String, List<Float>>): EntityEmbeddings = EntityEmbeddings(map)
+        
+        /** Create empty embeddings (for testing or when embeddings not needed) */
+        fun empty(): EntityEmbeddings = EntityEmbeddings(emptyMap())
+    }
+}
+
+/**
  * Repository for managing the knowledge graph using Apache AGE.
  * Handles entity/relationship storage, retrieval, and incremental updates.
+ * 
+ * Note: Embeddings must be pre-computed by the caller (application layer) 
+ * to ensure proper token usage tracking.
  */
 interface IKnowledgeGraphRepository {
     
@@ -21,8 +46,13 @@ interface IKnowledgeGraphRepository {
      * 
      * @param url The source URL of the document
      * @param extraction The extracted entities and relationships from the document
+     * @param embeddings Pre-computed embeddings for entity names (for entity resolution)
      */
-    suspend fun indexDocument(url: String, extraction: KgExtractionResult)
+    suspend fun indexDocument(
+        url: String,
+        extraction: KgExtractionResult,
+        embeddings: EntityEmbeddings
+    )
     
     /**
      * Remove a document from the knowledge graph.
@@ -37,8 +67,12 @@ interface IKnowledgeGraphRepository {
      * More efficient than individual indexDocument calls for batch processing.
      * 
      * @param extractions Map of URL to extraction result
+     * @param embeddings Pre-computed embeddings for all entity names across all extractions
      */
-    suspend fun batchIndexDocuments(extractions: Map<String, KgExtractionResult>)
+    suspend fun batchIndexDocuments(
+        extractions: Map<String, KgExtractionResult>,
+        embeddings: EntityEmbeddings
+    )
     
     // ========================================
     // QUERY OPERATIONS

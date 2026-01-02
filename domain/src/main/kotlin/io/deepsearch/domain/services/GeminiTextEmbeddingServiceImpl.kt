@@ -93,6 +93,49 @@ class GeminiTextEmbeddingServiceImpl(
         }
     }
 
+    override suspend fun embedForSimilarity(texts: List<String>): EmbeddingResult {
+        if (texts.isEmpty()) {
+            return EmbeddingResult(
+                embeddings = emptyList(),
+                tokenUsage = TokenUsageMetrics.empty(modelName)
+            )
+        }
+
+        logger.debug("Embedding {} texts for semantic similarity with Gemini API", texts.size)
+
+        return try {
+            var totalTokens = 0
+            
+            // Process each text individually with SEMANTIC_SIMILARITY task type
+            val embeddings = coroutineScope {
+                texts.map { text ->
+                    async {
+                        val (embedding, tokens) = embedSingleText(
+                            text = text,
+                            taskType = "SEMANTIC_SIMILARITY"
+                        )
+                        totalTokens += tokens
+                        embedding
+                    }
+                }.awaitAll()
+            }
+            
+            EmbeddingResult(
+                embeddings = embeddings,
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelName,
+                    promptTokens = totalTokens,
+                    outputTokens = 0, // Embeddings don't have output tokens
+                    totalTokens = totalTokens
+                )
+            )
+        } catch (e: Exception) {
+            logger.error("Error generating similarity embeddings: ${e.message}", e)
+            throw e
+        }
+    }
+
+
     /**
      * Embed a single text using the Gemini API via REST.
      * Returns pair of (embedding, tokenCount)

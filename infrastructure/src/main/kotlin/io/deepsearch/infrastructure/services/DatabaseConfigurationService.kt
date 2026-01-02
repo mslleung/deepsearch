@@ -123,20 +123,6 @@ class DatabaseConfigurationService(
                     WITH (m = 16, ef_construction = 64)
                 """.trimIndent())
 
-                // Migration: Add is_preview column to webpage_markdowns if it doesn't exist
-                // This column tracks whether content is from simple text extraction (preview) or full LLM processing
-                exec("""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns 
-                            WHERE table_name = 'webpage_markdowns' AND column_name = 'is_preview'
-                        ) THEN
-                            ALTER TABLE webpage_markdowns ADD COLUMN is_preview BOOLEAN NOT NULL DEFAULT FALSE;
-                        END IF;
-                    END $$;
-                """.trimIndent())
-
                 // Create HNSW index for efficient vector similarity search on webpage embeddings
                 // Using cosine distance operator (vector_cosine_ops) for cosine similarity
                 // HNSW parameters: m=16 (connections per layer), ef_construction=64 (quality vs speed tradeoff)

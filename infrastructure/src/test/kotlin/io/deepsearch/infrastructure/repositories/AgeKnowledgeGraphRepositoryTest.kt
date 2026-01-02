@@ -2,6 +2,7 @@ package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.knowledgegraph.*
+import io.deepsearch.domain.repositories.EntityEmbeddings
 import io.deepsearch.domain.repositories.IKnowledgeGraphRepository
 import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.infrastructure.config.infrastructureTestModule
@@ -28,6 +29,18 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val knowledgeGraphRepository by inject<IKnowledgeGraphRepository>()
     private val textEmbeddingService by inject<ITextEmbeddingService>()
+
+    /** Helper to generate embeddings for a list of entity names */
+    private suspend fun generateEmbeddings(entityNames: List<String>): EntityEmbeddings {
+        if (entityNames.isEmpty()) return EntityEmbeddings.empty()
+        val result = textEmbeddingService.embedForSimilarity(entityNames)
+        return EntityEmbeddings.fromMap(entityNames.zip(result.embeddings).toMap())
+    }
+
+    /** Helper to generate embeddings from an extraction */
+    private suspend fun generateEmbeddings(extraction: KgExtractionResult): EntityEmbeddings {
+        return generateEmbeddings(extraction.entities.map { it.name })
+    }
 
     @Test
     fun `indexDocument and semanticEntitySearch finds entities`() = runTest(testCoroutineDispatcher) {
@@ -67,11 +80,13 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             )
         )
 
-        // When: indexing the document
-        knowledgeGraphRepository.indexDocument(sourceUrl, extraction)
+        // When: indexing the document with pre-computed embeddings
+        val embeddings = generateEmbeddings(extraction)
+        knowledgeGraphRepository.indexDocument(sourceUrl, extraction, embeddings)
 
         // Then: semantic search should find the entities
-        val queryEmbedding = textEmbeddingService.embedQuery("Acme pricing plan")
+        // Use embedForSimilarity to match the task type used for entity embeddings
+        val queryEmbedding = textEmbeddingService.embedForSimilarity("Acme pricing plan")
         val results = knowledgeGraphRepository.semanticEntitySearch(
             queryEmbedding = queryEmbedding.embedding.toFloatArray(),
             limit = 10,
@@ -121,10 +136,11 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             )
         )
 
-        knowledgeGraphRepository.indexDocument(sourceUrl, extraction)
+        val embeddings = generateEmbeddings(extraction)
+        knowledgeGraphRepository.indexDocument(sourceUrl, extraction, embeddings)
 
         // Find the starting entity
-        val queryEmbedding = textEmbeddingService.embedQuery("TraverseProduct")
+        val queryEmbedding = textEmbeddingService.embedForSimilarity("TraverseProduct")
         val searchResults = knowledgeGraphRepository.semanticEntitySearch(
             queryEmbedding = queryEmbedding.embedding.toFloatArray(),
             limit = 1,
@@ -168,10 +184,11 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             relationships = emptyList()
         )
 
-        knowledgeGraphRepository.indexDocument(sourceUrl, extraction)
+        val embeddings = generateEmbeddings(extraction)
+        knowledgeGraphRepository.indexDocument(sourceUrl, extraction, embeddings)
 
         // Verify entity exists
-        val queryEmbedding = textEmbeddingService.embedQuery("RemoveTestEntity")
+        val queryEmbedding = textEmbeddingService.embedForSimilarity("RemoveTestEntity")
         val beforeRemoval = knowledgeGraphRepository.semanticEntitySearch(
             queryEmbedding = queryEmbedding.embedding.toFloatArray(),
             limit = 10,
@@ -221,11 +238,13 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             )
         )
 
-        // When: batch indexing
-        knowledgeGraphRepository.batchIndexDocuments(extractions)
+        // When: batch indexing with pre-computed embeddings
+        val allEntityNames = extractions.values.flatMap { it.entities.map { e -> e.name } }
+        val embeddings = generateEmbeddings(allEntityNames)
+        knowledgeGraphRepository.batchIndexDocuments(extractions, embeddings)
 
         // Then: all entities should be searchable
-        val queryEmbedding = textEmbeddingService.embedQuery("BatchProduct")
+        val queryEmbedding = textEmbeddingService.embedForSimilarity("BatchProduct")
         val results = knowledgeGraphRepository.semanticEntitySearch(
             queryEmbedding = queryEmbedding.embedding.toFloatArray(),
             limit = 10,
@@ -259,7 +278,8 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             )
         )
 
-        knowledgeGraphRepository.indexDocument(sourceUrl, extraction)
+        val embeddings = generateEmbeddings(extraction)
+        knowledgeGraphRepository.indexDocument(sourceUrl, extraction, embeddings)
 
         // When: getting schema description
         val schema = knowledgeGraphRepository.getSchemaDescription()
@@ -280,7 +300,8 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             relationships = emptyList()
         )
 
-        knowledgeGraphRepository.indexDocument(sourceUrl, extraction)
+        val embeddings = generateEmbeddings(extraction)
+        knowledgeGraphRepository.indexDocument(sourceUrl, extraction, embeddings)
 
         // Then: hasDataForUrlPrefix should return true for matching prefix
         assertTrue(
@@ -320,12 +341,14 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             relationships = emptyList()
         )
 
-        // When: indexing both documents
-        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/merge1", extraction1)
-        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/merge2", extraction2)
+        // When: indexing both documents with pre-computed embeddings
+        val embeddings1 = generateEmbeddings(extraction1)
+        val embeddings2 = generateEmbeddings(extraction2)
+        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/merge1", extraction1, embeddings1)
+        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/merge2", extraction2, embeddings2)
 
         // Then: semantic search should find the merged entity with facts from both sources
-        val queryEmbedding = textEmbeddingService.embedQuery("Kotlin Language")
+        val queryEmbedding = textEmbeddingService.embedForSimilarity("Kotlin Language")
         val results = knowledgeGraphRepository.semanticEntitySearch(
             queryEmbedding = queryEmbedding.embedding.toFloatArray(),
             limit = 10,
@@ -369,11 +392,12 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             relationships = emptyList()
         )
 
-        knowledgeGraphRepository.indexDocument(sourceUrl, extraction)
+        val embeddings = generateEmbeddings(extraction)
+        knowledgeGraphRepository.indexDocument(sourceUrl, extraction, embeddings)
 
         val timestampAfterIndexing = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
-        val queryEmbedding = textEmbeddingService.embedQuery("CacheAgeTestEntity")
+        val queryEmbedding = textEmbeddingService.embedForSimilarity("CacheAgeTestEntity")
 
         // When: searching with minExtractedAtEpochMs before indexing time
         val resultsWithOldTimestamp = knowledgeGraphRepository.semanticEntitySearch(
@@ -446,10 +470,12 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             relationships = emptyList()
         )
 
-        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/combined-filter/path-a", extraction1)
-        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/combined-filter/path-b", extraction2)
+        val embeddings1 = generateEmbeddings(extraction1)
+        val embeddings2 = generateEmbeddings(extraction2)
+        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/combined-filter/path-a", extraction1, embeddings1)
+        knowledgeGraphRepository.indexDocument("https://example.com/kg-test/combined-filter/path-b", extraction2, embeddings2)
 
-        val queryEmbedding = textEmbeddingService.embedQuery("CombinedFilterEntity")
+        val queryEmbedding = textEmbeddingService.embedForSimilarity("CombinedFilterEntity")
 
         // When: searching with both urlPrefix AND minExtractedAtEpochMs
         val results = knowledgeGraphRepository.semanticEntitySearch(

@@ -61,8 +61,16 @@ dependencies {
     testImplementation(files("../infrastructure/build/libs/infrastructure-test.jar"))
 }
 
+// Get shared env vars from root project
+val envVars: Map<String, String> by rootProject.extra
+
 tasks.test {
     useJUnitPlatform()
+    
+    // Load all environment variables from .env file, with system env taking precedence
+    envVars.forEach { (key, value) ->
+        environment(key, System.getenv(key) ?: value)
+    }
 }
 
 tasks.compileKotlin {

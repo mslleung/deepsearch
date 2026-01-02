@@ -48,5 +48,40 @@ interface ITextEmbeddingService {
      * @return QueryEmbeddingResult containing embedding and token usage metrics
      */
     suspend fun embedQuery(text: String): QueryEmbeddingResult
+
+    /**
+     * Generate embeddings for symmetric similarity comparison.
+     * 
+     * Use this method when comparing texts for semantic similarity where both sides
+     * are of the same type (e.g., entity names, short phrases). This uses the 
+     * SEMANTIC_SIMILARITY task type, which optimizes embeddings for comparing
+     * how similar two pieces of text are in meaning.
+     * 
+     * Common use cases:
+     * - Entity resolution: "Microsoft Corp." vs "Microsoft Corporation"
+     * - Duplicate detection: comparing titles or names
+     * - Paraphrase detection
+     * - Searching for entities in a knowledge graph
+     *
+     * @param texts List of text strings to embed
+     * @return EmbeddingResult containing list of embeddings and token usage metrics
+     */
+    suspend fun embedForSimilarity(texts: List<String>): EmbeddingResult
+
+    /**
+     * Generate a single embedding for symmetric similarity comparison.
+     * 
+     * Convenience overload for embedding a single text. Delegates to [embedForSimilarity].
+     *
+     * @param text The text to embed
+     * @return QueryEmbeddingResult containing embedding and token usage metrics
+     */
+    suspend fun embedForSimilarity(text: String): QueryEmbeddingResult {
+        val result = embedForSimilarity(listOf(text))
+        return QueryEmbeddingResult(
+            embedding = result.embeddings.first(),
+            tokenUsage = result.tokenUsage
+        )
+    }
 }
 

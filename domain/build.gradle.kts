@@ -65,12 +65,16 @@ dependencies {
     testImplementation(libs.junit.jupiter.params)
 }
 
+// Get shared env vars from root project
+val envVars: Map<String, String> by rootProject.extra
+
 tasks.test {
     useJUnitPlatform()
     
-    // Pass environment variables to tests
-    environment("GOOGLE_API_KEY", System.getenv("GOOGLE_API_KEY") ?: "")
-    environment("SERPER_API_KEY", System.getenv("SERPER_API_KEY") ?: "")
+    // Load all environment variables from .env file, with system env taking precedence
+    envVars.forEach { (key, value) ->
+        environment(key, System.getenv(key) ?: value)
+    }
 }
 
 // Create a test JAR to allow other modules to depend on test classes

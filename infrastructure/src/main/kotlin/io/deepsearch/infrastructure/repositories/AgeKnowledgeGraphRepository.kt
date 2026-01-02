@@ -1,8 +1,8 @@
 package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.knowledgegraph.*
+import io.deepsearch.domain.repositories.EntityEmbeddings
 import io.deepsearch.domain.repositories.IKnowledgeGraphRepository
-import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.infrastructure.database.KgEntityEmbeddingsTable
 import io.deepsearch.infrastructure.database.KgEntitySourcesTable
 import io.deepsearch.infrastructure.database.KgRelationshipSourcesTable
@@ -10,10 +10,14 @@ import io.deepsearch.infrastructure.services.ITransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.QueryBuilder
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.selectAll
@@ -28,30 +32,29 @@ import kotlin.time.ExperimentalTime
  * Apache AGE-based implementation of the Knowledge Graph repository.
  * Handles entity/relationship storage, retrieval, and graph operations.
  * 
- * Note: The graph operations (AGE) may not be available in all PostgreSQL installations.
- * When AGE is not available, the repository falls back to relational queries on provenance tables.
+ * Note: Embeddings must be pre-computed by the caller to ensure proper token tracking.
+ * The repository does not generate embeddings itself.
  */
 @OptIn(ExperimentalTime::class)
 class AgeKnowledgeGraphRepository(
     private val entityEmbeddingsTable: KgEntityEmbeddingsTable,
     private val entitySourcesTable: KgEntitySourcesTable,
     private val relationshipSourcesTable: KgRelationshipSourcesTable,
-    private val transactionService: ITransactionService,
-    private val textEmbeddingService: ITextEmbeddingService
+    private val transactionService: ITransactionService
 ) : IKnowledgeGraphRepository {
 
     private val logger: Logger = LoggerFactory.getLogger(AgeKnowledgeGraphRepository::class.java)
     private val json = Json { ignoreUnknownKeys = true }
-    
-    companion object {
-        private const val ENTITY_RESOLUTION_SIMILARITY_THRESHOLD = 0.88f
-    }
 
     // ========================================
     // INDEXING OPERATIONS
     // ========================================
 
-    override suspend fun indexDocument(url: String, extraction: KgExtractionResult) {
+    override suspend fun indexDocument(
+        url: String,
+        extraction: KgExtractionResult,
+        embeddings: EntityEmbeddings
+    ) {
         if (extraction.isEmpty()) {
             logger.debug("Empty extraction for URL: {}, skipping indexing", url)
             return
@@ -66,7 +69,8 @@ class AgeKnowledgeGraphRepository(
             // Step 2: Resolve entities (find existing or create new)
             val resolvedEntities = mutableMapOf<String, UUID>()
             for (entity in extraction.entities) {
-                val entityId = resolveEntity(entity, url, now)
+                val embedding = embeddings[entity.name]
+                val entityId = resolveEntityWithEmbedding(entity, url, now, embedding)
                 resolvedEntities[entity.name] = entityId
             }
 
@@ -102,22 +106,13 @@ class AgeKnowledgeGraphRepository(
         logger.debug("Removed document from KG: {}", url)
     }
 
-    override suspend fun batchIndexDocuments(extractions: Map<String, KgExtractionResult>) {
+    override suspend fun batchIndexDocuments(
+        extractions: Map<String, KgExtractionResult>,
+        embeddings: EntityEmbeddings
+    ) {
         if (extractions.isEmpty()) return
 
         val now = Clock.System.now().toEpochMilliseconds()
-
-        // Collect all unique entity names for batch embedding
-        val allEntities = extractions.values.flatMap { it.entities }
-        val uniqueEntityNames = allEntities.map { it.name }.distinct()
-
-        // Pre-generate embeddings for all entities in a single batch
-        val embeddingMap = if (uniqueEntityNames.isNotEmpty()) {
-            val result = textEmbeddingService.embedDocuments(uniqueEntityNames)
-            uniqueEntityNames.zip(result.embeddings).toMap()
-        } else {
-            emptyMap()
-        }
 
         transactionService.withTransaction {
             for ((url, extraction) in extractions) {
@@ -129,7 +124,7 @@ class AgeKnowledgeGraphRepository(
                 // Resolve entities with pre-computed embeddings
                 val resolvedEntities = mutableMapOf<String, UUID>()
                 for (entity in extraction.entities) {
-                    val embedding = embeddingMap[entity.name]
+                    val embedding = embeddings[entity.name]
                     val entityId = resolveEntityWithEmbedding(entity, url, now, embedding)
                     resolvedEntities[entity.name] = entityId
                 }
@@ -160,57 +155,65 @@ class AgeKnowledgeGraphRepository(
         minExtractedAtEpochMs: Long?
     ): List<KgEntity> {
         return transactionService.withTransaction {
-            // Get all entities with embeddings
-            val allEntities = entityEmbeddingsTable.selectAll()
+            // Configure HNSW iterative index scan for better recall with filters
+            exec("""
+                SET LOCAL hnsw.iterative_scan = 'strict_order';
+                SET LOCAL hnsw.max_scan_tuples = 20000;
+            """.trimIndent())
+            
+            // Format query embedding as pgvector string: '[1.0,2.0,3.0,...]'
+            val embeddingStr = "[${queryEmbedding.joinToString(",")}]"
+            
+            // Create custom SQL expression for cosine distance using pgvector's <=> operator
+            val cosineDistanceExpr = object : Expression<Double>() {
+                override fun toQueryBuilder(queryBuilder: QueryBuilder) {
+                    queryBuilder.append("(${entityEmbeddingsTable.tableName}.embedding <=> '$embeddingStr'::vector)")
+                }
+            }
+            
+            // EXISTS subquery filter for URL prefix and/or extraction time
+            // Uses the composite index on (entity_id, source_url) for efficient prefix matching
+            val existsFilter: Expression<Boolean>? = if (urlPrefix != null || minExtractedAtEpochMs != null) {
+                object : Expression<Boolean>() {
+                    override fun toQueryBuilder(queryBuilder: QueryBuilder) {
+                        queryBuilder.append("EXISTS (SELECT 1 FROM ${entitySourcesTable.tableName} s WHERE s.entity_id = ${entityEmbeddingsTable.tableName}.entity_id")
+                        if (urlPrefix != null) {
+                            val escapedPrefix = urlPrefix.replace("'", "''")
+                            queryBuilder.append(" AND s.source_url LIKE '$escapedPrefix%'")
+                        }
+                        if (minExtractedAtEpochMs != null) {
+                            queryBuilder.append(" AND s.extracted_at_epoch_ms >= $minExtractedAtEpochMs")
+                        }
+                        queryBuilder.append(")")
+                    }
+                }
+            } else {
+                null
+            }
+            
+            // Build and execute the query using pgvector's native cosine distance
+            val results = entityEmbeddingsTable.selectAll()
+                .where {
+                    val embeddingNotNull = entityEmbeddingsTable.embedding.isNotNull()
+                    if (existsFilter != null) {
+                        embeddingNotNull and existsFilter
+                    } else {
+                        embeddingNotNull
+                    }
+                }
+                .orderBy(cosineDistanceExpr to SortOrder.ASC)
+                .limit(limit)
                 .map { row ->
-                    val entityId = row[entityEmbeddingsTable.entityId]
-                    val name = row[entityEmbeddingsTable.name]
-                    val type = row[entityEmbeddingsTable.type]
-                    val embedding = row[entityEmbeddingsTable.embedding]
-                    Triple(entityId, "$name|||$type", embedding)
+                    Triple(
+                        row[entityEmbeddingsTable.entityId],
+                        row[entityEmbeddingsTable.name],
+                        row[entityEmbeddingsTable.type]
+                    )
                 }
                 .toList()
             
-            // Filter by URL prefix and/or cache age if specified
-            // An entity is included if ANY of its sources match the criteria
-            val filteredEntities = if (urlPrefix != null || minExtractedAtEpochMs != null) {
-                val validEntityIds = entitySourcesTable.selectAll()
-                    .map { row -> 
-                        Triple(
-                            row[entitySourcesTable.entityId],
-                            row[entitySourcesTable.sourceUrl],
-                            row[entitySourcesTable.extractedAtEpochMs]
-                        )
-                    }
-                    .toList()
-                    .filter { (_, sourceUrl, extractedAt) ->
-                        val urlMatches = urlPrefix == null || sourceUrl.startsWith(urlPrefix)
-                        val ageMatches = minExtractedAtEpochMs == null || extractedAt >= minExtractedAtEpochMs
-                        urlMatches && ageMatches
-                    }
-                    .map { it.first }
-                    .toSet()
-                
-                allEntities.filter { validEntityIds.contains(it.first) }
-            } else {
-                allEntities
-            }
-            
-            // Calculate cosine similarity and sort
-            val scoredEntities = filteredEntities
-                .filter { it.third != null }
-                .map { (entityId, nameType, embedding) ->
-                    val similarity = cosineSimilarity(queryEmbedding, embedding!!.toFloatArray())
-                    Triple(entityId, nameType, similarity)
-                }
-                .sortedByDescending { it.third }
-                .take(limit)
-            
-            // Fetch full entity details
-            scoredEntities.map { (entityId, nameType, _) ->
-                val (name, type) = nameType.split("|||")
-                fetchEntityDetails(entityId, name, type)
-            }
+            // Batch fetch entity details for all results at once
+            batchFetchEntityDetails(results)
         }
     }
 
@@ -221,12 +224,10 @@ class AgeKnowledgeGraphRepository(
             val entities = mutableMapOf<UUID, KgEntity>()
             val relationships = mutableListOf<KgRelationship>()
 
-            // First, load the starting entities
-            for (entityId in entityIds) {
-                val entity = loadEntityById(entityId)
-                if (entity != null) {
-                    entities[entityId] = entity
-                }
+            // Batch load starting entities using IN clause
+            val startingEntities = batchLoadEntitiesByIds(entityIds)
+            for (entity in startingEntities) {
+                entities[UUID.fromString(entity.id)] = entity
             }
 
             // Traverse N hops using the relationship provenance tables
@@ -234,33 +235,42 @@ class AgeKnowledgeGraphRepository(
             for (hop in 1..maxHops) {
                 if (currentHop.isEmpty()) break
 
+                // Batch query all relationships from current hop entities
+                val allRels = batchQueryRelationshipsFrom(currentHop.toList())
+                
+                // Collect all destination entity IDs we need to load
+                val missingEntityIds = allRels
+                    .map { it.second }
+                    .filter { !entities.containsKey(it) }
+                    .distinct()
+                
+                // Batch load missing entities
+                if (missingEntityIds.isNotEmpty()) {
+                    val loadedEntities = batchLoadEntitiesByIds(missingEntityIds)
+                    for (entity in loadedEntities) {
+                        entities[UUID.fromString(entity.id)] = entity
+                    }
+                }
+                
+                // Build relationships and determine next hop
                 val nextHop = mutableSetOf<UUID>()
-
-                for (fromId in currentHop) {
-                    // Query relationships from provenance table
-                    val rels = queryRelationshipsFrom(fromId)
-                    for ((toId, relationType) in rels) {
-                        // Load destination entity if not already loaded
-                        if (!entities.containsKey(toId)) {
-                            val toEntity = loadEntityById(toId)
-                            if (toEntity != null) {
-                                entities[toId] = toEntity
-                                nextHop.add(toId)
-                            }
-                        }
-
-                        // Add relationship
-                        val fromEntity = entities[fromId]
-                        val toEntity = entities[toId]
-                        if (fromEntity != null && toEntity != null) {
-                            relationships.add(
-                                KgRelationship(
-                                    fromEntity = fromEntity,
-                                    toEntity = toEntity,
-                                    relationType = relationType
-                                )
+                for ((fromId, toId, relationType) in allRels) {
+                    val fromEntity = entities[fromId]
+                    val toEntity = entities[toId]
+                    
+                    if (fromEntity != null && toEntity != null) {
+                        relationships.add(
+                            KgRelationship(
+                                fromEntity = fromEntity,
+                                toEntity = toEntity,
+                                relationType = relationType
                             )
-                        }
+                        )
+                    }
+                    
+                    // Add to next hop if newly discovered
+                    if (!currentHop.contains(toId) && entities.containsKey(toId)) {
+                        nextHop.add(toId)
                     }
                 }
 
@@ -276,41 +286,47 @@ class AgeKnowledgeGraphRepository(
     }
 
     override suspend fun executeCypher(cypherQuery: String, timeoutSeconds: Int): List<Map<String, String>> {
-        // Cypher execution requires AGE extension which may not be available
-        // For now, return empty results - the repository falls back to relational queries
-        logger.debug("Cypher execution not implemented - falling back to empty results")
+        if (cypherQuery.isBlank()) {
+            return emptyList()
+        }
+        
+        // Apache AGE Cypher execution requires dynamic SQL with result parsing.
+        // Since R2DBC Exposed doesn't support exec() with result reading like JDBC,
+        // we fall back to using the relational tables for now.
+        // Full Cypher support would require using raw R2DBC connection pooling.
+        logger.debug("Cypher execution not fully supported in R2DBC mode - returning empty results")
         return emptyList()
     }
 
     override suspend fun getSchemaDescription(): String {
         return transactionService.withTransaction {
-            val entityTypeCounts = mutableMapOf<String, Int>()
-            val relationshipTypeCounts = mutableMapOf<String, Int>()
-
-            // Count entities by type
-            entityEmbeddingsTable.selectAll()
+            // Count entities by type - fetch all types and count in memory
+            // This is efficient for typical KG sizes (thousands of entities)
+            val entityTypeCounts = entityEmbeddingsTable.selectAll()
                 .map { it[entityEmbeddingsTable.type] }
                 .toList()
-                .forEach { type ->
-                    entityTypeCounts[type] = entityTypeCounts.getOrDefault(type, 0) + 1
-                }
+                .groupingBy { it }
+                .eachCount()
+                .toList()
+                .sortedByDescending { it.second }
 
             // Count relationships by type
-            relationshipSourcesTable.selectAll()
+            val relationshipTypeCounts = relationshipSourcesTable.selectAll()
                 .map { it[relationshipSourcesTable.relationType] }
                 .toList()
-                .forEach { type ->
-                    relationshipTypeCounts[type] = relationshipTypeCounts.getOrDefault(type, 0) + 1
-                }
+                .groupingBy { it }
+                .eachCount()
+                .toList()
+                .sortedByDescending { it.second }
 
             buildString {
                 appendLine("Entity Types:")
-                for ((type, count) in entityTypeCounts.entries.sortedByDescending { it.value }) {
+                for ((type, count) in entityTypeCounts) {
                     appendLine("  - $type: $count entities")
                 }
                 appendLine()
                 appendLine("Relationship Types:")
-                for ((type, count) in relationshipTypeCounts.entries.sortedByDescending { it.value }) {
+                for ((type, count) in relationshipTypeCounts) {
                     appendLine("  - $type: $count relationships")
                 }
             }
@@ -335,16 +351,6 @@ class AgeKnowledgeGraphRepository(
         relationshipSourcesTable.deleteWhere { relationshipSourcesTable.sourceUrl eq url }
     }
 
-    private suspend fun resolveEntity(
-        entity: ExtractedEntity,
-        sourceUrl: String,
-        now: Long
-    ): UUID {
-        // Generate embedding for entity name
-        val embeddingResult = textEmbeddingService.embedQuery(entity.name)
-        return resolveEntityWithEmbedding(entity, sourceUrl, now, embeddingResult.embedding)
-    }
-
     private suspend fun resolveEntityWithEmbedding(
         entity: ExtractedEntity,
         sourceUrl: String,
@@ -353,7 +359,10 @@ class AgeKnowledgeGraphRepository(
     ): UUID {
         val canonicalName = entity.name.lowercase().trim()
 
-        // Step 1: Try exact canonical name + type match
+        // Only merge on exact canonical name + type match.
+        // This handles trivial duplicates (case/whitespace differences).
+        // Semantic similarity is handled at query time via vector search,
+        // avoiding data loss from incorrect merging.
         val existingByName = entityEmbeddingsTable.selectAll()
             .where {
                 (entityEmbeddingsTable.canonicalName eq canonicalName) and
@@ -362,31 +371,7 @@ class AgeKnowledgeGraphRepository(
             .map { it[entityEmbeddingsTable.entityId] }
             .singleOrNull()
 
-        val entityId = existingByName
-            ?: if (embedding != null) {
-                // Step 2: Try semantic similarity match
-                val candidateEntities = entityEmbeddingsTable.selectAll()
-                    .where { entityEmbeddingsTable.type eq entity.type.name }
-                    .map { row ->
-                        val id = row[entityEmbeddingsTable.entityId]
-                        val emb = row[entityEmbeddingsTable.embedding]
-                        Pair(id, emb)
-                    }
-                    .toList()
-
-                val similarEntity = candidateEntities
-                    .map { (id, emb) ->
-                        val similarity = cosineSimilarity(embedding.toFloatArray(), emb!!.toFloatArray())
-                        Pair(id, similarity)
-                    }
-                    .filter { it.second >= ENTITY_RESOLUTION_SIMILARITY_THRESHOLD }
-                    .maxByOrNull { it.second }
-                    ?.first
-
-                similarEntity ?: createNewEntity(entity, canonicalName, embedding, now)
-            } else {
-                createNewEntity(entity, canonicalName, embedding, now)
-            }
+        val entityId = existingByName ?: createNewEntity(entity, canonicalName, embedding, now)
 
         // Record provenance
         entitySourcesTable.upsert(
@@ -454,20 +439,19 @@ class AgeKnowledgeGraphRepository(
         val allEntityIds = entityEmbeddingsTable.selectAll()
             .map { it[entityEmbeddingsTable.entityId] }
             .toList()
-            
+
+        if (allEntityIds.isEmpty()) return
+
         val entitiesWithSources = entitySourcesTable.selectAll()
             .map { it[entitySourcesTable.entityId] }
             .toList()
             .toSet()
-            
+
         val orphanedIds = allEntityIds.filter { !entitiesWithSources.contains(it) }
 
         // Delete orphaned entities
-        for (entityId in orphanedIds) {
-            entityEmbeddingsTable.deleteWhere { entityEmbeddingsTable.entityId eq entityId }
-        }
-
         if (orphanedIds.isNotEmpty()) {
+            entityEmbeddingsTable.deleteWhere { entityEmbeddingsTable.entityId inList orphanedIds }
             logger.debug("Garbage collected {} orphaned entities", orphanedIds.size)
         }
     }
@@ -507,52 +491,130 @@ class AgeKnowledgeGraphRepository(
         )
     }
 
-    private suspend fun loadEntityById(entityId: UUID): KgEntity? {
-        val row = entityEmbeddingsTable.selectAll()
-            .where { entityEmbeddingsTable.entityId eq entityId }
-            .singleOrNull()
-            ?: return null
-
-        return fetchEntityDetails(
-            entityId,
-            row[entityEmbeddingsTable.name],
-            row[entityEmbeddingsTable.type]
-        )
-    }
-
-    private suspend fun queryRelationshipsFrom(fromId: UUID): List<Pair<UUID, RelationType>> {
+    /**
+     * Batch query relationships from multiple source entity IDs.
+     * More efficient than individual queries.
+     */
+    private suspend fun batchQueryRelationshipsFrom(fromIds: List<UUID>): List<Triple<UUID, UUID, RelationType>> {
+        if (fromIds.isEmpty()) return emptyList()
+        
         return relationshipSourcesTable.selectAll()
-            .where { relationshipSourcesTable.fromEntityId eq fromId }
+            .where { relationshipSourcesTable.fromEntityId inList fromIds }
             .map { row ->
+                val fromId = row[relationshipSourcesTable.fromEntityId]
                 val toId = row[relationshipSourcesTable.toEntityId]
                 val type = try {
                     RelationType.valueOf(row[relationshipSourcesTable.relationType])
                 } catch (e: Exception) {
                     RelationType.RELATED_TO
                 }
-                toId to type
+                Triple(fromId, toId, type)
             }
             .toList()
-            .distinctBy { it.first to it.second }
+            .distinctBy { Triple(it.first, it.second, it.third) }
     }
 
     /**
-     * Calculate cosine similarity between two vectors.
+     * Batch load entities by their IDs using a single query with IN clause.
      */
-    private fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {
-        if (a.size != b.size) return 0f
-        
-        var dotProduct = 0f
-        var normA = 0f
-        var normB = 0f
-        
-        for (i in a.indices) {
-            dotProduct += a[i] * b[i]
-            normA += a[i] * a[i]
-            normB += b[i] * b[i]
+    private suspend fun batchLoadEntitiesByIds(entityIds: List<UUID>): List<KgEntity> {
+        if (entityIds.isEmpty()) return emptyList()
+
+        // Get all entity base data in one query
+        val entityBaseData = entityEmbeddingsTable.selectAll()
+            .where { entityEmbeddingsTable.entityId inList entityIds }
+            .map { row ->
+                Triple(
+                    row[entityEmbeddingsTable.entityId],
+                    row[entityEmbeddingsTable.name],
+                    row[entityEmbeddingsTable.type]
+                )
+            }
+            .toList()
+
+        if (entityBaseData.isEmpty()) return emptyList()
+
+        // Get all facts and sources for these entities in one query
+        val allSourceData = entitySourcesTable.selectAll()
+            .where { entitySourcesTable.entityId inList entityIds }
+            .map { row ->
+                val entityId = row[entitySourcesTable.entityId]
+                val sourceUrl = row[entitySourcesTable.sourceUrl]
+                val factsJson = row[entitySourcesTable.facts]
+                val facts = try {
+                    json.decodeFromString<List<String>>(factsJson)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                Triple(entityId, sourceUrl, facts)
+            }
+            .toList()
+
+        // Group source data by entity ID
+        val sourcesByEntity = allSourceData.groupBy { it.first }
+
+        // Build KgEntity objects
+        return entityBaseData.map { (entityId, name, type) ->
+            val sources = sourcesByEntity[entityId] ?: emptyList()
+            KgEntity(
+                id = entityId.toString(),
+                name = name,
+                type = try {
+                    EntityType.valueOf(type)
+                } catch (e: Exception) {
+                    EntityType.OTHER
+                },
+                facts = sources.flatMap { it.third }.distinct(),
+                sourceUrls = sources.map { it.second }.distinct()
+            )
         }
-        
-        val magnitude = kotlin.math.sqrt(normA) * kotlin.math.sqrt(normB)
-        return if (magnitude > 0) dotProduct / magnitude else 0f
     }
+
+    /**
+     * Batch fetch entity details for a list of entity ID/name/type tuples.
+     * Used by semanticEntitySearch for efficient detail retrieval.
+     */
+    private suspend fun batchFetchEntityDetails(
+        entities: List<Triple<UUID, String, String>>
+    ): List<KgEntity> {
+        if (entities.isEmpty()) return emptyList()
+
+        val entityIds = entities.map { it.first }
+        
+        // Get all facts and sources for these entities in one query
+        val allSourceData = entitySourcesTable.selectAll()
+            .where { entitySourcesTable.entityId inList entityIds }
+            .map { row ->
+                val entityId = row[entitySourcesTable.entityId]
+                val sourceUrl = row[entitySourcesTable.sourceUrl]
+                val factsJson = row[entitySourcesTable.facts]
+                val facts = try {
+                    json.decodeFromString<List<String>>(factsJson)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                Triple(entityId, sourceUrl, facts)
+            }
+            .toList()
+
+        // Group source data by entity ID
+        val sourcesByEntity = allSourceData.groupBy { it.first }
+
+        // Build KgEntity objects
+        return entities.map { (entityId, name, type) ->
+            val sources = sourcesByEntity[entityId] ?: emptyList()
+            KgEntity(
+                id = entityId.toString(),
+                name = name,
+                type = try {
+                    EntityType.valueOf(type)
+                } catch (e: Exception) {
+                    EntityType.OTHER
+                },
+                facts = sources.flatMap { it.third }.distinct(),
+                sourceUrls = sources.map { it.second }.distinct()
+            )
+        }
+    }
+
 }

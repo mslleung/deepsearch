@@ -70,8 +70,16 @@ dependencies {
     testRuntimeOnly(libs.junit.jupiter.engine)
 }
 
+// Get shared env vars from root project
+val envVars: Map<String, String> by rootProject.extra
+
 tasks.test {
     useJUnitPlatform()
+    
+    // Load all environment variables from .env file, with system env taking precedence
+    envVars.forEach { (key, value) ->
+        environment(key, System.getenv(key) ?: value)
+    }
 }
 
 // --- Shadow JAR configuration for Docker builds ---

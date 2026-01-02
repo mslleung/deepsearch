@@ -122,13 +122,14 @@ class KgHybridRetrievalService(
         sessionId: SessionId
     ): Pair<KgSubgraph?, Boolean> {
         return try {
-            // Generate query embedding
-            val embeddingResult = textEmbeddingService.embedQuery(query)
+            // Generate query embedding using SEMANTIC_SIMILARITY task type
+            // This matches the task type used when storing entity embeddings
+            val embeddingResult = textEmbeddingService.embedForSimilarity(query)
             
             // Record token usage for embedding
             tokenUsageService.recordTokenUsage(
                 sessionId = sessionId,
-                agentName = "KgHybridRetrievalService.embedQuery",
+                agentName = "KgHybridRetrievalService.embedForSimilarity",
                 modelName = embeddingResult.tokenUsage.modelName,
                 promptTokens = embeddingResult.tokenUsage.promptTokens,
                 outputTokens = embeddingResult.tokenUsage.outputTokens,

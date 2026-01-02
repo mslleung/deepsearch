@@ -12,7 +12,7 @@ class KgEntityEmbeddingsTable : Table("kg_entity_embeddings") {
     val name = text("name")
     val type = varchar("type", length = 50)
     val canonicalName = varchar("canonical_name", length = 512)
-    val embedding = vector("embedding", dimensions = 768)  // Entity name embeddings
+    val embedding = vector("embedding", dimensions = 1536)  // Entity name embeddings (gemini-embedding-001)
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     
@@ -35,6 +35,9 @@ class KgEntitySourcesTable : Table("kg_entity_sources") {
     
     init {
         index(false, sourceUrl)
+        // Composite index for efficient EXISTS subquery in semantic search
+        // (entityId lookup + sourceUrl prefix matching)
+        index(false, entityId, sourceUrl)
     }
     
     override val primaryKey = PrimaryKey(entityId, sourceUrl)

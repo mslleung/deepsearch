@@ -112,6 +112,44 @@ class TextEmbeddingServiceTest : KoinTest {
         assertTrue(areDifferent, "Query and document embeddings should differ due to different task types")
     }
 
+    @Test
+    fun `embedForSimilarity generates embeddings with correct dimensions`() = runTest(testCoroutineDispatcher) {
+        // Given - entity names for knowledge graph
+        val entityNames = listOf(
+            "Microsoft Corporation",
+            "Microsoft Corp.",
+            "Apple Inc."
+        )
+
+        // When
+        val result = textEmbeddingService.embedForSimilarity(entityNames)
+
+        // Then
+        assertEquals(3, result.embeddings.size, "Should generate 3 embeddings")
+        result.embeddings.forEach { embedding ->
+            assertEquals(1536, embedding.size, "Each embedding should have 1536 dimensions")
+            assertTrue(embedding.any { it != 0f }, "Embedding should contain non-zero values")
+        }
+        assertTrue(result.tokenUsage.totalTokens > 0, "Should have token usage")
+    }
+
+    @Test
+    fun `embedForSimilarity generates different embeddings than embedDocuments`() = runTest(testCoroutineDispatcher) {
+        // Given
+        val text = "Microsoft Corporation"
+
+        // When
+        val similarityResult = textEmbeddingService.embedForSimilarity(listOf(text))
+        val documentResult = textEmbeddingService.embedDocuments(listOf(text))
+
+        // Then - they should be different because they use different task types
+        // (SEMANTIC_SIMILARITY vs RETRIEVAL_DOCUMENT)
+        val areDifferent = similarityResult.embeddings[0].indices.any { i ->
+            similarityResult.embeddings[0][i] != documentResult.embeddings[0][i]
+        }
+        assertTrue(areDifferent, "Similarity and document embeddings should differ due to different task types")
+    }
+
     /**
      * Calculate cosine similarity between two vectors.
      * Returns a value between -1 and 1, where 1 means identical direction.

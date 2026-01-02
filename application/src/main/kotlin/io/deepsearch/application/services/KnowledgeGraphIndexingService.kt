@@ -5,8 +5,10 @@ import io.deepsearch.domain.agents.IEntityExtractionAgent
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
 import io.deepsearch.domain.models.valueobjects.SessionId
+import io.deepsearch.domain.repositories.EntityEmbeddings
 import io.deepsearch.domain.repositories.IKnowledgeGraphRepository
 import io.deepsearch.domain.services.BatchContentRequest
+import io.deepsearch.domain.services.ITextEmbeddingService
 import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -60,15 +62,20 @@ interface IKnowledgeGraphIndexingService {
      * Called after batch API returns results.
      * 
      * @param results Map of URL to extraction result
+     * @param sessionId Optional session ID for token tracking (if null, tokens are not tracked)
      */
-    suspend fun processBatchResults(results: Map<String, KgExtractionResult>)
+    suspend fun processBatchResults(
+        results: Map<String, KgExtractionResult>,
+        sessionId: SessionId? = null
+    )
 }
 
 class KnowledgeGraphIndexingService(
     private val entityExtractionAgent: IEntityExtractionAgent,
     private val knowledgeGraphRepository: IKnowledgeGraphRepository,
     private val applicationScope: IApplicationCoroutineScope,
-    private val tokenUsageService: ILlmTokenUsageService
+    private val tokenUsageService: ILlmTokenUsageService,
+    private val textEmbeddingService: ITextEmbeddingService
 ) : IKnowledgeGraphIndexingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -88,7 +95,7 @@ class KnowledgeGraphIndexingService(
                     EntityExtractionInput(markdown = markdown, sourceUrl = url)
                 )
 
-                // Record token usage
+                // Record token usage for entity extraction
                 tokenUsageService.recordTokenUsage(
                     sessionId = sessionId,
                     agentName = "EntityExtractionAgent",
@@ -103,8 +110,25 @@ class KnowledgeGraphIndexingService(
                     return@launch
                 }
 
-                // Index into knowledge graph
-                knowledgeGraphRepository.indexDocument(url, output.extraction)
+                // Generate embeddings for entities with token tracking
+                val entityNames = output.extraction.entities.map { it.name }
+                val embeddingResult = textEmbeddingService.embedForSimilarity(entityNames)
+                val embeddings = EntityEmbeddings.fromMap(
+                    entityNames.zip(embeddingResult.embeddings).toMap()
+                )
+
+                // Record token usage for entity embeddings
+                tokenUsageService.recordTokenUsage(
+                    sessionId = sessionId,
+                    agentName = "KnowledgeGraphIndexingService.embedForSimilarity",
+                    modelName = embeddingResult.tokenUsage.modelName,
+                    promptTokens = embeddingResult.tokenUsage.promptTokens,
+                    outputTokens = embeddingResult.tokenUsage.outputTokens,
+                    totalTokens = embeddingResult.tokenUsage.totalTokens
+                )
+
+                // Index into knowledge graph with pre-computed embeddings
+                knowledgeGraphRepository.indexDocument(url, output.extraction, embeddings)
 
                 logger.debug(
                     "KG indexed {} entities and {} relationships from URL: {}",
@@ -130,39 +154,60 @@ class KnowledgeGraphIndexingService(
         return entityExtractionAgent.parseBatchResponse(responseText)
     }
 
-    override suspend fun processBatchResults(results: Map<String, KgExtractionResult>) {
+    override suspend fun processBatchResults(
+        results: Map<String, KgExtractionResult>,
+        sessionId: SessionId?
+    ) {
         logger.info("Processing {} batch KG extraction results", results.size)
 
-        var successCount = 0
-        var entityCount = 0
-        var relationshipCount = 0
-
-        results.forEach { (url, extraction) ->
-            try {
-                if (extraction.isEmpty()) {
-                    logger.debug("No entities extracted from batch for URL: {}", url)
-                    return@forEach
-                }
-
-                knowledgeGraphRepository.indexDocument(url, extraction)
-
-                successCount++
-                entityCount += extraction.entities.size
-                relationshipCount += extraction.relationships.size
-
-                logger.debug(
-                    "Indexed {} entities and {} relationships from batch for URL: {}",
-                    extraction.entities.size, extraction.relationships.size, url
-                )
-            } catch (e: Exception) {
-                logger.warn("Failed to store batch KG extraction for URL {}: {}", url, e.message)
-            }
+        // Filter out empty extractions
+        val nonEmptyResults = results.filterValues { !it.isEmpty() }
+        if (nonEmptyResults.isEmpty()) {
+            logger.debug("No non-empty extractions to process")
+            return
         }
 
-        logger.info(
-            "Completed processing batch KG results: {} pages, {} entities, {} relationships",
-            successCount, entityCount, relationshipCount
-        )
+        // Collect all unique entity names for batch embedding
+        val allEntityNames = nonEmptyResults.values
+            .flatMap { it.entities }
+            .map { it.name }
+            .distinct()
+
+        // Generate embeddings for all entities in a single batch
+        val embeddings = if (allEntityNames.isNotEmpty()) {
+            val embeddingResult = textEmbeddingService.embedForSimilarity(allEntityNames)
+            
+            // Record token usage if sessionId is provided
+            if (sessionId != null) {
+                tokenUsageService.recordTokenUsage(
+                    sessionId = sessionId,
+                    agentName = "KnowledgeGraphIndexingService.batchEmbedForSimilarity",
+                    modelName = embeddingResult.tokenUsage.modelName,
+                    promptTokens = embeddingResult.tokenUsage.promptTokens,
+                    outputTokens = embeddingResult.tokenUsage.outputTokens,
+                    totalTokens = embeddingResult.tokenUsage.totalTokens
+                )
+            }
+            
+            EntityEmbeddings.fromMap(allEntityNames.zip(embeddingResult.embeddings).toMap())
+        } else {
+            EntityEmbeddings.empty()
+        }
+
+        // Use the batch indexing method with pre-computed embeddings
+        try {
+            knowledgeGraphRepository.batchIndexDocuments(nonEmptyResults, embeddings)
+            
+            val entityCount = nonEmptyResults.values.sumOf { it.entities.size }
+            val relationshipCount = nonEmptyResults.values.sumOf { it.relationships.size }
+            
+            logger.info(
+                "Completed processing batch KG results: {} pages, {} entities, {} relationships",
+                nonEmptyResults.size, entityCount, relationshipCount
+            )
+        } catch (e: Exception) {
+            logger.error("Failed to batch index KG extractions: {}", e.message, e)
+        }
     }
 }
 

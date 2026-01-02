@@ -7,3 +7,21 @@ plugins {
 }
 
 group = "io.deepsearch"
+
+// Load environment variables from .env file for all subprojects
+fun loadEnvFile(file: File): Map<String, String> {
+    val envVars = mutableMapOf<String, String>()
+    if (file.exists()) {
+        file.readLines().forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.isNotEmpty() && !trimmed.startsWith("#") && trimmed.contains("=")) {
+                val (key, value) = trimmed.split("=", limit = 2)
+                envVars[key.trim()] = value.trim()
+            }
+        }
+    }
+    return envVars
+}
+
+val envFile = file(".env")
+val envVars: Map<String, String> by extra(loadEnvFile(envFile))
