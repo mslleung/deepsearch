@@ -8,6 +8,7 @@ import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.EntityEmbeddings
 import io.deepsearch.domain.repositories.IKnowledgeGraphRepository
 import io.deepsearch.domain.services.BatchContentRequest
+import io.deepsearch.domain.services.BatchEmbeddingRequest
 import io.deepsearch.domain.services.ITextEmbeddingService
 import kotlinx.coroutines.launch
 import org.slf4j.Logger
@@ -67,6 +68,31 @@ interface IKnowledgeGraphIndexingService {
     suspend fun processBatchResults(
         results: Map<String, KgExtractionResult>,
         sessionId: SessionId? = null
+    )
+
+    /**
+     * Prepare batch embedding requests for entity names.
+     * Used by Stage 5 to generate embeddings for extracted entities.
+     * 
+     * @param jobId The batch job ID for request ID generation
+     * @param entityNames List of unique entity names to embed
+     * @return List of BatchEmbeddingRequest for the Gemini Batch API
+     */
+    fun prepareBatchEntityEmbeddingRequests(
+        jobId: Long,
+        entityNames: List<String>
+    ): List<BatchEmbeddingRequest>
+
+    /**
+     * Process batch entity embedding results and store them with KG data.
+     * Called after Stage 5 embedding batch completes.
+     * 
+     * @param results Map of URL to KG extraction result
+     * @param embeddings Map of entity name to embedding vector
+     */
+    suspend fun processBatchEntityEmbeddingResults(
+        results: Map<String, KgExtractionResult>,
+        embeddings: Map<String, List<Float>>
     )
 }
 
@@ -208,6 +234,60 @@ class KnowledgeGraphIndexingService(
         } catch (e: Exception) {
             logger.error("Failed to batch index KG extractions: {}", e.message, e)
         }
+    }
+
+    override fun prepareBatchEntityEmbeddingRequests(
+        jobId: Long,
+        entityNames: List<String>
+    ): List<BatchEmbeddingRequest> {
+        return entityNames.mapIndexed { index, name ->
+            BatchEmbeddingRequest(
+                requestId = "$jobId-entity-$index",
+                modelId = EMBEDDING_MODEL,
+                text = name,
+                taskType = SEMANTIC_SIMILARITY_TASK,
+                outputDimensionality = EMBEDDING_DIMENSIONALITY
+            )
+        }
+    }
+
+    override suspend fun processBatchEntityEmbeddingResults(
+        results: Map<String, KgExtractionResult>,
+        embeddings: Map<String, List<Float>>
+    ) {
+        logger.info("Processing {} KG extraction results with {} entity embeddings", 
+            results.size, embeddings.size)
+
+        // Filter out empty extractions
+        val nonEmptyResults = results.filterValues { !it.isEmpty() }
+        if (nonEmptyResults.isEmpty()) {
+            logger.debug("No non-empty extractions to process")
+            return
+        }
+
+        // Build EntityEmbeddings from the pre-computed map
+        val entityEmbeddings = EntityEmbeddings.fromMap(embeddings)
+
+        // Use the batch indexing method with pre-computed embeddings
+        try {
+            knowledgeGraphRepository.batchIndexDocuments(nonEmptyResults, entityEmbeddings)
+            
+            val entityCount = nonEmptyResults.values.sumOf { it.entities.size }
+            val relationshipCount = nonEmptyResults.values.sumOf { it.relationships.size }
+            
+            logger.info(
+                "Completed batch KG indexing with embeddings: {} pages, {} entities, {} relationships",
+                nonEmptyResults.size, entityCount, relationshipCount
+            )
+        } catch (e: Exception) {
+            logger.error("Failed to batch index KG with embeddings: {}", e.message, e)
+        }
+    }
+
+    companion object {
+        private const val EMBEDDING_MODEL = "gemini-embedding-001"
+        private const val EMBEDDING_DIMENSIONALITY = 1536
+        private const val SEMANTIC_SIMILARITY_TASK = "SEMANTIC_SIMILARITY"
     }
 }
 

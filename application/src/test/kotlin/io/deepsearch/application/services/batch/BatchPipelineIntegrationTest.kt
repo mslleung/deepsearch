@@ -27,11 +27,12 @@ import kotlin.time.ExperimentalTime
 /**
  * Integration test for the batch periodic index pipeline.
  * 
- * Tests the complete 4-stage batch processing flow:
+ * Tests the complete 5-stage batch processing flow:
  * 1. CRAWL_AND_EXTRACT - Browser-based crawl + extraction
  * 2. CONTENT_LLM_BATCH - LLM batch for semantic/table/icon identification
  * 3. LLM_TABLE_INTERPRETATION - LLM batch for table interpretation
- * 4. FINALIZE_AND_CACHE_EMBEDDING - Finalize markdown and cache
+ * 4. PARALLEL_EMBEDDING_AND_KG - Page embedding batch + KG extraction batch (parallel)
+ * 5. KG_ENTITY_EMBEDDINGS - Batch embedding for extracted KG entities
  * 
  * Similar to WebpageExtractionServiceTest but tests the batch path instead of the interactive path.
  */

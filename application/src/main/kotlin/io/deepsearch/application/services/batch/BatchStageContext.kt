@@ -28,7 +28,8 @@ data class BatchPeriodicIndexEvent(
     /** Stage 4: URLs written to cache */
     val urlsCached: Int,
     val totalUrls: Int,
-    val geminiBatchJobId: String? = null,
+    /** Active Gemini batch job IDs for the current stage (1 for most stages, 2 for stage 4) */
+    val batchJobIds: List<String> = emptyList(),
     val estimatedCompletionTime: String? = null,
     val errorMessage: String? = null,
     val message: String? = null,

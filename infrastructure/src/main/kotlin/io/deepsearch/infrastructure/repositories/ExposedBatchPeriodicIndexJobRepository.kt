@@ -11,6 +11,7 @@ import io.deepsearch.infrastructure.services.ITransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
@@ -28,6 +29,8 @@ class ExposedBatchPeriodicIndexJobRepository(
     private val transactionService: ITransactionService
 ) : IBatchPeriodicIndexJobRepository {
 
+    private val json = Json { ignoreUnknownKeys = true }
+
     override suspend fun create(job: BatchPeriodicIndexJob): BatchPeriodicIndexJob = transactionService.withTransaction {
         val id = table.insert {
             it[userId] = job.userId.value
@@ -40,7 +43,7 @@ class ExposedBatchPeriodicIndexJobRepository(
             it[version] = job.version
             it[languagePattern] = job.languagePattern
             it[ocrLanguage] = job.ocrLanguage.code
-            it[geminiBatchJobId] = job.geminiBatchJobId
+            it[batchJobIds] = serializeBatchJobIds(job.batchJobIds)
             it[batchJobCreatedAtMs] = job.batchJobCreatedAt?.toEpochMilliseconds()
             it[lastResumedAtMs] = job.lastResumedAt?.toEpochMilliseconds()
             it[errorMessage] = job.errorMessage
@@ -61,7 +64,7 @@ class ExposedBatchPeriodicIndexJobRepository(
             it[state] = job.state.name
             it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
             it[version] = job.version + 1
-            it[geminiBatchJobId] = job.geminiBatchJobId
+            it[batchJobIds] = serializeBatchJobIds(job.batchJobIds)
             it[batchJobCreatedAtMs] = job.batchJobCreatedAt?.toEpochMilliseconds()
             it[lastResumedAtMs] = job.lastResumedAt?.toEpochMilliseconds()
             it[errorMessage] = job.errorMessage
@@ -142,6 +145,14 @@ class ExposedBatchPeriodicIndexJobRepository(
         table.deleteWhere { table.id eq id }
     }
 
+    private fun serializeBatchJobIds(ids: List<String>): String? {
+        return if (ids.isEmpty()) null else json.encodeToString(ids)
+    }
+
+    private fun deserializeBatchJobIds(jsonStr: String?): List<String> {
+        return if (jsonStr.isNullOrBlank()) emptyList() else json.decodeFromString(jsonStr)
+    }
+
     private fun mapRow(row: ResultRow): BatchPeriodicIndexJob = BatchPeriodicIndexJob(
         id = row[table.id],
         userId = UserId(row[table.userId]),
@@ -154,7 +165,7 @@ class ExposedBatchPeriodicIndexJobRepository(
         version = row[table.version],
         languagePattern = row[table.languagePattern],
         ocrLanguage = OcrLanguage.fromCodeOrDefault(row[table.ocrLanguage]),
-        geminiBatchJobId = row[table.geminiBatchJobId],
+        batchJobIds = deserializeBatchJobIds(row[table.batchJobIds]),
         batchJobCreatedAt = row[table.batchJobCreatedAtMs]?.let { Instant.fromEpochMilliseconds(it) },
         lastResumedAt = row[table.lastResumedAtMs]?.let { Instant.fromEpochMilliseconds(it) },
         errorMessage = row[table.errorMessage],

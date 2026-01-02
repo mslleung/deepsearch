@@ -51,7 +51,8 @@ class BatchPeriodicIndexController(
         val urlsFinalProcessed: Int,
         /** Stage 4: URLs written to cache */
         val urlsCached: Int,
-        val geminiBatchJobId: String?,
+        /** Active batch job IDs for the current stage */
+        val batchJobIds: List<String>,
         val errorMessage: String?,
         val createdAtMs: Long,
         val updatedAtMs: Long,
@@ -236,7 +237,7 @@ class BatchPeriodicIndexController(
         urlsContentProcessed = this.urlsContentProcessed,
         urlsFinalProcessed = this.urlsFinalProcessed,
         urlsCached = this.urlsCached,
-        geminiBatchJobId = this.geminiBatchJobId,
+        batchJobIds = this.batchJobIds,
         errorMessage = this.errorMessage,
         createdAtMs = this.createdAt.toEpochMilliseconds(),
         updatedAtMs = this.updatedAt.toEpochMilliseconds(),

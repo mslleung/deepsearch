@@ -64,8 +64,8 @@ val applicationModule = module {
     singleOf(::CrawlAndExtractHandler)
     singleOf(::ContentLlmBatchHandler)
     singleOf(::TableInterpretationBatchHandler)
-    singleOf(::FinalizeAndCacheHandler)
-    singleOf(::KnowledgeGraphExtractionHandler)
+    singleOf(::ParallelEmbeddingAndKgHandler)
+    singleOf(::KgEntityEmbeddingsHandler)
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 

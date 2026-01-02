@@ -13,7 +13,8 @@ import io.deepsearch.application.services.batch.BatchEventEmitter
 import io.deepsearch.application.services.batch.BatchPeriodicIndexOrchestrator
 import io.deepsearch.application.services.batch.ContentLlmBatchHandler
 import io.deepsearch.application.services.batch.CrawlAndExtractHandler
-import io.deepsearch.application.services.batch.FinalizeAndCacheHandler
+import io.deepsearch.application.services.batch.ParallelEmbeddingAndKgHandler
+import io.deepsearch.application.services.batch.KgEntityEmbeddingsHandler
 import io.deepsearch.application.services.batch.IBatchPeriodicIndexOrchestrator
 import io.deepsearch.application.services.batch.TableInterpretationBatchHandler
 import io.deepsearch.application.services.FileSearchService
@@ -67,6 +68,10 @@ import io.deepsearch.application.services.ProxySettingsService
 import io.deepsearch.application.services.IProxySettingsService
 import io.deepsearch.application.services.ProxyResolutionService
 import io.deepsearch.application.services.IProxyResolutionService
+import io.deepsearch.application.services.HybridSearchIndexingService
+import io.deepsearch.application.services.IHybridSearchIndexingService
+import io.deepsearch.application.services.KnowledgeGraphIndexingService
+import io.deepsearch.application.services.IKnowledgeGraphIndexingService
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.application.services.PeriodicIndexJobRegistry
 import io.deepsearch.application.services.PeriodicIndexJobService
@@ -139,12 +144,17 @@ private val applicationCommonTestModule = module {
     singleOf(::ProxySettingsService) bind IProxySettingsService::class
     singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
     
+    // Indexing services (handle both interactive fire-and-forget and batch modes)
+    singleOf(::HybridSearchIndexingService) bind IHybridSearchIndexingService::class
+    singleOf(::KnowledgeGraphIndexingService) bind IKnowledgeGraphIndexingService::class
+    
     // Batch periodic index services
     singleOf(::BatchEventEmitter)
     singleOf(::CrawlAndExtractHandler)
     singleOf(::ContentLlmBatchHandler)
     singleOf(::TableInterpretationBatchHandler)
-    singleOf(::FinalizeAndCacheHandler)
+    singleOf(::ParallelEmbeddingAndKgHandler)
+    singleOf(::KgEntityEmbeddingsHandler)
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 

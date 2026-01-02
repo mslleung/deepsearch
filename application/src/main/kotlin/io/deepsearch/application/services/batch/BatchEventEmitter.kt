@@ -35,7 +35,7 @@ class BatchEventEmitter(
                 urlsFinalProcessed = job.urlsFinalProcessed,
                 urlsCached = job.urlsCached,
                 totalUrls = counts.total,
-                geminiBatchJobId = job.geminiBatchJobId,
+                batchJobIds = job.batchJobIds,
                 errorMessage = job.errorMessage,
                 message = message
             )

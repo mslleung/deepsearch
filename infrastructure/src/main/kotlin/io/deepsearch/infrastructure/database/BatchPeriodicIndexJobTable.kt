@@ -17,22 +17,23 @@ class BatchPeriodicIndexJobTable(
     val baseUrl = varchar("base_url", length = 2048)
     val maxUrlCount = integer("max_url_count")
     val sitemapUrl = varchar("sitemap_url", length = 2048).nullable()
-    val state = varchar("state", length = 32)
+    val state = varchar("state", length = 64)
     val createdAtMs = long("created_at_ms")
     val updatedAtMs = long("updated_at_ms")
     val version = long("version").default(0)
     val languagePattern = varchar("language_pattern", length = 64).nullable()
     val ocrLanguage = varchar("ocr_language", length = 16)
     
-    // Gemini batch job tracking
-    val geminiBatchJobId = varchar("gemini_batch_job_id", length = 256).nullable()
+    // Gemini batch job tracking - JSON array of batch job IDs
+    // Most stages have 1 ID, Stage 4 has 2 (embedding + KG extraction)
+    val batchJobIds = text("batch_job_ids").nullable()
     val batchJobCreatedAtMs = long("batch_job_created_at_ms").nullable()
     val lastResumedAtMs = long("last_resumed_at_ms").nullable()
     
     // Error tracking
     val errorMessage = text("error_message").nullable()
     
-    // Progress counters (4 stages now)
+    // Progress counters (5 stages now)
     /** Stage 1: URLs that have been crawled + browser extracted */
     val urlsProcessed = integer("urls_processed").default(0)
     /** Stage 2: URLs with content LLM batch complete */
@@ -46,7 +47,6 @@ class BatchPeriodicIndexJobTable(
         index(false, baseUrl)
         index(false, userId)
         index(false, state)
-        index(false, geminiBatchJobId)
     }
 
     override val primaryKey = PrimaryKey(id)

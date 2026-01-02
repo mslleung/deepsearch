@@ -8,7 +8,7 @@ import kotlin.time.Instant
 
 /**
  * State machine for batch periodic index jobs.
- * Batch jobs go through 4 stages with async Gemini batch processing.
+ * Batch jobs go through 5 stages with async Gemini batch processing.
  */
 enum class BatchPeriodicIndexJobState {
     /** Stage 1: Browser-based crawling + extraction (single browser visit per URL) */
@@ -17,10 +17,10 @@ enum class BatchPeriodicIndexJobState {
     CONTENT_LLM_BATCH,
     /** Stage 3: LLM batch for table interpretation */
     LLM_TABLE_INTERPRETATION,
-    /** Stage 4: Finalize markdown and generate embeddings */
-    FINALIZE_AND_CACHE_EMBEDDING,
-    /** Stage 5: LLM batch for knowledge graph entity extraction */
-    KNOWLEDGE_GRAPH_EXTRACTION,
+    /** Stage 4: Parallel page embedding batch + KG extraction batch */
+    PARALLEL_EMBEDDING_AND_KG_EXTRACTION,
+    /** Stage 5: Batch embedding for KG entities */
+    KG_ENTITY_EMBEDDINGS,
     /** Successfully completed all stages */
     COMPLETED,
     /** Failed due to an error */
@@ -35,11 +35,12 @@ enum class BatchPeriodicIndexJobState {
  * Batch jobs use Gemini's Batch API for cost-effective background processing (50% cost savings).
  * Unlike interactive periodic index jobs, batch jobs can take up to 24+ hours to complete.
  * 
- * The job progresses through 4 stages:
+ * The job progresses through 5 stages:
  * 1. CRAWL_AND_EXTRACT - Browser-based crawl + extraction (single visit per URL)
  * 2. CONTENT_LLM_BATCH - LLM batch for semantic/table/icon identification
  * 3. LLM_TABLE_INTERPRETATION - LLM batch for table interpretation
- * 4. FINALIZE_AND_CACHE_EMBEDDING - Finalize markdown and generate embeddings
+ * 4. PARALLEL_EMBEDDING_AND_KG_EXTRACTION - Page embedding batch + KG extraction batch (run in parallel)
+ * 5. KG_ENTITY_EMBEDDINGS - Batch embedding for extracted KG entities
  * 
  * State is persisted at each stage for resumption after server restarts.
  */
@@ -68,12 +69,13 @@ class BatchPeriodicIndexJob(
      */
     val ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
     /**
-     * Current Gemini batch job ID when in BATCHING_CONTENT_LLM or BATCHING_FINAL_LLM state.
+     * Active Gemini batch job IDs for the current stage.
+     * Most stages have 1 batch job, Stage 4 has 2 (embedding + KG extraction).
      * Used to poll for batch completion and resume after server restart.
      */
-    var geminiBatchJobId: String? = null,
+    var batchJobIds: List<String> = emptyList(),
     /**
-     * Timestamp when the current Gemini batch job was created.
+     * Timestamp when the current batch job(s) were created.
      * Used for timeout detection and progress estimation.
      */
     var batchJobCreatedAt: Instant? = null,
@@ -110,8 +112,8 @@ class BatchPeriodicIndexJob(
         BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> 1
         BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> 2
         BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> 3
-        BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> 4
-        BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION -> 5
+        BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION -> 4
+        BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> 5
         BatchPeriodicIndexJobState.COMPLETED -> 5
         BatchPeriodicIndexJobState.FAILED, BatchPeriodicIndexJobState.STOPPED -> currentStageFromProgress()
     }
@@ -130,8 +132,8 @@ class BatchPeriodicIndexJob(
         BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> "Crawling & extracting webpages"
         BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> "Processing with Gemini (content analysis)"
         BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> "Processing with Gemini (table interpretation)"
-        BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> "Finalizing and caching"
-        BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION -> "Extracting knowledge graph"
+        BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION -> "Generating embeddings & extracting knowledge graph"
+        BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> "Generating entity embeddings"
         BatchPeriodicIndexJobState.COMPLETED -> "Completed"
         BatchPeriodicIndexJobState.FAILED -> "Failed: ${errorMessage ?: "Unknown error"}"
         BatchPeriodicIndexJobState.STOPPED -> "Stopped"
@@ -144,9 +146,9 @@ class BatchPeriodicIndexJob(
         state = when (state) {
             BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> BatchPeriodicIndexJobState.CONTENT_LLM_BATCH
             BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION
-            BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING
-            BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION
-            BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION -> BatchPeriodicIndexJobState.COMPLETED
+            BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION
+            BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION -> BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS
+            BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> BatchPeriodicIndexJobState.COMPLETED
             else -> state // No transition for terminal states
         }
         updatedAt = Clock.System.now()
@@ -180,19 +182,22 @@ class BatchPeriodicIndexJob(
     }
 
     /**
-     * Set the Gemini batch job ID when submitting a batch.
+     * Add a batch job ID to the active list.
+     * Sets the creation timestamp on the first job added.
      */
-    fun setBatchJob(batchJobId: String) {
-        geminiBatchJobId = batchJobId
-        batchJobCreatedAt = Clock.System.now()
+    fun addBatchJob(batchJobId: String) {
+        batchJobIds = batchJobIds + batchJobId
+        if (batchJobIds.size == 1) {
+            batchJobCreatedAt = Clock.System.now()
+        }
         updatedAt = Clock.System.now()
     }
 
     /**
-     * Clear the Gemini batch job ID after batch completes.
+     * Clear all batch job IDs after stage completes.
      */
-    fun clearBatchJob() {
-        geminiBatchJobId = null
+    fun clearBatchJobs() {
+        batchJobIds = emptyList()
         batchJobCreatedAt = null
         updatedAt = Clock.System.now()
     }
@@ -217,9 +222,5 @@ class BatchPeriodicIndexJob(
     /**
      * Check if the job is waiting for a Gemini batch to complete.
      */
-    fun isWaitingForBatch(): Boolean = state in listOf(
-        BatchPeriodicIndexJobState.CONTENT_LLM_BATCH,
-        BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION,
-        BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION
-    ) && geminiBatchJobId != null
+    fun isWaitingForBatch(): Boolean = batchJobIds.isNotEmpty()
 }

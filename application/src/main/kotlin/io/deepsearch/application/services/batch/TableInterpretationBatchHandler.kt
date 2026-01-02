@@ -66,7 +66,7 @@ class TableInterpretationBatchHandler(
         val batchJobIdTyped = BatchJobId(jobId)
         
         // Check if we already have a batch job running (resume case)
-        if (job.geminiBatchJobId != null) {
+        if (job.batchJobIds.isNotEmpty()) {
             // Rebuild mapping from database state for resumability
             // This works because:
             // 1. findNeedingFinalLlmProcessing() returns URLs in deterministic order (by id)
@@ -82,9 +82,10 @@ class TableInterpretationBatchHandler(
             tableInterpretationMappings[batchJobIdTyped] = requestMappings
             logger.info("[{}] Rebuilt table interpretation mapping with {} entries for resume", jobId, requestMappings.size)
 
-            pollBatchUntilComplete(job, eventFlow, job.geminiBatchJobId!!)
-            processTableBatchResults(jobId, job.geminiBatchJobId!!)
-            job.clearBatchJob()
+            val batchJobId = job.batchJobIds.first()
+            pollBatchUntilComplete(job, eventFlow, batchJobId)
+            processTableBatchResults(jobId, batchJobId)
+            job.clearBatchJobs()
             job.advanceToNextStage()
             batchJobRepository.update(job)
             return
@@ -131,7 +132,7 @@ class TableInterpretationBatchHandler(
 
         try {
             val batchJobId = geminiBatchService.createContentBatch(pendingRequests.map { it.request })
-            job.setBatchJob(batchJobId)
+            job.addBatchJob(batchJobId)
             batchJobRepository.update(job)
 
             logger.info("[{}] Submitted table batch job: {}", jobId, batchJobId)
@@ -140,7 +141,7 @@ class TableInterpretationBatchHandler(
             pollBatchUntilComplete(job, eventFlow, batchJobId)
             processTableBatchResults(jobId, batchJobId)
 
-            job.clearBatchJob()
+            job.clearBatchJobs()
             job.advanceToNextStage()
             batchJobRepository.update(job)
         } catch (e: Exception) {

@@ -1,6 +1,5 @@
 package io.deepsearch.application.services.batch
 
-import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
@@ -42,8 +41,8 @@ interface IBatchPeriodicIndexOrchestrator {
  * Stage 1: CRAWL_AND_EXTRACT - Browser-based crawl + extraction (single visit per URL)
  * Stage 2: CONTENT_LLM_BATCH - LLM batch for semantic/table/icon identification
  * Stage 3: LLM_TABLE_INTERPRETATION - LLM batch for table interpretation
- * Stage 4: FINALIZE_AND_CACHE_EMBEDDING - Finalize markdown and generate embeddings
- * Stage 5: KNOWLEDGE_GRAPH_EXTRACTION - LLM batch for entity and relationship extraction
+ * Stage 4: PARALLEL_EMBEDDING_AND_KG_EXTRACTION - Page embedding batch + KG extraction batch (run in parallel)
+ * Stage 5: KG_ENTITY_EMBEDDINGS - Batch embedding for extracted KG entities
  * 
  * Each stage is handled by a dedicated handler class.
  * State is persisted at each stage for resumption after server restarts.
@@ -58,8 +57,8 @@ class BatchPeriodicIndexOrchestrator(
     private val crawlAndExtractHandler: CrawlAndExtractHandler,
     private val contentLlmBatchHandler: ContentLlmBatchHandler,
     private val tableInterpretationHandler: TableInterpretationBatchHandler,
-    private val finalizeAndCacheHandler: FinalizeAndCacheHandler,
-    private val knowledgeGraphExtractionHandler: KnowledgeGraphExtractionHandler,
+    private val parallelEmbeddingAndKgHandler: ParallelEmbeddingAndKgHandler,
+    private val kgEntityEmbeddingsHandler: KgEntityEmbeddingsHandler,
     private val eventEmitter: BatchEventEmitter
 ) : IBatchPeriodicIndexOrchestrator {
 
@@ -103,8 +102,8 @@ class BatchPeriodicIndexOrchestrator(
         runs.remove(jobId)?.coroutineJob?.cancel()
         val job = batchJobRepository.findById(jobId) ?: return
         
-        // Cancel any active Gemini batch job
-        job.geminiBatchJobId?.let { batchId ->
+        // Cancel all active Gemini batch jobs
+        job.batchJobIds.forEach { batchId ->
             try {
                 geminiBatchService.cancelBatch(batchId)
             } catch (e: Exception) {
@@ -141,10 +140,10 @@ class BatchPeriodicIndexOrchestrator(
                         contentLlmBatchHandler.execute(job, eventFlow)
                     BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> 
                         tableInterpretationHandler.execute(job, eventFlow)
-                    BatchPeriodicIndexJobState.FINALIZE_AND_CACHE_EMBEDDING -> 
-                        finalizeAndCacheHandler.execute(job, eventFlow)
-                    BatchPeriodicIndexJobState.KNOWLEDGE_GRAPH_EXTRACTION -> 
-                        knowledgeGraphExtractionHandler.execute(job, eventFlow)
+                    BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION ->
+                        parallelEmbeddingAndKgHandler.execute(job, eventFlow)
+                    BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> 
+                        kgEntityEmbeddingsHandler.execute(job, eventFlow)
                     else -> break
                 }
             }

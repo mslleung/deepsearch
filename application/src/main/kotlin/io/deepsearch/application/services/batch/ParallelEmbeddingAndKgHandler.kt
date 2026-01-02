@@ -1,37 +1,51 @@
 package io.deepsearch.application.services.batch
 
 import io.deepsearch.application.services.IHybridSearchIndexingService
+import io.deepsearch.application.services.IKnowledgeGraphIndexingService
 import io.deepsearch.application.services.IWebpageCacheService
+import io.deepsearch.domain.knowledgegraph.KgExtractionResult
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
+import io.deepsearch.domain.services.BatchContentRequest
 import io.deepsearch.domain.services.BatchJobState
 import io.deepsearch.domain.services.CssSelectorReplacement
 import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.domain.services.IJsoupDomService
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * Stage 4: Finalize and cache handler.
+ * Stage 4: Parallel embedding and knowledge graph extraction handler.
  * 
- * Finalizes markdown from processed HTML and generates embeddings via Gemini Batch API.
- * Caches the results to the webpage cache service.
+ * This stage runs two batch jobs in parallel:
+ * 1. Page embedding batch - generates embeddings for page markdown
+ * 2. KG extraction batch - extracts entities and relationships from markdown
+ * 
+ * After both batches complete:
+ * - Page embeddings are stored in the webpage cache
+ * - KG extraction results are stored in URL state for Stage 5 entity embedding
+ * - Pages are cached to the webpage cache service
  */
-class FinalizeAndCacheHandler(
+class ParallelEmbeddingAndKgHandler(
     private val batchJobRepository: IBatchPeriodicIndexJobRepository,
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val geminiBatchService: IGeminiBatchService,
     private val jsoupDomService: IJsoupDomService,
     private val webpageCacheService: IWebpageCacheService,
     private val hybridSearchIndexingService: IHybridSearchIndexingService,
+    private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService,
     private val eventEmitter: BatchEventEmitter
 ) : IBatchStageHandler {
 
@@ -51,16 +65,16 @@ class FinalizeAndCacheHandler(
         eventFlow: MutableSharedFlow<BatchPeriodicIndexEvent>
     ) {
         val jobId = requireNotNull(job.id)
-        logger.info("[{}] Stage 4: Finalizing and caching", jobId)
-        eventEmitter.emit(job, eventFlow, "Stage 4: Saving results to cache...")
+        logger.info("[{}] Stage 4: Parallel embedding and KG extraction", jobId)
+        eventEmitter.emit(job, eventFlow, "Stage 4: Generating embeddings & extracting knowledge graph...")
 
         val urlsNeedingCaching = batchUrlStateRepository.findNeedingCaching(jobId)
-        logger.info("[{}] {} URLs need caching", jobId, urlsNeedingCaching.size)
+        logger.info("[{}] {} URLs need processing", jobId, urlsNeedingCaching.size)
 
         if (urlsNeedingCaching.isEmpty()) {
             job.advanceToNextStage()
             batchJobRepository.update(job)
-            eventEmitter.emit(job, eventFlow, "Stage 4 complete: No URLs to cache")
+            eventEmitter.emit(job, eventFlow, "Stage 4 complete: No URLs to process")
             return
         }
 
@@ -86,7 +100,7 @@ class FinalizeAndCacheHandler(
             }
         }
 
-        // Step 2: Prepare embedding batch requests using the indexing service
+        // Step 2: Prepare batch requests for both embeddings and KG extraction
         val embeddingRequestMap = mutableMapOf<String, String>() // requestId -> URL
         val embeddingRequests = urlDataMap.mapNotNull { (urlStateId, data) ->
             val requestId = "${jobId}-${urlStateId}-embed"
@@ -94,26 +108,78 @@ class FinalizeAndCacheHandler(
             hybridSearchIndexingService.prepareBatchRequest(requestId, data.markdown)
         }
 
-        // Step 3: Submit embedding batch and fetch results
-        val embeddingResults = mutableMapOf<String, List<Float>>() // URL -> embedding
-        if (embeddingRequests.isNotEmpty()) {
+        val kgRequestMap = mutableMapOf<String, Long>() // requestId -> urlStateId
+        val kgRequests = mutableListOf<KgBatchRequest>()
+        urlDataMap.forEach { (urlStateId, data) ->
             try {
-                eventEmitter.emit(job, eventFlow, "Generating embeddings for ${embeddingRequests.size} pages...")
+                val requestId = "${jobId}-${urlStateId}-kg"
+                kgRequestMap[requestId] = urlStateId
+                val request = knowledgeGraphIndexingService.prepareBatchRequest(
+                    requestId = requestId,
+                    markdown = data.markdown,
+                    sourceUrl = data.urlState.url
+                )
+                kgRequests.add(KgBatchRequest(
+                    urlStateId = urlStateId,
+                    url = data.urlState.url,
+                    request = request
+                ))
+            } catch (e: Exception) {
+                logger.warn("[{}] Failed to prepare KG request for {}: {}", jobId, data.urlState.url, e.message)
+            }
+        }
 
-                val embeddingBatchId = geminiBatchService.createEmbeddingBatch(embeddingRequests)
-                job.setBatchJob(embeddingBatchId)
-                batchJobRepository.update(job)
+        logger.info("[{}] Prepared {} embedding requests and {} KG requests", 
+            jobId, embeddingRequests.size, kgRequests.size)
 
-                logger.info("[{}] Submitted embedding batch: {}", jobId, embeddingBatchId)
+        // Step 3: Submit both batches and poll in parallel
+        val embeddingResults = mutableMapOf<String, List<Float>>() // URL -> embedding
+        val kgResults = mutableMapOf<Long, KgExtractionResult>() // urlStateId -> extraction result
 
+        try {
+            eventEmitter.emit(job, eventFlow, 
+                "Submitting parallel batches: ${embeddingRequests.size} embeddings, ${kgRequests.size} KG extractions...")
+
+            // Submit embedding batch if we have requests
+            val embeddingBatchId = if (embeddingRequests.isNotEmpty()) {
+                geminiBatchService.createEmbeddingBatch(embeddingRequests).also { batchId ->
+                    job.addBatchJob(batchId)
+                    logger.info("[{}] Submitted embedding batch: {}", jobId, batchId)
+                }
+            } else null
+
+            // Submit KG extraction batch if we have requests
+            val kgBatchId = if (kgRequests.isNotEmpty()) {
+                geminiBatchService.createContentBatch(kgRequests.map { it.request }).also { batchId ->
+                    job.addBatchJob(batchId)
+                    logger.info("[{}] Submitted KG extraction batch: {}", jobId, batchId)
+                }
+            } else null
+
+            batchJobRepository.update(job)
+
+            // Poll both batches in parallel
+            coroutineScope {
+                val embeddingDeferred = embeddingBatchId?.let { batchId ->
+                    async {
+                        pollBatchUntilComplete(job, eventFlow, batchId, "embedding")
+                    }
+                }
+                val kgDeferred = kgBatchId?.let { batchId ->
+                    async {
+                        pollBatchUntilComplete(job, eventFlow, batchId, "KG extraction")
+                    }
+                }
+
+                listOfNotNull(embeddingDeferred, kgDeferred).awaitAll()
+            }
+
+            // Fetch embedding results
+            embeddingBatchId?.let { batchId ->
                 try {
-                    pollBatchUntilComplete(job, eventFlow, embeddingBatchId)
-
-                    // Fetch batch results
-                    val batchResults = geminiBatchService.fetchBatchResults(embeddingBatchId)
+                    val batchResults = geminiBatchService.fetchBatchResults(batchId)
                     logger.info("[{}] Retrieved {} embedding batch results", jobId, batchResults.size)
 
-                    // Map results back to URLs
                     batchResults.forEachIndexed { index, result ->
                         val requestId = embeddingRequests.getOrNull(index)?.requestId ?: return@forEachIndexed
                         val url = embeddingRequestMap[requestId] ?: return@forEachIndexed
@@ -124,18 +190,52 @@ class FinalizeAndCacheHandler(
                             logger.warn("[{}] Embedding failed for {}: {}", jobId, url, result.errorMessage)
                         }
                     }
-
-                    logger.info("[{}] Successfully retrieved {} embeddings", jobId, embeddingResults.size)
-
                 } catch (e: Exception) {
-                    logger.warn("[{}] Embedding batch failed, continuing without embeddings: {}", jobId, e.message)
-                } finally {
-                    job.clearBatchJob()
-                    batchJobRepository.update(job)
+                    logger.warn("[{}] Failed to fetch embedding results: {}", jobId, e.message)
                 }
-            } catch (e: Exception) {
-                logger.warn("[{}] Embedding batch failed: {}, continuing without embeddings", jobId, e.message)
             }
+
+            // Fetch KG extraction results
+            kgBatchId?.let { batchId ->
+                try {
+                    val batchResults = geminiBatchService.fetchBatchResults(batchId)
+                    logger.info("[{}] Retrieved {} KG batch results", jobId, batchResults.size)
+
+                    batchResults.forEachIndexed { index, result ->
+                        val kgRequest = kgRequests.getOrNull(index) ?: return@forEachIndexed
+
+                        try {
+                            if (!result.success || result.generatedText == null) {
+                                logger.warn("[{}] KG batch failed for {}: {}", 
+                                    jobId, kgRequest.url, result.errorMessage)
+                                return@forEachIndexed
+                            }
+
+                            val extraction = knowledgeGraphIndexingService.parseBatchResponse(result.generatedText!!)
+                            if (!extraction.isEmpty()) {
+                                kgResults[kgRequest.urlStateId] = extraction
+                            } else {
+                                logger.debug("[{}] No entities extracted from {}", jobId, kgRequest.url)
+                            }
+                        } catch (e: Exception) {
+                            logger.warn("[{}] Failed to parse KG result for {}: {}", 
+                                jobId, kgRequest.url, e.message)
+                        }
+                    }
+                } catch (e: Exception) {
+                    logger.warn("[{}] Failed to fetch KG results: {}", jobId, e.message)
+                }
+            }
+
+            logger.info("[{}] Successfully retrieved {} embeddings and {} KG extractions", 
+                jobId, embeddingResults.size, kgResults.size)
+
+        } catch (e: Exception) {
+            logger.error("[{}] Parallel batch processing failed: {}", jobId, e.message, e)
+            // Continue with whatever results we have
+        } finally {
+            job.clearBatchJobs()
+            batchJobRepository.update(job)
         }
 
         // Step 4: Store embeddings using the indexing service
@@ -148,9 +248,20 @@ class FinalizeAndCacheHandler(
             }
         }
 
-        // Step 5: Cache all pages (without triggering async indexing - handled by batch stages)
+        // Step 5: Cache all pages and store KG results in snapshot data for Stage 5
         urlDataMap.values.forEach { data ->
             try {
+                // Update snapshot data with KG extraction result for Stage 5
+                val kgResult = kgResults[data.urlState.id!!]
+                val updatedSnapshotData = if (kgResult != null && data.snapshotData != null) {
+                    data.snapshotData.copy(
+                        markdown = data.markdown,
+                        kgExtractionResult = kgResult
+                    )
+                } else {
+                    data.snapshotData?.copy(markdown = data.markdown)
+                }
+
                 webpageCacheService.cacheWebpageBatch(
                     url = data.urlState.url,
                     title = data.urlState.title,
@@ -163,6 +274,10 @@ class FinalizeAndCacheHandler(
                     sessionId = sessionId
                 )
 
+                // Update URL state with KG result for Stage 5
+                if (updatedSnapshotData != null) {
+                    data.urlState.snapshotData = json.encodeToString(updatedSnapshotData)
+                }
                 data.urlState.markCached()
                 batchUrlStateRepository.update(data.urlState)
                 job.urlsCached++
@@ -175,15 +290,26 @@ class FinalizeAndCacheHandler(
 
         batchJobRepository.update(job)
 
+        val entityCount = kgResults.values.sumOf { it.entities.size }
+        val relationshipCount = kgResults.values.sumOf { it.relationships.size }
+
         job.advanceToNextStage()
         batchJobRepository.update(job)
-        eventEmitter.emit(job, eventFlow, "Stage 4 complete: ${job.urlsCached} pages cached, ${embeddingResults.size} embeddings")
+        eventEmitter.emit(job, eventFlow, 
+            "Stage 4 complete: ${job.urlsCached} pages cached, ${embeddingResults.size} embeddings, " +
+            "$entityCount entities, $relationshipCount relationships")
     }
 
     private data class UrlCacheData(
         val urlState: BatchUrlState,
         val markdown: String,
         val snapshotData: BatchUrlSnapshotData?
+    )
+
+    private data class KgBatchRequest(
+        val urlStateId: Long,
+        val url: String,
+        val request: BatchContentRequest
     )
 
     private fun buildFinalMarkdown(urlState: BatchUrlState, snapshotData: BatchUrlSnapshotData?): String {
@@ -303,7 +429,8 @@ class FinalizeAndCacheHandler(
     private suspend fun pollBatchUntilComplete(
         job: BatchPeriodicIndexJob,
         eventFlow: MutableSharedFlow<BatchPeriodicIndexEvent>,
-        batchJobId: String
+        batchJobId: String,
+        batchType: String
     ) {
         var attempts = 0
 
@@ -313,23 +440,23 @@ class FinalizeAndCacheHandler(
 
                 when (status.state) {
                     BatchJobState.SUCCEEDED -> {
-                        logger.info("Batch job {} completed successfully", batchJobId)
+                        logger.info("{} batch job {} completed successfully", batchType, batchJobId)
                         return
                     }
 
-                    BatchJobState.FAILED -> throw RuntimeException("Batch job failed: ${status.errorMessage}")
-                    BatchJobState.CANCELLED -> throw RuntimeException("Batch job was cancelled")
+                    BatchJobState.FAILED -> throw RuntimeException("$batchType batch job failed: ${status.errorMessage}")
+                    BatchJobState.CANCELLED -> throw RuntimeException("$batchType batch job was cancelled")
                     else -> {
                         eventEmitter.emit(
                             job,
                             eventFlow,
-                            "Waiting for batch (${status.completedRequests}/${status.totalRequests})"
+                            "Waiting for $batchType batch (${status.completedRequests}/${status.totalRequests})"
                         )
                     }
                 }
             } catch (e: Exception) {
                 if (e.message?.contains("429") == true) {
-                    logger.warn("Rate limited while polling, will retry")
+                    logger.warn("Rate limited while polling {}, will retry", batchType)
                 } else {
                     throw e
                 }
@@ -339,6 +466,7 @@ class FinalizeAndCacheHandler(
             attempts++
         }
 
-        throw RuntimeException("Batch job polling timed out after $MAX_BATCH_POLL_ATTEMPTS attempts")
+        throw RuntimeException("$batchType batch job polling timed out after $MAX_BATCH_POLL_ATTEMPTS attempts")
     }
 }
+

@@ -2,6 +2,7 @@ package io.deepsearch.domain.models.entities
 
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.knowledgegraph.KgExtractionResult
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -250,5 +251,12 @@ data class BatchUrlSnapshotData(
      * Batch request index for tracking responses.
      * Used to match batch results back to this URL.
      */
-    val batchRequestIndex: Int? = null
+    val batchRequestIndex: Int? = null,
+    
+    /**
+     * Stage 4 result: Knowledge graph extraction result.
+     * Contains entities and relationships extracted from the markdown.
+     * Used in Stage 5 for entity embedding generation.
+     */
+    val kgExtractionResult: KgExtractionResult? = null
 )
