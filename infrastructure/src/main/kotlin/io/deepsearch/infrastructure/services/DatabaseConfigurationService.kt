@@ -111,12 +111,23 @@ class DatabaseConfigurationService(
                 // See: https://age.apache.org/age-manual/master/intro/setup.html
                 exec("""
                     DO $$
+                    DECLARE
+                        db_name TEXT := current_database();
                     BEGIN
                         -- Check if AGE extension is available before trying to create it
                         IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'age') THEN
                             CREATE EXTENSION IF NOT EXISTS age;
-                            -- Set search path to include ag_catalog for AGE functions
+                            
+                            -- Configure database to auto-load AGE for all connections (required for R2DBC)
+                            -- session_preload_libraries ensures 'age' is loaded for every new connection
+                            EXECUTE format('ALTER DATABASE %I SET session_preload_libraries = ''age''', db_name);
+                            
+                            -- Set database-level search_path so ag_catalog is always accessible
+                            EXECUTE format('ALTER DATABASE %I SET search_path = ag_catalog, "${'$'}user", public', db_name);
+                            
+                            -- Set search path for current session
                             SET search_path = ag_catalog, "${'$'}user", public;
+                            
                             -- Create the knowledge_graph if it doesn't exist
                             IF NOT EXISTS (SELECT 1 FROM ag_graph WHERE name = 'knowledge_graph') THEN
                                 PERFORM create_graph('knowledge_graph');

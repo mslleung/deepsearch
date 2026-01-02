@@ -119,25 +119,15 @@ sleep 3
 # Enter password: password
 ```
 
-##### Step 6: Enable Extensions and Configure Database
+##### Step 6: Enable Extensions and Verify
 
 ```bash
 /Library/PostgreSQL/17/bin/psql -U postgres -d deepsearch << 'EOF'
--- Enable extensions
+-- Enable extensions (the application will configure them automatically on first run)
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS age;
 
--- Configure database to auto-load AGE for all connections (required for R2DBC)
-ALTER DATABASE deepsearch SET session_preload_libraries = 'age';
-ALTER DATABASE deepsearch SET search_path = ag_catalog, "$user", public;
-
--- Reconnect to apply settings
-\c deepsearch
-
--- Create the knowledge graph (required for Cypher queries)
-SELECT create_graph('knowledge_graph');
-
--- Verify extensions
+-- Verify extensions are installed
 SELECT extname, extversion FROM pg_extension WHERE extname IN ('vector', 'age');
 EOF
 ```
@@ -150,6 +140,11 @@ You should see output like:
  age     | 1.6.0
 (2 rows)
 ```
+
+**Note:** The application automatically configures AGE on startup:
+- Sets `session_preload_libraries = 'age'` for auto-loading
+- Sets `search_path` to include `ag_catalog`
+- Creates the `knowledge_graph` if it doesn't exist
 
 #### Option C: Manual Installation on Linux (Ubuntu/Debian)
 
