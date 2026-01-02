@@ -1,0 +1,32 @@
+# Custom PostgreSQL image with pgvector and Apache AGE extensions
+# Based on pgvector/pgvector image (includes pgvector), adds Apache AGE for graph database
+#
+# Build: docker build -f Dockerfile.postgres -t deepsearch-postgres:latest .
+# Run:   docker-compose up -d postgres
+
+FROM pgvector/pgvector:pg17
+
+# Install build dependencies for Apache AGE
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libreadline-dev \
+    zlib1g-dev \
+    flex \
+    bison \
+    git \
+    postgresql-server-dev-17 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build Apache AGE v1.6.0 for PostgreSQL 17
+# See: https://github.com/apache/age/releases
+RUN git clone --branch release/PG17/1.6.0 --depth 1 https://github.com/apache/age.git /tmp/age \
+    && cd /tmp/age \
+    && make install \
+    && rm -rf /tmp/age
+
+# Clean up build dependencies to reduce image size
+RUN apt-get purge -y --auto-remove \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+

@@ -21,6 +21,13 @@ import java.time.Duration
 interface IDatabaseConfigurationService {
 
     fun getDatabase(): R2dbcDatabase
+    
+    /**
+     * Returns the R2DBC connection pool for raw SQL execution.
+     * Used for executing queries that Exposed doesn't directly support (e.g., Apache AGE Cypher).
+     * Returns null if not using PostgreSQL (e.g., H2 in development).
+     */
+    fun getConnectionPool(): ConnectionPool?
 
 }
 
@@ -34,6 +41,9 @@ class DatabaseConfigurationService(
 ) : IDatabaseConfigurationService {
 
     private val logger = LoggerFactory.getLogger(DatabaseConfigurationService::class.java)
+    
+    // Connection pool stored separately for raw SQL execution (e.g., Apache AGE Cypher)
+    private var _connectionPool: ConnectionPool? = null
     private val _database: R2dbcDatabase = configureDatabase()
     
     companion object {
@@ -46,6 +56,8 @@ class DatabaseConfigurationService(
     }
 
     override fun getDatabase() = _database
+    
+    override fun getConnectionPool() = _connectionPool
 
     /**
      * Configures database connection based on environment.
@@ -215,6 +227,9 @@ class DatabaseConfigurationService(
             .build()
 
         val pool = ConnectionPool(poolConfiguration)
+        
+        // Store pool for raw SQL execution (e.g., Apache AGE Cypher queries)
+        _connectionPool = pool
 
         return R2dbcDatabase.connect(
             connectionFactory = pool,

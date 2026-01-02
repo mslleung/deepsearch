@@ -290,12 +290,140 @@ class AgeKnowledgeGraphRepository(
             return emptyList()
         }
         
-        // Apache AGE Cypher execution requires dynamic SQL with result parsing.
-        // Since R2DBC Exposed doesn't support exec() with result reading like JDBC,
-        // we fall back to using the relational tables for now.
-        // Full Cypher support would require using raw R2DBC connection pooling.
-        logger.debug("Cypher execution not fully supported in R2DBC mode - returning empty results")
-        return emptyList()
+        // Check if AGE extension is available before attempting to execute
+        if (!isAgeAvailable()) {
+            logger.debug("Apache AGE is not installed - Cypher queries are not supported")
+            return emptyList()
+        }
+        
+        // Build Apache AGE SQL query
+        // Using dollar-quoting ($$) to safely embed the Cypher query
+        // The SET search_path is needed for AGE functions
+        val sql = buildAgeCypherSql(cypherQuery)
+        
+        logger.debug("Executing Cypher query via AGE: {}", cypherQuery)
+        
+        return try {
+            val rawResults = transactionService.executeRawQuery(sql, timeoutSeconds)
+            
+            // Parse agtype results into simple string maps
+            rawResults.map { row ->
+                row.mapValues { (_, value) -> parseAgtypeValue(value) }
+            }
+        } catch (e: Exception) {
+            logger.error("Error executing Cypher query: {}", e.message, e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Check if Apache AGE extension is installed and available.
+     * Caches the result to avoid repeated database queries.
+     */
+    private var ageAvailableCache: Boolean? = null
+    
+    private suspend fun isAgeAvailable(): Boolean {
+        // Return cached result if available
+        ageAvailableCache?.let { return it }
+        
+        return try {
+            val result = transactionService.executeRawQuery(
+                "SELECT 1 FROM pg_extension WHERE extname = 'age'",
+                timeoutSeconds = 5
+            )
+            val available = result.isNotEmpty()
+            ageAvailableCache = available
+            if (!available) {
+                logger.info("Apache AGE extension is not installed. Cypher query support is disabled.")
+            }
+            available
+        } catch (e: Exception) {
+            logger.warn("Could not check AGE availability: {}", e.message)
+            ageAvailableCache = false
+            false
+        }
+    }
+    
+    /**
+     * Build the SQL statement to execute a Cypher query via Apache AGE.
+     * Uses dollar-quoting to safely embed the Cypher query.
+     */
+    private fun buildAgeCypherSql(cypherQuery: String): String {
+        // Extract column names from the RETURN clause for the AS definition
+        val returnColumns = extractReturnColumns(cypherQuery)
+        
+        // Build column definitions for the AS clause
+        val columnDefs = if (returnColumns.isNotEmpty()) {
+            returnColumns.joinToString(", ") { "$it agtype" }
+        } else {
+            // Default to single 'result' column if we can't parse RETURN
+            "result agtype"
+        }
+        
+        return $$"""
+            SET search_path = ag_catalog, "$user", public;
+            SELECT * FROM cypher('knowledge_graph', $$
+                $$cypherQuery
+            $$) AS ($$columnDefs);
+        """.trimIndent()
+    }
+    
+    /**
+     * Extract column names from the RETURN clause of a Cypher query.
+     * Handles patterns like:
+     * - RETURN n.name, n.age -> [name, age]
+     * - RETURN n.name AS name, n.age AS age -> [name, age]
+     * - RETURN n -> [n]
+     */
+    private fun extractReturnColumns(cypherQuery: String): List<String> {
+        // Find the RETURN clause (case-insensitive)
+        val returnMatch = Regex("(?i)\\bRETURN\\s+(.+?)(?:\\s+ORDER\\s+BY|\\s+LIMIT|\\s+SKIP|$)", RegexOption.DOT_MATCHES_ALL)
+            .find(cypherQuery)
+            ?: return emptyList()
+        
+        val returnClause = returnMatch.groupValues[1].trim()
+        
+        // Split by comma and extract column names
+        return returnClause.split(",").mapNotNull { part ->
+            val trimmed = part.trim()
+            
+            // Check for AS alias
+            val asMatch = Regex("(?i)\\bAS\\s+(\\w+)$").find(trimmed)
+            if (asMatch != null) {
+                return@mapNotNull asMatch.groupValues[1]
+            }
+            
+            // Check for property access (n.property)
+            val propMatch = Regex("\\w+\\.(\\w+)$").find(trimmed)
+            if (propMatch != null) {
+                return@mapNotNull propMatch.groupValues[1]
+            }
+            
+            // Check for simple variable name
+            val varMatch = Regex("^(\\w+)$").find(trimmed)
+            if (varMatch != null) {
+                return@mapNotNull varMatch.groupValues[1]
+            }
+            
+            null
+        }
+    }
+    
+    /**
+     * Parse an agtype value into a string.
+     * AGE returns JSON-like values that need unwrapping.
+     */
+    private fun parseAgtypeValue(value: String): String {
+        if (value.isBlank()) return ""
+        
+        // agtype strings are wrapped in quotes: "value"
+        // Numbers and booleans are returned as-is
+        return when {
+            value.startsWith("\"") && value.endsWith("\"") -> 
+                value.drop(1).dropLast(1)
+            value == "null" -> ""
+            else -> value
+        }
     }
 
     override suspend fun getSchemaDescription(): String {

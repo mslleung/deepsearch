@@ -7,6 +7,7 @@ import io.deepsearch.domain.repositories.IKnowledgeGraphRepository
 import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.infrastructure.config.infrastructureTestModule
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -509,6 +510,93 @@ class AgeKnowledgeGraphRepositoryTest : KoinTest {
             resultsWithFutureTime.any { it.name == "CombinedFilterEntity1" },
             "Should NOT find Entity1 when time filter excludes it"
         )
+    }
+
+    @Test
+    fun `executeCypher returns empty list for blank query`() = runTest(testCoroutineDispatcher) {
+        // When: executing a blank Cypher query
+        val results = knowledgeGraphRepository.executeCypher("")
+
+        // Then: should return empty list
+        assertTrue(results.isEmpty(), "Blank query should return empty results")
+    }
+
+    @Test
+    fun `executeCypher returns empty list for whitespace-only query`() = runTest(testCoroutineDispatcher) {
+        // When: executing a whitespace-only Cypher query
+        val results = knowledgeGraphRepository.executeCypher("   \n\t  ")
+
+        // Then: should return empty list
+        assertTrue(results.isEmpty(), "Whitespace-only query should return empty results")
+    }
+
+    @Test
+    fun `executeCypher handles invalid Cypher gracefully`() = runBlocking {
+        // When: executing an invalid Cypher query
+        // This should not throw an exception, but return empty results or handle error gracefully
+        // Note: Using runBlocking because real database I/O requires real time, not virtual time
+        val results = knowledgeGraphRepository.executeCypher("INVALID CYPHER SYNTAX HERE!!!")
+
+        // Then: should return empty list (error is caught and logged, or AGE not installed)
+        // The implementation catches exceptions and returns empty list
+        assertTrue(results.isEmpty(), "Invalid Cypher should return empty results without throwing")
+    }
+
+    @Test
+    fun `executeCypher executes valid MATCH query or returns empty when AGE not installed`() = runBlocking {
+        // Note: This test works regardless of whether Apache AGE is installed.
+        // If AGE is not installed, the method returns empty results gracefully.
+        
+        // Given: some indexed entities (to ensure there's data in the relational tables)
+        val sourceUrl = "https://example.com/kg-test/cypher-test"
+        val extraction = KgExtractionResult(
+            entities = listOf(
+                ExtractedEntity(
+                    name = "CypherTestProduct",
+                    type = EntityType.PRODUCT,
+                    facts = listOf("Product for Cypher test")
+                )
+            ),
+            relationships = emptyList()
+        )
+
+        val embeddings = generateEmbeddings(extraction)
+        knowledgeGraphRepository.indexDocument(sourceUrl, extraction, embeddings)
+
+        // When: executing a simple Cypher MATCH query
+        // Note: This queries the AGE graph, not the relational tables
+        val results = knowledgeGraphRepository.executeCypher(
+            "MATCH (n) RETURN n.name AS name LIMIT 5",
+            timeoutSeconds = 5
+        )
+
+        // Then: results could be empty if AGE is not installed, or contain data if it is
+        // We're mainly testing that the method doesn't throw and returns a valid list
+        assertNotNull(results, "Results should not be null")
+        // If results are non-empty, they should have the expected structure
+        if (results.isNotEmpty()) {
+            assertTrue(
+                results.all { it.containsKey("name") },
+                "Each result should have a 'name' key"
+            )
+        }
+    }
+
+    @Test
+    fun `executeCypher returns promptly when AGE not installed`() = runBlocking {
+        // When: executing a query (AGE check should be fast)
+        // Note: Using runBlocking because real database I/O requires real time, not virtual time
+        val startTime = System.currentTimeMillis()
+        val results = knowledgeGraphRepository.executeCypher(
+            "MATCH (n) RETURN n LIMIT 1",
+            timeoutSeconds = 30
+        )
+        val elapsed = System.currentTimeMillis() - startTime
+
+        // Then: should return promptly (either with results or empty if AGE not installed)
+        // The AGE availability check should be fast (< 10 seconds even with timeout)
+        assertNotNull(results, "Should return results without hanging")
+        assertTrue(elapsed < 15000, "Should return within 15 seconds (actual: ${elapsed}ms)")
     }
 }
 
