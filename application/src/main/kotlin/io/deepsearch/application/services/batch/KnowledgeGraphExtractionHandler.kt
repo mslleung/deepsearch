@@ -39,7 +39,6 @@ class KnowledgeGraphExtractionHandler(
     companion object {
         private const val BATCH_POLL_INTERVAL_MS = 60_000L
         private const val MAX_BATCH_POLL_ATTEMPTS = 1440
-        private const val MIN_MARKDOWN_LENGTH = 100
     }
 
     override suspend fun execute(
@@ -67,7 +66,7 @@ class KnowledgeGraphExtractionHandler(
         urlStates.forEach { urlState ->
             try {
                 val markdown = getMarkdownForUrl(urlState)
-                if (markdown != null && markdown.length >= MIN_MARKDOWN_LENGTH) {
+                if (markdown != null) {
                     val requestId = "${jobId}-${urlState.id}-kg"
                     val request = knowledgeGraphIndexingService.prepareBatchRequest(
                         requestId = requestId,
