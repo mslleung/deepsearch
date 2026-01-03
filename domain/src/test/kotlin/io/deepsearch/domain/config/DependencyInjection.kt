@@ -109,6 +109,7 @@ private val domainCommonTestModule = module {
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
+    singleOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class
     
     // Knowledge Graph agents
     singleOf(::EntityExtractionAgentGenAiImpl) bind IEntityExtractionAgent::class

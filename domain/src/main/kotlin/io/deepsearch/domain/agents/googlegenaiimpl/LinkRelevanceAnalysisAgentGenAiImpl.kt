@@ -37,7 +37,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
     private val relevantLinkSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("A relevant link with path and reasoning")
+        .description("A relevant link with path, reasoning, and relevance score")
         .properties(
             mapOf(
                 "url" to Schema.builder().type("STRING")
@@ -45,10 +45,13 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     .build(),
                 "reason" to Schema.builder().type("STRING")
                     .description("Brief explanation of why this link is relevant to the query")
+                    .build(),
+                "score" to Schema.builder().type("INTEGER")
+                    .description("Relevance score from 1-10 (10 = highly relevant, likely to directly answer query; 1 = tangentially related)")
                     .build()
             )
         )
-        .required(listOf("url", "reason"))
+        .required(listOf("url", "reason", "score"))
         .build()
 
     private val outputSchema: Schema = Schema.builder()
@@ -67,7 +70,8 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     @Serializable
     private data class RelevantLinkJson(
         val url: String,
-        val reason: String
+        val reason: String,
+        val score: Int
     )
 
     @Serializable
@@ -85,8 +89,14 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         2. Using the surrounding context, analyze which links are relevant to the user's query
         3. Be very permissive, look for any link that may be relevant directly or indirectly to the user query.
         4. Include links that may lead to pages that have a high chance to contain linkage to pages related to the query. (multi-hop)
-        5. Return all relevant links with reasons why they are relevant
+        5. Return all relevant links with reasons why they are relevant and a relevance score
         6. The links must be unique and exactly the same as given in the source (use the relative path exactly as shown)
+        
+        Scoring Guidelines (1-10):
+        - 10: Highly likely to directly answer the query (e.g., pricing page for a pricing query)
+        - 7-9: Very relevant, likely contains substantial information
+        - 4-6: Moderately relevant, may contain some useful information
+        - 1-3: Tangentially related, might lead to relevant content via multiple hops
         
         Focus on links that would help answer the user's query or provide more detailed information.
         
@@ -94,12 +104,14 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         {
           "links": [
             {
-              "url": "/",
-              "reason": "The home page of the website..."
+              "url": "/pricing",
+              "reason": "Official pricing page likely contains pricing details",
+              "score": 10
             },
             {
               "url": "/docs/page",
-              "reason": "This page contains information about..."
+              "reason": "Documentation that may reference pricing or plans",
+              "score": 6
             }
           ]
         }
@@ -173,10 +185,13 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                 if (linkJson.url in validRelativePaths) {
                     // Reconstruct absolute URL from relative path + base
                     val absoluteUrl = baseUri.resolve(linkJson.url).toString()
+                    // Clamp score to valid range 1-10
+                    val clampedScore = linkJson.score.coerceIn(1, 10)
                     WebpageLink(
                         url = absoluteUrl,
                         source = LinkSource.LINK_RELEVANCE,
-                        reason = linkJson.reason
+                        reason = linkJson.reason,
+                        score = clampedScore
                     )
                 } else {
                     logger.warn("LLM returned hallucinated link not found in original HTML: '{}'", linkJson.url)
