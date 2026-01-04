@@ -39,7 +39,7 @@ class ExposedWebpageMarkdownRepository(
             webpageMarkdownTable.title,
             webpageMarkdownTable.description,
             webpageMarkdownTable.markdown,
-            webpageMarkdownTable.html,
+            webpageMarkdownTable.cleanedLinkRelevanceHtml,
             webpageMarkdownTable.cleanedPreviewHtml,
             webpageMarkdownTable.httpStatus,
             webpageMarkdownTable.httpReason,
@@ -110,7 +110,7 @@ class ExposedWebpageMarkdownRepository(
             it[description] = webpage.description
             it[markdown] = webpage.markdown  // Original markdown preserved
             it[markdownSanitized] = sanitizedMarkdown  // Sanitized version for tsvector trigger
-            it[html] = webpage.html
+            it[cleanedLinkRelevanceHtml] = webpage.cleanedLinkRelevanceHtml
             it[cleanedPreviewHtml] = webpage.cleanedPreviewHtml
             it[httpStatus] = webpage.httpStatus
             it[httpReason] = webpage.httpReason
@@ -352,7 +352,7 @@ class ExposedWebpageMarkdownRepository(
             title = row[webpageMarkdownTable.title],
             description = row[webpageMarkdownTable.description],
             markdown = row[webpageMarkdownTable.markdown],
-            html = row[webpageMarkdownTable.html],
+            cleanedLinkRelevanceHtml = row[webpageMarkdownTable.cleanedLinkRelevanceHtml],
             cleanedPreviewHtml = row[webpageMarkdownTable.cleanedPreviewHtml],
             httpStatus = row[webpageMarkdownTable.httpStatus],
             httpReason = row[webpageMarkdownTable.httpReason],

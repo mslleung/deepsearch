@@ -265,25 +265,26 @@ class UrlContentProcessingService(
         cached: io.deepsearch.domain.models.entities.WebpageMarkdown,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
-        val cachedHtml = cached.html
+        // Use pre-computed cleanedPreviewHtml (avoids expensive Jsoup parsing on cache hit)
+        val cleanedPreviewHtml = cached.cleanedPreviewHtml
         
-        // Emit HtmlPreviewReady for preview path evaluation when HTML is available
-        // Must clean cached HTML through HtmlPreviewService for consistency with live crawl path
-        if (cachedHtml != null) {
-            val previewResult = htmlPreviewService.prepareHtmlPreview(cachedHtml, originalUrl)
-            logger.debug("Emitting cached HTML preview for URL: {} ({} -> {} chars)", 
-                originalUrl, cachedHtml.length, previewResult.cleanedHtml.length)
+        if (cleanedPreviewHtml != null) {
+            logger.debug("Emitting cached HTML preview for URL: {} ({} chars)", 
+                originalUrl, cleanedPreviewHtml.length)
             emit(
                 UrlProcessingEvent.HtmlPreviewReady(
                     originalUrl,
-                    previewResult.cleanedHtml,
-                    previewResult.title ?: cached.title,
-                    previewResult.description ?: cached.description
+                    cleanedPreviewHtml,
+                    cached.title,
+                    cached.description
                 )
             )
         }
         
-        val links = if (cachedHtml != null) discoverLinks(cachedHtml) else emptyList()
+        // Use pre-computed link-relevance cleaned HTML for link discovery
+        // This is much smaller than raw HTML (~10-30KB vs ~500KB-1MB) but contains all anchor tags
+        val linkRelevanceHtml = cached.cleanedLinkRelevanceHtml
+        val links = if (linkRelevanceHtml != null) discoverLinks(linkRelevanceHtml) else emptyList()
 
         // Emit links first, then markdown (consistent with non-cached flow)
         logger.debug("Emitting {} cached links for URL: {}", links.size, originalUrl)

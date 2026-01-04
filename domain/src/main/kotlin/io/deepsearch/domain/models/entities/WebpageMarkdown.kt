@@ -10,7 +10,7 @@ data class WebpageMarkdown(
     val title: String?,
     val description: String?,
     val markdown: String?,
-    val html: String?,
+    val cleanedLinkRelevanceHtml: String? = null, // Cleaned HTML for link discovery (~10-30KB vs ~500KB-1MB raw)
     val cleanedPreviewHtml: String? = null, // Pre-cleaned HTML for preview path (avoids CPU-heavy Jsoup processing)
     val httpStatus: Int?,
     val httpReason: String?,

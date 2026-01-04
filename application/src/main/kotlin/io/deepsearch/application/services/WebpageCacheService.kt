@@ -119,6 +119,7 @@ class WebpageCacheService(
     private val normalizeUrlService: io.deepsearch.domain.services.INormalizeUrlService,
     private val tokenUsageService: ILlmTokenUsageService,
     private val htmlPreviewService: IHtmlPreviewService,
+    private val linkRelevanceHtmlService: ILinkRelevanceHtmlService,
     private val hybridSearchIndexingService: IHybridSearchIndexingService,
     private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService
 ) : IWebpageCacheService {
@@ -230,10 +231,18 @@ class WebpageCacheService(
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
 
-        // Pre-compute cleaned preview HTML when HTML is available
-        // This avoids CPU-heavy Jsoup processing during hybrid search
-        val cleanedPreviewHtml = if (!html.isNullOrBlank()) {
-            htmlPreviewService.prepareHtmlPreview(html, url).cleanedHtml
+        // Pre-compute cleaned versions when raw HTML is available
+        val cleanedPreviewHtml = when {
+            // For full HTML content, compute cleaned preview
+            !html.isNullOrBlank() -> htmlPreviewService.prepareHtmlPreview(html, url).cleanedHtml
+            // For preview mode without HTML, the markdown IS the cleaned preview content
+            isPreview && !markdown.isNullOrBlank() -> markdown
+            else -> null
+        }
+        
+        // Pre-compute link-relevance cleaned HTML (~10-30KB vs ~500KB-1MB raw)
+        val cleanedLinkRelevanceHtml = if (!html.isNullOrBlank()) {
+            linkRelevanceHtmlService.prepareLinkRelevanceHtml(html, url).cleanedHtml
         } else {
             null
         }
@@ -245,7 +254,7 @@ class WebpageCacheService(
                 title = title,
                 description = description,
                 markdown = markdown,
-                html = html,
+                cleanedLinkRelevanceHtml = cleanedLinkRelevanceHtml,
                 cleanedPreviewHtml = cleanedPreviewHtml,
                 httpStatus = httpStatus,
                 httpReason = httpReason,
@@ -259,11 +268,12 @@ class WebpageCacheService(
         )
 
         logger.debug(
-            "Cached webpage for URL: {} (status: {}, markdown: {} chars, cleanedPreviewHtml: {} chars, isPreview: {})",
+            "Cached webpage for URL: {} (status: {}, markdown: {} chars, cleanedPreviewHtml: {} chars, linkRelevanceHtml: {} chars, isPreview: {})",
             url,
             httpStatus,
             markdown?.length ?: 0,
             cleanedPreviewHtml?.length ?: 0,
+            cleanedLinkRelevanceHtml?.length ?: 0,
             isPreview
         )
     }

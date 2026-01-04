@@ -13,7 +13,7 @@ class WebpageMarkdownCacheTable(
     val description = text("description").nullable()
     val markdown = text("markdown").nullable()
     val markdownSanitized = text("markdown_sanitized").nullable() // Sanitized markdown for full-text search (no emoji/special chars)
-    val html = text("html").nullable()
+    val cleanedLinkRelevanceHtml = text("link_relevance_cleaned_html").nullable() // Cleaned HTML for link discovery
     val cleanedPreviewHtml = text("cleaned_preview_html").nullable() // Pre-cleaned HTML for preview path
     val httpStatus = integer("http_status").nullable()
     val httpReason = text("http_reason").nullable()

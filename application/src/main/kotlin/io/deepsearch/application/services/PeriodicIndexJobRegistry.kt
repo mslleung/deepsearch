@@ -44,6 +44,18 @@ class PeriodicIndexJobRegistry(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
+    companion object {
+        /** Default maximum concurrent URL processing across all flows */
+        private const val DEFAULT_MAX_CONCURRENCY = 30
+        
+        /**
+         * Calculate adaptive concurrency based on maxUrlCount.
+         * Limits concurrency to avoid wasting resources when processing few URLs.
+         */
+        private fun calculateConcurrency(maxUrlCount: Int): Int = 
+            minOf(DEFAULT_MAX_CONCURRENCY, maxOf(1, maxUrlCount))
+    }
+
     private data class Run(
         val flow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
         val job: Job
@@ -205,11 +217,14 @@ class PeriodicIndexJobRegistry(
 
     /**
      * Reactive flow orchestration for periodic indexing links.
-     * Uses channel-based architecture similar to AgenticBrowserSearchOrchestrator.
-     * Link sources: initial URL, Serper search, sitemap, carried-over URLs from previous job,
-     * and recursive discovered links.
+     * 
+     * Architecture:
+     * - Discovery flows emit URLs (initial, serper, sitemap)
+     * - Recursive channel for links discovered during processing
+     * - All sources merged into single flow
+     * - Single flatMapMerge(concurrency=adaptive) for processing
      */
-    @OptIn(ExperimentalCoroutinesApi::class)
+    @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
     private suspend fun extractAndCacheLinks(
         jobId: Long,
         job: PeriodicIndexJob,
@@ -219,64 +234,78 @@ class PeriodicIndexJobRegistry(
         val seenUrls = ConcurrentHashMap.newKeySet<String>()
         val processedCount = AtomicInteger(job.processedCount)
         val urlTracker = UrlTracker()
+        
+        // Adaptive concurrency based on maxUrlCount
+        val concurrency = calculateConcurrency(job.maxUrlCount)
+        logger.info("[{}] Using adaptive concurrency of {} (maxUrlCount={})", jobId, concurrency, job.maxUrlCount)
 
-        // Fetch carried-over URLs from the last completed job for this user/baseUrl
+        // Fetch carried-over URLs from the last completed job
         val carriedOverUrls = fetchCarriedOverUrls(job)
         logger.info("[{}] Fetched {} carried-over URLs from previous job", jobId, carriedOverUrls.size)
 
-        // Channels for discovered links from different sources
-        val initialDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
-        val serperDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
-        val sitemapDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
-        val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+        // Channel for links discovered during processing (recursive crawling)
+        val discoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+        
+        // Track in-flight processing and discovery completion for termination
+        val inFlightProcessing = AtomicInteger(0)
+        val discoveryComplete = AtomicInteger(0) // 0 = not complete, 1 = complete
+        
+        val tryCloseChannel = {
+            if (discoveryComplete.get() == 1 && inFlightProcessing.get() == 0) {
+                discoveredLinksChannel.close()
+            }
+        }
 
-        // Merge all link processing flows
+        // Merge all discovery sources with recursive channel
         merge(
-            processInitialLinkFlow(
-                jobId = jobId,
-                job = job,
-                seenUrls = seenUrls,
-                initialDiscoveredLinksChannel = initialDiscoveredLinksChannel,
-                urlTracker = urlTracker,
-                carriedOverUrls = carriedOverUrls,
-                proxyConfig = proxyConfig,
-                eventFlow = eventFlow,
-                processedCount = processedCount
-            ),
-            processSerperSearchLinksFlow(
-                jobId = jobId,
-                job = job,
-                seenUrls = seenUrls,
-                serperDiscoveredLinksChannel = serperDiscoveredLinksChannel,
-                urlTracker = urlTracker,
-                proxyConfig = proxyConfig,
-                eventFlow = eventFlow,
-                processedCount = processedCount
-            ),
-            processSitemapLinksFlow(
-                jobId = jobId,
-                job = job,
-                seenUrls = seenUrls,
-                sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel,
-                urlTracker = urlTracker,
-                proxyConfig = proxyConfig,
-                eventFlow = eventFlow,
-                processedCount = processedCount
-            ),
-            processRecursiveDiscoveredLinksFlow(
-                jobId = jobId,
-                job = job,
-                seenUrls = seenUrls,
-                initialDiscoveredLinksChannel = initialDiscoveredLinksChannel,
-                serperDiscoveredLinksChannel = serperDiscoveredLinksChannel,
-                sitemapDiscoveredLinksChannel = sitemapDiscoveredLinksChannel,
-                recursiveDiscoveredLinksChannel = recursiveDiscoveredLinksChannel,
-                urlTracker = urlTracker,
-                proxyConfig = proxyConfig,
-                eventFlow = eventFlow,
-                processedCount = processedCount
-            )
+            // Discovery source 1: Initial URLs + carried-over URLs
+            createInitialUrlsFlow(jobId, job, carriedOverUrls),
+            // Discovery source 2: Serper search
+            createSerperUrlsFlow(jobId, job),
+            // Discovery source 3: Sitemap
+            createSitemapUrlsFlow(jobId, job)
         )
+            .onCompletion { 
+                discoveryComplete.set(1)
+                tryCloseChannel()
+                logger.debug("[{}] All discovery sources complete", jobId)
+            }
+            .let { discoveryFlow ->
+                // Merge discovery flow with recursive channel
+                merge(discoveryFlow, discoveredLinksChannel.receiveAsFlow())
+            }
+            .filter { link ->
+                val normalizedUrl = normalize(link.url)
+                normalizedUrl.startsWith(job.baseUrl) && 
+                    matchesLanguageFilter(normalizedUrl, job) &&
+                    seenUrls.add(normalizedUrl)
+            }
+            .flatMapMerge(concurrency = concurrency) { link ->
+                flow {
+                    val normalizedUrl = normalize(link.url)
+                    inFlightProcessing.incrementAndGet()
+                    
+                    try {
+                        val result = processUrl(
+                            jobId = jobId,
+                            job = job,
+                            normalizedUrl = normalizedUrl,
+                            urlTracker = urlTracker,
+                            proxyConfig = proxyConfig,
+                            eventFlow = eventFlow,
+                            processedCount = processedCount,
+                            seenUrls = seenUrls,
+                            discoveredLinksChannel = discoveredLinksChannel
+                        )
+                        if (result != null) {
+                            emit(result)
+                        }
+                    } finally {
+                        inFlightProcessing.decrementAndGet()
+                        tryCloseChannel()
+                    }
+                }
+            }
             .flowOn(dispatchers.io)
             .takeWhile { processedCount.get() < job.maxUrlCount }
             .onEach { result ->
@@ -284,7 +313,6 @@ class PeriodicIndexJobRegistry(
                 job.incrementProcessed()
                 periodicIndexJobRepository.update(job)
 
-                // Emit progress event with URL tracking
                 eventFlow.emit(
                     IPeriodicIndexJobService.PeriodicIndexEvent(
                         jobId = jobId,
@@ -308,7 +336,7 @@ class PeriodicIndexJobRegistry(
             .onCompletion {
                 logger.info("[{}] Periodic index complete: {} pages processed", jobId, processedCount.get())
             }
-            .collect { /* Terminal operator */ }
+            .collect()
     }
 
     /**
@@ -331,537 +359,37 @@ class PeriodicIndexJobRegistry(
         return (cachedUrls + uncachedUrls).toSet()
     }
 
+    // ========== Discovery Flows (lightweight, just emit URLs) ==========
+
     /**
-     * Process the initial base URL and carried-over URLs from the previous job.
-     * Emits discovered links to the initialDiscoveredLinksChannel.
-     * Carried-over URLs that fail are tracked but do not count toward progress.
+     * Create a flow of initial URLs (base URL + carried-over URLs).
      */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun processInitialLinkFlow(
+    private fun createInitialUrlsFlow(
         jobId: Long,
         job: PeriodicIndexJob,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        urlTracker: UrlTracker,
-        carriedOverUrls: Set<String>,
-        proxyConfig: ProxyConfiguration,
-        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
-        processedCount: AtomicInteger
-    ): Flow<PeriodicIndexStepResult> {
-        // Combine base URL with carried-over URLs (base URL first for priority)
-        val allInitialUrls = listOf(job.baseUrl) + carriedOverUrls.filter { it != job.baseUrl }
-        val carriedOverSet = carriedOverUrls.toSet()
-        val processedUrlCount = AtomicInteger(0)
-        val totalInitialUrls = allInitialUrls.size
-
-        return allInitialUrls.asFlow()
-            .flatMapMerge(concurrency = 10) { url ->
-                flow {
-                    val normalizedUrl = normalize(url)
-                    val isCarriedOver = carriedOverSet.contains(normalizedUrl)
-
-                    if (!seenUrls.add(normalizedUrl)) {
-                        logger.debug("[{}] Initial URL already seen: {}", jobId, normalizedUrl)
-                        // Check if all URLs are processed to close the channel
-                        if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
-                            initialDiscoveredLinksChannel.close()
-                        }
-                        return@flow
-                    }
-
-                    urlTracker.startProcessing(normalizedUrl)
-                    eventFlow.emit(
-                        IPeriodicIndexJobService.PeriodicIndexEvent(
-                            jobId = jobId,
-                            baseUrl = job.baseUrl,
-                            url = normalizedUrl,
-                            processedCount = processedCount.get(),
-                            maxUrlCount = job.maxUrlCount,
-                            cachedHit = null,
-                            totalQueued = 0,
-                            state = job.state,
-                            message = null,
-                            processedUrls = urlTracker.getProcessedUrls(),
-                            processingUrls = urlTracker.getProcessingUrls(),
-                            failedUrls = urlTracker.getFailedUrls()
-                        )
-                    )
-                    val sessionId = PeriodicIndexSessionId(jobId)
-                    
-                    // Use adaptive rate limiter to respect website rate limits
-                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
-                            .catch { e ->
-                                if (e is CancellationException) throw e
-                                if (e is UrlProcessingException) {
-                                    if (isCarriedOver) {
-                                        logger.info("[{}] Carried-over URL failed (not counting as progress): {}: {}", jobId, normalizedUrl, e.message)
-                                    } else {
-                                        logger.warn("[{}] Failed to process initial URL {}: {}", jobId, normalizedUrl, e.message)
-                                    }
-                                    val failedAccess = FailedUrlAccess(
-                                        url = normalizedUrl,
-                                        timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!,
-                                        message = e.message ?: "Unknown error"
-                                    )
-                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                    // Check if all URLs are processed to close the channel
-                                    if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
-                                        initialDiscoveredLinksChannel.close()
-                                    }
-                                } else {
-                                    logger.error("[{}] Unexpected error processing initial URL {}: {}", jobId, normalizedUrl, e.message, e)
-                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                    throw e
-                                }
-                            }
-                            .onEach { event ->
-                                when (event) {
-                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                        logger.debug("[{}] Initial URL discovered {} links", jobId, event.discoveredLinks.size)
-                                        event.discoveredLinks
-                                            .filter { link -> 
-                                                val url = normalize(link.url)
-                                                url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
-                                            }
-                                            .sortedBy { it.pathDepth() }
-                                            .forEach { link -> initialDiscoveredLinksChannel.send(link) }
-                                        // Check if all URLs are processed to close the channel
-                                        if (processedUrlCount.incrementAndGet() >= totalInitialUrls) {
-                                            initialDiscoveredLinksChannel.close()
-                                        }
-                                    }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                        logger.debug("[{}] Initial URL markdown extracted: {} chars", jobId, event.markdown.length)
-                                        val urlAccess = if (event.wasCached) {
-                                            CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                        } else {
-                                            UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                        }
-                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                        urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
-                                        emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
-                                    }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                        // Ignored for periodic index - we only care about final markdown
-                                    }
-                                }
-                            }
-                            .collect {}
-                    }
-                }
-            }
-            .onCompletion {
-                initialDiscoveredLinksChannel.close()
-                logger.info("[{}] Initial link processing complete", jobId)
-            }
-    }
-
-    /**
-     * Process links discovered via Serper search.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun processSerperSearchLinksFlow(
-        jobId: Long,
-        job: PeriodicIndexJob,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        serperDiscoveredLinksChannel: Channel<WebpageLink>,
-        urlTracker: UrlTracker,
-        proxyConfig: ProxyConfiguration,
-        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
-        processedCount: AtomicInteger
-    ): Flow<PeriodicIndexStepResult> {
-        return createSerperSearchLinkFlow(jobId, job)
-            .filter { link ->
-                val normalizedUrl = normalize(link.url)
-                // Use atomic add() which returns true only if element was NOT already present
-                val isNew = seenUrls.add(normalizedUrl)
-                if (!isNew) {
-                    logger.debug("[{}] Serper link already seen: {}", jobId, normalizedUrl)
-                }
-                isNew
-            }
-            .flatMapMerge(concurrency = 10) { link ->
-                flow {
-                    val normalizedUrl = normalize(link.url)
-                    urlTracker.startProcessing(normalizedUrl)
-                    eventFlow.emit(
-                        IPeriodicIndexJobService.PeriodicIndexEvent(
-                            jobId = jobId,
-                            baseUrl = job.baseUrl,
-                            url = normalizedUrl,
-                            processedCount = processedCount.get(),
-                            maxUrlCount = job.maxUrlCount,
-                            cachedHit = null,
-                            totalQueued = 0,
-                            state = job.state,
-                            message = null,
-                            processedUrls = urlTracker.getProcessedUrls(),
-                            processingUrls = urlTracker.getProcessingUrls(),
-                            failedUrls = urlTracker.getFailedUrls()
-                        )
-                    )
-                    val sessionId = PeriodicIndexSessionId(jobId)
-                    
-                    // Use adaptive rate limiter to respect website rate limits
-                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
-                            .catch { e ->
-                                if (e is CancellationException) throw e
-                                if (e is UrlProcessingException) {
-                                    logger.warn("[{}] Failed to process Serper link {}: {}", jobId, normalizedUrl, e.message)
-                                    val failedAccess = FailedUrlAccess(
-                                        url = normalizedUrl,
-                                        timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!,
-                                        message = e.message ?: "Unknown error"
-                                    )
-                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                } else {
-                                    logger.error("[{}] Unexpected error processing Serper link {}: {}", jobId, normalizedUrl, e.message, e)
-                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                    throw e
-                                }
-                            }
-                            .onEach { event ->
-                                when (event) {
-                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                        logger.debug("[{}] Serper link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
-                                        event.discoveredLinks
-                                            .filter { discovered -> 
-                                                val url = normalize(discovered.url)
-                                                url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
-                                            }
-                                            .sortedBy { it.pathDepth() }
-                                            .forEach { discovered -> serperDiscoveredLinksChannel.send(discovered) }
-                                    }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                        logger.debug("[{}] Serper link markdown extracted: {} chars", jobId, event.markdown.length)
-                                        val urlAccess = if (event.wasCached) {
-                                            CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                        } else {
-                                            UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                        }
-                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                        urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
-                                        emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
-                                    }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                        // Ignored for periodic index - we only care about final markdown
-                                    }
-                                }
-                            }
-                            .collect {}
-                    }
-                }
-            }
-            .onCompletion {
-                serperDiscoveredLinksChannel.close()
-                logger.info("[{}] Serper search link processing complete", jobId)
-            }
-    }
-
-    /**
-     * Process links discovered via sitemap.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun processSitemapLinksFlow(
-        jobId: Long,
-        job: PeriodicIndexJob,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
-        urlTracker: UrlTracker,
-        proxyConfig: ProxyConfiguration,
-        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
-        processedCount: AtomicInteger
-    ): Flow<PeriodicIndexStepResult> {
-        return createSitemapLinkFlow(jobId, job)
-            .filter { link ->
-                val normalizedUrl = normalize(link.url)
-                // Use atomic add() which returns true only if element was NOT already present
-                val isNew = seenUrls.add(normalizedUrl)
-                if (!isNew) {
-                    logger.debug("[{}] Sitemap link already seen: {}", jobId, normalizedUrl)
-                }
-                isNew
-            }
-            .flatMapMerge(concurrency = 10) { link ->
-                flow {
-                    val normalizedUrl = normalize(link.url)
-                    urlTracker.startProcessing(normalizedUrl)
-                    eventFlow.emit(
-                        IPeriodicIndexJobService.PeriodicIndexEvent(
-                            jobId = jobId,
-                            baseUrl = job.baseUrl,
-                            url = normalizedUrl,
-                            processedCount = processedCount.get(),
-                            maxUrlCount = job.maxUrlCount,
-                            cachedHit = null,
-                            totalQueued = 0,
-                            state = job.state,
-                            message = null,
-                            processedUrls = urlTracker.getProcessedUrls(),
-                            processingUrls = urlTracker.getProcessingUrls(),
-                            failedUrls = urlTracker.getFailedUrls()
-                        )
-                    )
-                    val sessionId = PeriodicIndexSessionId(jobId)
-                    
-                    // Use adaptive rate limiter to respect website rate limits
-                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
-                            .catch { e ->
-                                if (e is CancellationException) throw e
-                                if (e is UrlProcessingException) {
-                                    logger.warn("[{}] Failed to process sitemap link {}: {}", jobId, normalizedUrl, e.message)
-                                    val failedAccess = FailedUrlAccess(
-                                        url = normalizedUrl,
-                                        timestamp = Clock.System.now(),
-                                        exceptionType = e::class.simpleName!!,
-                                        message = e.message ?: "Unknown error"
-                                    )
-                                    urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                } else {
-                                    logger.error("[{}] Unexpected error processing sitemap link {}: {}", jobId, normalizedUrl, e.message, e)
-                                    urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                    throw e
-                                }
-                            }
-                            .onEach { event ->
-                                when (event) {
-                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                        logger.debug("[{}] Sitemap link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
-                                        event.discoveredLinks
-                                            .filter { discovered -> 
-                                                val url = normalize(discovered.url)
-                                                url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
-                                            }
-                                            .sortedBy { it.pathDepth() }
-                                            .forEach { discovered -> sitemapDiscoveredLinksChannel.send(discovered) }
-                                    }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                        logger.debug("[{}] Sitemap link markdown extracted: {} chars", jobId, event.markdown.length)
-                                        val urlAccess = if (event.wasCached) {
-                                            CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                        } else {
-                                            UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                        }
-                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                        urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
-                                        emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
-                                    }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                        // Ignored for periodic index - we only care about final markdown
-                                    }
-                                }
-                            }
-                            .collect {}
-                    }
-                }
-            }
-            .onCompletion {
-                sitemapDiscoveredLinksChannel.close()
-                logger.info("[{}] Sitemap link processing complete", jobId)
-            }
-    }
-
-    /**
-     * Process recursively discovered links from all sources.
-     * Uses in-flight tracking to know when to close the recursive channel.
-     */
-    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
-    private fun processRecursiveDiscoveredLinksFlow(
-        jobId: Long,
-        job: PeriodicIndexJob,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        serperDiscoveredLinksChannel: Channel<WebpageLink>,
-        sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
-        recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
-        urlTracker: UrlTracker,
-        proxyConfig: ProxyConfiguration,
-        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
-        processedCount: AtomicInteger
-    ): Flow<PeriodicIndexStepResult> {
-        val inFlightLinkDiscoveryProcessing = ConcurrentHashMap.newKeySet<String>()
-
-        return merge(
-            merge(
-                initialDiscoveredLinksChannel.receiveAsFlow(),
-                serperDiscoveredLinksChannel.receiveAsFlow(),
-                sitemapDiscoveredLinksChannel.receiveAsFlow()
-            )
-                .onCompletion {
-                    // Close recursive channel if no in-flight processing
-                    if (inFlightLinkDiscoveryProcessing.isEmpty()) {
-                        recursiveDiscoveredLinksChannel.close()
-                    }
-                },
-            recursiveDiscoveredLinksChannel.receiveAsFlow()
-        )
-            .filter { link ->
-                val normalizedUrl = normalize(link.url)
-                if (!normalizedUrl.startsWith(job.baseUrl)) {
-                    false
-                } else if (!matchesLanguageFilter(normalizedUrl, job)) {
-                    logger.debug("[{}] Recursive link filtered by language pattern: {}", jobId, normalizedUrl)
-                    false
-                } else {
-                    // Use atomic add() which returns true only if element was NOT already present
-                    val isNew = seenUrls.add(normalizedUrl)
-                    if (!isNew) {
-                        logger.debug("[{}] Recursive link already seen: {}", jobId, normalizedUrl)
-                    }
-                    isNew
-                }
-            }
-            .flatMapMerge(concurrency = 30) { link ->
-                flow {
-                    val normalizedUrl = normalize(link.url)
-                    val sessionId = PeriodicIndexSessionId(jobId)
-                    inFlightLinkDiscoveryProcessing.add(normalizedUrl)
-                    urlTracker.startProcessing(normalizedUrl)
-                    eventFlow.emit(
-                        IPeriodicIndexJobService.PeriodicIndexEvent(
-                            jobId = jobId,
-                            baseUrl = job.baseUrl,
-                            url = normalizedUrl,
-                            processedCount = processedCount.get(),
-                            maxUrlCount = job.maxUrlCount,
-                            cachedHit = null,
-                            totalQueued = 0,
-                            state = job.state,
-                            message = null,
-                            processedUrls = urlTracker.getProcessedUrls(),
-                            processingUrls = urlTracker.getProcessingUrls(),
-                            failedUrls = urlTracker.getFailedUrls()
-                        )
-                    )
-
-                    // Use adaptive rate limiter to respect website rate limits
-                    adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                        urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
-                            .catch { e ->
-                                when (e) {
-                                    is CancellationException -> throw e
-                                    is UrlProcessingException -> {
-                                        logger.warn("[{}] Failed to process recursive link {}: {}", jobId, normalizedUrl, e.message)
-                                        val failedAccess = FailedUrlAccess(
-                                            url = normalizedUrl,
-                                            timestamp = Clock.System.now(),
-                                            exceptionType = e::class.simpleName!!,
-                                            message = e.message ?: "Unknown error"
-                                        )
-                                        urlAccessService.recordUrlAccess(sessionId, failedAccess)
-                                        urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                        inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
-                                        checkAndCloseRecursiveChannel(
-                                            initialDiscoveredLinksChannel,
-                                            serperDiscoveredLinksChannel,
-                                            sitemapDiscoveredLinksChannel,
-                                            recursiveDiscoveredLinksChannel,
-                                            inFlightLinkDiscoveryProcessing
-                                        )
-                                    }
-                                    else -> {
-                                        logger.error("[{}] Unexpected error processing recursive link {}: {}", jobId, normalizedUrl, e.message, e)
-                                        urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
-                                        throw e
-                                    }
-                                }
-                            }
-                            .onEach { event ->
-                                when (event) {
-                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                        logger.debug("[{}] Recursive link {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
-
-                                        val newDiscoveredLinks = event.discoveredLinks.filter { discovered ->
-                                            val normalizedDiscovered = normalize(discovered.url)
-                                            normalizedDiscovered.startsWith(job.baseUrl) && 
-                                                matchesLanguageFilter(normalizedDiscovered, job) &&
-                                                !seenUrls.contains(normalizedDiscovered)
-                                        }
-                                        
-                                        // Send all discovered links BEFORE removing from in-flight set
-                                        // Use trySend to gracefully handle channel closure during shutdown
-                                        newDiscoveredLinks
-                                            .sortedBy { it.pathDepth() }
-                                            .forEach { discovered ->
-                                                recursiveDiscoveredLinksChannel.send(discovered)
-                                            }
-
-                                        // Only remove from in-flight AFTER all sends are complete
-                                        inFlightLinkDiscoveryProcessing.remove(normalizedUrl)
-                                        logger.debug("[{}] In-flight links count: {}", jobId, inFlightLinkDiscoveryProcessing.size)
-
-                                        if (newDiscoveredLinks.isEmpty()) {
-                                            checkAndCloseRecursiveChannel(
-                                                initialDiscoveredLinksChannel,
-                                                serperDiscoveredLinksChannel,
-                                                sitemapDiscoveredLinksChannel,
-                                                recursiveDiscoveredLinksChannel,
-                                                inFlightLinkDiscoveryProcessing
-                                            )
-                                        }
-                                    }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                        logger.debug("[{}] Recursive link markdown extracted: {} chars", jobId, event.markdown.length)
-                                        val urlAccess = if (event.wasCached) {
-                                            CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                        } else {
-                                            UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
-                                        }
-                                        urlAccessService.recordUrlAccess(sessionId, urlAccess)
-                                        urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
-                                        emit(PeriodicIndexStepResult(url = normalizedUrl, title = event.title, cachedHit = event.wasCached))
-                                    }
-                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                        // Ignored for periodic index - we only care about final markdown
-                                    }
-                                }
-                            }
-                            .collect {}
-                    }
-                }
-            }
-            .onCompletion { cause ->
-                if (cause != null) {
-                    logger.info("[{}] Recursive link processing cancelled: {}", jobId, cause.message)
-                } else {
-                    logger.info("[{}] Recursive link processing complete", jobId)
-                }
-            }
-    }
-
-    /**
-     * Check if all source channels are closed and no in-flight processing,
-     * then close the recursive channel.
-     */
-    @OptIn(DelicateCoroutinesApi::class)
-    private fun checkAndCloseRecursiveChannel(
-        initialDiscoveredLinksChannel: Channel<WebpageLink>,
-        serperDiscoveredLinksChannel: Channel<WebpageLink>,
-        sitemapDiscoveredLinksChannel: Channel<WebpageLink>,
-        recursiveDiscoveredLinksChannel: Channel<WebpageLink>,
-        inFlightLinkDiscoveryProcessing: MutableSet<String>
-    ) {
-        if (initialDiscoveredLinksChannel.isClosedForSend &&
-            serperDiscoveredLinksChannel.isClosedForSend &&
-            sitemapDiscoveredLinksChannel.isClosedForSend &&
-            inFlightLinkDiscoveryProcessing.isEmpty()
-        ) {
-            recursiveDiscoveredLinksChannel.close()
+        carriedOverUrls: Set<String>
+    ): Flow<WebpageLink> = flow {
+        // Base URL first, then carried-over URLs
+        val allUrls = listOf(job.baseUrl) + carriedOverUrls.filter { it != job.baseUrl }
+        
+        allUrls.forEach { url ->
+            val normalizedUrl = normalize(url)
+            emit(WebpageLink(
+                url = normalizedUrl, 
+                source = LinkSource.ALL_LINKS, 
+                reason = "Initial/carried-over URL"
+            ))
+            logger.debug("[{}] Emitted initial URL: {}", jobId, normalizedUrl)
         }
-    }
+    }.flowOn(dispatchers.io)
 
     /**
-     * Create a flow of links from Serper search.
+     * Create a flow of URLs discovered via Serper search.
      */
-    private fun createSerperSearchLinkFlow(jobId: Long, job: PeriodicIndexJob): Flow<WebpageLink> = flow {
+    private fun createSerperUrlsFlow(
+        jobId: Long,
+        job: PeriodicIndexJob
+    ): Flow<WebpageLink> = flow {
         try {
             val query = SearchQuery(rawQuery = job.baseUrl, url = job.baseUrl)
             val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(query)
@@ -872,18 +400,26 @@ class PeriodicIndexJobRegistry(
                 .distinctBy { normalize(it.url) }
                 .sortedBy { it.pathDepth() }
                 .take(50)
+            
             logger.debug("[{}] Serper search discovered {} links for base URL: {}", jobId, serperLinks.size, job.baseUrl)
-            serperLinks.forEach { link -> emit(link) }
+            
+            serperLinks.forEach { link ->
+                emit(link.copy(url = normalize(link.url)))
+            }
         } catch (e: Exception) {
             logger.error("[{}] Failed Serper search for {}: {}", jobId, job.baseUrl, e.message, e)
         }
-    }
+    }.flowOn(dispatchers.io)
 
     /**
-     * Create a flow of links from sitemap.
+     * Create a flow of URLs discovered via sitemap.
      */
-    private fun createSitemapLinkFlow(jobId: Long, job: PeriodicIndexJob): Flow<WebpageLink> = flow {
+    private fun createSitemapUrlsFlow(
+        jobId: Long,
+        job: PeriodicIndexJob
+    ): Flow<WebpageLink> = flow {
         val sitemapUrl = job.sitemapUrl ?: return@flow
+        
         try {
             val sitemapLinks = webpageLinkDiscoveryService.discoverSitemapLinks(sitemapUrl)
                 .filter { 
@@ -891,11 +427,119 @@ class PeriodicIndexJobRegistry(
                     url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
                 }
                 .sortedBy { it.pathDepth() }
+            
             logger.debug("[{}] Sitemap discovered {} links", jobId, sitemapLinks.size)
-            sitemapLinks.forEach { link -> emit(link) }
+            
+            sitemapLinks.forEach { link ->
+                emit(link.copy(url = normalize(link.url)))
+            }
         } catch (e: Exception) {
             logger.error("[{}] Failed sitemap discovery: {}", jobId, e.message, e)
         }
+    }.flowOn(dispatchers.io)
+
+    // ========== URL Processing ==========
+
+    /**
+     * Process a single URL: fetch content, extract markdown, discover links.
+     * Discovered links are sent to the channel for recursive processing.
+     * Returns the result if successful, null if failed.
+     */
+    @OptIn(DelicateCoroutinesApi::class)
+    private suspend fun processUrl(
+        jobId: Long,
+        job: PeriodicIndexJob,
+        normalizedUrl: String,
+        urlTracker: UrlTracker,
+        proxyConfig: ProxyConfiguration,
+        eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
+        processedCount: AtomicInteger,
+        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        discoveredLinksChannel: Channel<WebpageLink>
+    ): PeriodicIndexStepResult? {
+        urlTracker.startProcessing(normalizedUrl)
+        eventFlow.emit(
+            IPeriodicIndexJobService.PeriodicIndexEvent(
+                jobId = jobId,
+                baseUrl = job.baseUrl,
+                url = normalizedUrl,
+                processedCount = processedCount.get(),
+                maxUrlCount = job.maxUrlCount,
+                cachedHit = null,
+                totalQueued = 0,
+                state = job.state,
+                message = null,
+                processedUrls = urlTracker.getProcessedUrls(),
+                processingUrls = urlTracker.getProcessingUrls(),
+                failedUrls = urlTracker.getFailedUrls()
+            )
+        )
+        
+        val sessionId = PeriodicIndexSessionId(jobId)
+        var result: PeriodicIndexStepResult? = null
+        
+        try {
+            adaptiveRateLimiter.withRateLimit(normalizedUrl) {
+                urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
+                    .collect { event ->
+                        when (event) {
+                            is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                logger.debug("[{}] URL {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
+                                
+                                // Send discovered links back to the channel for processing
+                                event.discoveredLinks
+                                    .filter { link -> 
+                                        val url = normalize(link.url)
+                                        url.startsWith(job.baseUrl) && 
+                                            matchesLanguageFilter(url, job) &&
+                                            !seenUrls.contains(url)
+                                    }
+                                    .sortedBy { it.pathDepth() }
+                                    .forEach { link ->
+                                        if (!discoveredLinksChannel.isClosedForSend) {
+                                            discoveredLinksChannel.send(link)
+                                        }
+                                    }
+                            }
+                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                                logger.debug("[{}] URL markdown extracted: {} chars", jobId, event.markdown.length)
+                                val urlAccess = if (event.wasCached) {
+                                    CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                } else {
+                                    UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                }
+                                urlAccessService.recordUrlAccess(sessionId, urlAccess)
+                                urlTracker.finishProcessing(normalizedUrl, event.title, event.wasCached)
+                                result = PeriodicIndexStepResult(
+                                    url = normalizedUrl, 
+                                    title = event.title, 
+                                    cachedHit = event.wasCached
+                                )
+                            }
+                            is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
+                                // Ignored for periodic index
+                            }
+                        }
+                    }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: UrlProcessingException) {
+            logger.warn("[{}] Failed to process URL {}: {}", jobId, normalizedUrl, e.message)
+            val failedAccess = FailedUrlAccess(
+                url = normalizedUrl,
+                timestamp = Clock.System.now(),
+                exceptionType = e::class.simpleName!!,
+                message = e.message ?: "Unknown error"
+            )
+            urlAccessService.recordUrlAccess(sessionId, failedAccess)
+            urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+        } catch (e: Exception) {
+            logger.error("[{}] Unexpected error processing URL {}: {}", jobId, normalizedUrl, e.message, e)
+            urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+        }
+        
+        return result
     }
 
     private data class PeriodicIndexStepResult(
