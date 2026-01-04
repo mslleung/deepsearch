@@ -340,6 +340,7 @@ class AgeKnowledgeGraphRepository(
      * - RETURN n.name, n.age -> [name, age]
      * - RETURN n.name AS name, n.age AS age -> [name, age]
      * - RETURN n -> [n]
+     * - RETURN p.name, c.name -> [p_name, c_name] (auto-alias duplicates)
      */
     private fun extractReturnColumns(cypherQuery: String): List<String> {
         // Find the RETURN clause (case-insensitive)
@@ -349,29 +350,44 @@ class AgeKnowledgeGraphRepository(
         
         val returnClause = returnMatch.groupValues[1].trim()
         
-        // Split by comma and extract column names
-        return returnClause.split(",").mapNotNull { part ->
+        // Split by comma and extract column names with their full expressions
+        val rawColumns = returnClause.split(",").mapNotNull { part ->
             val trimmed = part.trim()
             
-            // Check for AS alias
+            // Check for AS alias - use it directly
             val asMatch = Regex("(?i)\\bAS\\s+(\\w+)$").find(trimmed)
             if (asMatch != null) {
-                return@mapNotNull asMatch.groupValues[1]
+                return@mapNotNull asMatch.groupValues[1] to asMatch.groupValues[1]
             }
             
-            // Check for property access (n.property)
-            val propMatch = Regex("\\w+\\.(\\w+)$").find(trimmed)
+            // Check for property access (n.property) - preserve full expression for uniqueness
+            val propMatch = Regex("(\\w+)\\.(\\w+)$").find(trimmed)
             if (propMatch != null) {
-                return@mapNotNull propMatch.groupValues[1]
+                val varName = propMatch.groupValues[1]
+                val propName = propMatch.groupValues[2]
+                return@mapNotNull "${varName}_${propName}" to propName
             }
             
             // Check for simple variable name
             val varMatch = Regex("^(\\w+)$").find(trimmed)
             if (varMatch != null) {
-                return@mapNotNull varMatch.groupValues[1]
+                val name = varMatch.groupValues[1]
+                return@mapNotNull name to name
             }
             
             null
+        }
+        
+        // Deduplicate column names - if there are duplicates, use the full alias (var_prop)
+        val nameCounts = rawColumns.groupingBy { it.second }.eachCount()
+        return rawColumns.map { (fullAlias, simpleName) ->
+            if (nameCounts[simpleName]!! > 1) {
+                // There are duplicates, use the full alias (e.g., p_name, c_name)
+                fullAlias
+            } else {
+                // No duplicates, use the simple name
+                simpleName
+            }
         }
     }
     
