@@ -3,7 +3,6 @@ package io.deepsearch.application.services
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.exceptions.UrlProcessingException
-import io.deepsearch.domain.ext.pathDepth
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.*
@@ -13,7 +12,6 @@ import io.deepsearch.domain.repositories.IPeriodicIndexJobRepository
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -243,20 +241,20 @@ class PeriodicIndexJobRegistry(
         val carriedOverUrls = fetchCarriedOverUrls(job)
         logger.info("[{}] Fetched {} carried-over URLs from previous job", jobId, carriedOverUrls.size)
 
-        // Channel for links discovered during processing (recursive crawling)
-        val discoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+        // Priority buffer for links - maintains global ordering by path depth
+        val priorityLinkBuffer = PriorityLinkBuffer()
         
         // Track in-flight processing and discovery completion for termination
         val inFlightProcessing = AtomicInteger(0)
         val discoveryComplete = AtomicInteger(0) // 0 = not complete, 1 = complete
         
-        val tryCloseChannel = {
+        val tryCloseBuffer = {
             if (discoveryComplete.get() == 1 && inFlightProcessing.get() == 0) {
-                discoveredLinksChannel.close()
+                priorityLinkBuffer.close()
             }
         }
 
-        // Merge all discovery sources with recursive channel
+        // Merge all discovery sources - they feed into the priority buffer
         merge(
             // Discovery source 1: Initial URLs + carried-over URLs
             createInitialUrlsFlow(jobId, job, carriedOverUrls),
@@ -265,15 +263,16 @@ class PeriodicIndexJobRegistry(
             // Discovery source 3: Sitemap
             createSitemapUrlsFlow(jobId, job)
         )
+            .onEach { link -> priorityLinkBuffer.send(link) }
             .onCompletion { 
                 discoveryComplete.set(1)
-                tryCloseChannel()
+                tryCloseBuffer()
                 logger.debug("[{}] All discovery sources complete", jobId)
             }
-            .let { discoveryFlow ->
-                // Merge discovery flow with recursive channel
-                merge(discoveryFlow, discoveredLinksChannel.receiveAsFlow())
-            }
+            .launchIn(CoroutineScope(currentCoroutineContext()))
+
+        // Process links from priority buffer (always in path-depth order)
+        priorityLinkBuffer.receiveAsFlow()
             .filter { link ->
                 val normalizedUrl = normalize(link.url)
                 normalizedUrl.startsWith(job.baseUrl) && 
@@ -295,14 +294,14 @@ class PeriodicIndexJobRegistry(
                             eventFlow = eventFlow,
                             processedCount = processedCount,
                             seenUrls = seenUrls,
-                            discoveredLinksChannel = discoveredLinksChannel
+                            priorityLinkBuffer = priorityLinkBuffer
                         )
                         if (result != null) {
                             emit(result)
                         }
                     } finally {
                         inFlightProcessing.decrementAndGet()
-                        tryCloseChannel()
+                        tryCloseBuffer()
                     }
                 }
             }
@@ -398,8 +397,6 @@ class PeriodicIndexJobRegistry(
                     url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
                 }
                 .distinctBy { normalize(it.url) }
-                .sortedBy { it.pathDepth() }
-                .take(50)
             
             logger.debug("[{}] Serper search discovered {} links for base URL: {}", jobId, serperLinks.size, job.baseUrl)
             
@@ -426,7 +423,6 @@ class PeriodicIndexJobRegistry(
                     val url = normalize(it.url)
                     url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)
                 }
-                .sortedBy { it.pathDepth() }
             
             logger.debug("[{}] Sitemap discovered {} links", jobId, sitemapLinks.size)
             
@@ -442,10 +438,9 @@ class PeriodicIndexJobRegistry(
 
     /**
      * Process a single URL: fetch content, extract markdown, discover links.
-     * Discovered links are sent to the channel for recursive processing.
+     * Discovered links are sent to the priority buffer for recursive processing.
      * Returns the result if successful, null if failed.
      */
-    @OptIn(DelicateCoroutinesApi::class)
     private suspend fun processUrl(
         jobId: Long,
         job: PeriodicIndexJob,
@@ -455,7 +450,7 @@ class PeriodicIndexJobRegistry(
         eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
         processedCount: AtomicInteger,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        discoveredLinksChannel: Channel<WebpageLink>
+        priorityLinkBuffer: PriorityLinkBuffer
     ): PeriodicIndexStepResult? {
         urlTracker.startProcessing(normalizedUrl)
         eventFlow.emit(
@@ -486,7 +481,7 @@ class PeriodicIndexJobRegistry(
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                 logger.debug("[{}] URL {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
                                 
-                                // Send discovered links back to the channel for processing
+                                // Send discovered links to priority buffer for processing
                                 event.discoveredLinks
                                     .filter { link -> 
                                         val url = normalize(link.url)
@@ -494,10 +489,9 @@ class PeriodicIndexJobRegistry(
                                             matchesLanguageFilter(url, job) &&
                                             !seenUrls.contains(url)
                                     }
-                                    .sortedBy { it.pathDepth() }
                                     .forEach { link ->
-                                        if (!discoveredLinksChannel.isClosedForSend) {
-                                            discoveredLinksChannel.send(link)
+                                        if (!priorityLinkBuffer.isClosedForSend()) {
+                                            priorityLinkBuffer.send(link)
                                         }
                                     }
                             }
