@@ -1,6 +1,8 @@
 package io.deepsearch.infrastructure.config
 
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
+import io.deepsearch.domain.config.EnvironmentConfig
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.proxy.IProxyRuleRepository
 import io.deepsearch.domain.repositories.*
@@ -9,14 +11,14 @@ import io.deepsearch.infrastructure.repositories.*
 import io.deepsearch.infrastructure.services.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
-import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
 private val infrastructureCommonTestModule = module {
-    // Test encryption config
+    // Test configs
+    single { EnvironmentConfig(isDevelopmentMode = true) }
     single {
         DatabaseEncryptionConfig(
             encryptionSecret = System.getenv("DATABASE_ENCRYPTION_SECRET")
@@ -32,14 +34,14 @@ private val infrastructureCommonTestModule = module {
         )
     }
     
-    // Database services
-    singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
+    // Database services (no createdAtStart - lazy init allows DatabaseTables to use KoinComponent.inject())
+    singleOf(::DatabaseConfigurationService) bind IDatabaseConfigurationService::class
 
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
     singleOf(::TransactionService) bind ITransactionService::class
     
-    // DatabaseTables container (lazily resolves all tables via KoinComponent)
-    singleOf(::DatabaseTables)
+    // DatabaseTables container (lazily resolves all tables via Koin instance, not GlobalContext)
+    single { DatabaseTables(getKoin()) }
 
     // All table instances (singletons, depend on DatabaseCryptoService)
     singleOf(::UserTable)
@@ -95,6 +97,15 @@ private val infrastructureCommonTestModule = module {
 val infrastructureTestModule = module {
     includes(infrastructureCommonTestModule)
     single<CoroutineDispatcher> { StandardTestDispatcher() }
+    single<IDispatcherProvider> {
+        val testDispatcher = get<CoroutineDispatcher>()
+        object : IDispatcherProvider {
+            override val io = testDispatcher
+            override val default = testDispatcher
+            override val main = testDispatcher
+            override val unconfined = testDispatcher
+        }
+    }
 }
 
 val infrastructureBenchmarkTestModule = module {

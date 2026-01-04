@@ -1,41 +1,41 @@
 package io.deepsearch.infrastructure.database
 
 import org.jetbrains.exposed.v1.core.Table
-import org.koin.core.component.KoinComponent
-import org.koin.core.component.inject
+import org.koin.core.Koin
 
 /**
  * Container that lazily resolves all database tables from Koin.
  * This avoids having 20+ constructor parameters in DatabaseConfigurationService.
  *
- * Uses KoinComponent to resolve tables lazily, keeping the DI registration simple
- * (zero constructor parameters).
+ * Takes a Koin instance explicitly instead of using GlobalContext via KoinComponent,
+ * which allows it to work during eager initialization (createdAtStart) when
+ * GlobalContext is not yet available.
  */
-class DatabaseTables : KoinComponent {
+class DatabaseTables(private val koin: Koin) {
 
-    val userTable: UserTable by inject()
-    val apiKeyTable: ApiKeyTable by inject()
-    val userSubscriptionTable: UserSubscriptionTable by inject()
-    val webpageIconCacheTable: WebpageIconCacheTable by inject()
-    val webpageImageCacheTable: WebpageImageCacheTable by inject()
-    val webpageImageLinkageTable: WebpageImageLinkageTable by inject()
-    val webpagePopupCacheTable: WebpagePopupCacheTable by inject()
-    val webpageTableCacheTable: WebpageTableCacheTable by inject()
-    val webpageTableInterpretationCacheTable: WebpageTableInterpretationCacheTable by inject()
-    val webpageSemanticElementCacheTable: WebpageSemanticElementCacheTable by inject()
-    val webpageMarkdownCacheTable: WebpageMarkdownCacheTable by inject()
-    val querySessionTable: QuerySessionTable by inject()
-    val periodicIndexJobTable: PeriodicIndexJobTable by inject()
-    val sitemapCacheTable: SitemapCacheTable by inject()
-    val urlAccessTable: UrlAccessTable by inject()
-    val llmTokenUsageTable: LlmTokenUsageTable by inject()
-    val periodicIndexConfigTable: PeriodicIndexConfigTable by inject()
-    val batchPeriodicIndexJobTable: BatchPeriodicIndexJobTable by inject()
-    val batchUrlStateTable: BatchUrlStateTable by inject()
-    val proxyRuleTable: ProxyRuleTable by inject()
-    val kgEntityEmbeddingsTable: KgEntityEmbeddingsTable by inject()
-    val kgEntitySourcesTable: KgEntitySourcesTable by inject()
-    val kgRelationshipSourcesTable: KgRelationshipSourcesTable by inject()
+    val userTable: UserTable by lazy { koin.get() }
+    val apiKeyTable: ApiKeyTable by lazy { koin.get() }
+    val userSubscriptionTable: UserSubscriptionTable by lazy { koin.get() }
+    val webpageIconCacheTable: WebpageIconCacheTable by lazy { koin.get() }
+    val webpageImageCacheTable: WebpageImageCacheTable by lazy { koin.get() }
+    val webpageImageLinkageTable: WebpageImageLinkageTable by lazy { koin.get() }
+    val webpagePopupCacheTable: WebpagePopupCacheTable by lazy { koin.get() }
+    val webpageTableCacheTable: WebpageTableCacheTable by lazy { koin.get() }
+    val webpageTableInterpretationCacheTable: WebpageTableInterpretationCacheTable by lazy { koin.get() }
+    val webpageSemanticElementCacheTable: WebpageSemanticElementCacheTable by lazy { koin.get() }
+    val webpageMarkdownCacheTable: WebpageMarkdownCacheTable by lazy { koin.get() }
+    val querySessionTable: QuerySessionTable by lazy { koin.get() }
+    val periodicIndexJobTable: PeriodicIndexJobTable by lazy { koin.get() }
+    val sitemapCacheTable: SitemapCacheTable by lazy { koin.get() }
+    val urlAccessTable: UrlAccessTable by lazy { koin.get() }
+    val llmTokenUsageTable: LlmTokenUsageTable by lazy { koin.get() }
+    val periodicIndexConfigTable: PeriodicIndexConfigTable by lazy { koin.get() }
+    val batchPeriodicIndexJobTable: BatchPeriodicIndexJobTable by lazy { koin.get() }
+    val batchUrlStateTable: BatchUrlStateTable by lazy { koin.get() }
+    val proxyRuleTable: ProxyRuleTable by lazy { koin.get() }
+    val kgEntityEmbeddingsTable: KgEntityEmbeddingsTable by lazy { koin.get() }
+    val kgEntitySourcesTable: KgEntitySourcesTable by lazy { koin.get() }
+    val kgRelationshipSourcesTable: KgRelationshipSourcesTable by lazy { koin.get() }
 
     /**
      * All tables as an array for schema operations (e.g., SchemaUtils.create).
@@ -68,4 +68,3 @@ class DatabaseTables : KoinComponent {
         )
     }
 }
-

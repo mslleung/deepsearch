@@ -207,74 +207,68 @@ SELECT * FROM pg_extension WHERE extname IN ('vector', 'age');
 EOF
 ```
 
-#### Option D: Manual Installation on Windows
+#### Option D: Installation on Windows (Docker Required)
 
-##### Step 1: Install Build Tools
+> **Important:** Apache AGE does NOT support native Windows builds. Windows users **must** use Docker or WSL2 to run PostgreSQL with the required extensions.
 
-1. **Install Visual Studio Build Tools:**
-   - Download [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
-   - During installation, select "Desktop development with C++"
-   - Ensure "MSVC v143" and "Windows SDK" are checked
+##### Option D.1: Using Docker (Recommended)
 
-2. **Install Git for Windows:**
-   - Download from [git-scm.com](https://git-scm.com/download/win)
+This is the easiest and most reliable method for Windows users.
 
-##### Step 2: Install PostgreSQL 17
+**Prerequisites:**
+1. Install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+2. Ensure Docker Desktop is running
 
-1. Download PostgreSQL 17 from [EDB Downloads](https://www.enterprisedb.com/downloads/postgres-postgresql-downloads)
-2. Run the installer with these settings:
-   - **Installation Directory:** `C:\Program Files\PostgreSQL\17`
-   - **Data Directory:** `C:\Program Files\PostgreSQL\17\data`
-     - **Password:** `password`
-     - **Port:** `5432`
-   - **Locale:** Default
-3. Add PostgreSQL to PATH:
-   - Open System Properties → Environment Variables
-   - Add `C:\Program Files\PostgreSQL\17\bin` to the `Path` variable
+**Step 1: Stop System PostgreSQL (if installed)**
 
-##### Step 3: Install pgvector Extension
+If you have a system PostgreSQL installation, stop it to free port 5432:
 
-Open "x64 Native Tools Command Prompt for VS 2022" as Administrator:
-
-```cmd
-cd %TEMP%
-git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
-cd pgvector
-
-:: Set environment for PostgreSQL
-set "PGROOT=C:\Program Files\PostgreSQL\17"
-
-:: Build pgvector
-nmake /F Makefile.win
-
-:: Install (run as Administrator)
-nmake /F Makefile.win install
+```powershell
+# Run as Administrator
+net stop postgresql-x64-17
 ```
 
-##### Step 4: Install Apache AGE Extension
+**Step 2: Create Environment File**
 
-Continue in the same "x64 Native Tools Command Prompt for VS 2022":
+Create a `.env` file in the project root (`deepsearch/`) with the following content:
 
-```cmd
-cd %TEMP%
-git clone --branch release/PG17/1.6.0 https://github.com/apache/age.git
-cd age
-
-:: Set environment
-set "PGROOT=C:\Program Files\PostgreSQL\17"
-
-:: Build AGE
-nmake /F Makefile.win
-
-:: Install (run as Administrator)
-nmake /F Makefile.win install
+```bash
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=deepsearch
+DB_USERNAME=postgres
+DB_PASSWORD=password
 ```
 
-**Note:** If AGE doesn't have a `Makefile.win`, you may need to use WSL2 (Windows Subsystem for Linux) instead. See the Docker option or Linux instructions with WSL2.
+**Step 3: Build and Start PostgreSQL Container**
 
-##### Step 5: Alternative - Use WSL2 (Recommended for Windows)
+```powershell
+cd deepsearch
 
-If building natively on Windows is problematic, use WSL2:
+# Build the custom PostgreSQL image with pgvector and Apache AGE
+docker build -f Dockerfile.postgres -t deepsearch-postgres:latest .
+
+# Start the PostgreSQL container
+docker-compose up -d postgres
+
+# Verify it's running
+docker exec -it deepsearch-postgres psql -U postgres -d deepsearch -c "SELECT extname, extversion FROM pg_extension WHERE extname IN ('vector', 'age');"
+```
+
+You should see output like:
+```
+ extname | extversion 
+---------+------------
+ vector  | 0.8.0
+ age     | 1.6.0
+(2 rows)
+```
+
+The application will automatically configure the extensions on startup.
+
+##### Option D.2: Using WSL2 (Alternative)
+
+If you prefer to run PostgreSQL natively in a Linux environment:
 
 1. **Install WSL2:**
    ```powershell
@@ -283,30 +277,14 @@ If building natively on Windows is problematic, use WSL2:
 
 2. **Inside WSL2, follow the Linux instructions** (Option C above)
 
-3. **Update your `.env` file** to connect to WSL2's PostgreSQL:
+3. **Configure your `.env` file** to connect to WSL2's PostgreSQL:
    ```bash
    DB_HOST=localhost
    DB_PORT=5432
+   DB_NAME=deepsearch
+   DB_USERNAME=postgres
+   DB_PASSWORD=password
    ```
-
-##### Step 6: Restart PostgreSQL and Create Database
-
-Open Command Prompt as Administrator:
-
-```cmd
-:: Restart PostgreSQL service
-net stop postgresql-x64-17
-net start postgresql-x64-17
-
-:: Create database
-psql -U postgres -c "CREATE DATABASE deepsearch;"
-```
-
-##### Step 7: Verify Extensions
-
-```cmd
-psql -U postgres -d deepsearch -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS age; SELECT extname, extversion FROM pg_extension WHERE extname IN ('vector', 'age');"
-```
 
 #### Troubleshooting
 

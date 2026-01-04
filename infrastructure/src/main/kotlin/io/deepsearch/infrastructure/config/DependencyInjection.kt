@@ -11,7 +11,6 @@ import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
-import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -20,13 +19,13 @@ import org.koin.module.requestScope
 
 val infrastructureModule = module {
 
-    // Database services
-    singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
+    // Database services (no createdAtStart - lazy init allows DatabaseTables to use KoinComponent.inject())
+    singleOf(::DatabaseConfigurationService) bind IDatabaseConfigurationService::class
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
     singleOf(::TransactionService) bind ITransactionService::class
     
-    // DatabaseTables container (lazily resolves all tables via KoinComponent)
-    singleOf(::DatabaseTables)
+    // DatabaseTables container (lazily resolves all tables via Koin instance, not GlobalContext)
+    single { DatabaseTables(getKoin()) }
 
     // All table instances (singletons, depend on DatabaseCryptoService)
     singleOf(::UserTable)
