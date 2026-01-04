@@ -279,8 +279,14 @@ class PeriodicIndexJobRegistry(
                     matchesLanguageFilter(normalizedUrl, job) &&
                     seenUrls.add(normalizedUrl)
             }
+            .takeWhile { processedCount.get() < job.maxUrlCount }  // First defense: stop new items from entering queue
             .flatMapMerge(concurrency = concurrency) { link ->
                 flow {
+                    // Second defense: check again before expensive processing
+                    if (processedCount.get() >= job.maxUrlCount) {
+                        return@flow
+                    }
+                    
                     val normalizedUrl = normalize(link.url)
                     inFlightProcessing.incrementAndGet()
                     

@@ -1,7 +1,10 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.models.entities.IndexingTaskType
+import io.deepsearch.domain.models.entities.MarkdownIndexingTask
 import io.deepsearch.domain.models.entities.WebpageMarkdown
 import io.deepsearch.domain.models.valueobjects.SessionId
+import io.deepsearch.domain.repositories.IMarkdownIndexingTaskRepository
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.domain.services.ITextEmbeddingService
 import org.slf4j.Logger
@@ -120,8 +123,8 @@ class WebpageCacheService(
     private val tokenUsageService: ILlmTokenUsageService,
     private val htmlPreviewService: IHtmlPreviewService,
     private val linkRelevanceHtmlService: ILinkRelevanceHtmlService,
-    private val hybridSearchIndexingService: IHybridSearchIndexingService,
-    private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService
+    private val markdownIndexingTaskRepository: IMarkdownIndexingTaskRepository,
+    private val markdownIndexingWorker: IMarkdownIndexingWorker
 ) : IWebpageCacheService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -190,15 +193,40 @@ class WebpageCacheService(
     ) {
         cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview)
 
-        // Trigger async indexing for interactive mode
+        // Create indexing tasks for async processing
         if (!markdown.isNullOrBlank()) {
-            // Hybrid search embedding (both preview and full markdown)
-            hybridSearchIndexingService.indexAsync(url, markdown, sessionId, isPreview)
+            val tasks = mutableListOf<MarkdownIndexingTask>()
 
-            // Knowledge graph indexing (only for full content, not previews)
+            // Hybrid search embedding task (both preview and full markdown)
+            tasks.add(
+                MarkdownIndexingTask.createPending(
+                    url = url,
+                    taskType = IndexingTaskType.EMBEDDING,
+                    sessionId = sessionId.toStorageString(),
+                    markdown = markdown
+                )
+            )
+
+            // Knowledge graph indexing task (only for full content, not previews)
             if (!isPreview) {
-                knowledgeGraphIndexingService.indexAsync(url, markdown, sessionId)
+                tasks.add(
+                    MarkdownIndexingTask.createPending(
+                        url = url,
+                        taskType = IndexingTaskType.KNOWLEDGE_GRAPH,
+                        sessionId = sessionId.toStorageString(),
+                        markdown = markdown
+                    )
+                )
             }
+
+            // Persist tasks and notify worker
+            markdownIndexingTaskRepository.createBatch(tasks)
+            markdownIndexingWorker.notifyNewTasks()
+            
+            logger.debug(
+                "Created {} indexing task(s) for URL: {} (isPreview: {})",
+                tasks.size, url, isPreview
+            )
         }
     }
 

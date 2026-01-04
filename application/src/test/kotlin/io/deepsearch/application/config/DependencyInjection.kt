@@ -72,8 +72,10 @@ import io.deepsearch.application.services.ProxyResolutionService
 import io.deepsearch.application.services.IProxyResolutionService
 import io.deepsearch.application.services.HybridSearchIndexingService
 import io.deepsearch.application.services.IHybridSearchIndexingService
+import io.deepsearch.application.services.IMarkdownIndexingWorker
 import io.deepsearch.application.services.KnowledgeGraphIndexingService
 import io.deepsearch.application.services.IKnowledgeGraphIndexingService
+import io.deepsearch.application.services.MarkdownIndexingWorker
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.application.services.PeriodicIndexJobRegistry
 import io.deepsearch.application.services.PeriodicIndexJobService
@@ -150,6 +152,9 @@ private val applicationCommonTestModule = module {
     // Indexing services (handle both interactive fire-and-forget and batch modes)
     singleOf(::HybridSearchIndexingService) bind IHybridSearchIndexingService::class
     singleOf(::KnowledgeGraphIndexingService) bind IKnowledgeGraphIndexingService::class
+    
+    // Markdown indexing worker (starts automatically via init block)
+    singleOf(::MarkdownIndexingWorker) bind IMarkdownIndexingWorker::class
     
     // Batch periodic index services
     singleOf(::BatchEventEmitter)

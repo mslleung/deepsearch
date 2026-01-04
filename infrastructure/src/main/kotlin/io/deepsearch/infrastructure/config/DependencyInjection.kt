@@ -54,6 +54,9 @@ val infrastructureModule = module {
     singleOf(::KgEntitySourcesTable)
     singleOf(::KgRelationshipSourcesTable)
     
+    // Markdown indexing task table
+    singleOf(::MarkdownIndexingTaskTable)
+    
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
@@ -74,6 +77,9 @@ val infrastructureModule = module {
     
     // Knowledge Graph repository
     singleOf(::AgeKnowledgeGraphRepository) bind IKnowledgeGraphRepository::class
+    
+    // Markdown indexing task repository
+    singleOf(::ExposedMarkdownIndexingTaskRepository) bind IMarkdownIndexingTaskRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {

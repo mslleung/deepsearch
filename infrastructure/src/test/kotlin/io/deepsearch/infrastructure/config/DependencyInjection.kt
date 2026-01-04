@@ -69,12 +69,16 @@ private val infrastructureCommonTestModule = module {
     singleOf(::KgEntityEmbeddingsTable)
     singleOf(::KgEntitySourcesTable)
     singleOf(::KgRelationshipSourcesTable)
+    
+    // Markdown indexing task table
+    singleOf(::MarkdownIndexingTaskTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
     singleOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
+    singleOf(::ExposedWebpageImageLinkageRepository) bind IWebpageImageLinkageRepository::class
     singleOf(::ExposedWebpagePopupRepository) bind IWebpagePopupRepository::class
     singleOf(::ExposedWebpageTableRepository) bind IWebpageTableRepository::class
     singleOf(::ExposedWebpageTableInterpretationRepository) bind IWebpageTableInterpretationRepository::class
@@ -92,6 +96,9 @@ private val infrastructureCommonTestModule = module {
     
     // Knowledge Graph repository
     singleOf(::AgeKnowledgeGraphRepository) bind IKnowledgeGraphRepository::class
+    
+    // Markdown indexing task repository
+    singleOf(::ExposedMarkdownIndexingTaskRepository) bind IMarkdownIndexingTaskRepository::class
 }
 
 val infrastructureTestModule = module {

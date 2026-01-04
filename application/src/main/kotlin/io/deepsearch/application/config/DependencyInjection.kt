@@ -54,7 +54,10 @@ val applicationModule = module {
     singleOf(::HybridSearchIndexingService) bind IHybridSearchIndexingService::class
     singleOf(::KnowledgeGraphIndexingService) bind IKnowledgeGraphIndexingService::class
     
-    // WebpageCacheService depends on indexing services
+    // Markdown indexing worker (background task processor, starts in init block)
+    singleOf(::MarkdownIndexingWorker) bind IMarkdownIndexingWorker::class
+    
+    // WebpageCacheService depends on indexing services and worker
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     
     // Knowledge Graph query services

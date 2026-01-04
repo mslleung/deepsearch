@@ -6,6 +6,35 @@ package io.deepsearch.domain.models.valueobjects
  */
 sealed class SessionId {
     abstract val value: String
+
+    /**
+     * Convert this SessionId to a string suitable for storage.
+     * Can be reconstructed using [fromStorageString].
+     */
+    fun toStorageString(): String = when (this) {
+        is QuerySessionId -> "query:$value"
+        is PeriodicIndexSessionId -> "periodic:$jobId"
+    }
+
+    companion object {
+        private val PERIODIC_PATTERN = Regex("""periodic:(\d+)""")
+        private val QUERY_PATTERN = Regex("""query:(.+)""")
+
+        /**
+         * Reconstruct a SessionId from its storage string representation.
+         * @throws IllegalArgumentException if the format is invalid
+         */
+        fun fromStorageString(storage: String): SessionId {
+            PERIODIC_PATTERN.matchEntire(storage)?.let { match ->
+                return PeriodicIndexSessionId(match.groupValues[1].toLong())
+            }
+            QUERY_PATTERN.matchEntire(storage)?.let { match ->
+                return QuerySessionId(match.groupValues[1])
+            }
+            // Fallback: treat as query session ID for backward compatibility
+            return QuerySessionId(storage)
+        }
+    }
 }
 
 /**
