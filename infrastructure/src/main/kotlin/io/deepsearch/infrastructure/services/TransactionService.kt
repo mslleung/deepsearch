@@ -45,9 +45,25 @@ class TransactionService(
      * @throws Exception if the transaction fails or the block throws an exception
      */
     override suspend fun <T> withTransaction(block: suspend R2dbcTransaction.() -> T): T {
+        val start = System.currentTimeMillis()
         return withContext(dispatchProvider.io) {
+            val afterContextSwitch = System.currentTimeMillis()
             suspendTransaction(databaseConfigurationService.getDatabase()) {
-                block()
+                val afterTxStart = System.currentTimeMillis()
+                val result = block()
+                val afterBlock = System.currentTimeMillis()
+                val totalTime = afterBlock - start
+                // Only log if transaction takes longer than 20ms (to reduce noise)
+                if (totalTime > 20) {
+                    logger.debug(
+                        "TX timing: total={}ms, contextSwitch={}ms, txAcquire={}ms, block={}ms",
+                        totalTime,
+                        afterContextSwitch - start,
+                        afterTxStart - afterContextSwitch,
+                        afterBlock - afterTxStart
+                    )
+                }
+                result
             }
         }
     }

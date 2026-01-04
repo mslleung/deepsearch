@@ -69,6 +69,8 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.FeedbackLoopReport
@@ -878,6 +880,9 @@ class AgenticBrowserSearchOrchestrator(
             MarkdownSourceEvalInput(searchQuery, markdownSource)
         )
 
+        // Cooperative cancellation check - exits early if preview path already found an answer
+        currentCoroutineContext().ensureActive()
+
         tokenUsageService.recordTokenUsage(
             sessionId, "MarkdownSourceEvalAgent",
             output.tokenUsage.modelName, output.tokenUsage.promptTokens,
@@ -1166,6 +1171,10 @@ class AgenticBrowserSearchOrchestrator(
     ): PreviewResult {
         // Step 1: Source Eval - extracts facts, filters table facts
         val evalOutput = htmlSourceEvalAgent.generate(HtmlSourceEvalInput(searchQuery, htmlSource))
+        
+        // Cooperative cancellation check - exits early if another source already found an answer
+        currentCoroutineContext().ensureActive()
+        
         tokenUsageService.recordTokenUsage(
             sessionId, "HtmlSourceEvalAgent",
             evalOutput.tokenUsage.modelName, evalOutput.tokenUsage.promptTokens,
@@ -1181,6 +1190,9 @@ class AgenticBrowserSearchOrchestrator(
             "[{}] HTML source evaluation: url={}, {} facts",
             sessionId.value, htmlSource.url, evaluatedSource.relevantFacts.size
         )
+
+        // Check again before expensive synthesis call
+        currentCoroutineContext().ensureActive()
 
         // Step 2: Answer Synthesis (no previous queries for preview path)
         val synthesis = synthesizeAnswer(
