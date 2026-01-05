@@ -6,7 +6,6 @@ import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
-import io.deepsearch.domain.models.valueobjects.SourceClassification
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -51,22 +50,18 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             description = "A comprehensive guide to ML",
             relevantFacts = listOf(
                 RelevantFact(
-                    fact = "Machine learning is a subset of artificial intelligence (AI) that enables systems to learn and improve from experience without being explicitly programmed.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Machine learning is a subset of artificial intelligence (AI) that enables systems to learn and improve from experience without being explicitly programmed."
                 ),
                 RelevantFact(
-                    fact = "The process of learning begins with observations or data, such as examples, direct experience, or instruction.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "The process of learning begins with observations or data, such as examples, direct experience, or instruction."
                 ),
                 RelevantFact(
-                    fact = "Training Data is data used to train the model.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Training Data is data used to train the model."
                 )
             ),
-            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
-            relevanceReasoning = "Comprehensive introduction to machine learning"
+            intention = "Official documentation page providing a comprehensive introduction to machine learning concepts",
+            relevanceAssessment = "Directly answers the query with foundational ML concepts and terminology"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -90,14 +85,12 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             description = null,
             relevantFacts = listOf(
                 RelevantFact(
-                    fact = "Machine learning is a branch of artificial intelligence and computer science that focuses on the use of data and algorithms to imitate the way humans learn.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Machine learning is a branch of artificial intelligence and computer science that focuses on the use of data and algorithms to imitate the way humans learn."
                 )
             ),
-            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
-            relevanceReasoning = "Clear definition of machine learning"
+            intention = "Official documentation page defining machine learning",
+            relevanceAssessment = "Provides a clear and authoritative definition of machine learning"
         )
 
         val source2 = EvaluatedSource(
@@ -106,22 +99,18 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             description = null,
             relevantFacts = listOf(
                 RelevantFact(
-                    fact = "Supervised learning algorithms learn from labeled training data.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Supervised learning algorithms learn from labeled training data."
                 ),
                 RelevantFact(
-                    fact = "Unsupervised learning finds hidden patterns in unlabeled data.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Unsupervised learning finds hidden patterns in unlabeled data."
                 ),
                 RelevantFact(
-                    fact = "Reinforcement learning is about taking suitable action to maximize reward.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Reinforcement learning is about taking suitable action to maximize reward."
                 )
             ),
-            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
-            relevanceReasoning = "Comprehensive overview of ML types"
+            intention = "Official documentation page explaining the types of machine learning",
+            relevanceAssessment = "Comprehensive overview of the three main types of machine learning"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -138,25 +127,22 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     }
 
     @Test
-    fun `should prioritize facts from OFFICIAL_LIVING_DOC sources`() = runTest(testCoroutineDispatcher) {
+    fun `should prioritize facts from authoritative sources`() = runTest(testCoroutineDispatcher) {
         val highRelevanceSource = EvaluatedSource(
             url = "https://example.com/deep-learning-official",
             title = "Official Deep Learning Docs",
             description = null,
             relevantFacts = listOf(
                 RelevantFact(
-                    fact = "Deep learning is a subset of machine learning that uses neural networks with multiple layers.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Deep learning is a subset of machine learning that uses neural networks with multiple layers."
                 ),
                 RelevantFact(
-                    fact = "Deep learning models can handle large amounts of data and excel at complex tasks.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Deep learning models can handle large amounts of data and excel at complex tasks."
                 )
             ),
-            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
-            relevanceReasoning = "Official documentation on deep learning"
+            intention = "Official documentation page on deep learning from the main product site",
+            relevanceAssessment = "Canonical source that directly explains deep learning concepts"
         )
 
         val lowRelevanceSource = EvaluatedSource(
@@ -165,14 +151,12 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             description = null,
             relevantFacts = listOf(
                 RelevantFact(
-                    fact = "I started learning machine learning last month.",
-                    sourceClassification = SourceClassification.OTHERS
+                    fact = "I started learning machine learning last month."
                 )
             ),
-            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_SNAPSHOT,
             contentDate = null,
-            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.PARTIAL_MENTION,
-            relevanceReasoning = "Personal blog post"
+            intention = "Personal blog post about someone's journey learning machine learning",
+            relevanceAssessment = "Anecdotal content that doesn't provide authoritative information"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -195,18 +179,15 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             description = null,
             relevantFacts = listOf(
                 RelevantFact(
-                    fact = "Chocolate chip cookies need 2 cups flour and 1 cup sugar.",
-                    sourceClassification = SourceClassification.OTHERS
+                    fact = "Chocolate chip cookies need 2 cups flour and 1 cup sugar."
                 ),
                 RelevantFact(
-                    fact = "Preheat oven to 350°F for best results.",
-                    sourceClassification = SourceClassification.OTHERS
+                    fact = "Preheat oven to 350°F for best results."
                 )
             ),
-            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.FORUM_DISCUSSION,
             contentDate = null,
-            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.PARTIAL_MENTION,
-            relevanceReasoning = "Not relevant to query but kept for context"
+            intention = "Recipe page from a cooking forum discussing baking techniques",
+            relevanceAssessment = "Not relevant - this page is about cooking recipes, not quantum computing"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -230,30 +211,24 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             description = "Everything about ML",
             relevantFacts = listOf(
                 RelevantFact(
-                    fact = "Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Machine learning is a subset of artificial intelligence that enables systems to learn and improve from experience."
                 ),
                 RelevantFact(
-                    fact = "The three main types of machine learning are supervised learning, unsupervised learning, and reinforcement learning.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "The three main types of machine learning are supervised learning, unsupervised learning, and reinforcement learning."
                 ),
                 RelevantFact(
-                    fact = "Supervised learning uses labeled training data to learn the mapping from inputs to outputs.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Supervised learning uses labeled training data to learn the mapping from inputs to outputs."
                 ),
                 RelevantFact(
-                    fact = "Unsupervised learning finds patterns and structure in unlabeled data.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Unsupervised learning finds patterns and structure in unlabeled data."
                 ),
                 RelevantFact(
-                    fact = "Reinforcement learning learns through trial and error by receiving rewards and penalties.",
-                    sourceClassification = SourceClassification.OFFICIAL_LIVING_DOC
+                    fact = "Reinforcement learning learns through trial and error by receiving rewards and penalties."
                 )
             ),
-            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.OFFICIAL_LIVING_DOC,
             contentDate = null,
-            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.CANONICAL,
-            relevanceReasoning = "Comprehensive official documentation on machine learning"
+            intention = "Official comprehensive documentation page covering all aspects of machine learning",
+            relevanceAssessment = "Canonical source that comprehensively answers the query about machine learning"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -278,14 +253,12 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             description = null,
             relevantFacts = listOf(
                 RelevantFact(
-                    fact = "Machine learning helps computers learn from data.",
-                    sourceClassification = SourceClassification.OTHERS
+                    fact = "Machine learning helps computers learn from data."
                 )
             ),
-            sourceClassification = io.deepsearch.domain.models.valueobjects.SourceType.THIRD_PARTY_REVIEW,
             contentDate = null,
-            relevance = io.deepsearch.domain.models.valueobjects.SourceRelevance.PARTIAL_MENTION,
-            relevanceReasoning = "Basic mention of ML"
+            intention = "Third-party review article providing a basic overview of machine learning",
+            relevanceAssessment = "Partially relevant - provides basic information but lacks depth"
         )
 
         val input = StreamingAnswerSynthesisInput(

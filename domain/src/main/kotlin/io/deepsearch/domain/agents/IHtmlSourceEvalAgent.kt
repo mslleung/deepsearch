@@ -33,12 +33,13 @@ data class HtmlSourceEvalOutput(
 ) : IAgent.IAgentOutput
 
 /**
- * Agent that evaluates a single HTML preview source and extracts classified facts.
+ * Agent that evaluates a single HTML preview source and extracts facts.
  * 
  * For the source, the agent:
+ * - Determines the intention (purpose) of the webpage
+ * - Assesses relevance to the query
  * - Extracts facts relevant to the query
  * - Marks whether each fact comes from a table/grid (isInTable)
- * - Classifies the source type (OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, OTHERS)
  * 
  * Facts from tables (isInTable=true) are filtered out before returning,
  * as table data in HTML previews may be inaccurate.
@@ -49,4 +50,3 @@ data class HtmlSourceEvalOutput(
 interface IHtmlSourceEvalAgent : IAgent<HtmlSourceEvalInput, HtmlSourceEvalOutput> {
     override suspend fun generate(input: HtmlSourceEvalInput): HtmlSourceEvalOutput
 }
-

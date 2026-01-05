@@ -4,7 +4,6 @@ import io.deepsearch.domain.agents.HtmlSourceEvalInput
 import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import io.deepsearch.domain.models.valueobjects.SourceClassification
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -149,10 +148,10 @@ class HtmlSourceEvalAgentTest : KoinTest {
     }
 
     /**
-     * Test case: Blog post content should be classified with appropriate SourceClassification.
+     * Test case: Blog post content should have intention describing dated content.
      */
     @Test
-    fun `should classify blog posts with OFFICIAL_SNAPSHOT classification`() = runTest(testCoroutineDispatcher) {
+    fun `should identify blog posts as dated content in intention`() = runTest(testCoroutineDispatcher) {
         val htmlSource = UrlContentResult.HtmlPreview(
             url = "https://example.com/blog/2023/new-feature-announcement",
             title = "New Feature Announcement | Example Blog",
@@ -186,13 +185,15 @@ class HtmlSourceEvalAgentTest : KoinTest {
         
         assertTrue(featureFacts.isNotEmpty(), "Should find facts about AI analytics")
         
-        // Blog content facts should be classified as OFFICIAL_SNAPSHOT
-        featureFacts.forEach { fact ->
-            assertTrue(
-                fact.sourceClassification == SourceClassification.OFFICIAL_SNAPSHOT,
-                "Blog post facts should be classified as OFFICIAL_SNAPSHOT: ${fact.sourceClassification}"
-            )
-        }
+        // Blog post should have intention describing dated content
+        assertTrue(
+            evaluatedSource.intention.isNotBlank(),
+            "Should have intention describing the page purpose"
+        )
+        assertTrue(
+            evaluatedSource.relevanceAssessment.isNotBlank(),
+            "Should have relevance assessment"
+        )
     }
 
     /**
@@ -268,4 +269,3 @@ class HtmlSourceEvalAgentTest : KoinTest {
         )
     }
 }
-

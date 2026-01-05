@@ -3,7 +3,7 @@ package io.deepsearch.domain.models.valueobjects
 import kotlinx.serialization.Serializable
 
 /**
- * Represents an evaluated source with extracted facts and classification metadata.
+ * Represents an evaluated source with extracted facts and descriptive metadata.
  * 
  * This is the output from individual source evaluation agents (HTML and Markdown)
  * and is used directly by the answer synthesis agent.
@@ -12,10 +12,9 @@ import kotlinx.serialization.Serializable
  * @property title Title of the source page (nullable)
  * @property description Meta description of the source (nullable)
  * @property relevantFacts List of facts extracted from the source that are relevant to the query
- * @property sourceClassification Classification of the source type
  * @property contentDate Date extracted from content (nullable if no date found)
- * @property relevance How relevant the source is to the query (CANONICAL, PARTIAL_MENTION, NOT_RELEVANT)
- * @property relevanceReasoning Brief reason for inclusion
+ * @property intention Describes the purpose of the webpage (e.g., "Official pricing page showing subscription tiers")
+ * @property relevanceAssessment Describes how the page relates to the query (e.g., "Directly answers the pricing question with current tier information")
  * @property relevantImageIds List of image IDs (format: "img-xxx") deemed relevant for this source
  */
 @Serializable
@@ -24,9 +23,8 @@ data class EvaluatedSource(
     val title: String?,
     val description: String?,
     val relevantFacts: List<RelevantFact>,
-    val sourceClassification: SourceType,
     val contentDate: String?,
-    val relevance: SourceRelevance,
-    val relevanceReasoning: String,
+    val intention: String,
+    val relevanceAssessment: String,
     val relevantImageIds: List<String> = emptyList()
 )

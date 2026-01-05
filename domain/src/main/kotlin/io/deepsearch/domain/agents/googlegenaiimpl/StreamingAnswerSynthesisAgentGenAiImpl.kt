@@ -85,14 +85,15 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - The answer should be in the same language as the input query
         - The answer should be placed in a JSON structured output
         
-        Fact Prioritization:
-        - All provided facts have been pre-extracted and curated for quality and relevance
-        - If facts contain conflicting information, prioritize facts with:
-          1. OFFICIAL_LIVING_DOC classification (most current and authoritative)
-          2. OFFICIAL_SNAPSHOT classification (dated but official)
-          3. OTHERS classification (external sources)
-        - No need to note discrepancies, just include the most credible information
-        - Synthesize information across facts when they complement each other
+        Source Evaluation:
+        - Each source comes with an "Intention" describing its purpose (e.g., official pricing page, blog post, third-party review)
+        - Each source comes with a "Relevance Assessment" describing how it relates to the query
+        - Use these descriptions to judge source quality and prioritize information:
+          * Official living documentation (pricing pages, feature pages) are most authoritative
+          * Official snapshots (blog posts, news) are dated but official
+          * Third-party reviews and forum discussions provide external perspectives
+        - When facts conflict, prefer information from more authoritative sources based on the intention
+        - Synthesize information across sources when they complement each other
         
         Handling Insufficient Information:
         - If the facts lack sufficient information to answer the query, provide the best answer possible with available facts
@@ -105,7 +106,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - **COMPLETE**: The answer fully addresses the query with sufficient authoritative sources.
           Use COMPLETE when:
           - The core question is answered comprehensively
-          - Information comes from authoritative sources (preferably OFFICIAL_LIVING_DOC)
+          - Information comes from authoritative sources (check the source intentions)
           - No critical gaps remain in the answer
           - Additional searching would not significantly improve the answer
         
@@ -512,10 +513,9 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 if (source.relevantFacts.isNotEmpty()) {
                     appendLine("## Source ${index + 1}")
                     appendLine("URL: ${source.url}")
-                    appendLine("Source Classification: ${source.sourceClassification}")
+                    appendLine("Intention: ${source.intention}")
                     appendLine("Content Date: ${source.contentDate ?: "Not found"}")
-                    appendLine("Relevance: ${source.relevance}")
-                    appendLine("Relevance Justification: ${source.relevanceReasoning}")
+                    appendLine("Relevance Assessment: ${source.relevanceAssessment}")
                     
                     if (source.relevantImageIds.isNotEmpty()) {
                         appendLine("Relevant Images: ${source.relevantImageIds.joinToString(", ")}")
@@ -524,7 +524,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     appendLine()
                     appendLine("### Facts")
                     source.relevantFacts.forEach { fact ->
-                        appendLine("- [${fact.sourceClassification}] ${fact.fact}")
+                        appendLine("- ${fact.fact}")
                     }
                     appendLine()
                     appendLine("---")
@@ -551,7 +551,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
             appendLine("# Instructions")
             appendLine("Generate a comprehensive answer to the query using the extracted facts above.")
-            appendLine("Prioritize facts from OFFICIAL_LIVING_DOC sources when synthesizing information.")
+            appendLine("Use the source intentions to judge which facts are most authoritative.")
             appendLine("If relevant images are listed, include their IDs in the imageIds array.")
             appendLine("Decide if the answer is COMPLETE or needs more sources.")
         }

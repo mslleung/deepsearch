@@ -13,7 +13,6 @@ import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MarkdownSourceEvalAgentTest : KoinTest {
@@ -244,11 +243,9 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertTrue(evaluatedSource.title == source.title, "Title should be preserved")
         assertTrue(evaluatedSource.description == source.description, "Description should be preserved")
         
-        // Verify classification and relevance are set
-        assertNotNull(evaluatedSource.sourceClassification, "Should have source classification")
-        assertNotNull(evaluatedSource.relevance, "Should have relevance")
-        assertTrue(evaluatedSource.relevanceReasoning.isNotBlank(), "Should have relevance justification")
+        // Verify intention and relevance assessment are set
+        assertTrue(evaluatedSource.intention.isNotBlank(), "Should have intention describing the page purpose")
+        assertTrue(evaluatedSource.relevanceAssessment.isNotBlank(), "Should have relevance assessment")
     }
 
 }
-

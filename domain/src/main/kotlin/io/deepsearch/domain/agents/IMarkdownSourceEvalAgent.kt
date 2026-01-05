@@ -33,12 +33,12 @@ data class MarkdownSourceEvalOutput(
 ) : IAgent.IAgentOutput
 
 /**
- * Agent that evaluates a single markdown source and extracts classified facts.
+ * Agent that evaluates a single markdown source and extracts facts.
  * 
  * For the source, the agent:
+ * - Determines the intention (purpose) of the webpage
+ * - Assesses relevance to the query
  * - Extracts facts relevant to the query
- * - Classifies the source type (OFFICIAL_LIVING_DOC, OFFICIAL_SNAPSHOT, OTHERS)
- * - Determines answer type and temporal metadata
  * - Handles image selection (relevantImageIds)
  * 
  * Unlike the HTML preview agent, this does NOT filter table facts since markdown
@@ -50,4 +50,3 @@ data class MarkdownSourceEvalOutput(
 interface IMarkdownSourceEvalAgent : IAgent<MarkdownSourceEvalInput, MarkdownSourceEvalOutput> {
     override suspend fun generate(input: MarkdownSourceEvalInput): MarkdownSourceEvalOutput
 }
-
