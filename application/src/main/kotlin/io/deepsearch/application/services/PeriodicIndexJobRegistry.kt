@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.*
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -230,12 +231,12 @@ class PeriodicIndexJobRegistry(
         eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>
     ) {
         val seenUrls = ConcurrentHashMap.newKeySet<String>()
-        val processedCount = AtomicInteger(job.processedCount)
         val urlTracker = UrlTracker()
         
         // Adaptive concurrency based on maxUrlCount
         val concurrency = calculateConcurrency(job.maxUrlCount)
-        logger.info("[{}] Using adaptive concurrency of {} (maxUrlCount={})", jobId, concurrency, job.maxUrlCount)
+        val remainingToProcess = job.maxUrlCount - job.processedCount
+        logger.info("[{}] Using adaptive concurrency of {} (maxUrlCount={}, remainingToProcess={})", jobId, concurrency, job.maxUrlCount, remainingToProcess)
 
         // Fetch carried-over URLs from the last completed job
         val carriedOverUrls = fetchCarriedOverUrls(job)
@@ -246,10 +247,10 @@ class PeriodicIndexJobRegistry(
         
         // Track in-flight processing and discovery completion for termination
         val inFlightProcessing = AtomicInteger(0)
-        val discoveryComplete = AtomicInteger(0) // 0 = not complete, 1 = complete
+        val discoveryComplete = AtomicBoolean(false)
         
         val tryCloseBuffer = {
-            if (discoveryComplete.get() == 1 && inFlightProcessing.get() == 0) {
+            if (discoveryComplete.get() && inFlightProcessing.get() == 0) {
                 priorityLinkBuffer.close()
             }
         }
@@ -265,13 +266,16 @@ class PeriodicIndexJobRegistry(
         )
             .onEach { link -> priorityLinkBuffer.send(link) }
             .onCompletion { 
-                discoveryComplete.set(1)
+                discoveryComplete.set(true)
                 tryCloseBuffer()
                 logger.debug("[{}] All discovery sources complete", jobId)
             }
             .launchIn(CoroutineScope(currentCoroutineContext()))
 
         // Process links from priority buffer (always in path-depth order)
+        // Using .take(remainingToProcess) guarantees exactly the right number of items 
+        // flow through - no race conditions since the slot is reserved atomically 
+        // before items enter the concurrent flatMapMerge
         priorityLinkBuffer.receiveAsFlow()
             .filter { link ->
                 val normalizedUrl = normalize(link.url)
@@ -279,14 +283,9 @@ class PeriodicIndexJobRegistry(
                     matchesLanguageFilter(normalizedUrl, job) &&
                     seenUrls.add(normalizedUrl)
             }
-            .takeWhile { processedCount.get() < job.maxUrlCount }  // First defense: stop new items from entering queue
+            .take(remainingToProcess)
             .flatMapMerge(concurrency = concurrency) { link ->
                 flow {
-                    // Second defense: check again before expensive processing
-                    if (processedCount.get() >= job.maxUrlCount) {
-                        return@flow
-                    }
-                    
                     val normalizedUrl = normalize(link.url)
                     inFlightProcessing.incrementAndGet()
                     
@@ -298,7 +297,6 @@ class PeriodicIndexJobRegistry(
                             urlTracker = urlTracker,
                             proxyConfig = proxyConfig,
                             eventFlow = eventFlow,
-                            processedCount = processedCount,
                             seenUrls = seenUrls,
                             priorityLinkBuffer = priorityLinkBuffer
                         )
@@ -312,9 +310,7 @@ class PeriodicIndexJobRegistry(
                 }
             }
             .flowOn(dispatchers.io)
-            .takeWhile { processedCount.get() < job.maxUrlCount }
             .onEach { result ->
-                val count = processedCount.incrementAndGet()
                 job.incrementProcessed()
                 periodicIndexJobRepository.update(job)
 
@@ -323,7 +319,7 @@ class PeriodicIndexJobRegistry(
                         jobId = jobId,
                         baseUrl = job.baseUrl,
                         url = result.url,
-                        processedCount = count,
+                        processedCount = job.processedCount,
                         maxUrlCount = job.maxUrlCount,
                         cachedHit = result.cachedHit,
                         totalQueued = 0,
@@ -339,7 +335,7 @@ class PeriodicIndexJobRegistry(
                 logger.error("[{}] Error during periodic index: {}", jobId, e.message, e)
             }
             .onCompletion {
-                logger.info("[{}] Periodic index complete: {} pages processed", jobId, processedCount.get())
+                logger.info("[{}] Periodic index complete: {} pages processed", jobId, job.processedCount)
             }
             .collect()
     }
@@ -454,7 +450,6 @@ class PeriodicIndexJobRegistry(
         urlTracker: UrlTracker,
         proxyConfig: ProxyConfiguration,
         eventFlow: MutableSharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>,
-        processedCount: AtomicInteger,
         seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         priorityLinkBuffer: PriorityLinkBuffer
     ): PeriodicIndexStepResult? {
@@ -464,7 +459,7 @@ class PeriodicIndexJobRegistry(
                 jobId = jobId,
                 baseUrl = job.baseUrl,
                 url = normalizedUrl,
-                processedCount = processedCount.get(),
+                processedCount = job.processedCount,
                 maxUrlCount = job.maxUrlCount,
                 cachedHit = null,
                 totalQueued = 0,
