@@ -24,6 +24,15 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
+ * Represents an identified information gap with its corresponding follow-up query.
+ */
+@Serializable
+data class InformationGap(
+    val gapDescription: String,
+    val followUpQuery: String
+)
+
+/**
  * Streaming Answer Synthesis agent that generates comprehensive answers from extracted facts.
  * Receives facts (not full markdown content) from the source eval agents and synthesizes them into an answer.
  */
@@ -36,12 +45,12 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Comprehensive answer with status for feedback loop and optional follow-up queries")
+        .description("Comprehensive answer with identified information gaps for feedback loop")
         .properties(
             mapOf(
                 "reasoning" to Schema.builder()
                     .type("STRING")
-                    .description("Brief explanation of how the answer was derived from the facts, why this status was chosen, and what information is missing (if applicable).")
+                    .description("Brief explanation of how the answer was derived from the facts.")
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
@@ -52,15 +61,32 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .description("URLs of sources whose facts were actually used/cited in generating the answer. Only include sources that contributed to the answer content.")
                     .items(Schema.builder().type("STRING").build())
                     .build(),
+                "informationGaps" to Schema.builder()
+                    .type("ARRAY")
+                    .description("List of identified information gaps. Each gap represents missing information that would improve the answer. If this array is non-empty, status MUST be NEED_MORE_INFORMATION.")
+                    .items(
+                        Schema.builder()
+                            .type("OBJECT")
+                            .properties(
+                                mapOf(
+                                    "gapDescription" to Schema.builder()
+                                        .type("STRING")
+                                        .description("What information is missing or incomplete")
+                                        .build(),
+                                    "followUpQuery" to Schema.builder()
+                                        .type("STRING")
+                                        .description("A targeted search query to find this missing information")
+                                        .build()
+                                )
+                            )
+                            .required(listOf("gapDescription", "followUpQuery"))
+                            .build()
+                    )
+                    .build(),
                 "status" to Schema.builder()
                     .type("STRING")
-                    .description("COMPLETE if the answer fully addresses the query with sufficient authoritative sources. NEED_MORE_INFORMATION if the answer is partial or lacks authoritative sources and more searching is needed.")
+                    .description("COMPLETE only if informationGaps is empty and the answer fully addresses the query. NEED_MORE_INFORMATION if any gaps were identified.")
                     .enum_(listOf("COMPLETE", "NEED_MORE_INFORMATION"))
-                    .build(),
-                "followUpQueries" to Schema.builder()
-                    .type("ARRAY")
-                    .description("Targeted search queries to find missing information. Required when status=NEED_MORE_INFORMATION. Each query should be specific and focused on a gap in the current answer. Do NOT include queries that have already been searched.")
-                    .items(Schema.builder().type("STRING").build())
                     .build(),
                 "imageIds" to Schema.builder()
                     .type("ARRAY")
@@ -69,83 +95,62 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("reasoning", "answer", "citedSourceUrls", "status", "followUpQueries", "imageIds"))
+        .required(listOf("reasoning", "answer", "citedSourceUrls", "informationGaps", "status", "imageIds"))
         .build()
 
     private val systemInstruction = $$"""
         You are an answer synthesis agent that generates comprehensive answers from pre-extracted facts.
         You are part of a feedback loop that continues searching until the answer is complete.
-        
-        Answer Quality:
-        - The answer should be as comprehensive as possible based on the provided facts
-        - The answer should be standalone and serve as a straightforward and direct answer to the user query
-        - Only include information that is present in the provided facts
-        - Do not invent information not present in the facts
+
+        ## Step 1: Reasoning
+        - Evaluate the sources and reason how you are going to derive the answer based on the sources
+        - Note the completeness of the sources, whether you are confident a complete answer can be generated
+
+        ## Step 2: Synthesize the Answer
+        - Generate a comprehensive answer based on the provided facts
+        - The answer should be standalone and directly address the user query
+        - Only include information present in the provided facts - do not invent
         - Use markdown styling as applicable (headings, lists, bold, etc.)
         - The answer should be in the same language as the input query
-        - The answer should be placed in a JSON structured output
+        - When facts conflict, prefer information from official sources (check the "Intention" field)
         
-        Source Evaluation:
-        - Each source comes with an "Intention" describing its purpose (e.g., official pricing page, blog post, third-party review)
-        - Each source comes with a "Relevance Assessment" describing how it relates to the query
-        - Use these descriptions to judge source quality and prioritize information:
-          * Official living documentation (pricing pages, feature pages) are most authoritative
-          * Official snapshots (blog posts, news) are dated but official
-          * Third-party reviews and forum discussions provide external perspectives
-        - When facts conflict, prefer information from more authoritative sources based on the intention
-        - Synthesize information across sources when they complement each other
+        ## Step 3: Challenge your own answer (Critical Self-Review)
+        - After writing the answer, step back and critically evaluate what you just wrote.
+        - Pretend you are a skeptical user who received this answer
+        - Critique your answer using the following dimensions:
+          - ANSWER COMPLETENESS: Did you answer all possible and implied queries? Or is the answer only partial?
+          - ANSWER DEPTH: Did I give specific data, or just generic statements/overview?
+          - QUERY INTENTION FULFILLMENT: Would the user need to search for any additional information to really satisfy all potential follow-up concern?
+          - CONFIDENCE: Is the answer without any ambiguity?
+        - For each weakness you find in the answer:
+          - Document it as a gap with a clear description of what's missing
+          - Create a targeted search query to fill that specific gap
         
-        Handling Insufficient Information:
-        - If the facts lack sufficient information to answer the query, provide the best answer possible with available facts
-        - Only provide what can be substantiated by the facts
-        - Do not speculate or fill gaps with external knowledge
-        - Set status=NEED_MORE_INFORMATION and suggest targeted follow-up queries
-        
-        ## Status Decision (CRITICAL - drives the feedback loop):
-        
-        - **COMPLETE**: The answer fully addresses the query with sufficient authoritative sources.
-          Use COMPLETE when:
-          - The core question is answered comprehensively
-          - Information comes from authoritative sources (check the source intentions)
-          - No critical gaps remain in the answer
-          - Additional searching would not significantly improve the answer
-        
-        - **NEED_MORE_INFORMATION**: The answer is partial or lacks authoritative sources.
-          Use NEED_MORE_INFORMATION when:
-          - The answer only addresses a subset of what was asked
-          - Information is from lower-quality sources when official sources likely exist
-          - There are obvious gaps that targeted searches could fill
-          - The query has multiple facets and not all are covered
-          
-          When NEED_MORE_INFORMATION, you MUST provide:
-          - followUpQueries: 1-3 targeted search queries to find the missing info
-          
-        ## Follow-up Query Guidelines:
-        - Make queries specific and focused on the gap
-        - Do NOT suggest queries that have already been searched (check the "Previously Searched Queries" list)
-        - Queries will be automatically prefixed with site: for the target domain
-        - Examples:
-          - "pricing plans subscription tiers"
-          - "enterprise features comparison"
-          - "API rate limits documentation"
-      
-        ## Reasoning (output FIRST before answer):
-        - Briefly explain how you will derive the answer from the facts
-        - Explain why you chose the status (COMPLETE vs NEED_MORE_INFORMATION)
-        - If NEED_MORE_INFORMATION, explain what is missing
+        ## Step 4: Status Decision (Based on Your Self-Review)
+        - **COMPLETE**: Use ONLY when your self-review found NO weaknesses
+          - You answered all parts of the query with specifics
+          - A user would NOT need to search any further
+          - You are confident in what you wrote
+        - **NEED_MORE_INFORMATION**: Use when you found ANY weakness
+          - The rule: if you identified gaps → NEED_MORE_INFORMATION
         
         ## Citation Source URLs:
         - List the URLs of sources whose facts you actually used in generating the answer
         - Only include sources that contributed information to the answer
         
-        Expected Output Shape (fields in this exact order):
+        Expected Output:
         {
-            "reasoning": "brief explanation of how the answer was derived and why this status was chosen",
-            "answer": "your comprehensive answer text",
-            "citedSourceUrls": ["https://example.com/pricing", "https://example.com/features"],
+            "reasoning": "synthesis approach + self-review findings",
+            "answer": "your answer text",
+            "citedSourceUrls": ["https://..."],
+            "informationGaps": [
+                {
+                    "gapDescription": "My answer says 'Enterprise plan available' but I didn't provide the actual price",
+                    "followUpQuery": "Enterprise plan pricing cost USD"
+                }
+            ],
             "status": "COMPLETE" | "NEED_MORE_INFORMATION",
-            "followUpQueries": ["query1", "query2"],
-            "imageIds": ["img-xxx"]
+            "imageIds": []
         }
     """.trimIndent()
 
@@ -154,10 +159,14 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val reasoning: String,
         val answer: String,
         val citedSourceUrls: List<String> = emptyList(),
+        val informationGaps: List<InformationGap> = emptyList(),
         val status: AnswerStatus,
-        val followUpQueries: List<String> = emptyList(),
         val imageIds: List<String> = emptyList()
-    )
+    ) {
+        // Derive followUpQueries from informationGaps for backward compatibility
+        val followUpQueries: List<String>
+            get() = informationGaps.map { it.followUpQuery }
+    }
 
     override suspend fun generate(input: StreamingAnswerSynthesisInput): StreamingAnswerSynthesisOutput {
         logger.debug(
@@ -414,21 +423,38 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     }
 
     /**
-     * Extract followUpQueries array from accumulated JSON.
-     * The JSON format is: {"answer": "...", "followUpQueries": ["query1", "query2"]}
+     * Extract informationGaps array from accumulated JSON.
+     * The JSON format is: {"informationGaps": [{"gapDescription": "...", "followUpQuery": "..."}]}
+     * Returns a list of pairs: (gapDescription, followUpQuery)
      */
-    private fun extractFollowUpQueries(json: String): List<String> {
-        val regex = """"followUpQueries"\s*:\s*\[([^\]]*)\]""".toRegex()
+    private fun extractInformationGaps(json: String): List<Pair<String, String>> {
+        val regex = """"informationGaps"\s*:\s*\[([\s\S]*?)\](?=\s*[,}])""".toRegex()
         val match = regex.find(json) ?: return emptyList()
         
         val arrayContent = match.groupValues[1]
         if (arrayContent.isBlank()) return emptyList()
         
-        // Extract individual string values from the array
-        val stringRegex = """"((?:[^"\\]|\\.)*)"""".toRegex()
-        return stringRegex.findAll(arrayContent)
-            .map { unescapeJsonString(it.groupValues[1]) }
+        // Extract individual gap objects - handle both field orderings
+        val gapRegex1 = """\{\s*"gapDescription"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"followUpQuery"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}""".toRegex()
+        val gapRegex2 = """\{\s*"followUpQuery"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"gapDescription"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}""".toRegex()
+        
+        val gaps1 = gapRegex1.findAll(arrayContent)
+            .map { Pair(unescapeJsonString(it.groupValues[1]), unescapeJsonString(it.groupValues[2])) }
             .toList()
+        
+        val gaps2 = gapRegex2.findAll(arrayContent)
+            .map { Pair(unescapeJsonString(it.groupValues[2]), unescapeJsonString(it.groupValues[1])) }
+            .toList()
+        
+        return gaps1 + gaps2
+    }
+
+    /**
+     * Extract followUpQueries from informationGaps for backward compatibility.
+     * The JSON format is: {"informationGaps": [{"gapDescription": "...", "followUpQuery": "..."}]}
+     */
+    private fun extractFollowUpQueries(json: String): List<String> {
+        return extractInformationGaps(json).map { it.second }
     }
 
     /**
@@ -515,7 +541,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     appendLine("URL: ${source.url}")
                     appendLine("Intention: ${source.intention}")
                     appendLine("Content Date: ${source.contentDate ?: "Not found"}")
-                    appendLine("Relevance Assessment: ${source.relevanceAssessment}")
                     
                     if (source.relevantImageIds.isNotEmpty()) {
                         appendLine("Relevant Images: ${source.relevantImageIds.joinToString(", ")}")
@@ -532,28 +557,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 }
             }
 
-            // Previously searched queries (for deduplication)
-            if (input.previouslySearchedQueries.isNotEmpty()) {
-                appendLine()
-                appendLine("# Previously Searched Queries")
-                appendLine("Do NOT suggest these as follow-up queries (they have already been searched):")
-                input.previouslySearchedQueries.forEach { query ->
-                    appendLine("- $query")
-                }
-                appendLine()
-            }
-
             // Dynamic content at the end (query)
             appendLine()
             appendLine("# Query")
             appendLine(input.query)
-            appendLine()
-
-            appendLine("# Instructions")
-            appendLine("Generate a comprehensive answer to the query using the extracted facts above.")
-            appendLine("Use the source intentions to judge which facts are most authoritative.")
-            appendLine("If relevant images are listed, include their IDs in the imageIds array.")
-            appendLine("Decide if the answer is COMPLETE or needs more sources.")
         }
     }
 }

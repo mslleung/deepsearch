@@ -72,6 +72,9 @@ private val infrastructureCommonTestModule = module {
     
     // Markdown indexing task table
     singleOf(::MarkdownIndexingTaskTable)
+    
+    // HTML source eval cache table
+    singleOf(::HtmlSourceEvalCacheTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -99,6 +102,9 @@ private val infrastructureCommonTestModule = module {
     
     // Markdown indexing task repository
     singleOf(::ExposedMarkdownIndexingTaskRepository) bind IMarkdownIndexingTaskRepository::class
+    
+    // HTML source eval cache repository
+    singleOf(::ExposedHtmlSourceEvalCacheRepository) bind IHtmlSourceEvalCacheRepository::class
 }
 
 val infrastructureTestModule = module {

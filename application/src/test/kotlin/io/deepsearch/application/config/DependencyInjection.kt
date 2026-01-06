@@ -30,7 +30,9 @@ import io.deepsearch.application.services.IUserService
 import io.deepsearch.application.services.IWebpageExtractionService
 import io.deepsearch.application.services.HttpContentTypeResolutionService
 import io.deepsearch.application.services.HtmlPreviewService
+import io.deepsearch.application.services.HtmlSourceEvalService
 import io.deepsearch.application.services.IHtmlPreviewService
+import io.deepsearch.application.services.IHtmlSourceEvalService
 import io.deepsearch.application.services.LinkRelevanceHtmlService
 import io.deepsearch.application.services.ILinkRelevanceHtmlService
 import io.deepsearch.application.services.IApiKeyService
@@ -139,6 +141,7 @@ private val applicationCommonTestModule = module {
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
+    singleOf(::HtmlSourceEvalService) bind IHtmlSourceEvalService::class
     singleOf(::LinkRelevanceHtmlService) bind ILinkRelevanceHtmlService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class

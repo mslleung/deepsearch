@@ -280,4 +280,162 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         }
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
+
+    @Test
+    fun `should identify information gaps and generate follow-up queries for partial answers`() = runTest(testCoroutineDispatcher) {
+        // Provide only partial information about pricing - should identify gap for specific prices
+        val partialPricingSource = EvaluatedSource(
+            url = "https://example.com/pricing",
+            title = "Pricing Overview",
+            description = null,
+            relevantFacts = listOf(
+                RelevantFact(
+                    fact = "The company offers three pricing tiers: Starter, Professional, and Enterprise."
+                ),
+                RelevantFact(
+                    fact = "Contact sales for pricing information."
+                )
+            ),
+            contentDate = null,
+            intention = "Official pricing page showing available subscription tiers",
+            relevanceAssessment = "Partially addresses the query but lacks specific pricing amounts"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What are the pricing plans and how much do they cost?",
+            evaluatedSources = listOf(partialPricingSource)
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should provide available information")
+        
+        // With gap-first approach, partial info should result in NEED_MORE_INFORMATION
+        // because specific pricing amounts are missing
+        assertEquals(
+            AnswerStatus.NEED_MORE_INFORMATION, 
+            output.status, 
+            "Should identify gap: specific pricing amounts missing"
+        )
+        
+        // Should have follow-up queries to find the missing pricing details
+        assertTrue(
+            output.followUpQueries.isNotEmpty(),
+            "Should suggest follow-up queries to find specific pricing"
+        )
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    @Test
+    fun `should have consistent status and gaps - COMPLETE means no gaps, gaps mean NEED_MORE_INFORMATION`() = runTest(testCoroutineDispatcher) {
+        // Provide comprehensive information with actual pricing amounts
+        val comprehensivePricingSource = EvaluatedSource(
+            url = "https://example.com/pricing",
+            title = "Pricing",
+            description = "Full pricing details",
+            relevantFacts = listOf(
+                RelevantFact(
+                    fact = "Starter plan costs $9/month and includes 1000 API calls."
+                ),
+                RelevantFact(
+                    fact = "Professional plan costs $49/month and includes 10,000 API calls."
+                ),
+                RelevantFact(
+                    fact = "Enterprise plan costs $199/month and includes unlimited API calls."
+                ),
+                RelevantFact(
+                    fact = "All plans include 24/7 email support."
+                ),
+                RelevantFact(
+                    fact = "Annual billing provides a 20% discount on all plans."
+                )
+            ),
+            contentDate = null,
+            intention = "Official pricing page with complete pricing information for all tiers",
+            relevanceAssessment = "Comprehensive pricing information that fully answers the query"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What are the pricing plans and how much do they cost?",
+            evaluatedSources = listOf(comprehensivePricingSource)
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should be comprehensive")
+        assertTrue(output.answer.contains("9"), "Should mention starter price")
+        assertTrue(output.answer.contains("49") || output.answer.contains("professional", ignoreCase = true), 
+            "Should mention professional tier")
+        assertTrue(output.answer.contains("199") || output.answer.contains("enterprise", ignoreCase = true), 
+            "Should mention enterprise tier")
+        
+        // Test the invariant: status and gaps must be consistent
+        if (output.status == AnswerStatus.COMPLETE) {
+            assertTrue(
+                output.followUpQueries.isEmpty(),
+                "COMPLETE status must have no follow-up queries (gaps), but found: ${output.followUpQueries}"
+            )
+        } else {
+            // If NEED_MORE_INFORMATION, should have gaps identified
+            assertTrue(
+                output.followUpQueries.isNotEmpty(),
+                "NEED_MORE_INFORMATION status should have follow-up queries identifying the gaps"
+            )
+        }
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    @Test
+    fun `should be self-critical and identify weaknesses in its own answer`() = runTest(testCoroutineDispatcher) {
+        // Provide vague information that should trigger self-criticism
+        val vagueSource = EvaluatedSource(
+            url = "https://example.com/features",
+            title = "Features Overview",
+            description = null,
+            relevantFacts = listOf(
+                RelevantFact(
+                    fact = "The platform offers advanced AI capabilities."
+                ),
+                RelevantFact(
+                    fact = "Enterprise customers get premium support."
+                )
+            ),
+            contentDate = null,
+            intention = "Marketing page providing general feature overview",
+            relevanceAssessment = "High-level feature description"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What specific AI features does the platform offer and how do they work?",
+            evaluatedSources = listOf(vagueSource)
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        
+        // The agent should recognize the answer is vague and identify gaps
+        assertEquals(
+            AnswerStatus.NEED_MORE_INFORMATION, 
+            output.status, 
+            "Should identify that 'advanced AI capabilities' is too vague to answer 'what specific features'"
+        )
+        
+        assertTrue(
+            output.followUpQueries.isNotEmpty(),
+            "Should suggest follow-up queries to find specific AI feature details"
+        )
+        
+        // The reasoning should show self-critical thinking
+        assertTrue(
+            output.reasoning.isNotBlank(),
+            "Should have reasoning explaining the self-review"
+        )
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
 }

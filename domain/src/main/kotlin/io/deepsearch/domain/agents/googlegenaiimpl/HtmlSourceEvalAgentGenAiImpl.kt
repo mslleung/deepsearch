@@ -72,7 +72,7 @@ class HtmlSourceEvalAgentGenAiImpl(
                     .nullable(true)
                     .build(),
                 "relevanceAssessment" to Schema.builder().type("STRING")
-                    .description("Describes how the page relates to the query and whether it contains useful information (e.g., 'Directly answers the pricing question with current tier information', 'Mentions the topic briefly but focuses on unrelated features', 'Not relevant - page is about a different product')")
+                    .description("Describes how the page relates to the query and whether it contains useful information (e.g., 'Directly answers the pricing question with current tier information', 'Mentions the topic briefly but focuses on unrelated features', 'Not relevant - page is about a different product entirely')")
                     .build(),
                 "relevantFacts" to Schema.builder()
                     .type("ARRAY")

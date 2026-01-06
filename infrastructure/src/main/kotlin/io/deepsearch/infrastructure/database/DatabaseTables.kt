@@ -37,6 +37,7 @@ class DatabaseTables(private val koin: Koin) {
     val kgEntitySourcesTable: KgEntitySourcesTable by lazy { koin.get() }
     val kgRelationshipSourcesTable: KgRelationshipSourcesTable by lazy { koin.get() }
     val markdownIndexingTaskTable: MarkdownIndexingTaskTable by lazy { koin.get() }
+    val htmlSourceEvalCacheTable: HtmlSourceEvalCacheTable by lazy { koin.get() }
 
     /**
      * All tables as an array for schema operations (e.g., SchemaUtils.create).
@@ -67,6 +68,7 @@ class DatabaseTables(private val koin: Koin) {
             kgEntitySourcesTable,
             kgRelationshipSourcesTable,
             markdownIndexingTaskTable,
+            htmlSourceEvalCacheTable,
         )
     }
 }

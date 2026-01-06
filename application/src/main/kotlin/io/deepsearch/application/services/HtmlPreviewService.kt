@@ -48,11 +48,21 @@ class HtmlPreviewService : IHtmlPreviewService {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     companion object {
+        // Regex patterns to strip large blocks BEFORE parsing (much faster than DOM traversal)
+        // These patterns remove entire tag blocks that we know we don't need
+        private val SCRIPT_PATTERN = Regex("<script[^>]*>[\\s\\S]*?</script>", RegexOption.IGNORE_CASE)
+        private val STYLE_PATTERN = Regex("<style[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE)
+        private val SVG_PATTERN = Regex("<svg[^>]*>[\\s\\S]*?</svg>", RegexOption.IGNORE_CASE)
+        private val NOSCRIPT_PATTERN = Regex("<noscript[^>]*>[\\s\\S]*?</noscript>", RegexOption.IGNORE_CASE)
+        private val IFRAME_PATTERN = Regex("<iframe[^>]*>[\\s\\S]*?</iframe>", RegexOption.IGNORE_CASE)
+        private val TEMPLATE_PATTERN = Regex("<template[^>]*>[\\s\\S]*?</template>", RegexOption.IGNORE_CASE)
+        private val COMMENT_PATTERN = Regex("<!--[\\s\\S]*?-->")
+        
+        // Combined pattern for DATA URIs in attributes (huge base64 encoded images/fonts)
+        private val DATA_URI_PATTERN = Regex("data:[^\"'\\s]+", RegexOption.IGNORE_CASE)
+        
         // Aggressive removal - keep ONLY prose content
         private val REMOVE_SELECTOR_STRING = listOf(
-            // Scripts, styles, metadata
-            "script", "style", "noscript", "link", "meta", "template",
-
             // Navigation and chrome
             "nav", "header", "footer", "aside", "menu", "menuitem",
 
@@ -61,8 +71,8 @@ class HtmlPreviewService : IHtmlPreviewService {
             "fieldset", "legend", "output", "datalist",
 
             // ALL media - we only want prose text
-            "img", "picture", "video", "audio", "svg", "canvas",
-            "object", "embed", "iframe", "figure", "figcaption", "map", "area",
+            "img", "picture", "video", "audio", "canvas",
+            "object", "embed", "figure", "figcaption", "map", "area",
 
             // ALL tables - agent explicitly skips sources with tables
             "table", "tr", "td", "th", "thead", "tbody", "tfoot",
@@ -125,9 +135,15 @@ class HtmlPreviewService : IHtmlPreviewService {
 
     override fun prepareHtmlPreview(html: String, url: String): HtmlPreviewResult {
         val totalStart = System.currentTimeMillis()
+        
+        // Step 1: Pre-filter with regex to remove large blocks before parsing
+        // This is MUCH faster than DOM traversal for removing script/style/svg blocks
+        val preFilterStart = System.currentTimeMillis()
+        var filteredHtml = preFilterWithRegex(html)
+        val preFilterTime = System.currentTimeMillis() - preFilterStart
 
         val parseStart = System.currentTimeMillis()
-        val doc = Jsoup.parse(html, "", HTML_PARSER)
+        val doc = Jsoup.parse(filteredHtml, "", HTML_PARSER)
         val parseTime = System.currentTimeMillis() - parseStart
 
         val title = doc.title().takeIf { it.isNotBlank() }
@@ -157,8 +173,8 @@ class HtmlPreviewService : IHtmlPreviewService {
         val totalTime = System.currentTimeMillis() - totalStart
 
         logger.debug(
-            "HTML preview for {}: {} -> {} chars in {}ms (parse={}ms, remove={}ms, process={}ms, serialize={}ms)",
-            url, html.length, cleanedHtml.length, totalTime, parseTime, removeTime, processTime, serializeTime
+            "HTML preview for {}: {} -> {} -> {} chars in {}ms (preFilter={}ms, parse={}ms, remove={}ms, process={}ms, serialize={}ms)",
+            url, html.length, cleanedHtml.length, cleanedHtml.length, totalTime, preFilterTime, parseTime, removeTime, processTime, serializeTime
         )
 
         return HtmlPreviewResult(
@@ -166,6 +182,37 @@ class HtmlPreviewService : IHtmlPreviewService {
             title = title,
             description = description
         )
+    }
+    
+    /**
+     * Pre-filter HTML with regex to remove large blocks before DOM parsing.
+     * 
+     * This is significantly faster than DOM traversal for removing:
+     * - <script>...</script> blocks (often huge with inline JS)
+     * - <style>...</style> blocks (can contain large CSS)
+     * - <svg>...</svg> blocks (often contain huge path data)
+     * - HTML comments (can be large)
+     * - Data URIs (base64 encoded images/fonts)
+     * 
+     * Regex pre-filtering reduces the DOM size dramatically, making subsequent
+     * Jsoup parsing and traversal much faster.
+     */
+    private fun preFilterWithRegex(html: String): String {
+        var result = html
+        
+        // Remove in order of typical size (largest first for best performance)
+        result = SVG_PATTERN.replace(result, "")
+        result = SCRIPT_PATTERN.replace(result, "")
+        result = STYLE_PATTERN.replace(result, "")
+        result = NOSCRIPT_PATTERN.replace(result, "")
+        result = IFRAME_PATTERN.replace(result, "")
+        result = TEMPLATE_PATTERN.replace(result, "")
+        result = COMMENT_PATTERN.replace(result, "")
+        
+        // Remove data URIs (huge base64 strings) - replace with empty placeholder
+        result = DATA_URI_PATTERN.replace(result, "")
+        
+        return result
     }
 
     /**

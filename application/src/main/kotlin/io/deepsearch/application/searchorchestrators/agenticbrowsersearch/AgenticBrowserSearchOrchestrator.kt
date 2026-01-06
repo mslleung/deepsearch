@@ -2,6 +2,7 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.application.services.IHtmlPreviewService
+import io.deepsearch.application.services.IHtmlSourceEvalService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
@@ -10,7 +11,6 @@ import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.services.IGeminiFileSearchService
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
-import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.agents.IMarkdownSourceEvalAgent
 import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.ISerpQueryOptimizationAgent
@@ -96,7 +96,7 @@ class AgenticBrowserSearchOrchestrator(
     private val urlContentProcessingService: IUrlContentProcessingService,
     private val streamingAnswerAgent: IStreamingAnswerAgent,
     private val answerReviewerAgent: IAnswerReviewerAgent,
-    private val htmlSourceEvalAgent: IHtmlSourceEvalAgent,
+    private val htmlSourceEvalService: IHtmlSourceEvalService,
     private val markdownSourceEvalAgent: IMarkdownSourceEvalAgent,
     private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
     private val followUpQueryDedupAgent: IFollowUpQueryDedupAgent,
@@ -1169,17 +1169,11 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         htmlSource: UrlContentResult.HtmlPreview
     ): PreviewResult {
-        // Step 1: Source Eval - extracts facts, filters table facts
-        val evalOutput = htmlSourceEvalAgent.generate(HtmlSourceEvalInput(searchQuery, htmlSource))
+        // Step 1: Source Eval - extracts facts, filters table facts (service handles caching + token tracking)
+        val evalOutput = htmlSourceEvalService.evaluate(HtmlSourceEvalInput(searchQuery, htmlSource), sessionId)
         
         // Cooperative cancellation check - exits early if another source already found an answer
         currentCoroutineContext().ensureActive()
-        
-        tokenUsageService.recordTokenUsage(
-            sessionId, "HtmlSourceEvalAgent",
-            evalOutput.tokenUsage.modelName, evalOutput.tokenUsage.promptTokens,
-            evalOutput.tokenUsage.outputTokens, evalOutput.tokenUsage.totalTokens
-        )
 
         val evaluatedSource = evalOutput.evaluatedSource ?: run {
             logger.debug("[{}] HTML source not relevant: {}", sessionId.value, htmlSource.url)

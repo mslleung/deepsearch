@@ -57,6 +57,9 @@ val infrastructureModule = module {
     // Markdown indexing task table
     singleOf(::MarkdownIndexingTaskTable)
     
+    // HTML source eval cache table
+    singleOf(::HtmlSourceEvalCacheTable)
+    
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
@@ -80,6 +83,9 @@ val infrastructureModule = module {
     
     // Markdown indexing task repository
     singleOf(::ExposedMarkdownIndexingTaskRepository) bind IMarkdownIndexingTaskRepository::class
+    
+    // HTML source eval cache repository
+    singleOf(::ExposedHtmlSourceEvalCacheRepository) bind IHtmlSourceEvalCacheRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {
