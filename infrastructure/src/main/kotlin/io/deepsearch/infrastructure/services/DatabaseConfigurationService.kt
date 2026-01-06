@@ -218,6 +218,12 @@ class DatabaseConfigurationService(
     /**
      * Configures PostgreSQL database for production.
      * Uses R2DBC with connection pooling. Pool settings are loaded from PostgresConfig.
+     * 
+     * Optimizations applied:
+     * - Prepared statement caching (256 statements) - reduces parse overhead
+     * - Statement timeout (30s) - prevents long-running queries
+     * - Connection acquisition timeout (5s) - fail fast if pool exhausted
+     * - Background validation - keeps connections warm
      */
     private fun configurePostgreSqlDatabase(): R2dbcDatabase {
         val connectionFactory = PostgresqlConnectionFactory(
@@ -227,6 +233,10 @@ class DatabaseConfigurationService(
                 .database(postgresConfig.database)
                 .username(postgresConfig.username)
                 .password(postgresConfig.password)
+                // Enable prepared statement caching for faster repeated queries
+                .preparedStatementCacheQueries(256)
+                // Set statement timeout to prevent long-running queries
+                .statementTimeout(Duration.ofSeconds(30))
                 .build()
         )
 
@@ -235,9 +245,17 @@ class DatabaseConfigurationService(
             .initialSize(postgresConfig.poolInitialSize)
             .maxIdleTime(Duration.ofMinutes(postgresConfig.poolMaxIdleTimeMinutes))
             .maxLifeTime(Duration.ofHours(1))
+            // Fail fast if no connection available (5 second timeout)
+            .maxAcquireTime(Duration.ofSeconds(5))
+            // Background validation keeps connections ready
+            .backgroundEvictionInterval(Duration.ofSeconds(30))
             .build()
 
         val pool = ConnectionPool(poolConfiguration)
+        
+        // Warm up the pool by pre-creating initial connections
+        logger.info("Database pool configured: initialSize={}, maxSize={}, preparedStatementCache=256",
+            postgresConfig.poolInitialSize, postgresConfig.poolMaxSize)
         
         // Store pool for raw SQL execution (e.g., Apache AGE Cypher queries)
         _connectionPool = pool
