@@ -316,7 +316,7 @@ class AgeKnowledgeGraphRepository(
      * 
      * NOTE: The database must be configured with:
      *   ALTER DATABASE deepsearch SET session_preload_libraries = 'age';
-     *   ALTER DATABASE deepsearch SET search_path = ag_catalog, "$user", public;
+     *   ALTER DATABASE deepsearch SET search_path = public, "$user", ag_catalog;
      */
     private fun buildAgeCypherSql(cypherQuery: String): String {
         // Extract column names from the RETURN clause for the AS definition

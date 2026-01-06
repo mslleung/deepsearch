@@ -4,6 +4,7 @@ import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.StreamingAnswerInput
 import io.deepsearch.domain.agents.StreamingAnswerOutput
 import io.deepsearch.domain.config.domainTestModule
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -22,9 +23,10 @@ class StreamingAnswerAgentTest : KoinTest {
     val koin = KoinTestExtension.create { modules(domainTestModule) }
 
     private val agent by inject<IStreamingAnswerAgent>()
+    private val testDispatcher by inject<CoroutineDispatcher>()
 
     @Test
-    fun `should generate initial answer from first batch`() = runTest {
+    fun `should generate initial answer from first batch`() = runTest(testDispatcher) {
         val input = StreamingAnswerInput(
             query = "What is the capital of France?",
             currentAnswer = null,
@@ -41,7 +43,7 @@ class StreamingAnswerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should update answer with new information from second batch`() = runTest {
+    fun `should update answer with new information from second batch`() = runTest(testDispatcher) {
         // First batch
         val firstInput = StreamingAnswerInput(
             query = "Tell me about the Eiffel Tower",
@@ -72,7 +74,7 @@ class StreamingAnswerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should generate answer when sufficient information is provided`() = runTest {
+    fun `should generate answer when sufficient information is provided`() = runTest(testDispatcher) {
         val input = StreamingAnswerInput(
             query = "What is 2+2?",
             currentAnswer = null,
@@ -88,7 +90,7 @@ class StreamingAnswerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should preserve existing answer when new batch has no relevant information`() = runTest {
+    fun `should preserve existing answer when new batch has no relevant information`() = runTest(testDispatcher) {
         // First batch with relevant info
         val firstInput = StreamingAnswerInput(
             query = "What is the capital of Germany?",
@@ -122,7 +124,7 @@ class StreamingAnswerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should handle empty markdown batch gracefully`() = runTest {
+    fun `should handle empty markdown batch gracefully`() = runTest(testDispatcher) {
         val input = StreamingAnswerInput(
             query = "What is AI?",
             currentAnswer = "AI stands for Artificial Intelligence.",
@@ -136,7 +138,7 @@ class StreamingAnswerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should handle many sequential markdown batches and accumulate information`() = runTest {
+    fun `should handle many sequential markdown batches and accumulate information`() = runTest(testDispatcher) {
         val query = "Tell me about Tokyo"
         
         // Simulate multiple batches arriving sequentially, each adding new information
@@ -188,7 +190,7 @@ class StreamingAnswerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should handle large batch with parallel processing (more than 20 markdowns)`() = runTest {
+    fun `should handle large batch with parallel processing (more than 20 markdowns)`() = runTest(testDispatcher) {
         // Create a batch with more than 20 markdowns to trigger parallel processing
         val largeMarkdownBatch = (1..25).map { i ->
             """
@@ -219,7 +221,7 @@ class StreamingAnswerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should progressively build comprehensive answer across many batches until complete`() = runTest {
+    fun `should progressively build comprehensive answer across many batches until complete`() = runTest(testDispatcher) {
         val query = "What is the capital of France and what is it famous for?"
         
         // First batch with partial info

@@ -122,11 +122,11 @@ class DatabaseConfigurationService(
                             -- session_preload_libraries ensures 'age' is loaded for every new connection
                             EXECUTE format('ALTER DATABASE %I SET session_preload_libraries = ''age''', db_name);
                             
-                            -- Set database-level search_path so ag_catalog is always accessible
-                            EXECUTE format('ALTER DATABASE %I SET search_path = ag_catalog, "${'$'}user", public', db_name);
+                            -- Set database-level search_path: public first for regular tables, ag_catalog included for AGE access
+                            EXECUTE format('ALTER DATABASE %I SET search_path = public, "${'$'}user", ag_catalog', db_name);
                             
                             -- Set search path for current session
-                            SET search_path = ag_catalog, "${'$'}user", public;
+                            SET search_path = public, "${'$'}user", ag_catalog;
                             
                             -- Create the knowledge_graph if it doesn't exist
                             IF NOT EXISTS (SELECT 1 FROM ag_graph WHERE name = 'knowledge_graph') THEN

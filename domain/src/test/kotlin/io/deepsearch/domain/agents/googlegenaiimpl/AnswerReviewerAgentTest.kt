@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import io.deepsearch.domain.agents.AnswerReviewerInput
 import io.deepsearch.domain.agents.IAnswerReviewerAgent
 import io.deepsearch.domain.config.domainTestModule
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -20,9 +21,10 @@ class AnswerReviewerAgentTest : KoinTest {
     val koin = KoinTestExtension.create { modules(domainTestModule) }
 
     private val agent by inject<IAnswerReviewerAgent>()
+    private val testDispatcher by inject<CoroutineDispatcher>()
 
     @Test
-    fun `should mark as complete when answer fully addresses simple query`() = runTest {
+    fun `should mark as complete when answer fully addresses simple query`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "What is the capital of France?",
             currentAnswer = "The capital of France is Paris."
@@ -36,7 +38,7 @@ class AnswerReviewerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should mark as incomplete when answer is insufficient for query`() = runTest {
+    fun `should mark as incomplete when answer is insufficient for query`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "Explain the complete history, architecture, cultural significance, visitor statistics, and construction details of the Eiffel Tower",
             currentAnswer = "The Eiffel Tower is in Paris."
@@ -50,7 +52,7 @@ class AnswerReviewerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should mark as incomplete when answer is blank`() = runTest {
+    fun `should mark as incomplete when answer is blank`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "What is machine learning?",
             currentAnswer = ""
@@ -64,7 +66,7 @@ class AnswerReviewerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should mark as complete for invalid query`() = runTest {
+    fun `should mark as complete for invalid query`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "Good morning!",
             currentAnswer = "This doesn't seem to be a valid search query."
@@ -78,7 +80,7 @@ class AnswerReviewerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should mark as complete for gibberish query`() = runTest {
+    fun `should mark as complete for gibberish query`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "*f&dbst4$",
             currentAnswer = "Unable to determine a meaningful answer for this query."
@@ -92,7 +94,7 @@ class AnswerReviewerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should be conservative for complex multi-part query with partial answer`() = runTest {
+    fun `should be conservative for complex multi-part query with partial answer`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "Provide a comprehensive analysis of machine learning algorithms, their applications, limitations, and future trends",
             currentAnswer = "Machine learning is a subset of AI. Common algorithms include decision trees, neural networks, and support vector machines."
@@ -107,7 +109,7 @@ class AnswerReviewerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should mark as complete when multi-part query is fully answered`() = runTest {
+    fun `should mark as complete when multi-part query is fully answered`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "What is the capital of France and what is it famous for?",
             currentAnswer = """
@@ -131,7 +133,7 @@ class AnswerReviewerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should mark as incomplete for partially answered multi-part query`() = runTest {
+    fun `should mark as incomplete for partially answered multi-part query`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "What is the capital of Germany and what is its population?",
             currentAnswer = "The capital of Germany is Berlin."
@@ -145,7 +147,7 @@ class AnswerReviewerAgentTest : KoinTest {
     }
 
     @Test
-    fun `should mark as complete for factual query with precise answer`() = runTest {
+    fun `should mark as complete for factual query with precise answer`() = runTest(testDispatcher) {
         val input = AnswerReviewerInput(
             query = "What is 2+2?",
             currentAnswer = "2 + 2 = 4"
