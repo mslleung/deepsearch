@@ -265,21 +265,10 @@ class UrlContentProcessingService(
         cached: io.deepsearch.domain.models.entities.WebpageMarkdown,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
-        // Use pre-computed cleanedPreviewHtml (avoids expensive Jsoup parsing on cache hit)
-        val cleanedPreviewHtml = cached.cleanedPreviewHtml
-        
-        if (cleanedPreviewHtml != null) {
-            logger.debug("Emitting cached HTML preview for URL: {} ({} chars)", 
-                originalUrl, cleanedPreviewHtml.length)
-            emit(
-                UrlProcessingEvent.HtmlPreviewReady(
-                    originalUrl,
-                    cleanedPreviewHtml,
-                    cached.title,
-                    cached.description
-                )
-            )
-        }
+        // NOTE: We intentionally do NOT emit HtmlPreviewReady for cached pages.
+        // The preview path is designed for early answers while waiting for markdown extraction.
+        // For cached pages, the full markdown is already available immediately, so there's
+        // no benefit to the preview path racing against it.
         
         // Use pre-computed link-relevance cleaned HTML for link discovery
         // This is much smaller than raw HTML (~10-30KB vs ~500KB-1MB) but contains all anchor tags
