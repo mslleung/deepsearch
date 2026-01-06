@@ -438,4 +438,109 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
+
+    @Test
+    fun `should handle image IDs and return original hash-based IDs`() = runTest(testCoroutineDispatcher) {
+        // Create sources with hash-based image IDs (img-xxx format)
+        val sourceWithImages = EvaluatedSource(
+            url = "https://example.com/product-screenshots",
+            title = "Product Screenshots",
+            description = "Visual guide to the product",
+            relevantFacts = listOf(
+                RelevantFact(
+                    fact = "The dashboard shows real-time analytics with customizable widgets."
+                ),
+                RelevantFact(
+                    fact = "Users can create custom reports from the main menu."
+                )
+            ),
+            contentDate = null,
+            intention = "Official product page with screenshots demonstrating key features",
+            relevanceAssessment = "Directly shows the product interface with relevant screenshots",
+            relevantImageIds = listOf("img-abc123", "img-def456")
+        )
+
+        val anotherSourceWithImages = EvaluatedSource(
+            url = "https://example.com/pricing-page",
+            title = "Pricing Information",
+            description = "Pricing tiers and features",
+            relevantFacts = listOf(
+                RelevantFact(
+                    fact = "The Pro plan includes advanced analytics features."
+                )
+            ),
+            contentDate = null,
+            intention = "Official pricing page with comparison chart",
+            relevanceAssessment = "Shows pricing tiers with visual comparison",
+            relevantImageIds = listOf("img-xyz789")
+        )
+
+        // Image descriptions fetched from DB
+        val imageDescriptions = mapOf(
+            "img-abc123" to "Dashboard screenshot showing real-time analytics widgets",
+            "img-def456" to "Settings panel with customization options",
+            "img-xyz789" to "Pricing comparison table with three tiers"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "Show me the product dashboard and pricing information",
+            evaluatedSources = listOf(sourceWithImages, anotherSourceWithImages),
+            imageDescriptions = imageDescriptions
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        
+        // Verify that any returned image IDs are in the original hash format (img-xxx)
+        // The LLM may or may not select images, but if it does, they should be mapped back correctly
+        val allSourceImageIds = listOf("img-abc123", "img-def456", "img-xyz789")
+        output.imageIds.forEach { imageId ->
+            assertTrue(
+                imageId.startsWith("img-"),
+                "Image ID should be in original hash format (img-xxx), but got: $imageId"
+            )
+            assertTrue(
+                imageId in allSourceImageIds,
+                "Image ID should be one of the original IDs from the sources, but got: $imageId"
+            )
+        }
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    @Test
+    fun `should handle sources with no images gracefully`() = runTest(testCoroutineDispatcher) {
+        val sourceWithoutImages = EvaluatedSource(
+            url = "https://example.com/text-only",
+            title = "Text Content",
+            description = "Text-only content",
+            relevantFacts = listOf(
+                RelevantFact(
+                    fact = "Machine learning models require training data to learn patterns."
+                )
+            ),
+            contentDate = null,
+            intention = "Technical documentation explaining ML concepts",
+            relevanceAssessment = "Provides textual explanation without visual aids",
+            relevantImageIds = emptyList()  // No images
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "How do machine learning models work?",
+            evaluatedSources = listOf(sourceWithoutImages)
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        // Image IDs should be empty when sources have no images
+        assertTrue(
+            output.imageIds.isEmpty(),
+            "Should return empty imageIds when sources have no images, but got: ${output.imageIds}"
+        )
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
 }

@@ -21,7 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class AgenticBrowserSearchOrchestratorTest : KoinTest {
-    private val apiKeyId = ApiKeyId(0)
+    private val apiKeyId = ApiKeyId(1)
 
     @JvmField
     @RegisterExtension

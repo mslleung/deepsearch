@@ -39,7 +39,7 @@ data class MarkdownSourceEvalOutput(
  * - Determines the intention (purpose) of the webpage
  * - Assesses relevance to the query
  * - Extracts facts relevant to the query
- * - Handles image selection (relevantImageIds)
+ * - Selects relevant image IDs (relevantImageIds)
  * 
  * Unlike the HTML preview agent, this does NOT filter table facts since markdown
  * tables are properly processed and accurate.

@@ -79,6 +79,7 @@ private val infrastructureCommonTestModule = module {
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
     singleOf(::ExposedApiKeyRepository) bind IApiKeyRepository::class
+    singleOf(::ExposedUserSubscriptionRepository) bind IUserSubscriptionRepository::class
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
     singleOf(::ExposedWebpageImageLinkageRepository) bind IWebpageImageLinkageRepository::class

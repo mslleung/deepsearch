@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory
  * - Determines the intention (purpose) of the webpage
  * - Assesses relevance to the query
  * - Extracts facts relevant to the query
- * - Handles image selection (relevantImageIds)
+ * - Selects relevant image IDs (relevantImageIds)
  * 
  * Unlike the HTML preview agent, this does NOT filter table facts since markdown
  * tables are properly processed and accurate.
@@ -176,9 +176,9 @@ class MarkdownSourceEvalAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        // Transform markdown to use numbered image IDs for LLM
-        val (transformedMarkdown, imageMapping) = transformImageIdsForLlm(markdownSource.markdown)
-        val userPrompt = buildUserPrompt(input, transformedMarkdown)
+        // Extract images from markdown and transform to numbered IDs for LLM
+        val imageExtraction = extractImagesFromMarkdown(markdownSource.markdown)
+        val userPrompt = buildUserPrompt(input, imageExtraction.transformedMarkdown)
 
         val response = withContext(dispatcherProvider.io) {
             retryLlmCall<EvalResponse>(this@MarkdownSourceEvalAgentGenAiImpl::class.simpleName!!) {
@@ -237,8 +237,11 @@ class MarkdownSourceEvalAgentGenAiImpl(
             RelevantFact(fact = llmFact.fact)
         }
 
-        // Map numbered image IDs back to original hash-based IDs (filtering out placeholders)
-        val originalImageIds = mapNumberedIdsToOriginal(response.relevantImageIds, imageMapping)
+        // Map LLM-selected numbered image IDs back to original hash-based IDs
+        val relevantImageIds = mapSelectedImagesToOriginal(
+            response.relevantImageIds,
+            imageExtraction.images
+        )
 
         val evaluatedSource = EvaluatedSource(
             url = markdownSource.url,
@@ -248,14 +251,14 @@ class MarkdownSourceEvalAgentGenAiImpl(
             contentDate = response.contentDate,
             intention = response.intention,
             relevanceAssessment = response.relevanceAssessment,
-            relevantImageIds = originalImageIds
+            relevantImageIds = relevantImageIds
         )
 
         logger.debug(
             "Markdown source evaluation complete for {}: {} facts, {} images",
             markdownSource.url,
             relevantFacts.size,
-            originalImageIds.size
+            relevantImageIds.size
         )
 
         return MarkdownSourceEvalOutput(
@@ -292,9 +295,6 @@ class MarkdownSourceEvalAgentGenAiImpl(
     }
 
     companion object {
-        /** Marker used to identify placeholder images in the mapping */
-        const val PLACEHOLDER_MARKER = "__PLACEHOLDER__"
-        
         /**
          * Extracts the domain from a URL string.
          */
@@ -311,15 +311,37 @@ class MarkdownSourceEvalAgentGenAiImpl(
         private val PLACEHOLDER_IMAGE_REGEX = """<image\s+placeholder(?:\s+alt="([^"]*)")?(?:\s*/)?>""".toRegex()
 
         /**
-         * Transforms image IDs in markdown to simple numbered IDs for LLM comprehension.
+         * Represents an extracted image from markdown.
+         * The numbered ID is derived from the position in the list (index + 1).
+         * 
+         * @property imageId The full image ID (e.g., "img-abc123"), or null for placeholder images
+         * @property description The text description of the image
+         */
+        data class ExtractedImage(
+            val imageId: String?,  // null for placeholder images
+            val description: String
+        )
+
+        /**
+         * Result of extracting images from markdown.
+         * @property transformedMarkdown The markdown with numbered image IDs (1, 2, 3...)
+         * @property images Ordered list of extracted images (index + 1 = numbered ID)
+         */
+        data class ImageExtractionResult(
+            val transformedMarkdown: String,
+            val images: List<ExtractedImage>
+        )
+
+        /**
+         * Extracts images from markdown and transforms to numbered IDs for LLM comprehension.
          *
          * - Converts `<image id="img-xxx">description</image>` to `<image id="1">description</image>`
          * - Converts `<image placeholder alt="..."/>` to `<image id="1" placeholder>alt text</image>`
          *
-         * @return Pair of (transformed markdown, mapping from numbered ID to original ID or PLACEHOLDER_MARKER)
+         * @return ImageExtractionResult with transformed markdown and ordered list of images
          */
-        fun transformImageIdsForLlm(markdown: String): Pair<String, Map<String, String>> {
-            val imageMapping = mutableMapOf<String, String>()
+        fun extractImagesFromMarkdown(markdown: String): ImageExtractionResult {
+            val images = mutableListOf<ExtractedImage>()
             var imageCounter = 0
 
             // First pass: transform full images with hash IDs
@@ -327,11 +349,11 @@ class MarkdownSourceEvalAgentGenAiImpl(
                 imageCounter++
                 val numberedId = imageCounter.toString()
                 val originalId = matchResult.groupValues[1]
-                val description = matchResult.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() }
+                val description = matchResult.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() } ?: ""
 
-                imageMapping[numberedId] = originalId
+                images.add(ExtractedImage(imageId = originalId, description = description))
 
-                if (description != null) {
+                if (description.isNotEmpty()) {
                     """<image id="$numberedId">$description</image>"""
                 } else {
                     """<image id="$numberedId"/>"""
@@ -342,36 +364,41 @@ class MarkdownSourceEvalAgentGenAiImpl(
             transformedMarkdown = PLACEHOLDER_IMAGE_REGEX.replace(transformedMarkdown) { matchResult ->
                 imageCounter++
                 val numberedId = imageCounter.toString()
-                val altText = matchResult.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() }
+                val altText = matchResult.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: ""
 
-                imageMapping[numberedId] = PLACEHOLDER_MARKER
+                images.add(ExtractedImage(imageId = null, description = altText))  // null = placeholder
 
-                if (altText != null) {
+                if (altText.isNotEmpty()) {
                     """<image id="$numberedId" placeholder>$altText</image>"""
                 } else {
                     """<image id="$numberedId" placeholder/>"""
                 }
             }
 
-            return Pair(transformedMarkdown, imageMapping)
+            return ImageExtractionResult(
+                transformedMarkdown = transformedMarkdown,
+                images = images
+            )
         }
 
         /**
-         * Maps numbered image IDs back to their original hash-based IDs.
+         * Maps LLM-selected numbered image IDs back to original hash-based IDs.
          * Filters out placeholder images.
          *
-         * @param numberedIds List of numbered IDs selected by the LLM (e.g., ["1", "3"])
-         * @param imageMapping Mapping from numbered ID to original ID or PLACEHOLDER_MARKER
-         * @return List of original hash-based image IDs (placeholders are excluded)
+         * @param selectedNumberedIds List of numbered IDs selected by the LLM (e.g., ["1", "3"])
+         * @param extractedImages Ordered list of extracted images from the markdown
+         * @return List of original hash-based image IDs
          */
-        fun mapNumberedIdsToOriginal(numberedIds: List<String>, imageMapping: Map<String, String>): List<String> {
-            return numberedIds.mapNotNull { numberedId ->
-                val originalId = imageMapping[numberedId]
-                when {
-                    originalId == null -> null
-                    originalId == PLACEHOLDER_MARKER -> null  // Exclude placeholders
-                    else -> originalId
-                }
+        fun mapSelectedImagesToOriginal(
+            selectedNumberedIds: List<String>,
+            extractedImages: List<ExtractedImage>
+        ): List<String> {
+            return selectedNumberedIds.mapNotNull { numberedId ->
+                val index = numberedId.toIntOrNull()?.minus(1) ?: return@mapNotNull null
+                val image = extractedImages.getOrNull(index) ?: return@mapNotNull null
+                
+                // Skip placeholders (null imageId)
+                image.imageId
             }
         }
     }

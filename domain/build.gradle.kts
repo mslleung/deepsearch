@@ -71,6 +71,16 @@ val envVars: Map<String, String> by rootProject.extra
 tasks.test {
     useJUnitPlatform()
     
+    // Run tests in parallel using available CPU cores
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
+    
+    // Better test output
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = false
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+    
     // Load all environment variables from .env file, with system env taking precedence
     envVars.forEach { (key, value) ->
         environment(key, System.getenv(key) ?: value)

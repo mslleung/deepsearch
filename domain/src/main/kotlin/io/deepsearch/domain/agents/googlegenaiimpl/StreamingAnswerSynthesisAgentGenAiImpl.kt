@@ -14,6 +14,7 @@ import io.deepsearch.domain.agents.infra.flowWithRateLimitRetry
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
+import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -90,7 +91,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .build(),
                 "imageIds" to Schema.builder()
                     .type("ARRAY")
-                    .description("List of image IDs from the sources that should be displayed with the answer.")
+                    .description("List of image IDs (numbered, e.g., '1', '2', '3') from the sources that should be displayed with the answer. Select from the numbered image IDs listed under 'Relevant Images' for each source.")
                     .items(Schema.builder().type("STRING").build())
                     .build()
             )
@@ -150,7 +151,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 }
             ],
             "status": "COMPLETE" | "NEED_MORE_INFORMATION",
-            "imageIds": []
+            "imageIds": [1,5,7]
         }
     """.trimIndent()
 
@@ -192,7 +193,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             )
         }
 
-        val userPrompt = buildUserPrompt(input)
+        // Collect all unique images across sources into a global ordered list
+        val globalImages = collectGlobalImages(input.evaluatedSources)
+
+        val userPrompt = buildUserPrompt(input, globalImages)
 
         val response = withContext(dispatcherProvider.io) {
             retryLlmCall<SynthesisResponse>(this@StreamingAnswerSynthesisAgentGenAiImpl::class.simpleName!!) {
@@ -234,11 +238,14 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             response
         )
 
+        // Map LLM-selected numbered image IDs back to original hash-based IDs
+        val originalImageIds = mapSelectedImagesToOriginal(response.imageIds, globalImages)
+
         logger.debug(
             "Answer synthesis complete: {} chars, status: {}, {} images, citedSources: {}, followUpQueries: {}",
             response.answer.length,
             response.status,
-            response.imageIds.size,
+            originalImageIds.size,
             response.citedSourceUrls.size,
             response.followUpQueries.size
         )
@@ -249,7 +256,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             citedSourceUrls = response.citedSourceUrls,
             status = response.status,
             followUpQueries = response.followUpQueries,
-            imageIds = response.imageIds,
+            imageIds = originalImageIds,
             tokenUsage = tokenUsage
         )
     }
@@ -278,7 +285,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             return@flow
         }
 
-        val userPrompt = buildUserPrompt(input)
+        // Collect all unique images across sources into a global ordered list
+        val globalImages = collectGlobalImages(input.evaluatedSources)
+
+        val userPrompt = buildUserPrompt(input, globalImages)
 
         val config = GenerateContentConfig.builder()
             .temperature(0F)
@@ -347,17 +357,20 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val citedSourceUrls = extractCitedSourceUrls(accumulatedJson)
         val status = extractStatus(accumulatedJson)
         val followUpQueries = extractFollowUpQueries(accumulatedJson)
-        val imageIds = extractImageIds(accumulatedJson)
+        val numberedImageIds = extractImageIds(accumulatedJson)
+        
+        // Map LLM-selected numbered image IDs back to original hash-based IDs
+        val originalImageIds = mapSelectedImagesToOriginal(numberedImageIds, globalImages)
         
         logger.debug("Streaming answer synthesis complete: {} chars total, status: {}, {} images, citedSources: {}, followUpQueries: {}", 
-            lastAnswerLength, status, imageIds.size, citedSourceUrls.size, followUpQueries.size)
+            lastAnswerLength, status, originalImageIds.size, citedSourceUrls.size, followUpQueries.size)
         emit(StreamingAnswerStreamItem.Complete(
             tokenUsage = tokenUsage,
             reasoning = reasoning,
             citedSourceUrls = citedSourceUrls,
             status = status,
             followUpQueries = followUpQueries,
-            imageIds = imageIds
+            imageIds = originalImageIds
         ))
     }
 
@@ -529,7 +542,14 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             .replace("\\\\", "\\")
     }
 
-    private fun buildUserPrompt(input: StreamingAnswerSynthesisInput): String {
+    private fun buildUserPrompt(
+        input: StreamingAnswerSynthesisInput,
+        globalImages: List<GlobalImage>
+    ): String {
+        // Build a lookup from original image ID to global numbered ID
+        val imageIdToNumbered = globalImages.withIndex()
+            .associate { (index, img) -> img.originalId to (index + 1).toString() }
+        
         return buildString {
             // Static content first (for cache optimization)
             appendLine("# Extracted Facts from Sources")
@@ -542,8 +562,20 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     appendLine("Intention: ${source.intention}")
                     appendLine("Content Date: ${source.contentDate ?: "Not found"}")
                     
-                    if (source.relevantImageIds.isNotEmpty()) {
-                        appendLine("Relevant Images: ${source.relevantImageIds.joinToString(", ")}")
+                    // Show available images for this source with descriptions from input
+                    val sourceImages = source.relevantImageIds.mapNotNull { imageId ->
+                        val numberedId = imageIdToNumbered[imageId]
+                        val description = input.imageDescriptions[imageId]
+                        if (numberedId != null && description != null) {
+                            numberedId to description
+                        } else null
+                    }
+                    if (sourceImages.isNotEmpty()) {
+                        appendLine()
+                        appendLine("### Available Images")
+                        sourceImages.forEach { (numberedId, description) ->
+                            appendLine("- Image $numberedId: $description")
+                        }
                     }
                     
                     appendLine()
@@ -561,6 +593,57 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             appendLine()
             appendLine("# Query")
             appendLine(input.query)
+        }
+    }
+
+    /**
+     * Represents an image collected from all sources with a global numbered ID.
+     * The numbered ID is derived from the position in the list (index + 1).
+     * 
+     * @property originalId The original image ID (e.g., "img-abc123")
+     */
+    private data class GlobalImage(
+        val originalId: String
+    )
+
+    /**
+     * Collects all unique image IDs from evaluated sources into a global ordered list.
+     * Each image gets a sequential numbered ID (1, 2, 3...) based on position.
+     *
+     * @param sources List of evaluated sources containing image IDs
+     * @return Ordered list of global images (index + 1 = numbered ID)
+     */
+    private fun collectGlobalImages(
+        sources: List<EvaluatedSource>
+    ): List<GlobalImage> {
+        val seenIds = mutableSetOf<String>()
+        val globalImages = mutableListOf<GlobalImage>()
+
+        sources.forEach { source ->
+            source.relevantImageIds.forEach { imageId ->
+                if (imageId !in seenIds) {
+                    seenIds.add(imageId)
+                    globalImages.add(GlobalImage(originalId = imageId))
+                }
+            }
+        }
+        return globalImages
+    }
+
+    /**
+     * Maps LLM-selected numbered image IDs back to original hash-based IDs.
+     *
+     * @param selectedNumberedIds List of numbered IDs selected by the LLM (e.g., ["1", "3"])
+     * @param globalImages Ordered list of global images
+     * @return List of original hash-based image IDs
+     */
+    private fun mapSelectedImagesToOriginal(
+        selectedNumberedIds: List<String>,
+        globalImages: List<GlobalImage>
+    ): List<String> {
+        return selectedNumberedIds.mapNotNull { numberedId ->
+            val index = numberedId.toIntOrNull()?.minus(1) ?: return@mapNotNull null
+            globalImages.getOrNull(index)?.originalId
         }
     }
 }

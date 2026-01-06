@@ -12,12 +12,15 @@ import kotlinx.coroutines.flow.Flow
  * 
  * @property query The original user query
  * @property evaluatedSources Sources with extracted facts to synthesize the answer from
+ * @property imageDescriptions Map of image IDs to their text descriptions, fetched from DB.
+ *           The agent uses these descriptions to help the LLM select relevant images.
  * @property previouslySearchedQueries List of queries that have already been searched.
  *           Used to prevent the agent from suggesting duplicate follow-up queries.
  */
 data class StreamingAnswerSynthesisInput(
     val query: String,
     val evaluatedSources: List<EvaluatedSource>,
+    val imageDescriptions: Map<String, String> = emptyMap(),
     val previouslySearchedQueries: List<String> = emptyList()
 ) : IAgent.IAgentInput
 
