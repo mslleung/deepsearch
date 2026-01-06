@@ -44,7 +44,7 @@ data class DimensionAssessment(
  * 
  * @property coverage Whether facts address all parts of the query; multiple sources for negative conclusions
  * @property depth Whether facts contain specific data (numbers, prices, dates) vs vague statements
- * @property recency Whether sources are recent enough for time-sensitive queries
+ * @property temporality Whether sources are recent enough for time-sensitive queries
  * @property authority Whether sources are official/authoritative vs third-party/user-generated
  * @property consistency Whether facts from different sources agree vs conflict
  */
@@ -52,7 +52,7 @@ data class DimensionAssessment(
 data class AnswerAssessment(
     val coverage: DimensionAssessment,
     val depth: DimensionAssessment,
-    val recency: DimensionAssessment,
+    val temporality: DimensionAssessment,
     val authority: DimensionAssessment,
     val consistency: DimensionAssessment
 ) {
@@ -62,7 +62,7 @@ data class AnswerAssessment(
     fun isComplete(): Boolean =
         coverage.satisfied &&
         depth.satisfied &&
-        recency.satisfied &&
+        temporality.satisfied &&
         authority.satisfied &&
         consistency.satisfied
 }

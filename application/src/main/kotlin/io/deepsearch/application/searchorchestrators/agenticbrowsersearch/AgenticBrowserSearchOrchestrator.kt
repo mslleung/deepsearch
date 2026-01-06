@@ -866,7 +866,7 @@ class AgenticBrowserSearchOrchestrator(
             val unsatisfied = mutableListOf<String>()
             if (!assessment.coverage.satisfied) unsatisfied.add("coverage")
             if (!assessment.depth.satisfied) unsatisfied.add("depth")
-            if (!assessment.recency.satisfied) unsatisfied.add("recency")
+            if (!assessment.temporality.satisfied) unsatisfied.add("temporality")
             if (!assessment.authority.satisfied) unsatisfied.add("authority")
             if (!assessment.consistency.satisfied) unsatisfied.add("consistency")
             return if (unsatisfied.isEmpty()) "all satisfied" else unsatisfied.joinToString(", ")

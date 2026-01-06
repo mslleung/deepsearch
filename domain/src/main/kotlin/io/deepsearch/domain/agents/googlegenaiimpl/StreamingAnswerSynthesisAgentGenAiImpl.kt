@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory
  * Uses a 5-dimension batch assessment to determine if sources are sufficient:
  * - COVERAGE: Facts address all parts of the query; multiple sources for negative conclusions
  * - DEPTH: Facts contain specific data (numbers, dates, prices) vs vague statements
- * - RECENCY: Sources are recent enough for time-sensitive queries
+ * - TEMPORALITY: Sources are recent enough for time-sensitive queries
  * - AUTHORITY: Sources are official/authoritative vs third-party/user-generated
  * - CONSISTENCY: Facts from different sources agree vs conflict
  */
@@ -77,12 +77,12 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                         mapOf(
                             "coverage" to dimensionAssessmentSchema,
                             "depth" to dimensionAssessmentSchema,
-                            "recency" to dimensionAssessmentSchema,
+                            "temporality" to dimensionAssessmentSchema,
                             "authority" to dimensionAssessmentSchema,
                             "consistency" to dimensionAssessmentSchema
                         )
                     )
-                    .required(listOf("coverage", "depth", "recency", "authority", "consistency"))
+                    .required(listOf("coverage", "depth", "temporality", "authority", "consistency"))
                     .build(),
                 "continuation_status" to Schema.builder()
                     .type("STRING")
@@ -131,7 +131,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         ### Temporality
         - Sources are recent enough for time-sensitive information
         - Satisfied: content dated within 6 months, or topic is not time-sensitive
-        - If you suspect the sources may be too old, set satisfied=false
+        - If you suspect the sources may be too old, set satisfied=false t eagerly allow further information gathering
         - Check "Content Date" field of each source if available
 
         ### AUTHORITY
@@ -169,7 +169,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             "assessment": {
                 "coverage": { "satisfied": bool, "rationale": str },
                 "depth": { "satisfied": bool, "rationale": str },
-                "recency": { "satisfied": bool, "rationale": str },
+                "temporality": { "satisfied": bool, "rationale": str },
                 "authority": { "satisfied": bool, "rationale": str },
                 "consistency": { "satisfied": bool, "rationale": str }
             },
@@ -199,7 +199,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     private data class LlmAnswerAssessment(
         val coverage: LlmDimensionAssessment,
         val depth: LlmDimensionAssessment,
-        val recency: LlmDimensionAssessment,
+        val temporality: LlmDimensionAssessment,
         val authority: LlmDimensionAssessment,
         val consistency: LlmDimensionAssessment
     )
@@ -219,7 +219,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         fun toAnswerAssessment(): AnswerAssessment = AnswerAssessment(
             coverage = assessment.coverage.toDomain(),
             depth = assessment.depth.toDomain(),
-            recency = assessment.recency.toDomain(),
+            temporality = assessment.temporality.toDomain(),
             authority = assessment.authority.toDomain(),
             consistency = assessment.consistency.toDomain()
         )
@@ -245,7 +245,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     rationale = "No facts available from the provided sources."
                 ),
                 depth = DimensionAssessment(satisfied = false, rationale = "No data available."),
-                recency = DimensionAssessment(satisfied = false, rationale = "No sources to evaluate."),
+                temporality = DimensionAssessment(satisfied = false, rationale = "No sources to evaluate."),
                 authority = DimensionAssessment(satisfied = false, rationale = "No sources available."),
                 consistency = DimensionAssessment(satisfied = false, rationale = "No sources to compare.")
             )
@@ -348,7 +348,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     rationale = "No facts available from the provided sources."
                 ),
                 depth = DimensionAssessment(satisfied = false, rationale = "No data available."),
-                recency = DimensionAssessment(satisfied = false, rationale = "No sources to evaluate."),
+                temporality = DimensionAssessment(satisfied = false, rationale = "No sources to evaluate."),
                 authority = DimensionAssessment(satisfied = false, rationale = "No sources available."),
                 consistency = DimensionAssessment(satisfied = false, rationale = "No sources to compare.")
             )
@@ -584,7 +584,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         return AnswerAssessment(
             coverage = extractDimension("coverage"),
             depth = extractDimension("depth"),
-            recency = extractDimension("recency"),
+            temporality = extractDimension("temporality"),
             authority = extractDimension("authority"),
             consistency = extractDimension("consistency")
         )
@@ -596,7 +596,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     private fun createDefaultAssessment(): AnswerAssessment = AnswerAssessment(
         coverage = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
         depth = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
-        recency = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
+        temporality = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
         authority = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
         consistency = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment")
     )
