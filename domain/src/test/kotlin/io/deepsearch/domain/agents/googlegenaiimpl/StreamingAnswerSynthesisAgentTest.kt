@@ -265,7 +265,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         assertNotNull(output)
         assertTrue(output.answer.isNotBlank(), "Answer should provide what's available")
         // If follow-up queries are suggested, they should not duplicate previously searched queries
-        output.followUpQueries.forEach { query ->
+        output.assessment.allFollowUpQueries().forEach { query ->
             assertTrue(
                 !input.previouslySearchedQueries.contains(query),
                 "Follow-up query should not duplicate previously searched: $query"
@@ -313,7 +313,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         
         // Should have follow-up queries to find the missing pricing details
         assertTrue(
-            output.followUpQueries.isNotEmpty(),
+            output.assessment.allFollowUpQueries().isNotEmpty(),
             "Should suggest follow-up queries to find specific pricing"
         )
         
@@ -364,15 +364,16 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             "Should mention enterprise tier")
         
         // Test the invariant: status and gaps must be consistent
+        val followUpQueries = output.assessment.allFollowUpQueries()
         if (output.status == AnswerStatus.COMPLETE) {
             assertTrue(
-                output.followUpQueries.isEmpty(),
-                "COMPLETE status must have no follow-up queries (gaps), but found: ${output.followUpQueries}"
+                followUpQueries.isEmpty(),
+                "COMPLETE status must have no follow-up queries (gaps), but found: $followUpQueries"
             )
         } else {
             // If NEED_MORE_INFORMATION, should have gaps identified
             assertTrue(
-                output.followUpQueries.isNotEmpty(),
+                followUpQueries.isNotEmpty(),
                 "NEED_MORE_INFORMATION status should have follow-up queries identifying the gaps"
             )
         }
@@ -416,7 +417,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         )
         
         assertTrue(
-            output.followUpQueries.isNotEmpty(),
+            output.assessment.allFollowUpQueries().isNotEmpty(),
             "Should suggest follow-up queries to find specific AI feature details"
         )
         

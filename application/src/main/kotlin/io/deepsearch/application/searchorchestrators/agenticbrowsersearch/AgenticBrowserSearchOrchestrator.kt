@@ -861,11 +861,13 @@ class AgenticBrowserSearchOrchestrator(
         val citedSourceUrls: List<String>,
         val assessment: AnswerAssessment,
         val status: AnswerStatus,
-        val followUpQueries: List<String>,
         val imageIds: List<String>
     ) {
         /** Whether the answer is complete (status=COMPLETE from synthesis agent) */
         val isComplete: Boolean get() = status == AnswerStatus.COMPLETE
+        
+        /** Follow-up queries derived from assessment dimensions */
+        val followUpQueries: List<String> get() = assessment.allFollowUpQueries()
         
         /** Returns a brief summary of unsatisfied dimensions for logging */
         fun getUnsatisfiedSummary(): String {
@@ -919,7 +921,6 @@ class AgenticBrowserSearchOrchestrator(
         val answerBuilder = StringBuilder()
         lateinit var status: AnswerStatus
         lateinit var assessment: AnswerAssessment
-        var followUpQueries = emptyList<String>()
         var citedSourceUrls = emptyList<String>()
         var imageIds = emptyList<String>()
 
@@ -941,7 +942,6 @@ class AgenticBrowserSearchOrchestrator(
                     assessment = item.assessment
                     citedSourceUrls = item.citedSourceUrls
                     status = item.status
-                    followUpQueries = item.followUpQueries
                     imageIds = item.imageIds
                 }
             }
@@ -950,10 +950,9 @@ class AgenticBrowserSearchOrchestrator(
         return SynthesisResult(
             answer = answerBuilder.toString(),
             citedSourceUrls = citedSourceUrls,
+            assessment = assessment,
             status = status,
-            followUpQueries = followUpQueries,
-            imageIds = imageIds,
-            assessment = assessment
+            imageIds = imageIds
         )
     }
 

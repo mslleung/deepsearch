@@ -274,7 +274,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 citedSourceUrls = emptyList(),
                 assessment = emptyAssessment,
                 status = AnswerStatus.NEED_MORE_INFORMATION,
-                followUpQueries = listOf(input.query), // Retry the original query
                 tokenUsage = tokenUsage
             )
         }
@@ -344,7 +343,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             citedSourceUrls = response.citedSourceUrls,
             assessment = answerAssessment,
             status = response.status,
-            followUpQueries = followUpQueries,
             imageIds = originalImageIds,
             tokenUsage = tokenUsage
         )
@@ -378,8 +376,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 tokenUsage = TokenUsageMetrics.empty(modelId),
                 assessment = emptyAssessment,
                 citedSourceUrls = emptyList(),
-                status = AnswerStatus.NEED_MORE_INFORMATION,
-                followUpQueries = listOf(input.query)
+                status = AnswerStatus.NEED_MORE_INFORMATION
             ))
             return@flow
         }
@@ -468,7 +465,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             assessment = assessment,
             citedSourceUrls = citedSourceUrls,
             status = status,
-            followUpQueries = followUpQueries,
             imageIds = originalImageIds
         ))
     }

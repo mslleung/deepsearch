@@ -80,11 +80,12 @@ data class AnswerAssessment(
  * Output from streaming answer synthesis agent.
  * Contains the generated comprehensive answer, 4-dimension assessment, and status.
  * 
+ * Follow-up queries are available via `assessment.allFollowUpQueries()`.
+ * 
  * @property answer The synthesized answer text
  * @property citedSourceUrls URLs of sources that were actually cited in the answer
  * @property assessment 4-dimension quality assessment of the answer
  * @property status COMPLETE if all 4 dimensions are satisfied, NEED_MORE_INFORMATION otherwise
- * @property followUpQueries Aggregated follow-up queries from unsatisfied dimensions
  * @property imageIds List of image IDs referenced in the answer
  * @property tokenUsage Token usage metrics for this synthesis call
  */
@@ -93,7 +94,6 @@ data class StreamingAnswerSynthesisOutput(
     val citedSourceUrls: List<String> = emptyList(),
     val assessment: AnswerAssessment,
     val status: AnswerStatus,
-    val followUpQueries: List<String> = emptyList(),
     val imageIds: List<String> = emptyList(),
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
@@ -110,11 +110,12 @@ sealed class StreamingAnswerStreamItem {
     /**
      * Emitted after all chunks, contains status, token usage, and feedback loop data.
      * 
+     * Follow-up queries are available via `assessment.allFollowUpQueries()`.
+     * 
      * @property tokenUsage Token usage metrics for this synthesis call
      * @property assessment 4-dimension quality assessment of the answer
      * @property citedSourceUrls URLs of sources that were actually cited in the answer
      * @property status COMPLETE if all 4 dimensions are satisfied, NEED_MORE_INFORMATION otherwise
-     * @property followUpQueries Aggregated follow-up queries from unsatisfied dimensions
      * @property imageIds List of image IDs referenced in the answer
      */
     data class Complete(
@@ -122,7 +123,6 @@ sealed class StreamingAnswerStreamItem {
         val assessment: AnswerAssessment,
         val citedSourceUrls: List<String> = emptyList(),
         val status: AnswerStatus,
-        val followUpQueries: List<String> = emptyList(),
         val imageIds: List<String> = emptyList()
     ) : StreamingAnswerStreamItem()
 }
