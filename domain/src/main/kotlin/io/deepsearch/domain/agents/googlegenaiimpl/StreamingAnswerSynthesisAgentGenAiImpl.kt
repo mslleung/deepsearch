@@ -561,7 +561,13 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     appendLine("URL: ${source.url}")
                     appendLine("Intention: ${source.intention}")
                     appendLine("Content Date: ${source.contentDate ?: "Not found"}")
-                    
+
+                    appendLine()
+                    appendLine("### Facts")
+                    source.relevantFacts.forEach { fact ->
+                        appendLine("- ${fact.fact}")
+                    }
+
                     // Show available images for this source with descriptions from input
                     val sourceImages = source.relevantImageIds.mapNotNull { imageId ->
                         val numberedId = imageIdToNumbered[imageId]
@@ -576,12 +582,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                         sourceImages.forEach { (numberedId, description) ->
                             appendLine("- Image $numberedId: $description")
                         }
-                    }
-                    
-                    appendLine()
-                    appendLine("### Facts")
-                    source.relevantFacts.forEach { fact ->
-                        appendLine("- ${fact.fact}")
                     }
                     appendLine()
                     appendLine("---")

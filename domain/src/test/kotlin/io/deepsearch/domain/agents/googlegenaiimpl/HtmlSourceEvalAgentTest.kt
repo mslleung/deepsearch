@@ -78,7 +78,7 @@ class HtmlSourceEvalAgentTest : KoinTest {
         assertNotNull(output.evaluatedSource, "Should have evaluated source for relevant content")
         
         // Find facts about the CEO
-        val ceoFacts = output.evaluatedSource!!.relevantFacts
+        val ceoFacts = output.evaluatedSource.relevantFacts
             .filter { it.fact.contains("Henson", ignoreCase = true) || it.fact.contains("CEO", ignoreCase = true) }
         
         assertTrue(ceoFacts.isNotEmpty(), "Should find facts about the CEO (prose facts are not filtered)")
@@ -177,7 +177,7 @@ class HtmlSourceEvalAgentTest : KoinTest {
         assertNotNull(output)
         assertNotNull(output.evaluatedSource, "Should have evaluated source for relevant content")
         
-        val evaluatedSource = output.evaluatedSource!!
+        val evaluatedSource = output.evaluatedSource
         
         // Find facts about the feature
         val featureFacts = evaluatedSource.relevantFacts
