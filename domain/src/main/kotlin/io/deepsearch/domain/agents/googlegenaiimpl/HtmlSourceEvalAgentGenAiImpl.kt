@@ -61,7 +61,7 @@ class HtmlSourceEvalAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Evaluated source with intention, relevance assessment, and extracted facts")
+        .description("Evaluated source with intention and extracted facts")
         .properties(
             mapOf(
                 "intention" to Schema.builder().type("STRING")
@@ -71,9 +71,6 @@ class HtmlSourceEvalAgentGenAiImpl(
                     .description("Date extracted from content (null/empty if no date found)")
                     .nullable(true)
                     .build(),
-                "relevanceAssessment" to Schema.builder().type("STRING")
-                    .description("Describes how the page relates to the query and whether it contains useful information (e.g., 'Directly answers the pricing question with current tier information', 'Mentions the topic briefly but focuses on unrelated features', 'Not relevant - page is about a different product entirely')")
-                    .build(),
                 "relevantFacts" to Schema.builder()
                     .type("ARRAY")
                     .items(relevantFactSchema)
@@ -81,11 +78,11 @@ class HtmlSourceEvalAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("intention", "relevanceAssessment", "relevantFacts"))
+        .required(listOf("intention", "relevantFacts"))
         .build()
 
     private val systemInstruction = """
-        You are a source evaluation and fact extraction agent. Your job is to understand the purpose of a webpage, assess its relevance to a query, and extract relevant facts from HTML preview content.
+        You are a source evaluation and fact extraction agent. Your job is to understand the purpose of a webpage and extract relevant facts from HTML preview content.
         
         Input: 
         - Current date
@@ -110,18 +107,7 @@ class HtmlSourceEvalAgentGenAiImpl(
            - Look for dates in headers, metadata, or content
            - If no date is found, leave it null/empty
         
-        3. **Relevance Assessment** (relevanceAssessment):
-           Describe how the page relates to the query:
-           - Does it directly answer the query?
-           - Does it partially address the query?
-           - Is it not relevant to the query?
-           Be specific about what information is or isn't present.
-           Examples:
-           - "Directly answers the pricing question with comprehensive tier breakdown"
-           - "Mentions pricing briefly in passing but focuses on feature comparison"
-           - "Not relevant - this page discusses a different product entirely"
-        
-        4. **Extract Relevant Facts** (relevantFacts):
+        3. **Extract Relevant Facts** (relevantFacts):
            - Extract facts that are directly relevant to answering the query
            - Each fact should be a complete, standalone statement
            - Only include facts that help answer the query
@@ -132,7 +118,6 @@ class HtmlSourceEvalAgentGenAiImpl(
         {
           "intention": "Official pricing page showing current subscription tiers",
           "contentDate": "2024-07-25",
-          "relevanceAssessment": "Directly answers the pricing question with detailed tier information",
           "relevantFacts": [
             {"fact": "The Pro plan costs ${'$'}99/month", "isInTable": true},
             {"fact": "Enterprise pricing requires contacting sales", "isInTable": false}
@@ -150,7 +135,6 @@ class HtmlSourceEvalAgentGenAiImpl(
     private data class EvalResponse(
         val intention: String,
         val contentDate: String? = null,
-        val relevanceAssessment: String,
         val relevantFacts: List<LlmRelevantFact> = emptyList()
     )
 
@@ -235,7 +219,6 @@ class HtmlSourceEvalAgentGenAiImpl(
             relevantFacts = filteredFacts,
             contentDate = response.contentDate,
             intention = response.intention,
-            relevanceAssessment = response.relevanceAssessment,
             relevantImageIds = emptyList() // Preview path doesn't handle images
         )
 

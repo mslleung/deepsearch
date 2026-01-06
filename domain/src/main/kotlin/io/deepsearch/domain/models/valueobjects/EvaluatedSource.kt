@@ -14,7 +14,6 @@ import kotlinx.serialization.Serializable
  * @property relevantFacts List of facts extracted from the source that are relevant to the query
  * @property contentDate Date extracted from content (nullable if no date found)
  * @property intention Describes the purpose of the webpage (e.g., "Official pricing page showing subscription tiers")
- * @property relevanceAssessment Describes how the page relates to the query (e.g., "Directly answers the pricing question with current tier information")
  * @property relevantImageIds List of image IDs (format: "img-xxx") deemed relevant for this source
  */
 @Serializable
@@ -25,6 +24,5 @@ data class EvaluatedSource(
     val relevantFacts: List<RelevantFact>,
     val contentDate: String?,
     val intention: String,
-    val relevanceAssessment: String,
     val relevantImageIds: List<String> = emptyList()
 )

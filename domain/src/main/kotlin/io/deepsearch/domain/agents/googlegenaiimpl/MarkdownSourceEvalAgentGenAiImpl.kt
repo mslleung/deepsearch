@@ -57,7 +57,7 @@ class MarkdownSourceEvalAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Evaluated source with intention, relevance assessment, extracted facts, and relevant images")
+        .description("Evaluated source with intention, extracted facts, and relevant images")
         .properties(
             mapOf(
                 "intention" to Schema.builder().type("STRING")
@@ -66,9 +66,6 @@ class MarkdownSourceEvalAgentGenAiImpl(
                 "contentDate" to Schema.builder().type("STRING")
                     .description("Date extracted from content (null/empty if no date found)")
                     .nullable(true)
-                    .build(),
-                "relevanceAssessment" to Schema.builder().type("STRING")
-                    .description("Describes how the page relates to the query and whether it contains useful information (e.g., 'Directly answers the pricing question with current tier information', 'Mentions the topic briefly but focuses on unrelated features', 'Not relevant - page is about a different product')")
                     .build(),
                 "relevantFacts" to Schema.builder()
                     .type("ARRAY")
@@ -82,11 +79,11 @@ class MarkdownSourceEvalAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("intention", "relevanceAssessment", "relevantFacts", "relevantImageIds"))
+        .required(listOf("intention", "relevantFacts", "relevantImageIds"))
         .build()
 
     private val systemInstruction = """
-        You are a source evaluation and fact extraction agent. Your job is to understand the purpose of a webpage, assess its relevance to a query, and extract relevant facts from markdown content.
+        You are a source evaluation and fact extraction agent. Your job is to understand the purpose of a webpage and extract relevant facts from markdown content.
         
         Input: 
         - Current date
@@ -111,24 +108,13 @@ class MarkdownSourceEvalAgentGenAiImpl(
            - Look for dates in headers, metadata, or content
            - If no date is found, leave it null/empty
         
-        3. **Relevance Assessment** (relevanceAssessment):
-           Describe how the page relates to the query:
-           - Does it directly answer the query?
-           - Does it partially address the query?
-           - Is it not relevant to the query?
-           Be specific about what information is or isn't present.
-           Examples:
-           - "Directly answers the pricing question with comprehensive tier breakdown"
-           - "Mentions pricing briefly in passing but focuses on feature comparison"
-           - "Not relevant - this page discusses a different product entirely"
-        
-        4. **Extract Relevant Facts** (relevantFacts):
+        3. **Extract Relevant Facts** (relevantFacts):
            - Extract all facts that are directly relevant to answering the query
            - Each fact should be a complete, standalone statement
            - Only include facts that help answer the query
            - If the page is not relevant, return an empty array
         
-        5. **Select Relevant Images** (relevantImageIds):
+        4. **Select Relevant Images** (relevantImageIds):
            - Sources may contain images in format: `<image id="N">description</image>` or `<image id="N" placeholder>alt text</image>`
            - Identify images that would genuinely help answer the query (e.g., product screenshots, pricing tables, feature diagrams, charts)
            - Return an array of image IDs (the number only, e.g., ["1", "3"]) for images that add value
@@ -139,7 +125,6 @@ class MarkdownSourceEvalAgentGenAiImpl(
         {
           "intention": "Official pricing page showing current subscription tiers",
           "contentDate": "2024-07-25",
-          "relevanceAssessment": "Directly answers the pricing question with detailed tier information",
           "relevantFacts": [
             {"fact": "The Pro plan costs ${'$'}99/month"},
             {"fact": "Enterprise pricing requires contacting sales"}
@@ -157,7 +142,6 @@ class MarkdownSourceEvalAgentGenAiImpl(
     private data class EvalResponse(
         val intention: String,
         val contentDate: String? = null,
-        val relevanceAssessment: String,
         val relevantFacts: List<LlmRelevantFact> = emptyList(),
         val relevantImageIds: List<String> = emptyList()
     )
@@ -250,7 +234,6 @@ class MarkdownSourceEvalAgentGenAiImpl(
             relevantFacts = relevantFacts,
             contentDate = response.contentDate,
             intention = response.intention,
-            relevanceAssessment = response.relevanceAssessment,
             relevantImageIds = relevantImageIds
         )
 

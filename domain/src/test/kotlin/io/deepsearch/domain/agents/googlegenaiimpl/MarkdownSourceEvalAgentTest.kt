@@ -243,9 +243,8 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertTrue(evaluatedSource.title == source.title, "Title should be preserved")
         assertTrue(evaluatedSource.description == source.description, "Description should be preserved")
         
-        // Verify intention and relevance assessment are set
+        // Verify intention is set
         assertTrue(evaluatedSource.intention.isNotBlank(), "Should have intention describing the page purpose")
-        assertTrue(evaluatedSource.relevanceAssessment.isNotBlank(), "Should have relevance assessment")
     }
 
 }

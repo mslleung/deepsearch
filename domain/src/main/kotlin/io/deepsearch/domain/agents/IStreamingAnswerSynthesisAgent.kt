@@ -5,6 +5,7 @@ import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
 
 /**
  * Input for streaming answer synthesis agent.
@@ -25,23 +26,72 @@ data class StreamingAnswerSynthesisInput(
 ) : IAgent.IAgentInput
 
 /**
+ * Assessment result for a single dimension of answer quality.
+ * Uses semantic satisfied/not-satisfied decision rather than numeric scores.
+ * 
+ * @property satisfied Whether this dimension is adequately addressed
+ * @property rationale Brief explanation for the decision
+ * @property followUpQueries Targeted queries to improve this dimension (empty if satisfied)
+ */
+@Serializable
+data class DimensionAssessment(
+    val satisfied: Boolean,
+    val rationale: String,
+    val followUpQueries: List<String> = emptyList()
+)
+
+/**
+ * 4-dimension quality assessment of the generated answer.
+ * All dimensions must be satisfied for the answer to be considered complete.
+ * 
+ * @property answerCompleteness Whether all parts of the query are addressed
+ * @property answerDepth Whether the answer contains specific data vs generic statements
+ * @property queryIntentionFulfillment Whether the user would need to search more
+ * @property sourceConfidence Whether sources are authoritative and recent
+ */
+@Serializable
+data class AnswerAssessment(
+    val answerCompleteness: DimensionAssessment,
+    val answerDepth: DimensionAssessment,
+    val queryIntentionFulfillment: DimensionAssessment,
+    val sourceConfidence: DimensionAssessment
+) {
+    /**
+     * Returns true only if ALL 4 dimensions are satisfied.
+     */
+    fun isComplete(): Boolean =
+        answerCompleteness.satisfied &&
+        answerDepth.satisfied &&
+        queryIntentionFulfillment.satisfied &&
+        sourceConfidence.satisfied
+
+    /**
+     * Collects all follow-up queries from unsatisfied dimensions.
+     */
+    fun allFollowUpQueries(): List<String> = listOf(
+        answerCompleteness.followUpQueries,
+        answerDepth.followUpQueries,
+        queryIntentionFulfillment.followUpQueries,
+        sourceConfidence.followUpQueries
+    ).flatten()
+}
+
+/**
  * Output from streaming answer synthesis agent.
- * Contains the generated comprehensive answer, status, and optional follow-up queries for the feedback loop.
+ * Contains the generated comprehensive answer, 4-dimension assessment, and status.
  * 
- * LLM output order: reasoning -> answer -> citedSourceUrls -> status -> followUpQueries -> imageIds
- * 
- * @property reasoning Explanation of how the answer was derived and why status was chosen
  * @property answer The synthesized answer text
  * @property citedSourceUrls URLs of sources that were actually cited in the answer
- * @property status COMPLETE if the answer is sufficient, NEED_MORE_INFORMATION if more searching is needed
- * @property followUpQueries Targeted search queries to find missing information (required when status=NEED_MORE_INFORMATION)
+ * @property assessment 4-dimension quality assessment of the answer
+ * @property status COMPLETE if all 4 dimensions are satisfied, NEED_MORE_INFORMATION otherwise
+ * @property followUpQueries Aggregated follow-up queries from unsatisfied dimensions
  * @property imageIds List of image IDs referenced in the answer
  * @property tokenUsage Token usage metrics for this synthesis call
  */
 data class StreamingAnswerSynthesisOutput(
-    val reasoning: String,
     val answer: String,
     val citedSourceUrls: List<String> = emptyList(),
+    val assessment: AnswerAssessment,
     val status: AnswerStatus,
     val followUpQueries: List<String> = emptyList(),
     val imageIds: List<String> = emptyList(),
@@ -61,15 +111,15 @@ sealed class StreamingAnswerStreamItem {
      * Emitted after all chunks, contains status, token usage, and feedback loop data.
      * 
      * @property tokenUsage Token usage metrics for this synthesis call
-     * @property reasoning Explanation of how the answer was derived and why status was chosen
+     * @property assessment 4-dimension quality assessment of the answer
      * @property citedSourceUrls URLs of sources that were actually cited in the answer
-     * @property status COMPLETE if the answer is sufficient, NEED_MORE_INFORMATION if more searching is needed
-     * @property followUpQueries Targeted search queries to find missing information (when status=NEED_MORE_INFORMATION)
+     * @property status COMPLETE if all 4 dimensions are satisfied, NEED_MORE_INFORMATION otherwise
+     * @property followUpQueries Aggregated follow-up queries from unsatisfied dimensions
      * @property imageIds List of image IDs referenced in the answer
      */
     data class Complete(
         val tokenUsage: TokenUsageMetrics,
-        val reasoning: String,
+        val assessment: AnswerAssessment,
         val citedSourceUrls: List<String> = emptyList(),
         val status: AnswerStatus,
         val followUpQueries: List<String> = emptyList(),

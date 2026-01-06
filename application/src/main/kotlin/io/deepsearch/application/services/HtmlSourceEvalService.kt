@@ -58,8 +58,7 @@ class HtmlSourceEvalService(
         val description: String?,
         val relevantFacts: List<String>,
         val contentDate: String?,
-        val intention: String,
-        val relevanceAssessment: String
+        val intention: String
     )
 
     override suspend fun evaluate(input: HtmlSourceEvalInput, sessionId: SessionId): HtmlSourceEvalOutput {
@@ -139,8 +138,7 @@ class HtmlSourceEvalService(
                     description = source.description,
                     relevantFacts = source.relevantFacts.map { it.fact },
                     contentDate = source.contentDate,
-                    intention = source.intention,
-                    relevanceAssessment = source.relevanceAssessment
+                    intention = source.intention
                 )
                 json.encodeToString(cached)
             }
@@ -185,7 +183,6 @@ class HtmlSourceEvalService(
                     relevantFacts = cachedSource.relevantFacts.map { RelevantFact(fact = it) },
                     contentDate = cachedSource.contentDate,
                     intention = cachedSource.intention,
-                    relevanceAssessment = cachedSource.relevanceAssessment,
                     relevantImageIds = emptyList()
                 )
             } catch (e: Exception) {

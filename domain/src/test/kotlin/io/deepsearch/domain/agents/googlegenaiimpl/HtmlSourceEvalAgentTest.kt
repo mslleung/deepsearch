@@ -190,10 +190,6 @@ class HtmlSourceEvalAgentTest : KoinTest {
             evaluatedSource.intention.isNotBlank(),
             "Should have intention describing the page purpose"
         )
-        assertTrue(
-            evaluatedSource.relevanceAssessment.isNotBlank(),
-            "Should have relevance assessment"
-        )
     }
 
     /**

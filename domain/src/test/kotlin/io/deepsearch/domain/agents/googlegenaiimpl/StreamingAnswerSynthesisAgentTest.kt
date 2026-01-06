@@ -14,6 +14,7 @@ import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -38,7 +39,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         assertNotNull(output)
         assertEquals("No information found to answer the query.", output.answer)
             assertEquals(AnswerStatus.NEED_MORE_INFORMATION, output.status, "Should request more information when empty")
-        assertTrue(output.reasoning.isNotBlank(), "Should have reasoning explaining why no answer")
+        assertFalse(output.assessment.isComplete(), "All 4 dimensions should be unsatisfied when no sources available")
         assertNotNull(output.tokenUsage)
     }
 
@@ -60,8 +61,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Official documentation page providing a comprehensive introduction to machine learning concepts",
-            relevanceAssessment = "Directly answers the query with foundational ML concepts and terminology"
+            intention = "Official documentation page providing a comprehensive introduction to machine learning concepts"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -89,8 +89,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Official documentation page defining machine learning",
-            relevanceAssessment = "Provides a clear and authoritative definition of machine learning"
+            intention = "Official documentation page defining machine learning"
         )
 
         val source2 = EvaluatedSource(
@@ -109,8 +108,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Official documentation page explaining the types of machine learning",
-            relevanceAssessment = "Comprehensive overview of the three main types of machine learning"
+            intention = "Official documentation page explaining the types of machine learning"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -141,8 +139,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Official documentation page on deep learning from the main product site",
-            relevanceAssessment = "Canonical source that directly explains deep learning concepts"
+            intention = "Official documentation page on deep learning from the main product site"
         )
 
         val lowRelevanceSource = EvaluatedSource(
@@ -155,8 +152,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Personal blog post about someone's journey learning machine learning",
-            relevanceAssessment = "Anecdotal content that doesn't provide authoritative information"
+            intention = "Personal blog post about someone's journey learning machine learning"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -186,8 +182,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Recipe page from a cooking forum discussing baking techniques",
-            relevanceAssessment = "Not relevant - this page is about cooking recipes, not quantum computing"
+            intention = "Recipe page from a cooking forum discussing baking techniques"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -227,8 +222,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Official comprehensive documentation page covering all aspects of machine learning",
-            relevanceAssessment = "Canonical source that comprehensively answers the query about machine learning"
+            intention = "Official comprehensive documentation page covering all aspects of machine learning"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -257,8 +251,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Third-party review article providing a basic overview of machine learning",
-            relevanceAssessment = "Partially relevant - provides basic information but lacks depth"
+            intention = "Third-party review article providing a basic overview of machine learning"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -297,8 +290,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Official pricing page showing available subscription tiers",
-            relevanceAssessment = "Partially addresses the query but lacks specific pricing amounts"
+            intention = "Official pricing page showing available subscription tiers"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -353,8 +345,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Official pricing page with complete pricing information for all tiers",
-            relevanceAssessment = "Comprehensive pricing information that fully answers the query"
+            intention = "Official pricing page with complete pricing information for all tiers"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -405,8 +396,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
                 )
             ),
             contentDate = null,
-            intention = "Marketing page providing general feature overview",
-            relevanceAssessment = "High-level feature description"
+            intention = "Marketing page providing general feature overview"
         )
 
         val input = StreamingAnswerSynthesisInput(
@@ -430,10 +420,10 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             "Should suggest follow-up queries to find specific AI feature details"
         )
         
-        // The reasoning should show self-critical thinking
-        assertTrue(
-            output.reasoning.isNotBlank(),
-            "Should have reasoning explaining the self-review"
+        // The assessment should show which dimensions are unsatisfied
+        assertFalse(
+            output.assessment.isComplete(),
+            "Should have at least one unsatisfied dimension from self-review"
         )
         
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
@@ -456,7 +446,6 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             contentDate = null,
             intention = "Official product page with screenshots demonstrating key features",
-            relevanceAssessment = "Directly shows the product interface with relevant screenshots",
             relevantImageIds = listOf("img-abc123", "img-def456")
         )
 
@@ -471,7 +460,6 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             contentDate = null,
             intention = "Official pricing page with comparison chart",
-            relevanceAssessment = "Shows pricing tiers with visual comparison",
             relevantImageIds = listOf("img-xyz789")
         )
 
@@ -523,7 +511,6 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
             ),
             contentDate = null,
             intention = "Technical documentation explaining ML concepts",
-            relevanceAssessment = "Provides textual explanation without visual aids",
             relevantImageIds = emptyList()  // No images
         )
 

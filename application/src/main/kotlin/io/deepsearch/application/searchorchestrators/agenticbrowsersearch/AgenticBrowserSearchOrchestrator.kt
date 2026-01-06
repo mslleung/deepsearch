@@ -74,6 +74,7 @@ import kotlinx.coroutines.ensureActive
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.FeedbackLoopReport
+import io.deepsearch.domain.agents.AnswerAssessment
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
@@ -856,15 +857,25 @@ class AgenticBrowserSearchOrchestrator(
      * Result from answer synthesis, containing all relevant data from the streaming response.
      */
     private data class SynthesisResult(
-        val reasoning: String,
         val answer: String,
         val citedSourceUrls: List<String>,
+        val assessment: AnswerAssessment,
         val status: AnswerStatus,
         val followUpQueries: List<String>,
         val imageIds: List<String>
     ) {
         /** Whether the answer is complete (status=COMPLETE from synthesis agent) */
         val isComplete: Boolean get() = status == AnswerStatus.COMPLETE
+        
+        /** Returns a brief summary of unsatisfied dimensions for logging */
+        fun getUnsatisfiedSummary(): String {
+            val unsatisfied = mutableListOf<String>()
+            if (!assessment.answerCompleteness.satisfied) unsatisfied.add("completeness")
+            if (!assessment.answerDepth.satisfied) unsatisfied.add("depth")
+            if (!assessment.queryIntentionFulfillment.satisfied) unsatisfied.add("intention")
+            if (!assessment.sourceConfidence.satisfied) unsatisfied.add("confidence")
+            return if (unsatisfied.isEmpty()) "all satisfied" else unsatisfied.joinToString(", ")
+        }
     }
 
     /**
@@ -907,7 +918,7 @@ class AgenticBrowserSearchOrchestrator(
     ): SynthesisResult {
         val answerBuilder = StringBuilder()
         lateinit var status: AnswerStatus
-        var reasoning = ""
+        lateinit var assessment: AnswerAssessment
         var followUpQueries = emptyList<String>()
         var citedSourceUrls = emptyList<String>()
         var imageIds = emptyList<String>()
@@ -927,7 +938,7 @@ class AgenticBrowserSearchOrchestrator(
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )
-                    reasoning = item.reasoning
+                    assessment = item.assessment
                     citedSourceUrls = item.citedSourceUrls
                     status = item.status
                     followUpQueries = item.followUpQueries
@@ -937,12 +948,12 @@ class AgenticBrowserSearchOrchestrator(
         }
 
         return SynthesisResult(
-            reasoning = reasoning,
             answer = answerBuilder.toString(),
             citedSourceUrls = citedSourceUrls,
             status = status,
             followUpQueries = followUpQueries,
-            imageIds = imageIds
+            imageIds = imageIds,
+            assessment = assessment
         )
     }
 
@@ -1007,7 +1018,7 @@ class AgenticBrowserSearchOrchestrator(
                     relevantCount = updatedSources.size,
                     isGoodEnough = synthesis.isComplete,
                     reason = if (synthesis.isComplete) "Answer is complete" 
-                             else "Collecting more sources: ${synthesis.reasoning.take(100)}"
+                             else "Collecting more sources (unsatisfied: ${synthesis.getUnsatisfiedSummary()})"
                 )
             )
         }
@@ -1197,8 +1208,8 @@ class AgenticBrowserSearchOrchestrator(
         )
 
         logger.debug(
-            "[{}] Preview synthesis: status={}, {} chars, reasoning={}",
-            sessionId.value, synthesis.status, synthesis.answer.length, synthesis.reasoning
+            "[{}] Preview synthesis: status={}, {} chars, assessment={}",
+            sessionId.value, synthesis.status, synthesis.answer.length, synthesis.getUnsatisfiedSummary()
         )
 
         // Preview path only accepts COMPLETE status
