@@ -211,8 +211,29 @@ class HtmlPreviewService : IHtmlPreviewService {
         
         // Strip most attributes but keep semantic ones
         // Matches attributes except class, id, role, aria-label
-        private val ATTRIBUTE_STRIP_PATTERN: Pattern = Pattern.compile(
-            """(?<=<[a-zA-Z][a-zA-Z0-9]*)\s+(?!class=|id=|role=|aria-label=)[a-zA-Z_:][a-zA-Z0-9_:.-]*\s*=\s*["'][^"']*["']""",
+        // Uses a simpler approach: match attribute patterns that should be removed
+        private val HREF_ATTR_PATTERN: Pattern = Pattern.compile(
+            """\s+href\s*=\s*["'][^"']*["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        
+        private val SRC_ATTR_PATTERN: Pattern = Pattern.compile(
+            """\s+src\s*=\s*["'][^"']*["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        
+        private val STYLE_ATTR_PATTERN: Pattern = Pattern.compile(
+            """\s+style\s*=\s*["'][^"']*["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        
+        private val ONCLICK_ATTR_PATTERN: Pattern = Pattern.compile(
+            """\s+on[a-z]+\s*=\s*["'][^"']*["']""",
+            Pattern.CASE_INSENSITIVE
+        )
+        
+        private val DATA_ATTR_PATTERN: Pattern = Pattern.compile(
+            """\s+data-[a-z0-9-]+\s*=\s*["'][^"']*["']""",
             Pattern.CASE_INSENSITIVE
         )
         
@@ -352,8 +373,12 @@ class HtmlPreviewService : IHtmlPreviewService {
             result = EMPTY_P_PATTERN.matcher(result).replaceAll("")
         }
         
-        // Phase 9: Strip unnecessary attributes
-        result = ATTRIBUTE_STRIP_PATTERN.matcher(result).replaceAll("")
+        // Phase 9: Strip unnecessary attributes (keep class, id, role, aria-label)
+        result = HREF_ATTR_PATTERN.matcher(result).replaceAll("")
+        result = SRC_ATTR_PATTERN.matcher(result).replaceAll("")
+        result = STYLE_ATTR_PATTERN.matcher(result).replaceAll("")
+        result = ONCLICK_ATTR_PATTERN.matcher(result).replaceAll("")
+        result = DATA_ATTR_PATTERN.matcher(result).replaceAll("")
         
         // Phase 10: Clean up whitespace
         result = MULTIPLE_WHITESPACE_PATTERN.matcher(result).replaceAll(" ")
