@@ -31,61 +31,51 @@ data class StreamingAnswerSynthesisInput(
  * 
  * @property satisfied Whether this dimension is adequately addressed
  * @property rationale Brief explanation for the decision
- * @property followUpQueries Targeted queries to improve this dimension (empty if satisfied)
  */
 @Serializable
 data class DimensionAssessment(
     val satisfied: Boolean,
-    val rationale: String,
-    val followUpQueries: List<String> = emptyList()
+    val rationale: String
 )
 
 /**
- * 4-dimension quality assessment of the generated answer.
+ * 5-dimension assessment of whether the source batch is sufficient for answering.
  * All dimensions must be satisfied for the answer to be considered complete.
  * 
- * @property answerCompleteness Whether all parts of the query are addressed
- * @property answerDepth Whether the answer contains specific data vs generic statements
- * @property queryIntentionFulfillment Whether the user would need to search more
- * @property sourceConfidence Whether sources are authoritative and recent
+ * @property coverage Whether facts address all parts of the query; multiple sources for negative conclusions
+ * @property depth Whether facts contain specific data (numbers, prices, dates) vs vague statements
+ * @property recency Whether sources are recent enough for time-sensitive queries
+ * @property authority Whether sources are official/authoritative vs third-party/user-generated
+ * @property consistency Whether facts from different sources agree vs conflict
  */
 @Serializable
 data class AnswerAssessment(
-    val answerCompleteness: DimensionAssessment,
-    val answerDepth: DimensionAssessment,
-    val queryIntentionFulfillment: DimensionAssessment,
-    val sourceConfidence: DimensionAssessment
+    val coverage: DimensionAssessment,
+    val depth: DimensionAssessment,
+    val recency: DimensionAssessment,
+    val authority: DimensionAssessment,
+    val consistency: DimensionAssessment
 ) {
     /**
-     * Returns true only if ALL 4 dimensions are satisfied.
+     * Returns true only if ALL 5 dimensions are satisfied.
      */
     fun isComplete(): Boolean =
-        answerCompleteness.satisfied &&
-        answerDepth.satisfied &&
-        queryIntentionFulfillment.satisfied &&
-        sourceConfidence.satisfied
-
-    /**
-     * Collects all follow-up queries from unsatisfied dimensions.
-     */
-    fun allFollowUpQueries(): List<String> = listOf(
-        answerCompleteness.followUpQueries,
-        answerDepth.followUpQueries,
-        queryIntentionFulfillment.followUpQueries,
-        sourceConfidence.followUpQueries
-    ).flatten()
+        coverage.satisfied &&
+        depth.satisfied &&
+        recency.satisfied &&
+        authority.satisfied &&
+        consistency.satisfied
 }
 
 /**
  * Output from streaming answer synthesis agent.
- * Contains the generated comprehensive answer, 4-dimension assessment, and status.
- * 
- * Follow-up queries are available via `assessment.allFollowUpQueries()`.
+ * Contains the generated comprehensive answer, 5-dimension batch assessment, and continuation status.
  * 
  * @property answer The synthesized answer text
  * @property citedSourceUrls URLs of sources that were actually cited in the answer
- * @property assessment 4-dimension quality assessment of the answer
- * @property status COMPLETE if all 4 dimensions are satisfied, NEED_MORE_INFORMATION otherwise
+ * @property assessment 5-dimension source batch assessment
+ * @property status FINISH_SEARCH if all 5 dimensions are satisfied, CONTINUE_SEARCH otherwise
+ * @property followUpQueries Suggested queries to gather more information (independent of assessment)
  * @property imageIds List of image IDs referenced in the answer
  * @property tokenUsage Token usage metrics for this synthesis call
  */
@@ -94,6 +84,7 @@ data class StreamingAnswerSynthesisOutput(
     val citedSourceUrls: List<String> = emptyList(),
     val assessment: AnswerAssessment,
     val status: AnswerStatus,
+    val followUpQueries: List<String> = emptyList(),
     val imageIds: List<String> = emptyList(),
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
@@ -108,14 +99,13 @@ sealed class StreamingAnswerStreamItem {
     data class Chunk(val text: String) : StreamingAnswerStreamItem()
 
     /**
-     * Emitted after all chunks, contains status, token usage, and feedback loop data.
-     * 
-     * Follow-up queries are available via `assessment.allFollowUpQueries()`.
+     * Emitted after all chunks, contains continuation status, token usage, and feedback loop data.
      * 
      * @property tokenUsage Token usage metrics for this synthesis call
-     * @property assessment 4-dimension quality assessment of the answer
+     * @property assessment 5-dimension source batch assessment
      * @property citedSourceUrls URLs of sources that were actually cited in the answer
-     * @property status COMPLETE if all 4 dimensions are satisfied, NEED_MORE_INFORMATION otherwise
+     * @property status FINISH_SEARCH if all 5 dimensions are satisfied, CONTINUE_SEARCH otherwise
+     * @property followUpQueries Suggested queries to gather more information (independent of assessment)
      * @property imageIds List of image IDs referenced in the answer
      */
     data class Complete(
@@ -123,6 +113,7 @@ sealed class StreamingAnswerStreamItem {
         val assessment: AnswerAssessment,
         val citedSourceUrls: List<String> = emptyList(),
         val status: AnswerStatus,
+        val followUpQueries: List<String> = emptyList(),
         val imageIds: List<String> = emptyList()
     ) : StreamingAnswerStreamItem()
 }

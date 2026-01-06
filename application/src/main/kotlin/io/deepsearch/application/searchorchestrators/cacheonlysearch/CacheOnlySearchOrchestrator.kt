@@ -243,7 +243,7 @@ class CacheOnlySearchOrchestrator(
                             item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                         )
                         // For cache-only search, we don't use feedback loop - just check status
-                        answerFound = item.status == io.deepsearch.domain.models.valueobjects.AnswerStatus.COMPLETE
+                        answerFound = item.status == io.deepsearch.domain.models.valueobjects.AnswerStatus.FINISH_SEARCH
                         imageIds = item.imageIds
                         citedSourceUrls = item.citedSourceUrls
                     }

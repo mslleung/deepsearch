@@ -253,7 +253,7 @@ class AgenticBrowserSearchOrchestrator(
                     .filterIsInstance<UrlContentResult.FullMarkdown>()
                     .filter { it.markdown.isNotBlank() }
                     .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
-                    .takeWhile { !includeImages || lastPreviewResult?.isAnswerFound != true }
+                    .takeWhile { !includeImages || lastPreviewResult?.status != AnswerStatus.FINISH_SEARCH }
                     .flatMapMerge(concurrency = 100) { markdownSource ->
                         flow {
                             emit(evaluateMarkdownSource(sessionId, searchQuery, markdownSource))
@@ -264,7 +264,7 @@ class AgenticBrowserSearchOrchestrator(
                     .runningFold(AnswerAccumulator(searchedQueries = listOf(searchQuery.query))) { state, evalResult ->
                         aggregateMarkdownResultIntoAnswer(
                             sessionId, searchQuery, state, evalResult, channel,
-                            isPreviewConfident = { !includeImages && lastPreviewResult?.isAnswerFound == true }
+                            isPreviewConfident = { !includeImages && lastPreviewResult?.status == AnswerStatus.FINISH_SEARCH }
                         )
                     }
                     .onEach { answerAccumulator = it }
@@ -290,7 +290,7 @@ class AgenticBrowserSearchOrchestrator(
                         }
                         
                         // Process pending follow-up queries through dedup agent
-                        if (pendingQueries.isNotEmpty() && status == AnswerStatus.NEED_MORE_INFORMATION) {
+                        if (pendingQueries.isNotEmpty() && status == AnswerStatus.CONTINUE_SEARCH) {
                             val dedupResult = followUpQueryDedupAgent.generate(
                                 FollowUpQueryDedupInput(
                                     candidateQueries = pendingQueries,
@@ -334,7 +334,7 @@ class AgenticBrowserSearchOrchestrator(
                     // Handle session completion for either path
                     when (update) {
                         is AccumulatorUpdate.Preview -> {
-                            if (update.result.isAnswerFound && sessionCompleted.compareAndSet(false, true)) {
+                            if (update.result.status == AnswerStatus.FINISH_SEARCH && sessionCompleted.compareAndSet(false, true)) {
                                 logger.info("[{}] Preview path produced confident answer, cancelling source processing", sessionId.value)
                                 // Emit the buffered answer chunk
                                 update.result.fullAnswer?.let { answer ->
@@ -365,7 +365,7 @@ class AgenticBrowserSearchOrchestrator(
                     if (sessionCompleted.compareAndSet(false, true)) {
                         logger.info("[{}] Flow completed, cancelling source processing", sessionId.value)
                         sourceProcessingJob.cancel()
-                        val confidentPreview = if (!includeImages) lastPreviewResult?.takeIf { it.isAnswerFound } else null
+                        val confidentPreview = if (!includeImages) lastPreviewResult?.takeIf { it.status == AnswerStatus.FINISH_SEARCH } else null
                         if (confidentPreview != null) {
                             logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
                             finishWithPreviewAnswer(sessionId, confidentPreview, channel)
@@ -814,7 +814,7 @@ class AgenticBrowserSearchOrchestrator(
         /** Sources count per iteration for loop report */
         val sourcesPerIteration: List<Int> = emptyList(),
         /** Answer status from last synthesis */
-        val status: AnswerStatus = AnswerStatus.NEED_MORE_INFORMATION,
+        val status: AnswerStatus = AnswerStatus.CONTINUE_SEARCH,
         /** Follow-up queries from latest synthesis that need deduplication and processing */
         val pendingFollowUpQueries: List<String> = emptyList()
     )
@@ -826,17 +826,11 @@ class AgenticBrowserSearchOrchestrator(
      */
     private data class PreviewResult(
         val evaluatedSources: List<EvaluatedSource> = emptyList(),
-        val status: AnswerStatus = AnswerStatus.NEED_MORE_INFORMATION,
+        val status: AnswerStatus = AnswerStatus.CONTINUE_SEARCH,
         val fullAnswer: String? = null,
         /** Follow-up queries from synthesis that need deduplication and processing */
         val pendingFollowUpQueries: List<String> = emptyList()
-    ) {
-        /**
-         * Whether a confident answer was found.
-         * Preview path only accepts COMPLETE status for early exit.
-         */
-        val isAnswerFound: Boolean get() = status == AnswerStatus.COMPLETE
-    }
+    )
 
     /**
      * Sealed class to distinguish accumulator updates from different paths.
@@ -861,21 +855,20 @@ class AgenticBrowserSearchOrchestrator(
         val citedSourceUrls: List<String>,
         val assessment: AnswerAssessment,
         val status: AnswerStatus,
+        val followUpQueries: List<String>,
         val imageIds: List<String>
     ) {
-        /** Whether the answer is complete (status=COMPLETE from synthesis agent) */
-        val isComplete: Boolean get() = status == AnswerStatus.COMPLETE
-        
-        /** Follow-up queries derived from assessment dimensions */
-        val followUpQueries: List<String> get() = assessment.allFollowUpQueries()
+        /** Whether the answer is complete (status=FINISH_SEARCH from synthesis agent) */
+        val isComplete: Boolean get() = status == AnswerStatus.FINISH_SEARCH
         
         /** Returns a brief summary of unsatisfied dimensions for logging */
         fun getUnsatisfiedSummary(): String {
             val unsatisfied = mutableListOf<String>()
-            if (!assessment.answerCompleteness.satisfied) unsatisfied.add("completeness")
-            if (!assessment.answerDepth.satisfied) unsatisfied.add("depth")
-            if (!assessment.queryIntentionFulfillment.satisfied) unsatisfied.add("intention")
-            if (!assessment.sourceConfidence.satisfied) unsatisfied.add("confidence")
+            if (!assessment.coverage.satisfied) unsatisfied.add("coverage")
+            if (!assessment.depth.satisfied) unsatisfied.add("depth")
+            if (!assessment.recency.satisfied) unsatisfied.add("recency")
+            if (!assessment.authority.satisfied) unsatisfied.add("authority")
+            if (!assessment.consistency.satisfied) unsatisfied.add("consistency")
             return if (unsatisfied.isEmpty()) "all satisfied" else unsatisfied.joinToString(", ")
         }
     }
@@ -922,6 +915,7 @@ class AgenticBrowserSearchOrchestrator(
         lateinit var status: AnswerStatus
         lateinit var assessment: AnswerAssessment
         var citedSourceUrls = emptyList<String>()
+        var followUpQueries = emptyList<String>()
         var imageIds = emptyList<String>()
 
         streamingAnswerSynthesisAgent.generateStream(
@@ -942,6 +936,7 @@ class AgenticBrowserSearchOrchestrator(
                     assessment = item.assessment
                     citedSourceUrls = item.citedSourceUrls
                     status = item.status
+                    followUpQueries = item.followUpQueries
                     imageIds = item.imageIds
                 }
             }
@@ -952,15 +947,16 @@ class AgenticBrowserSearchOrchestrator(
             citedSourceUrls = citedSourceUrls,
             assessment = assessment,
             status = status,
+            followUpQueries = followUpQueries,
             imageIds = imageIds
         )
     }
 
     /**
      * Aggregate a newly evaluated markdown source and attempt answer synthesis.
-     * Uses status from synthesis agent to determine if the answer is complete:
-     * - COMPLETE = answer is sufficient, stop collecting
-     * - NEED_MORE_INFORMATION = keep collecting sources and trigger follow-up searches
+     * Uses continuation_status from synthesis agent to determine if the answer is complete:
+     * - FINISH_SEARCH = answer is sufficient, stop collecting
+     * - CONTINUE_SEARCH = keep collecting sources and trigger follow-up searches
      * 
      * Follow-up queries are returned in the accumulator for deduplication via flow composition.
      */
@@ -1024,7 +1020,7 @@ class AgenticBrowserSearchOrchestrator(
 
         // Capture follow-up queries in accumulator for deduplication via flow composition
         // The dedup happens after runningFold using flatMapConcat (concurrency=1)
-        val pendingFollowUpQueries = if (synthesis.status == AnswerStatus.NEED_MORE_INFORMATION) {
+        val pendingFollowUpQueries = if (synthesis.status == AnswerStatus.CONTINUE_SEARCH) {
             synthesis.followUpQueries
         } else {
             emptyList()
@@ -1211,8 +1207,8 @@ class AgenticBrowserSearchOrchestrator(
             sessionId.value, synthesis.status, synthesis.answer.length, synthesis.getUnsatisfiedSummary()
         )
 
-        // Preview path only accepts COMPLETE status
-        val isConfident = synthesis.status == AnswerStatus.COMPLETE
+        // Preview path only accepts FINISH_SEARCH status
+        val isConfident = synthesis.status == AnswerStatus.FINISH_SEARCH
         
         // Capture follow-up queries even from preview path - they'll be processed after merge
         val pendingFollowUpQueries = if (!isConfident) synthesis.followUpQueries else emptyList()

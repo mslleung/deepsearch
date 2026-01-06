@@ -30,11 +30,12 @@ import org.slf4j.LoggerFactory
  * Streaming Answer Synthesis agent that generates comprehensive answers from extracted facts.
  * Receives facts (not full markdown content) from the source eval agents and synthesizes them into an answer.
  * 
- * Uses a 4-dimension semantic assessment to determine answer quality:
- * - ANSWER_COMPLETENESS: All parts of the query are addressed
- * - ANSWER_DEPTH: Answer contains specific data vs generic statements
- * - QUERY_INTENTION_FULFILLMENT: User would not need to search more
- * - SOURCE_CONFIDENCE: Sources are authoritative and recent
+ * Uses a 5-dimension batch assessment to determine if sources are sufficient:
+ * - COVERAGE: Facts address all parts of the query; multiple sources for negative conclusions
+ * - DEPTH: Facts contain specific data (numbers, dates, prices) vs vague statements
+ * - RECENCY: Sources are recent enough for time-sensitive queries
+ * - AUTHORITY: Sources are official/authoritative vs third-party/user-generated
+ * - CONSISTENCY: Facts from different sources agree vs conflict
  */
 class StreamingAnswerSynthesisAgentGenAiImpl(
     private val client: com.google.genai.Client,
@@ -48,147 +49,136 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
      */
     private val dimensionAssessmentSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Assessment of a single quality dimension")
+        .description("Assessment of a single source batch dimension")
         .properties(
             mapOf(
                 "satisfied" to Schema.builder()
                     .type("BOOLEAN")
-                    .description("Whether this dimension is adequately addressed")
+                    .description("Whether this dimension is adequately met by the source batch")
                     .build(),
                 "rationale" to Schema.builder()
                     .type("STRING")
                     .description("Brief explanation for the decision")
-                    .build(),
-                "followUpQueries" to Schema.builder()
-                    .type("ARRAY")
-                    .description("Targeted queries to improve this dimension (empty if satisfied)")
-                    .items(Schema.builder().type("STRING").build())
                     .build()
             )
         )
-        .required(listOf("satisfied", "rationale", "followUpQueries"))
+        .required(listOf("satisfied", "rationale"))
         .build()
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Comprehensive answer with 4-dimension quality assessment")
+        .description("Source batch assessment followed by answer synthesis")
         .properties(
             mapOf(
+                "assessment" to Schema.builder()
+                    .type("OBJECT")
+                    .description("5-dimension assessment of whether the source batch is sufficient")
+                    .properties(
+                        mapOf(
+                            "coverage" to dimensionAssessmentSchema,
+                            "depth" to dimensionAssessmentSchema,
+                            "recency" to dimensionAssessmentSchema,
+                            "authority" to dimensionAssessmentSchema,
+                            "consistency" to dimensionAssessmentSchema
+                        )
+                    )
+                    .required(listOf("coverage", "depth", "recency", "authority", "consistency"))
+                    .build(),
+                "continuation_status" to Schema.builder()
+                    .type("STRING")
+                    .description("FINISH_SEARCH if confident answer found. CONTINUE_SEARCH if more information needed.")
+                    .enum_(listOf("FINISH_SEARCH", "CONTINUE_SEARCH"))
+                    .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
-                    .description("Comprehensive answer to the search query based on the extracted facts")
+                    .description("Comprehensive answer based on the extracted facts")
                     .build(),
                 "citedSourceUrls" to Schema.builder()
                     .type("ARRAY")
-                    .description("URLs of sources whose facts were actually used/cited in generating the answer. Only include sources that contributed to the answer content.")
+                    .description("URLs of sources whose facts were used in the answer")
                     .items(Schema.builder().type("STRING").build())
                     .build(),
-                "assessment" to Schema.builder()
-                    .type("OBJECT")
-                    .description("4-dimension quality assessment of the answer")
-                    .properties(
-                        mapOf(
-                            "answerCompleteness" to dimensionAssessmentSchema,
-                            "answerDepth" to dimensionAssessmentSchema,
-                            "queryIntentionFulfillment" to dimensionAssessmentSchema,
-                            "sourceConfidence" to dimensionAssessmentSchema
-                        )
-                    )
-                    .required(listOf("answerCompleteness", "answerDepth", "queryIntentionFulfillment", "sourceConfidence"))
-                    .build(),
-                "status" to Schema.builder()
-                    .type("STRING")
-                    .description("COMPLETE only if ALL 4 dimensions are satisfied. NEED_MORE_INFORMATION if ANY dimension is not satisfied.")
-                    .enum_(listOf("COMPLETE", "NEED_MORE_INFORMATION"))
+                "followUpQueries" to Schema.builder()
+                    .type("ARRAY")
+                    .description("Suggested queries to gather more information and enhance the answer")
+                    .items(Schema.builder().type("STRING").build())
                     .build(),
                 "imageIds" to Schema.builder()
                     .type("ARRAY")
-                    .description("List of image IDs (numbered, e.g., '1', '2', '3') from the sources that should be displayed with the answer. Select from the numbered image IDs listed under 'Relevant Images' for each source.")
+                    .description("Image IDs from sources to display with answer (e.g., '1', '2')")
                     .items(Schema.builder().type("STRING").build())
                     .build()
             )
         )
-        .required(listOf("answer", "citedSourceUrls", "assessment", "status", "imageIds"))
+        .required(listOf("assessment", "continuation_status", "answer", "citedSourceUrls", "followUpQueries", "imageIds"))
         .build()
 
     private val systemInstruction = $$"""
-        You are an answer synthesis agent that generates comprehensive answers from pre-extracted facts.
-        You are part of a feedback loop that continues searching until the answer is complete.
+        You synthesize answers from extracted facts. First assess if the source batch is sufficient, then generate the answer.
 
-        ## Step 1: Synthesize the Answer
-        - Generate a comprehensive answer based on the provided facts
-        - The answer should be standalone and directly address the user query
-        - Only include information present in the provided facts - do not invent
-        - Use markdown styling as applicable (headings, lists, bold, etc.)
-        - The answer should be in the same language as the input query
-        - When facts conflict, prefer information from official sources (check the "Intention" field)
+        ## Step 1: Assess Source Batch (5 Dimensions)
         
-        ## Step 2: Assess Answer Quality (4 Dimensions)
-        
-        After writing the answer, step back and critically evaluate what you wrote.
-        Pretend you are a skeptical user who received this answer.
-        
-        For EACH dimension, determine if it is SATISFIED or NOT_SATISFIED:
+        Evaluate the collected facts. For each dimension, set satisfied=true/false.
 
-        ### ANSWER_COMPLETENESS (answerCompleteness)
-        - **SATISFIED**: All explicit and implicit parts of the query are addressed
-        - **NOT_SATISFIED**: Some parts of the query remain unanswered
-        - If NOT_SATISFIED, provide followUpQueries to fill the gaps
+        ### COVERAGE
+        - Facts address all explicit and implicit parts of the query
+        - Coverage is not satisfied if query has multiple parts but facts only cover some
 
-        ### ANSWER_DEPTH (answerDepth)
-        - **SATISFIED**: Answer contains specific data (numbers, dates, concrete details, prices, versions)
-        - **NOT_SATISFIED**: Answer is generic/vague without specifics (e.g., "pricing available" without actual prices)
-        - If NOT_SATISFIED, provide followUpQueries to get specific data
+        ### DEPTH  
+        - Facts contain specific data: numbers, prices, dates, versions, concrete details
+        - NOT satisfied: facts are vague without specifics, or are tangentially related, or can only serve as a surface level overview
 
-        ### QUERY_INTENTION_FULFILLMENT (queryIntentionFulfillment)
-        - **SATISFIED**: User has actionable information, no follow-up search needed
-        - **NOT_SATISFIED**: User would still need to search more to act on this information
-        - If NOT_SATISFIED, provide followUpQueries for what user would need next
+        ### Temporality
+        - Sources are recent enough for time-sensitive information
+        - Satisfied: content dated within 6 months, or topic is not time-sensitive
+        - If you suspect the sources may be too old, set satisfied=false
+        - Check "Content Date" field of each source if available
 
-        ### SOURCE_CONFIDENCE (sourceConfidence)
-        - **SATISFIED**: Sources are official docs, pricing pages, or recent (<6 months old) official content
-        - **NOT_SATISFIED**: Sources are old blog posts (>6 months), third-party content, or user-generated content
-        - Check the "Content Date" and "Intention" fields of each source
-        - If NOT_SATISFIED, provide followUpQueries to find more authoritative sources
+        ### AUTHORITY
+        - Sources are credible
+        - High credibility: official docs, product pages, pricing pages, Terms of Service etc.
+        - Low credibility: blog posts, third-party sites, or user-generated content
+        - Check "Intention" field of each source, authority requirement depends on the query
+
+        ### CONSISTENCY
+        - Facts from different sources agree
+        - Satisfied: no conflicts, or conflicts resolved by preferring authoritative sources
+        - NOT satisfied: sources contradict each other without clear resolution
         
-        ## Step 3: Status Decision
-        - **COMPLETE**: Use ONLY when ALL 4 dimensions are SATISFIED
-        - **NEED_MORE_INFORMATION**: Use when ANY dimension is NOT_SATISFIED
+        ## Step 2: Determine Search Continuation Status
+        - Decide whether search should continue
+        - Sources are continuously discovered. If you have any doubt, continue the search to allow for more information gathering.
+        - Set continuation_status to CONTINUE_SEARCH or FINISH_SEARCH
+
+        ## Step 3: Generate Answer
         
-        The rule is simple: if any dimension has satisfied=false → status MUST be NEED_MORE_INFORMATION
+        - Synthesize facts into a comprehensive, standalone answer
+        - Use markdown formatting (headings, lists, bold)
+        - Same language as the query
+        - Only include information from provided facts
+        - When facts conflict, note the conflicts and present as much information as possible
+
+        ## Step 4: Generate Follow-up Queries
         
-        ## Citation Source URLs
-        - List the URLs of sources whose facts you actually used in generating the answer
-        - Only include sources that contributed information to the answer
+        - Suggest queries that could enhance or extend the current answer
+        - Focus on related information that would make the answer more complete
+        - These are independent of the assessment - even complete answers can have useful follow-ups
+        - Avoid duplicating previously searched queries if provided
         
-        Expected Output:
+        ## Output Format
         {
-            "answer": "your answer text with markdown formatting",
-            "citedSourceUrls": ["https://..."],
             "assessment": {
-                "answerCompleteness": {
-                    "satisfied": true/false,
-                    "rationale": string,
-                    "followUpQueries": [string]
-                },
-                "answerDepth": {
-                    "satisfied": true/false,
-                    "rationale": string,
-                    "followUpQueries": [string]
-                },
-                "queryIntentionFulfillment": {
-                    "satisfied": true/false,
-                    "rationale": string,
-                    "followUpQueries": [string]
-                },
-                "sourceConfidence": {
-                    "satisfied": true/false,
-                    "rationale": string,
-                    "followUpQueries": [string]
-                }
+                "coverage": { "satisfied": bool, "rationale": str },
+                "depth": { "satisfied": bool, "rationale": str },
+                "recency": { "satisfied": bool, "rationale": str },
+                "authority": { "satisfied": bool, "rationale": str },
+                "consistency": { "satisfied": bool, "rationale": str }
             },
-            "status": "COMPLETE"/"NEED_MORE_INFORMATION",
-            "imageIds": ["1", "5", "7"]
+            "continuation_status": "FINISH_SEARCH" | "CONTINUE_SEARCH",
+            "answer": "markdown answer",
+            "citedSourceUrls": ["urls used"],
+            "followUpQueries": ["queries to enhance answer"],
+            "imageIds": ["1", "2"]
         }
     """.trimIndent()
 
@@ -198,22 +188,21 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     @Serializable
     private data class LlmDimensionAssessment(
         val satisfied: Boolean,
-        val rationale: String,
-        val followUpQueries: List<String> = emptyList()
+        val rationale: String
     ) {
         fun toDomain(): DimensionAssessment = DimensionAssessment(
             satisfied = satisfied,
-            rationale = rationale,
-            followUpQueries = followUpQueries
+            rationale = rationale
         )
     }
 
     @Serializable
     private data class LlmAnswerAssessment(
-        val answerCompleteness: LlmDimensionAssessment,
-        val answerDepth: LlmDimensionAssessment,
-        val queryIntentionFulfillment: LlmDimensionAssessment,
-        val sourceConfidence: LlmDimensionAssessment
+        val coverage: LlmDimensionAssessment,
+        val depth: LlmDimensionAssessment,
+        val recency: LlmDimensionAssessment,
+        val authority: LlmDimensionAssessment,
+        val consistency: LlmDimensionAssessment
     )
 
     @Serializable
@@ -221,28 +210,20 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val answer: String,
         val citedSourceUrls: List<String> = emptyList(),
         val assessment: LlmAnswerAssessment,
-        val status: AnswerStatus,
+        val continuation_status: AnswerStatus,
+        val followUpQueries: List<String> = emptyList(),
         val imageIds: List<String> = emptyList()
     ) {
         /**
          * Converts internal LLM response types to domain types.
          */
         fun toAnswerAssessment(): AnswerAssessment = AnswerAssessment(
-            answerCompleteness = assessment.answerCompleteness.toDomain(),
-            answerDepth = assessment.answerDepth.toDomain(),
-            queryIntentionFulfillment = assessment.queryIntentionFulfillment.toDomain(),
-            sourceConfidence = assessment.sourceConfidence.toDomain()
+            coverage = assessment.coverage.toDomain(),
+            depth = assessment.depth.toDomain(),
+            recency = assessment.recency.toDomain(),
+            authority = assessment.authority.toDomain(),
+            consistency = assessment.consistency.toDomain()
         )
-
-        /**
-         * Collects all follow-up queries from unsatisfied dimensions.
-         */
-        fun allFollowUpQueries(): List<String> = listOf(
-            assessment.answerCompleteness.followUpQueries,
-            assessment.answerDepth.followUpQueries,
-            assessment.queryIntentionFulfillment.followUpQueries,
-            assessment.sourceConfidence.followUpQueries
-        ).flatten()
     }
 
     override suspend fun generate(input: StreamingAnswerSynthesisInput): StreamingAnswerSynthesisOutput {
@@ -260,20 +241,21 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No facts provided, returning default message")
             val emptyAssessment = AnswerAssessment(
-                answerCompleteness = DimensionAssessment(
+                coverage = DimensionAssessment(
                     satisfied = false,
-                    rationale = "No facts available from the provided sources.",
-                    followUpQueries = listOf(input.query)
+                    rationale = "No facts available from the provided sources."
                 ),
-                answerDepth = DimensionAssessment(satisfied = false, rationale = "No data available.", followUpQueries = emptyList()),
-                queryIntentionFulfillment = DimensionAssessment(satisfied = false, rationale = "Query cannot be answered.", followUpQueries = emptyList()),
-                sourceConfidence = DimensionAssessment(satisfied = false, rationale = "No sources available.", followUpQueries = emptyList())
+                depth = DimensionAssessment(satisfied = false, rationale = "No data available."),
+                recency = DimensionAssessment(satisfied = false, rationale = "No sources to evaluate."),
+                authority = DimensionAssessment(satisfied = false, rationale = "No sources available."),
+                consistency = DimensionAssessment(satisfied = false, rationale = "No sources to compare.")
             )
             return StreamingAnswerSynthesisOutput(
                 answer = "No information found to answer the query.",
                 citedSourceUrls = emptyList(),
                 assessment = emptyAssessment,
-                status = AnswerStatus.NEED_MORE_INFORMATION,
+                status = AnswerStatus.CONTINUE_SEARCH,
+                followUpQueries = listOf(input.query),
                 tokenUsage = tokenUsage
             )
         }
@@ -327,22 +309,22 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val originalImageIds = mapSelectedImagesToOriginal(response.imageIds, globalImages)
 
         val answerAssessment = response.toAnswerAssessment()
-        val followUpQueries = response.allFollowUpQueries()
 
         logger.debug(
             "Answer synthesis complete: {} chars, status: {}, {} images, citedSources: {}, followUpQueries: {}",
             response.answer.length,
-            response.status,
+            response.continuation_status,
             originalImageIds.size,
             response.citedSourceUrls.size,
-            followUpQueries.size
+            response.followUpQueries.size
         )
 
         return StreamingAnswerSynthesisOutput(
             answer = response.answer,
             citedSourceUrls = response.citedSourceUrls,
             assessment = answerAssessment,
-            status = response.status,
+            status = response.continuation_status,
+            followUpQueries = response.followUpQueries,
             imageIds = originalImageIds,
             tokenUsage = tokenUsage
         )
@@ -362,21 +344,22 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No facts provided, emitting default message")
             val emptyAssessment = AnswerAssessment(
-                answerCompleteness = DimensionAssessment(
+                coverage = DimensionAssessment(
                     satisfied = false,
-                    rationale = "No facts available from the provided sources.",
-                    followUpQueries = listOf(input.query)
+                    rationale = "No facts available from the provided sources."
                 ),
-                answerDepth = DimensionAssessment(satisfied = false, rationale = "No data available.", followUpQueries = emptyList()),
-                queryIntentionFulfillment = DimensionAssessment(satisfied = false, rationale = "Query cannot be answered.", followUpQueries = emptyList()),
-                sourceConfidence = DimensionAssessment(satisfied = false, rationale = "No sources available.", followUpQueries = emptyList())
+                depth = DimensionAssessment(satisfied = false, rationale = "No data available."),
+                recency = DimensionAssessment(satisfied = false, rationale = "No sources to evaluate."),
+                authority = DimensionAssessment(satisfied = false, rationale = "No sources available."),
+                consistency = DimensionAssessment(satisfied = false, rationale = "No sources to compare.")
             )
             emit(StreamingAnswerStreamItem.Chunk("No information found to answer the query."))
             emit(StreamingAnswerStreamItem.Complete(
                 tokenUsage = TokenUsageMetrics.empty(modelId),
                 assessment = emptyAssessment,
                 citedSourceUrls = emptyList(),
-                status = AnswerStatus.NEED_MORE_INFORMATION
+                status = AnswerStatus.CONTINUE_SEARCH,
+                followUpQueries = listOf(input.query)
             ))
             return@flow
         }
@@ -448,12 +431,12 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             accumulatedJson
         )
 
-        // Extract assessment, status, citedSourceUrls, and imageIds from the complete JSON
+        // Extract assessment, status, citedSourceUrls, followUpQueries, and imageIds from the complete JSON
         val citedSourceUrls = extractCitedSourceUrls(accumulatedJson)
         val status = extractStatus(accumulatedJson)
+        val followUpQueries = extractFollowUpQueries(accumulatedJson)
         val numberedImageIds = extractImageIds(accumulatedJson)
         val assessment = extractAssessment(accumulatedJson)
-        val followUpQueries = assessment.allFollowUpQueries()
         
         // Map LLM-selected numbered image IDs back to original hash-based IDs
         val originalImageIds = mapSelectedImagesToOriginal(numberedImageIds, globalImages)
@@ -465,22 +448,40 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             assessment = assessment,
             citedSourceUrls = citedSourceUrls,
             status = status,
+            followUpQueries = followUpQueries,
             imageIds = originalImageIds
         ))
     }
 
     /**
-     * Extract status enum from accumulated JSON.
-     * Defaults to NEED_MORE_INFORMATION if not found or invalid.
+     * Extract continuation_status enum from accumulated JSON.
+     * Defaults to CONTINUE_SEARCH if not found or invalid.
      */
     private fun extractStatus(json: String): AnswerStatus {
-        val regex = """"status"\s*:\s*"(COMPLETE|NEED_MORE_INFORMATION)"""".toRegex(RegexOption.IGNORE_CASE)
-        val match = regex.find(json) ?: return AnswerStatus.NEED_MORE_INFORMATION
+        val regex = """"continuation_status"\s*:\s*"(FINISH_SEARCH|CONTINUE_SEARCH)"""".toRegex(RegexOption.IGNORE_CASE)
+        val match = regex.find(json) ?: return AnswerStatus.CONTINUE_SEARCH
         return try {
             AnswerStatus.valueOf(match.groupValues[1].uppercase())
         } catch (e: IllegalArgumentException) {
-            AnswerStatus.NEED_MORE_INFORMATION
+            AnswerStatus.CONTINUE_SEARCH
         }
+    }
+
+    /**
+     * Extract followUpQueries array from accumulated JSON.
+     */
+    private fun extractFollowUpQueries(json: String): List<String> {
+        val regex = """"followUpQueries"\s*:\s*\[([^\]]*)\]""".toRegex()
+        val match = regex.find(json) ?: return emptyList()
+        
+        val arrayContent = match.groupValues[1]
+        if (arrayContent.isBlank()) return emptyList()
+        
+        // Extract individual string values from the array
+        val stringRegex = """"([^"]+)"""".toRegex()
+        return stringRegex.findAll(arrayContent)
+            .map { it.groupValues[1] }
+            .toList()
     }
 
     /**
@@ -519,7 +520,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
     /**
      * Extract a single dimension assessment from JSON.
-     * Parses the satisfied boolean, rationale string, and followUpQueries array.
+     * Parses the satisfied boolean and rationale string.
      */
     private fun extractDimensionAssessment(dimensionJson: String): DimensionAssessment {
         // Extract satisfied boolean
@@ -530,30 +531,14 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val rationaleRegex = """"rationale"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
         val rationale = rationaleRegex.find(dimensionJson)?.groupValues?.get(1)?.let { unescapeJsonString(it) } ?: ""
         
-        // Extract followUpQueries array
-        val queriesRegex = """"followUpQueries"\s*:\s*\[([^\]]*)\]""".toRegex()
-        val queriesMatch = queriesRegex.find(dimensionJson)
-        val followUpQueries = if (queriesMatch != null) {
-            val arrayContent = queriesMatch.groupValues[1]
-            if (arrayContent.isBlank()) {
-                emptyList()
-            } else {
-                val stringRegex = """"([^"]+)"""".toRegex()
-                stringRegex.findAll(arrayContent).map { it.groupValues[1] }.toList()
-            }
-        } else {
-            emptyList()
-        }
-        
         return DimensionAssessment(
             satisfied = satisfied,
-            rationale = rationale,
-            followUpQueries = followUpQueries
+            rationale = rationale
         )
     }
 
     /**
-     * Extract the full 4-dimension assessment from accumulated JSON.
+     * Extract the full 5-dimension assessment from accumulated JSON.
      * Falls back to unsatisfied dimensions if parsing fails.
      */
     private fun extractAssessment(json: String): AnswerAssessment {
@@ -579,8 +564,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             val dimRegex = """"$dimensionName"\s*:\s*\{""".toRegex()
             val dimStart = dimRegex.find(assessmentJson)?.range?.last ?: return DimensionAssessment(
                 satisfied = false,
-                rationale = "Failed to parse $dimensionName",
-                followUpQueries = emptyList()
+                rationale = "Failed to parse $dimensionName"
             )
             
             // Find matching closing brace
@@ -599,10 +583,11 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         }
         
         return AnswerAssessment(
-            answerCompleteness = extractDimension("answerCompleteness"),
-            answerDepth = extractDimension("answerDepth"),
-            queryIntentionFulfillment = extractDimension("queryIntentionFulfillment"),
-            sourceConfidence = extractDimension("sourceConfidence")
+            coverage = extractDimension("coverage"),
+            depth = extractDimension("depth"),
+            recency = extractDimension("recency"),
+            authority = extractDimension("authority"),
+            consistency = extractDimension("consistency")
         )
     }
 
@@ -610,10 +595,11 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
      * Creates a default unsatisfied assessment when parsing fails.
      */
     private fun createDefaultAssessment(): AnswerAssessment = AnswerAssessment(
-        answerCompleteness = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment", followUpQueries = emptyList()),
-        answerDepth = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment", followUpQueries = emptyList()),
-        queryIntentionFulfillment = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment", followUpQueries = emptyList()),
-        sourceConfidence = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment", followUpQueries = emptyList())
+        coverage = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
+        depth = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
+        recency = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
+        authority = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
+        consistency = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment")
     )
 
     /**
@@ -699,6 +685,9 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         return buildString {
             // Static content first (for cache optimization)
             appendLine("# Extracted Facts from Sources")
+            // Include current date for temporal context
+            appendLine("# Current Date")
+            appendLine(java.time.LocalDate.now().toString())
             appendLine()
 
             input.evaluatedSources.forEachIndexed { index, source ->
@@ -732,6 +721,15 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     appendLine()
                     appendLine("---")
                     appendLine()
+                }
+            }
+
+            // Include previously searched queries to avoid duplication
+            if (input.previouslySearchedQueries.isNotEmpty()) {
+                appendLine()
+                appendLine("# Previously Searched Queries (avoid suggesting these)")
+                input.previouslySearchedQueries.forEach { query ->
+                    appendLine("- $query")
                 }
             }
 
