@@ -163,7 +163,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Suggest queries that could enhance or extend the current answer
         - Focus on related information that would make the answer more complete
         - These are independent of the assessment - even complete answers can have useful follow-ups
-        - Avoid duplicating previously searched queries if provided
         
         ## Output Format
         {
@@ -684,10 +683,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         
         return buildString {
             // Static content first (for cache optimization)
+            appendLine("# Query")
+            appendLine(input.query)
             appendLine("# Extracted Facts from Sources")
             // Include current date for temporal context
-            appendLine("# Current Date")
-            appendLine(java.time.LocalDate.now().toString())
             appendLine()
 
             input.evaluatedSources.forEachIndexed { index, source ->
@@ -724,19 +723,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 }
             }
 
-            // Include previously searched queries to avoid duplication
-            if (input.previouslySearchedQueries.isNotEmpty()) {
-                appendLine()
-                appendLine("# Previously Searched Queries (avoid suggesting these)")
-                input.previouslySearchedQueries.forEach { query ->
-                    appendLine("- $query")
-                }
-            }
-
             // Dynamic content at the end (query)
             appendLine()
-            appendLine("# Query")
-            appendLine(input.query)
+            appendLine("# Current Date")
+            appendLine(java.time.LocalDate.now().toString())
         }
     }
 
