@@ -120,6 +120,8 @@ val domainModule = module {
         scopedOf(::HtmlSourceEvalAgentGenAiImpl) bind IHtmlSourceEvalAgent::class
         scopedOf(::MarkdownSourceEvalAgentGenAiImpl) bind IMarkdownSourceEvalAgent::class
         scopedOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class
+        scopedOf(::SimpleQueryBreakdownAgentGenAiImpl) bind ISimpleQueryBreakdownAgent::class
+        scopedOf(::FullQueryBreakdownAgentGenAiImpl) bind IFullQueryBreakdownAgent::class
 
         // Request-scoped domain services (user/auth related)
         scopedOf(::ApiKeyCryptoService) bind IApiKeyCryptoService::class

@@ -108,9 +108,10 @@ class HtmlSourceEvalAgentGenAiImpl(
            - If no date is found, leave it null/empty
         
         3. **Extract Relevant Facts** (relevantFacts):
-           - Extract facts that are directly relevant to answering the query
+           - Extract facts that are directly relevant to answering the query and address the requirements
+           - Facts should be very detailed, providing as much information or supporting evidence if possible
+           - All relevant facts must be extracted with no omission
            - Each fact should be a complete, standalone statement
-           - Only include facts that help answer the query
            - If the page is not relevant, return an empty array
            - For each fact, mark `isInTable` as true if from table/grid structure (table data may be inaccurate in previews)
         
@@ -246,7 +247,9 @@ class HtmlSourceEvalAgentGenAiImpl(
     }
 
     private fun buildUserPrompt(input: HtmlSourceEvalInput): String {
-        val queryWithSite = "${input.searchQuery.query} site:${extractDomain(input.searchQuery.url)}"
+        // Use expanded query if available, otherwise fall back to raw query
+        val effectiveQuery = input.effectiveQuery
+        val queryWithSite = "$effectiveQuery site:${extractDomain(input.searchQuery.url)}"
         val source = input.htmlSource
         return buildString {
             // Include current date for temporal context
@@ -257,6 +260,15 @@ class HtmlSourceEvalAgentGenAiImpl(
             appendLine("# Query")
             appendLine(queryWithSite)
             appendLine()
+
+            // Include fulfillment requirements if available
+            if (input.fulfillmentRequirements.isNotEmpty()) {
+                appendLine("# Fulfillment Requirements")
+                input.fulfillmentRequirements.forEachIndexed { index, req ->
+                    appendLine("${index + 1}. $req")
+                }
+                appendLine()
+            }
 
             appendLine("# HTML Source to Evaluate")
             appendLine("URL: ${source.url}")

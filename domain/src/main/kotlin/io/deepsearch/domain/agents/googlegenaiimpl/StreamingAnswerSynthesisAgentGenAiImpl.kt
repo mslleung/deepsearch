@@ -123,9 +123,15 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         ### COVERAGE
         - Facts address all explicit and implicit parts of the query
         - Coverage is not satisfied if query has multiple parts but facts only cover some
+        If "Fulfillment Requirements" are provided, evaluate each requirement:
+        - satisfied=true ONLY if ALL listed requirements have adequate fact coverage
+        - satisfied=false if ANY requirement lacks supporting facts
+        - In the rationale, explicitly list which requirements are covered vs. uncovered
+        - Example: "Requirements 1, 2 covered. Requirement 3 (enterprise pricing) NOT covered."
 
         ### DEPTH  
         - Facts contain specific data: numbers, prices, dates, versions, concrete details
+        - The facts allow the formation of convincing deep answer
         - NOT satisfied: facts are vague without specifics, or are tangentially related, or can only serve as a surface level overview
 
         ### Temporality
@@ -147,8 +153,9 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         
         ## Step 2: Determine Search Continuation Status
         - Decide whether search should continue
-        - Sources are continuously discovered. If you have any doubt, continue the search to allow for more information gathering.
         - Set continuation_status to CONTINUE_SEARCH or FINISH_SEARCH
+        - Sources are continuously discovered. If you have any doubt, continue the search to allow for more information gathering.
+        - If fulfillment requirements are provided and ANY requirement is not satisfied, set CONTINUE_SEARCH
 
         ## Step 3: Generate Answer
         
@@ -684,17 +691,29 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         
         return buildString {
             // Static content first (for cache optimization)
-            appendLine("# Original query")
-            appendLine(input.query)
+            appendLine("# Query")
+            // Use expanded query if available, otherwise use original query
+            appendLine(input.effectiveQuery)
+            appendLine()
+            
+            // Include fulfillment requirements if available (critical for COVERAGE evaluation)
+            if (input.fulfillmentRequirements.isNotEmpty()) {
+                appendLine("# Fulfillment Requirements")
+                input.fulfillmentRequirements.forEachIndexed { index, req ->
+                    appendLine("${index + 1}. $req")
+                }
+                appendLine()
+            }
+            
             // Previously searched queries for follow-up deduplication
             if (input.previouslySearchedQueries.isNotEmpty()) {
-                appendLine()
                 appendLine("# Follow-up queries")
                 input.previouslySearchedQueries.forEach { query ->
                     appendLine("- $query")
                 }
+                appendLine()
             }
-            appendLine()
+            
             appendLine("# Current Date")
             appendLine(java.time.LocalDate.now().toString())
             appendLine()

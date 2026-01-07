@@ -60,6 +60,9 @@ val infrastructureModule = module {
     // HTML source eval cache table
     singleOf(::HtmlSourceEvalCacheTable)
     
+    // Website context cache table (for query processing)
+    singleOf(::WebsiteContextTable)
+    
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
@@ -86,6 +89,9 @@ val infrastructureModule = module {
     
     // HTML source eval cache repository
     singleOf(::ExposedHtmlSourceEvalCacheRepository) bind IHtmlSourceEvalCacheRepository::class
+    
+    // Website context cache repository (for query processing)
+    singleOf(::ExposedWebsiteContextRepository) bind IWebsiteContextRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {

@@ -75,6 +75,9 @@ private val infrastructureCommonTestModule = module {
     
     // HTML source eval cache table
     singleOf(::HtmlSourceEvalCacheTable)
+    
+    // Website context cache table (for query processing)
+    singleOf(::WebsiteContextTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -106,6 +109,9 @@ private val infrastructureCommonTestModule = module {
     
     // HTML source eval cache repository
     singleOf(::ExposedHtmlSourceEvalCacheRepository) bind IHtmlSourceEvalCacheRepository::class
+    
+    // Website context cache repository (for query processing)
+    singleOf(::ExposedWebsiteContextRepository) bind IWebsiteContextRepository::class
 }
 
 val infrastructureTestModule = module {

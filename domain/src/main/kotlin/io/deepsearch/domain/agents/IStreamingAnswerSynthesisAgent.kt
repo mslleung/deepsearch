@@ -17,13 +17,24 @@ import kotlinx.serialization.Serializable
  *           The agent uses these descriptions to help the LLM select relevant images.
  * @property previouslySearchedQueries List of queries that have already been searched.
  *           Used to prevent the agent from suggesting duplicate follow-up queries.
+ * @property expandedQuery Optional context-aware expanded query (preferred over raw query)
+ * @property fulfillmentRequirements Optional list of requirements that must ALL be satisfied
+ *           for the answer to be considered complete. Used for COVERAGE evaluation.
  */
 data class StreamingAnswerSynthesisInput(
     val query: String,
     val evaluatedSources: List<EvaluatedSource>,
     val imageDescriptions: Map<String, String> = emptyMap(),
-    val previouslySearchedQueries: List<String> = emptyList()
-) : IAgent.IAgentInput
+    val previouslySearchedQueries: List<String> = emptyList(),
+    val expandedQuery: String? = null,
+    val fulfillmentRequirements: List<String> = emptyList()
+) : IAgent.IAgentInput {
+    /**
+     * Returns the query to use for synthesis.
+     * Prefers expandedQuery if available, otherwise uses the raw query.
+     */
+    val effectiveQuery: String get() = expandedQuery ?: query
+}
 
 /**
  * Assessment result for a single dimension of answer quality.

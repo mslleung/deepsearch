@@ -85,6 +85,7 @@ val applicationModule = module {
         scopedOf(::AuthService) bind IAuthService::class
         scopedOf(::UserSubscriptionService) bind IUserSubscriptionService::class
         scopedOf(::UsageService) bind IUsageService::class
+        scopedOf(::QueryProcessingService) bind IQueryProcessingService::class
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
         scopedOf(::CacheOnlySearchOrchestrator) bind ICacheOnlySearchOrchestrator::class
         scopedOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class

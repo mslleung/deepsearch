@@ -33,6 +33,7 @@ import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
+import io.deepsearch.domain.models.valueobjects.QueryProcessingResult
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
@@ -70,6 +71,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.FeedbackLoopReport
@@ -107,7 +109,8 @@ class AgenticBrowserSearchOrchestrator(
     private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService,
     private val adaptiveRateLimiter: IAdaptiveRateLimiter,
     private val htmlPreviewService: IHtmlPreviewService,
-    private val kgHybridRetrievalService: io.deepsearch.application.services.IKgHybridRetrievalService
+    private val kgHybridRetrievalService: io.deepsearch.application.services.IKgHybridRetrievalService,
+    private val queryProcessingService: io.deepsearch.application.services.IQueryProcessingService
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -154,6 +157,12 @@ class AgenticBrowserSearchOrchestrator(
 
             val budget = SearchBudget(timeLimitMs = 300 * 1000L, maxLinks = 100)
             logger.debug("[{}] Executing search for query: {}", sessionId.value, searchQuery.query)
+
+            // Query processing flow - runs in parallel with discovery (no latency penalty)
+            // Uses Gemini URL Context tool to extract website context and generate expanded query + requirements
+            // Shared as a hot flow so multiple collectors get the same cached result
+            val queryProcessingFlow = queryProcessingService.processQueryFlow(searchQuery, maxCacheAge, sessionId)
+                .shareIn(this, SharingStarted.Eagerly, replay = 1)
 
             val seenUrls = ConcurrentHashMap.newKeySet<String>()
             
@@ -232,6 +241,19 @@ class AgenticBrowserSearchOrchestrator(
                 logger.info("[{}] includeImages enabled, skipping preview evaluation", sessionId.value)
             }
 
+            // Collect query processing result (runs in parallel with discovery, should be ready by now)
+            val queryProcessingResult = queryProcessingFlow.first()
+            val expandedQuery = queryProcessingResult.expandedQuery
+            val fulfillmentRequirements = queryProcessingResult.fulfillmentRequirements
+            
+            logger.info(
+                "[{}] Query processing complete: '{}' → '{}' with {} requirements",
+                sessionId.value,
+                searchQuery.query,
+                expandedQuery,
+                fulfillmentRequirements.size
+            )
+
             // Unified evaluation flow: both preview and markdown sources are evaluated in parallel
             // and merged into a single stream of TaggedEvaluatedSource
             val unifiedEvalFlow = merge(
@@ -241,7 +263,9 @@ class AgenticBrowserSearchOrchestrator(
                         .filterIsInstance<UrlContentResult.HtmlPreview>()
                         .flatMapMerge(concurrency = 100) { htmlSource ->
                             flow {
-                                val evalResult = evaluateHtmlSource(sessionId, searchQuery, htmlSource)
+                                val evalResult = evaluateHtmlSource(
+                                    sessionId, searchQuery, htmlSource, expandedQuery, fulfillmentRequirements
+                                )
                                 if (evalResult != null) {
                                     emit(TaggedEvaluatedSource(evalResult, isPreview = true))
                                 }
@@ -258,7 +282,9 @@ class AgenticBrowserSearchOrchestrator(
                     .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
                     .flatMapMerge(concurrency = 100) { markdownSource ->
                         flow {
-                            val evalResult = evaluateMarkdownSource(sessionId, searchQuery, markdownSource)
+                            val evalResult = evaluateMarkdownSource(
+                                sessionId, searchQuery, markdownSource, expandedQuery, fulfillmentRequirements
+                            )
                             if (evalResult != null) {
                                 emit(TaggedEvaluatedSource(evalResult.evaluatedSource, isPreview = false))
                             }
@@ -272,7 +298,8 @@ class AgenticBrowserSearchOrchestrator(
                 .takeWhile { !currentAccumulator.isComplete }
                 .runningFold(currentAccumulator) { state, batch ->
                     aggregateBatchIntoAccumulator(
-                        sessionId, searchQuery, state, batch, channel
+                        sessionId, searchQuery, state, batch, channel,
+                        expandedQuery, fulfillmentRequirements
                     )
                 }
                 .onEach { accumulator ->
@@ -840,10 +867,17 @@ class AgenticBrowserSearchOrchestrator(
     private suspend fun evaluateHtmlSource(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        htmlSource: UrlContentResult.HtmlPreview
+        htmlSource: UrlContentResult.HtmlPreview,
+        expandedQuery: String? = null,
+        fulfillmentRequirements: List<String> = emptyList()
     ): EvaluatedSource? {
         val evalOutput = htmlSourceEvalService.evaluate(
-            HtmlSourceEvalInput(searchQuery, htmlSource), 
+            HtmlSourceEvalInput(
+                searchQuery = searchQuery,
+                htmlSource = htmlSource,
+                expandedQuery = expandedQuery,
+                fulfillmentRequirements = fulfillmentRequirements
+            ), 
             sessionId
         )
         
@@ -865,10 +899,17 @@ class AgenticBrowserSearchOrchestrator(
     private suspend fun evaluateMarkdownSource(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        markdownSource: MarkdownSource
+        markdownSource: MarkdownSource,
+        expandedQuery: String? = null,
+        fulfillmentRequirements: List<String> = emptyList()
     ): MarkdownEvalResult? {
         val output = markdownSourceEvalAgent.generate(
-            MarkdownSourceEvalInput(searchQuery, markdownSource)
+            MarkdownSourceEvalInput(
+                searchQuery = searchQuery,
+                markdownSource = markdownSource,
+                expandedQuery = expandedQuery,
+                fulfillmentRequirements = fulfillmentRequirements
+            )
         )
 
         // Cooperative cancellation check
@@ -894,7 +935,9 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         query: String,
         evaluatedSources: List<EvaluatedSource>,
-        previouslySearchedQueries: List<String> = emptyList()
+        previouslySearchedQueries: List<String> = emptyList(),
+        expandedQuery: String? = null,
+        fulfillmentRequirements: List<String> = emptyList()
     ): SynthesisResult {
         val answerBuilder = StringBuilder()
         lateinit var status: AnswerStatus
@@ -907,7 +950,9 @@ class AgenticBrowserSearchOrchestrator(
             StreamingAnswerSynthesisInput(
                 query = query,
                 evaluatedSources = evaluatedSources,
-                previouslySearchedQueries = previouslySearchedQueries
+                previouslySearchedQueries = previouslySearchedQueries,
+                expandedQuery = expandedQuery,
+                fulfillmentRequirements = fulfillmentRequirements
             )
         ).collect { item ->
             when (item) {
@@ -947,7 +992,9 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         state: SourceAccumulator,
         batch: List<TaggedEvaluatedSource>,
-        eventChannel: SendChannel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>,
+        expandedQuery: String? = null,
+        fulfillmentRequirements: List<String> = emptyList()
     ): SourceAccumulator {
         if (batch.isEmpty()) {
             return state
@@ -998,7 +1045,9 @@ class AgenticBrowserSearchOrchestrator(
             sessionId = sessionId,
             query = searchQuery.query,
             evaluatedSources = updatedSourcesByUrl.values.map { it.source },
-            previouslySearchedQueries = state.searchedQueries
+            previouslySearchedQueries = state.searchedQueries,
+            expandedQuery = expandedQuery,
+            fulfillmentRequirements = fulfillmentRequirements
         )
 
         val newIterationNumber = state.iterationNumber + 1

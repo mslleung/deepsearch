@@ -11,11 +11,24 @@ import io.deepsearch.domain.models.valueobjects.UrlContentResult
  * Provides a single HTML preview source to evaluate and extract facts from.
  * 
  * The agent internally appends `site:<domain>` to the query for better context.
+ * 
+ * @property searchQuery The original user query
+ * @property htmlSource The HTML preview source to evaluate
+ * @property expandedQuery Optional context-aware expanded query (preferred over raw query)
+ * @property fulfillmentRequirements Optional list of requirements that must be satisfied
  */
 data class HtmlSourceEvalInput(
     val searchQuery: SearchQuery,
-    val htmlSource: UrlContentResult.HtmlPreview
-) : IAgent.IAgentInput
+    val htmlSource: UrlContentResult.HtmlPreview,
+    val expandedQuery: String? = null,
+    val fulfillmentRequirements: List<String> = emptyList()
+) : IAgent.IAgentInput {
+    /**
+     * Returns the query to use for evaluation.
+     * Prefers expandedQuery if available, otherwise uses the raw query.
+     */
+    val effectiveQuery: String get() = expandedQuery ?: searchQuery.query
+}
 
 /**
  * Output from HTML source evaluation agent.
