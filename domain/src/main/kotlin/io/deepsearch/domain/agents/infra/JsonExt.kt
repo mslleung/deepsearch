@@ -3,7 +3,9 @@ package io.deepsearch.domain.agents.infra
 import com.google.genai.errors.ClientException
 import io.deepsearch.domain.exceptions.LlmDeserializationException
 import io.deepsearch.domain.exceptions.LlmRateLimitException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.SerializationException
@@ -83,8 +85,14 @@ suspend fun <T> withRateLimitRetry(
     var rateLimitAttempt = 0
     
     while (true) {
+        // Check for cancellation before each attempt (enables fast cancellation)
+        currentCoroutineContext().ensureActive()
+        
         try {
-            return block()
+            val result = block()
+            // Check for cancellation after the call completes
+            currentCoroutineContext().ensureActive()
+            return result
         } catch (e: Exception) {
             if (isRateLimitException(e)) {
                 rateLimitAttempt++
@@ -133,10 +141,15 @@ suspend fun <T, R> withStreamingRateLimitRetry(
     var rateLimitAttempt = 0
     
     while (true) {
+        // Check for cancellation before each attempt (enables fast cancellation)
+        currentCoroutineContext().ensureActive()
+        
         try {
             val results = mutableListOf<R>()
             val stream = streamFactory()
             for (item in stream) {
+                // Check for cancellation during stream iteration
+                currentCoroutineContext().ensureActive()
                 val result = processItem(item)
                 if (result != null) {
                     results.add(result)
@@ -184,9 +197,14 @@ fun <T> flowWithRateLimitRetry(
     var rateLimitAttempt = 0
     
     while (true) {
+        // Check for cancellation before each attempt (enables fast cancellation)
+        currentCoroutineContext().ensureActive()
+        
         try {
             val stream = streamFactory()
             for (item in stream) {
+                // Check for cancellation before emitting each item
+                currentCoroutineContext().ensureActive()
                 emit(item)
             }
             return@flow // Successfully completed
@@ -283,8 +301,14 @@ suspend inline fun <reified T> retryLlmCall(
     var rateLimitAttempt = 0
 
     while (true) {
+        // Check for cancellation before each attempt (enables fast cancellation)
+        currentCoroutineContext().ensureActive()
+        
         // Try the LLM call with deserialization retries
         val result = tryLlmCallWithDeserializationRetries<T>(agentName, maxDeserializationRetries, logger, llmCall)
+        
+        // Check for cancellation after the call completes
+        currentCoroutineContext().ensureActive()
         
         when (result) {
             is LlmCallResult.Success -> return result.value
@@ -326,8 +350,15 @@ internal suspend inline fun <reified T> tryLlmCallWithDeserializationRetries(
     var lastDeserializationException: LlmDeserializationException? = null
     
     repeat(maxRetries) { attempt ->
+        // Check for cancellation before each retry attempt
+        currentCoroutineContext().ensureActive()
+        
         try {
             val response = llmCall()
+            
+            // Check for cancellation after the LLM call completes
+            currentCoroutineContext().ensureActive()
+            
             logger.debug("[{}] Decoding LLM response: {}", agentName, response)
             return LlmCallResult.Success(Json.decodeFromStringWithCodeBlocks<T>(response))
         } catch (e: LlmDeserializationException) {

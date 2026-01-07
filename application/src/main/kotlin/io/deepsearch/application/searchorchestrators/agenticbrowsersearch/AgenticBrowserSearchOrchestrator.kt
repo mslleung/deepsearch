@@ -117,6 +117,16 @@ class AgenticBrowserSearchOrchestrator(
     companion object {
         // Default score for links from sources that don't provide scoring (SERPER, etc.)
         private const val DEFAULT_LINK_SCORE = 10
+        
+        /**
+         * URL normalization config for deduplication.
+         * Strips locale segments from paths so /about, /en/about, /zh-cn/about are treated as duplicates.
+         * This prevents redundant processing of the same content in different locales.
+         */
+        private val DEDUP_URL_NORMALIZATION_CONFIG = io.deepsearch.domain.services.UrlNormalizationConfig(
+            stripLocaleFromPath = true,
+            normalizeWwwSubdomain = true
+        )
     }
 
     override fun execute(
@@ -645,15 +655,29 @@ class AgenticBrowserSearchOrchestrator(
         )
             .takeWhile { !querySessionService.isBudgetExceeded(sessionId, budget) }
             .filter { link ->
-                val url = normalizeUrlService.normalize(link.url) ?: link.url
+                // Normalize URL with locale stripping for deduplication
+                // This ensures /about, /en/about, /zh-cn/about are treated as the same URL
+                val dedupKey = normalizeUrlService.normalize(link.url, DEDUP_URL_NORMALIZATION_CONFIG) 
+                    ?: normalizeUrlService.normalize(link.url) 
+                    ?: link.url
+                
                 // Apply language filter if configured
                 val languagePattern = searchQuery.parsedLanguagePattern
-                if (languagePattern != null && !languagePattern.matches(url, searchQuery.url)) {
-                    logger.debug("[{}] Link filtered by language pattern: {}", sessionId.value, url)
-                    return@filter false
+                if (languagePattern != null) {
+                    // Use the original URL (not locale-stripped) for language pattern matching
+                    val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
+                    if (!languagePattern.matches(normalizedUrl, searchQuery.url)) {
+                        logger.debug("[{}] Link filtered by language pattern: {}", sessionId.value, normalizedUrl)
+                        return@filter false
+                    }
                 }
+                
                 // Use atomic add() which returns true only if element was NOT already present
-                seenUrls.add(url)
+                val isNew = seenUrls.add(dedupKey)
+                if (!isNew) {
+                    logger.debug("[{}] Skipping locale variant: {} (dedup key: {})", sessionId.value, link.url, dedupKey)
+                }
+                isNew
             }
             .flatMapMerge(concurrency = 100) { link ->
                 flow {
