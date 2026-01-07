@@ -152,7 +152,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
         ## Step 3: Generate Answer
         
-        - Synthesize facts into a comprehensive, standalone answer
+        - Synthesize facts into a comprehensive, standalone answer for answering the original query and the requirements
         - Use markdown formatting (headings, lists, bold)
         - Same language as the query
         - Only include information from provided facts
@@ -163,6 +163,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Suggest queries that could enhance or extend the current answer
         - Focus on related information that would make the answer more complete
         - These are independent of the assessment - even complete answers can have useful follow-ups
+        - Check the "Follow-up queries" section for queries that have already been searched, do not duplicate queries
         
         ## Output Format
         {
@@ -683,10 +684,19 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         
         return buildString {
             // Static content first (for cache optimization)
-            appendLine("# Query")
+            appendLine("# Original query")
             appendLine(input.query)
-            appendLine("# Extracted Facts from Sources")
-            // Include current date for temporal context
+            // Previously searched queries for follow-up deduplication
+            if (input.previouslySearchedQueries.isNotEmpty()) {
+                appendLine()
+                appendLine("# Follow-up queries")
+                input.previouslySearchedQueries.forEach { query ->
+                    appendLine("- $query")
+                }
+            }
+            appendLine()
+            appendLine("# Current Date")
+            appendLine(java.time.LocalDate.now().toString())
             appendLine()
 
             input.evaluatedSources.forEachIndexed { index, source ->

@@ -16,8 +16,6 @@ import io.deepsearch.domain.agents.IQueryBreakdownAgent
 import io.deepsearch.domain.agents.ISerpQueryOptimizationAgent
 import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
-import io.deepsearch.domain.agents.IFollowUpQueryDedupAgent
-import io.deepsearch.domain.agents.FollowUpQueryDedupInput
 import io.deepsearch.domain.agents.HtmlSourceEvalInput
 import io.deepsearch.domain.agents.MarkdownSourceEvalInput
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
@@ -43,6 +41,7 @@ import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.services.INormalizeUrlService
+import io.deepsearch.domain.ext.chunkedWithTimeout
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -100,7 +99,6 @@ class AgenticBrowserSearchOrchestrator(
     private val htmlSourceEvalService: IHtmlSourceEvalService,
     private val markdownSourceEvalAgent: IMarkdownSourceEvalAgent,
     private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
-    private val followUpQueryDedupAgent: IFollowUpQueryDedupAgent,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val webpageCacheService: WebpageCacheService,
@@ -213,176 +211,119 @@ class AgenticBrowserSearchOrchestrator(
             )
 
             // Create a child job for source processing that can be cancelled
-            // when either path produces a confident answer
+            // when synthesis produces FINISH_SEARCH
             val sourceProcessingJob = Job(coroutineContext[Job])
             val sourceProcessingScope = CoroutineScope(coroutineContext + sourceProcessingJob)
 
-            // Share the source flow so both preview and main paths can consume it
-            // Uses sourceProcessingScope so cancelling sourceProcessingJob cancels all in-flight work
+            // Merge discovery and link processing into a single source flow
             val sourceFlow = merge(discoveryFlows, linkProcessingFlow)
                 .cancellable()
                 .shareIn(sourceProcessingScope, SharingStarted.Eagerly)
 
-            // Track state for both paths
-            var lastPreviewResult: PreviewResult? = null
-            var answerAccumulator = AnswerAccumulator()
+            // Track current accumulator state
+            var currentAccumulator = SourceAccumulator(searchedQueries = listOf(searchQuery.query))
 
-            // Ensure exactly-once session completion across concurrent paths
+            // Ensure exactly-once session completion
             val sessionCompleted = AtomicBoolean(false)
 
-            // When includeImages is enabled, skip preview path and use stricter criteria
+            // When includeImages is enabled, skip preview path evaluation
             val includeImages = searchQuery.includeImages
             if (includeImages) {
-                logger.info("[{}] includeImages enabled, skipping preview path", sessionId.value)
+                logger.info("[{}] includeImages enabled, skipping preview evaluation", sessionId.value)
             }
 
-            // Build the list of flows to merge
-            val pathFlows = mutableListOf<Flow<AccumulatorUpdate>>()
-
-            // Preview path: fast HTML evaluation for early exit (stateless per source)
-            // Only enabled when includeImages is false
-            // Emits all results so follow-up queries can be processed after merge
-            if (!includeImages) {
-                pathFlows.add(
+            // Unified evaluation flow: both preview and markdown sources are evaluated in parallel
+            // and merged into a single stream of TaggedEvaluatedSource
+            val unifiedEvalFlow = merge(
+                // Preview path: fast HTML evaluation (when includeImages is false)
+                if (!includeImages) {
                     sourceFlow
                         .filterIsInstance<UrlContentResult.HtmlPreview>()
-                        .takeWhile { !answerAccumulator.isComplete }
                         .flatMapMerge(concurrency = 100) { htmlSource ->
                             flow {
-                                emit(processHtmlSource(sessionId, searchQuery, htmlSource))
+                                val evalResult = evaluateHtmlSource(sessionId, searchQuery, htmlSource)
+                                if (evalResult != null) {
+                                    emit(TaggedEvaluatedSource(evalResult, isPreview = true))
+                                }
                             }
                         }
-                        .onEach { lastPreviewResult = it }
-                        .map { AccumulatorUpdate.Preview(it) }
-                )
-            }
+                } else {
+                    flowOf() // Empty flow when includeImages is enabled
+                },
 
-            // Main path: full markdown processing (parallel evaluation, then answer synthesis)
-            pathFlows.add(
+                // Markdown path: full markdown evaluation  
                 sourceFlow
                     .filterIsInstance<UrlContentResult.FullMarkdown>()
                     .filter { it.markdown.isNotBlank() }
                     .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
-                    .takeWhile { !includeImages || lastPreviewResult?.status != AnswerStatus.FINISH_SEARCH }
                     .flatMapMerge(concurrency = 100) { markdownSource ->
                         flow {
-                            emit(evaluateMarkdownSource(sessionId, searchQuery, markdownSource))
+                            val evalResult = evaluateMarkdownSource(sessionId, searchQuery, markdownSource)
+                            if (evalResult != null) {
+                                emit(TaggedEvaluatedSource(evalResult.evaluatedSource, isPreview = false))
+                            }
                         }
                     }
-                    .filter { it != null }
-                    .map { it!! }
-                    .runningFold(AnswerAccumulator(searchedQueries = listOf(searchQuery.query))) { state, evalResult ->
-                        aggregateMarkdownResultIntoAnswer(
-                            sessionId, searchQuery, state, evalResult, channel,
-                            isPreviewConfident = { !includeImages && lastPreviewResult?.status == AnswerStatus.FINISH_SEARCH }
-                        )
-                    }
-                    .onEach { answerAccumulator = it }
-                    .map { AccumulatorUpdate.Main(it) }
             )
 
-            // Merge paths and process follow-up queries uniformly (concurrency=1 for dedup)
-            merge(*pathFlows.toTypedArray())
-                .flatMapConcat { update: AccumulatorUpdate ->
-                    flow<AccumulatorUpdate> {
-                        // Extract pending follow-up queries from either path
-                        val (pendingQueries, status, iterationNumber) = when (update) {
-                            is AccumulatorUpdate.Preview -> Triple(
-                                update.result.pendingFollowUpQueries,
-                                update.result.status,
-                                0 // Preview doesn't track iteration
-                            )
-                            is AccumulatorUpdate.Main -> Triple(
-                                update.accumulator.pendingFollowUpQueries,
-                                update.accumulator.status,
-                                update.accumulator.iterationNumber
-                            )
-                        }
-                        
-                        // Process pending follow-up queries through dedup agent
-                        if (pendingQueries.isNotEmpty() && status == AnswerStatus.CONTINUE_SEARCH) {
-                            val dedupResult = followUpQueryDedupAgent.generate(
-                                FollowUpQueryDedupInput(
-                                    candidateQueries = pendingQueries,
-                                    previouslySearchedQueries = previouslySearchedQueries.toList(),
-                                    originalQuery = searchQuery.query
-                                )
-                            )
-                            
-                            // Filter out queries we've already tracked (thread-safe add returns true if new)
-                            val newQueries = dedupResult.dedupedQueries.filter { query ->
-                                previouslySearchedQueries.add(query)
-                            }
-                            
-                            if (newQueries.isNotEmpty()) {
-                                logger.info(
-                                    "[{}] Dedup: {} candidates -> {} after dedup -> {} new: {}",
-                                    sessionId.value, pendingQueries.size,
-                                    dedupResult.dedupedQueries.size, newQueries.size, newQueries
-                                )
-                                
-                                channel.send(
-                                    SearchEvent.FollowUpSearchStarted(
-                                        sessionId = sessionId,
-                                        followUpQueries = newQueries,
-                                        whatsMissing = "Follow-up queries",
-                                        iterationNumber = iterationNumber
-                                    )
-                                )
-                                
-                                // Send to query channel to trigger discovery
-                                newQueries.forEach { query ->
-                                    queryChannel.send(query)
-                                }
-                            }
-                        }
-                        
-                        emit(update)
-                    }
+            // Batch sources with timeout, then accumulate and synthesize
+            unifiedEvalFlow
+                .chunkedWithTimeout(chunkSize = 100, timeoutMs = 300)
+                .takeWhile { !currentAccumulator.isComplete }
+                .runningFold(currentAccumulator) { state, batch ->
+                    aggregateBatchIntoAccumulator(
+                        sessionId, searchQuery, state, batch, channel
+                    )
                 }
-                .onEach { update ->
-                    // Handle session completion for either path
-                    when (update) {
-                        is AccumulatorUpdate.Preview -> {
-                            if (update.result.status == AnswerStatus.FINISH_SEARCH && sessionCompleted.compareAndSet(false, true)) {
-                                logger.info("[{}] Preview path produced confident answer, cancelling source processing", sessionId.value)
-                                // Emit the buffered answer chunk
-                                update.result.fullAnswer?.let { answer ->
-                                    if (answer.isNotBlank()) {
-                                        channel.send(SearchEvent.AnswerChunk(sessionId, answer))
-                                    }
-                                }
-                                sourceProcessingJob.cancel()
-                                queryChannel.close()
-                                priorityLinkBuffer.close()
-                                finishWithPreviewAnswer(sessionId, update.result, channel)
+                .onEach { accumulator ->
+                    currentAccumulator = accumulator
+                    
+                    // Process follow-up queries from synthesis (already deduped by synthesis agent)
+                    if (accumulator.pendingFollowUpQueries.isNotEmpty() && 
+                        accumulator.status == AnswerStatus.CONTINUE_SEARCH) {
+                        // Filter out queries we've already searched (thread-safe)
+                        val newQueries = accumulator.pendingFollowUpQueries.filter { query ->
+                            previouslySearchedQueries.add(query)
+                        }
+                        
+                        if (newQueries.isNotEmpty()) {
+                            logger.info(
+                                "[{}] Follow-up queries from synthesis: {}",
+                                sessionId.value, newQueries
+                            )
+                            
+                            channel.send(
+                                SearchEvent.FollowUpSearchStarted(
+                                    sessionId = sessionId,
+                                    followUpQueries = newQueries,
+                                    whatsMissing = "Follow-up queries",
+                                    iterationNumber = accumulator.iterationNumber
+                                )
+                            )
+                            
+                            // Send to query channel to trigger discovery
+                            newQueries.forEach { query ->
+                                queryChannel.send(query)
                             }
                         }
-                        is AccumulatorUpdate.Main -> {
-                            if (update.accumulator.isComplete && sessionCompleted.compareAndSet(false, true)) {
-                                logger.info("[{}] Main path completed with COMPLETE status, cancelling source processing", sessionId.value)
-                                sourceProcessingJob.cancel()
-                                queryChannel.close()
-                                priorityLinkBuffer.close()
-                                finishQuerySession(sessionId, searchQuery, update.accumulator, budget, channel)
-                            }
-                        }
+                    }
+                    
+                    // Handle session completion
+                    if (accumulator.isComplete && sessionCompleted.compareAndSet(false, true)) {
+                        logger.info("[{}] Synthesis returned FINISH_SEARCH, completing session", sessionId.value)
+                        sourceProcessingJob.cancel()
+                        queryChannel.close()
+                        priorityLinkBuffer.close()
+                        finishQuerySession(sessionId, searchQuery, accumulator, budget, channel)
                     }
                 }
                 .takeWhile { !sessionCompleted.get() }
                 .onCompletion {
-                    // Handle case where neither path completed (sources exhausted or interrupted)
+                    // Handle case where flow completed without FINISH_SEARCH (sources exhausted)
                     if (sessionCompleted.compareAndSet(false, true)) {
-                        logger.info("[{}] Flow completed, cancelling source processing", sessionId.value)
+                        logger.info("[{}] Flow completed without FINISH_SEARCH, finalizing session", sessionId.value)
                         sourceProcessingJob.cancel()
-                        val confidentPreview = if (!includeImages) lastPreviewResult?.takeIf { it.status == AnswerStatus.FINISH_SEARCH } else null
-                        if (confidentPreview != null) {
-                            logger.info("[{}] Preview path was confident at flow completion", sessionId.value)
-                            finishWithPreviewAnswer(sessionId, confidentPreview, channel)
-                        } else {
-                            // Fall back to main path accumulator (may be incomplete)
-                            finishQuerySession(sessionId, searchQuery, answerAccumulator, budget, channel)
-                        }
+                        finishQuerySession(sessionId, searchQuery, currentAccumulator, budget, channel)
                     }
                 }
                 .collect()
@@ -815,15 +756,25 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Accumulator for streaming answer generation with feedback loop support.
+     * Tagged evaluated source that tracks whether it came from preview (HTML) or full markdown.
+     * Used for URL-keyed accumulation where markdown replaces preview.
+     */
+    private data class TaggedEvaluatedSource(
+        val source: EvaluatedSource,
+        val isPreview: Boolean
+    ) {
+        val url: String get() = source.url
+    }
+
+    /**
+     * Accumulator for unified answer generation with feedback loop support.
+     * Uses URL-keyed source map where markdown sources replace preview sources.
      * Tracks sources, queries, and synthesis iterations.
      */
-    private data class AnswerAccumulator(
-        /** Evaluated sources accumulated from parallel markdown evaluation */
-        val evaluatedSources: List<EvaluatedSource> = emptyList(),
-        /** Set of URLs that have been processed (for deduplication) */
-        val processedUrls: Set<String> = emptySet(),
-        /** Whether the answer is complete (status=COMPLETE from synthesis agent) */
+    private data class SourceAccumulator(
+        /** URL-keyed source map - markdown replaces preview when both arrive */
+        val sourcesByUrl: Map<String, TaggedEvaluatedSource> = emptyMap(),
+        /** Whether the answer is complete (status=FINISH_SEARCH from synthesis agent) */
         val isComplete: Boolean = false,
         /** Full answer from the last answer synthesis attempt */
         val fullAnswer: String? = null,
@@ -831,7 +782,7 @@ class AgenticBrowserSearchOrchestrator(
         val citedSourceUrls: List<String> = emptyList(),
         /** Image IDs from the answer */
         val imageIds: List<String> = emptyList(),
-        /** All queries that have been searched (for deduplication) */
+        /** All queries that have been searched (for deduplication in synthesis prompt) */
         val searchedQueries: List<String> = emptyList(),
         /** Current synthesis iteration number */
         val iterationNumber: Int = 0,
@@ -839,29 +790,14 @@ class AgenticBrowserSearchOrchestrator(
         val sourcesPerIteration: List<Int> = emptyList(),
         /** Answer status from last synthesis */
         val status: AnswerStatus = AnswerStatus.CONTINUE_SEARCH,
-        /** Follow-up queries from latest synthesis that need deduplication and processing */
+        /** Follow-up queries from latest synthesis to be emitted upstream */
         val pendingFollowUpQueries: List<String> = emptyList()
-    )
-
-    /**
-     * Result from processing a preview source.
-     * Stateless - each source is processed independently.
-     * Uses a 2-agent flow: HtmlSourceEvalAgent -> StreamingAnswerSynthesisAgent.
-     */
-    private data class PreviewResult(
-        val evaluatedSources: List<EvaluatedSource> = emptyList(),
-        val status: AnswerStatus = AnswerStatus.CONTINUE_SEARCH,
-        val fullAnswer: String? = null,
-        /** Follow-up queries from synthesis that need deduplication and processing */
-        val pendingFollowUpQueries: List<String> = emptyList()
-    )
-
-    /**
-     * Sealed class to distinguish accumulator updates from different paths.
-     */
-    private sealed class AccumulatorUpdate {
-        data class Preview(val result: PreviewResult) : AccumulatorUpdate()
-        data class Main(val accumulator: AnswerAccumulator) : AccumulatorUpdate()
+    ) {
+        /** Get all evaluated sources as a list (for synthesis agent) */
+        val evaluatedSources: List<EvaluatedSource> get() = sourcesByUrl.values.map { it.source }
+        
+        /** Get all processed URLs */
+        val processedUrls: Set<String> get() = sourcesByUrl.keys
     }
 
     /**
@@ -898,6 +834,31 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
+     * Evaluate a single HTML preview source using the HtmlSourceEvalService.
+     * Returns null if the source is not relevant.
+     */
+    private suspend fun evaluateHtmlSource(
+        sessionId: QuerySessionId,
+        searchQuery: SearchQuery,
+        htmlSource: UrlContentResult.HtmlPreview
+    ): EvaluatedSource? {
+        val evalOutput = htmlSourceEvalService.evaluate(
+            HtmlSourceEvalInput(searchQuery, htmlSource), 
+            sessionId
+        )
+        
+        // Cooperative cancellation check
+        currentCoroutineContext().ensureActive()
+        
+        return evalOutput.evaluatedSource?.also { source ->
+            logger.debug(
+                "[{}] HTML source evaluation: url={}, {} facts",
+                sessionId.value, htmlSource.url, source.relevantFacts.size
+            )
+        }
+    }
+
+    /**
      * Evaluate a single markdown source using the stateless MarkdownSourceEvalAgent.
      * Returns null if the source is not relevant.
      */
@@ -910,7 +871,7 @@ class AgenticBrowserSearchOrchestrator(
             MarkdownSourceEvalInput(searchQuery, markdownSource)
         )
 
-        // Cooperative cancellation check - exits early if preview path already found an answer
+        // Cooperative cancellation check
         currentCoroutineContext().ensureActive()
 
         tokenUsageService.recordTokenUsage(
@@ -977,43 +938,75 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Aggregate a newly evaluated markdown source and attempt answer synthesis.
-     * Uses continuation_status from synthesis agent to determine if the answer is complete:
-     * - FINISH_SEARCH = answer is sufficient, stop collecting
-     * - CONTINUE_SEARCH = keep collecting sources and trigger follow-up searches
-     * 
-     * Follow-up queries are returned in the accumulator for deduplication via flow composition.
+     * Aggregate a batch of tagged sources into the accumulator with URL-keyed replacement.
+     * Markdown sources replace preview sources for the same URL.
+     * Triggers answer synthesis after updating sources.
      */
-    private suspend fun aggregateMarkdownResultIntoAnswer(
+    private suspend fun aggregateBatchIntoAccumulator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        state: AnswerAccumulator,
-        evalResult: MarkdownEvalResult,
-        eventChannel: SendChannel<SearchEvent>,
-        isPreviewConfident: () -> Boolean
-    ): AnswerAccumulator {
-        // Skip if already processed (deduplication)
-        if (evalResult.evaluatedSource.url in state.processedUrls) {
+        state: SourceAccumulator,
+        batch: List<TaggedEvaluatedSource>,
+        eventChannel: SendChannel<SearchEvent>
+    ): SourceAccumulator {
+        if (batch.isEmpty()) {
             return state
         }
 
-        val updatedSources = state.evaluatedSources + evalResult.evaluatedSource
-        val updatedProcessedUrls = state.processedUrls + evalResult.evaluatedSource.url
+        // Build updated source map with replacement logic
+        val updatedSourcesByUrl = state.sourcesByUrl.toMutableMap()
+        var replacements = 0
+        var additions = 0
+        
+        for (taggedSource in batch) {
+            val url = taggedSource.url
+            val existing = updatedSourcesByUrl[url]
+            
+            when {
+                // No existing entry - add new source
+                existing == null -> {
+                    updatedSourcesByUrl[url] = taggedSource
+                    additions++
+                }
+                // Existing is preview and new is markdown - replace
+                existing.isPreview && !taggedSource.isPreview -> {
+                    updatedSourcesByUrl[url] = taggedSource
+                    replacements++
+                    logger.debug(
+                        "[{}] Replacing preview with markdown for URL: {}",
+                        sessionId.value, url
+                    )
+                }
+                // Existing is markdown - keep existing (markdown is authoritative)
+                !existing.isPreview -> {
+                    // Skip - markdown already present
+                }
+                // Both are preview - keep existing
+                else -> {
+                    // Skip - first preview wins
+                }
+            }
+        }
 
-        // Synthesize answer with accumulated sources
+        logger.debug(
+            "[{}] Batch processing: {} sources, {} additions, {} replacements",
+            sessionId.value, batch.size, additions, replacements
+        )
+
+        // Synthesize answer with updated sources
         val synthesis = synthesizeAnswer(
-            sessionId = sessionId, 
-            query = searchQuery.query, 
-            evaluatedSources = updatedSources, 
+            sessionId = sessionId,
+            query = searchQuery.query,
+            evaluatedSources = updatedSourcesByUrl.values.map { it.source },
             previouslySearchedQueries = state.searchedQueries
         )
 
         val newIterationNumber = state.iterationNumber + 1
-        val updatedSourcesPerIteration = state.sourcesPerIteration + updatedSources.size
+        val updatedSourcesPerIteration = state.sourcesPerIteration + updatedSourcesByUrl.size
 
         logger.debug(
-            "[{}] Main path synthesis iteration {}: {} sources, status={}, citedSources={}, followUpQueries={}",
-            sessionId.value, newIterationNumber, updatedSources.size, synthesis.status,
+            "[{}] Synthesis iteration {}: {} sources, status={}, citedSources={}, followUpQueries={}",
+            sessionId.value, newIterationNumber, updatedSourcesByUrl.size, synthesis.status,
             synthesis.citedSourceUrls.size, synthesis.followUpQueries.size
         )
 
@@ -1023,51 +1016,37 @@ class AgenticBrowserSearchOrchestrator(
                 sessionId = sessionId,
                 iterationNumber = newIterationNumber,
                 status = synthesis.status.name,
-                sourceCount = updatedSources.size,
+                sourceCount = updatedSourcesByUrl.size,
                 followUpQueries = synthesis.followUpQueries
             )
         )
 
-        // Only emit SourcesEvaluated if preview path hasn't already produced a confident answer
-        if (!isPreviewConfident()) {
-            eventChannel.send(
-                SearchEvent.SourcesEvaluated(
-                    sessionId = sessionId,
-                    processedUrlCount = updatedProcessedUrls.size,
-                    relevantCount = updatedSources.size,
-                    isGoodEnough = synthesis.isComplete,
-                    reason = if (synthesis.isComplete) "Answer is complete" 
-                             else "Collecting more sources (unsatisfied: ${synthesis.getUnsatisfiedSummary()})"
-                )
+        // Emit sources evaluated event
+        eventChannel.send(
+            SearchEvent.SourcesEvaluated(
+                sessionId = sessionId,
+                processedUrlCount = updatedSourcesByUrl.size,
+                relevantCount = updatedSourcesByUrl.size,
+                isGoodEnough = synthesis.isComplete,
+                reason = if (synthesis.isComplete) "Answer is complete"
+                         else "Collecting more sources (unsatisfied: ${synthesis.getUnsatisfiedSummary()})"
             )
-        }
+        )
 
-        // Capture follow-up queries in accumulator for deduplication via flow composition
-        // The dedup happens after runningFold using flatMapConcat (concurrency=1)
+        // Capture follow-up queries for upstream processing
         val pendingFollowUpQueries = if (synthesis.status == AnswerStatus.CONTINUE_SEARCH) {
             synthesis.followUpQueries
         } else {
             emptyList()
         }
-        
-        if (pendingFollowUpQueries.isNotEmpty()) {
-            logger.debug(
-                "[{}] Synthesis iteration {} produced {} follow-up queries for dedup",
-                sessionId.value, newIterationNumber, pendingFollowUpQueries.size
-            )
-        }
-        
-        // Note: searchedQueries will be updated by the dedup flow after deduplication
-        val updatedSearchedQueries = state.searchedQueries
 
-        return AnswerAccumulator(
-            evaluatedSources = updatedSources,
-            processedUrls = updatedProcessedUrls,
+        return SourceAccumulator(
+            sourcesByUrl = updatedSourcesByUrl,
             isComplete = synthesis.isComplete,
             fullAnswer = synthesis.answer,
             citedSourceUrls = synthesis.citedSourceUrls,
             imageIds = synthesis.imageIds,
-            searchedQueries = updatedSearchedQueries,
+            searchedQueries = state.searchedQueries,
             iterationNumber = newIterationNumber,
             sourcesPerIteration = updatedSourcesPerIteration,
             status = synthesis.status,
@@ -1078,7 +1057,7 @@ class AgenticBrowserSearchOrchestrator(
     private suspend fun finishQuerySession(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        accumulator: AnswerAccumulator,
+        accumulator: SourceAccumulator,
         budget: SearchBudget,
         eventChannel: SendChannel<SearchEvent>,
         loopReport: FeedbackLoopReport? = null
@@ -1125,7 +1104,7 @@ class AgenticBrowserSearchOrchestrator(
 
     private suspend fun finishSessionWithAnswer(
         sessionId: QuerySessionId,
-        accumulator: AnswerAccumulator,
+        accumulator: SourceAccumulator,
         budget: SearchBudget,
         eventChannel: SendChannel<SearchEvent>,
         fullAnswer: String,
@@ -1185,122 +1164,4 @@ class AgenticBrowserSearchOrchestrator(
         )
     }
 
-    /**
-     * Process a single HTML preview source independently (stateless, side-effect-free).
-     * Uses a 2-agent flow:
-     * 1. HtmlSourceEvalAgent (non-streaming) - extracts facts and classifies source, filters table facts
-     * 2. StreamingAnswerSynthesisAgent (streaming) - generates answer and determines answerFound
-     * 
-     * Returns a PreviewResult with buffered answer. The caller is responsible for emitting
-     * the answer to the event channel after .take(1) selects the winning source.
-     */
-    private suspend fun processHtmlSource(
-        sessionId: QuerySessionId,
-        searchQuery: SearchQuery,
-        htmlSource: UrlContentResult.HtmlPreview
-    ): PreviewResult {
-        // Step 1: Source Eval - extracts facts, filters table facts (service handles caching + token tracking)
-        val evalOutput = htmlSourceEvalService.evaluate(HtmlSourceEvalInput(searchQuery, htmlSource), sessionId)
-        
-        // Cooperative cancellation check - exits early if another source already found an answer
-        currentCoroutineContext().ensureActive()
-
-        val evaluatedSource = evalOutput.evaluatedSource ?: run {
-            logger.debug("[{}] HTML source not relevant: {}", sessionId.value, htmlSource.url)
-            return PreviewResult()
-        }
-
-        logger.debug(
-            "[{}] HTML source evaluation: url={}, {} facts",
-            sessionId.value, htmlSource.url, evaluatedSource.relevantFacts.size
-        )
-
-        // Check again before expensive synthesis call
-        currentCoroutineContext().ensureActive()
-
-        // Step 2: Answer Synthesis (no previous queries for preview path)
-        val synthesis = synthesizeAnswer(
-            sessionId = sessionId, 
-            query = searchQuery.query, 
-            evaluatedSources = listOf(evaluatedSource),
-            previouslySearchedQueries = emptyList()
-        )
-
-        logger.debug(
-            "[{}] Preview synthesis: status={}, {} chars, assessment={}",
-            sessionId.value, synthesis.status, synthesis.answer.length, synthesis.getUnsatisfiedSummary()
-        )
-
-        // Preview path only accepts FINISH_SEARCH status
-        val isConfident = synthesis.status == AnswerStatus.FINISH_SEARCH
-        
-        // Capture follow-up queries even from preview path - they'll be processed after merge
-        val pendingFollowUpQueries = if (!isConfident) synthesis.followUpQueries else emptyList()
-
-        return PreviewResult(
-            evaluatedSources = listOf(evaluatedSource),
-            status = synthesis.status,
-            fullAnswer = if (isConfident) synthesis.answer else null,
-            pendingFollowUpQueries = pendingFollowUpQueries
-        )
-    }
-
-    /**
-     * Finish the query session with a preview answer.
-     * Called when the preview path produces a confident answer.
-     * The answer has already been streamed by processPreviewBatch,
-     * so this just completes the session.
-     * Uses database as source of truth to check if session is already finished.
-     */
-    private suspend fun finishWithPreviewAnswer(
-        sessionId: QuerySessionId,
-        result: PreviewResult,
-        eventChannel: SendChannel<SearchEvent>
-    ) {
-        // Check if session is already finished (use DB as source of truth)
-        val session = querySessionService.getSession(sessionId)
-        if (session.finishReason != null) {
-            logger.debug(
-                "[{}] Session already finished with {}, skipping preview answer",
-                sessionId.value,
-                session.finishReason
-            )
-            return
-        }
-
-        logger.info("[{}] Finishing with preview answer (early exit)", sessionId.value)
-
-        // Emit sources evaluated update for preview path (so frontend knows about preview sources)
-        eventChannel.send(
-            SearchEvent.SourcesEvaluated(
-                sessionId = sessionId,
-                processedUrlCount = result.evaluatedSources.size,
-                relevantCount = result.evaluatedSources.size,
-                isGoodEnough = true, // Preview path only finishes when confident
-                reason = "Preview path confident answer"
-            )
-        )
-
-        val answerSources = result.evaluatedSources.map { it.url }
-        if (answerSources.isNotEmpty()) {
-            urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)
-        }
-
-        querySessionService.completeSessionPreviewAnswerComplete(
-            sessionId,
-            result.fullAnswer ?: "",
-            result.fullAnswer?.isNotBlank() == true
-        )
-
-        val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
-
-        eventChannel.send(
-            SearchEvent.SessionCompleted(
-                sessionId = sessionId,
-                finishReason = "PREVIEW_ANSWER_COMPLETE",
-                sessionDetail = sessionDetail,
-                imageIds = emptyList()
-            )
-        )
-    }
 }
