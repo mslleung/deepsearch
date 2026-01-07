@@ -613,7 +613,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         assertNotNull(evalOutput.evaluatedSource, "Should extract facts from the pricing blog post")
         
-        val evaluatedSource = evalOutput.evaluatedSource!!
+        val evaluatedSource = evalOutput.evaluatedSource
         assertTrue(
             evaluatedSource.relevantFacts.isNotEmpty(),
             "Should have extracted relevant pricing facts"

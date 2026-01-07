@@ -20,6 +20,8 @@ import io.ktor.server.sse.*
 import io.ktor.sse.*
 import io.ktor.utils.io.ClosedWriteChannelException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -323,17 +325,24 @@ class SearchController(
                 includeImages
             )
 
-            eventFlow.collect { event ->
-                // Map application-layer SearchEvent to presentation-layer SearchEventDto
-                val images = if (event is SearchEvent.SessionCompleted && event.imageIds.isNotEmpty()) {
-                    fetchImagesByIds(event.imageIds)
-                } else {
-                    emptyMap()
+            // Use onEach to send SSE events, then first to stop at terminal event
+            // This ensures we don't wait for upstream flow cleanup after session completes
+            eventFlow
+                .onEach { event ->
+                    // Map application-layer SearchEvent to presentation-layer SearchEventDto
+                    val images = if (event is SearchEvent.SessionCompleted && event.imageIds.isNotEmpty()) {
+                        fetchImagesByIds(event.imageIds)
+                    } else {
+                        emptyMap()
+                    }
+                    val eventDto = event.toDto(images)
+                    val payload = Json.encodeToString(SearchEventDto.serializer(), eventDto)
+                    sse.send(ServerSentEvent(payload))
                 }
-                val eventDto = event.toDto(images)
-                val payload = Json.encodeToString(SearchEventDto.serializer(), eventDto)
-                sse.send(ServerSentEvent(payload))
-            }
+                .first { event ->
+                    // Stop collecting after terminal event
+                    event is SearchEvent.SessionCompleted || event is SearchEvent.SessionError
+                }
 
         } catch (e: Exception) {
             // Handle channel closure gracefully - this is expected when client disconnects or stream ends
