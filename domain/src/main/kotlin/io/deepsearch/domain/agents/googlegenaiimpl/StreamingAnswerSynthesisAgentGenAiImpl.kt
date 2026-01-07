@@ -130,8 +130,8 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
         ### Temporality
         - Sources are recent enough for time-sensitive information
-        - Satisfied: content dated within 6 months, or topic is not time-sensitive
-        - If you suspect the sources may be too old, set satisfied=false t eagerly allow further information gathering
+        - Satisfied: content is reasonably recent enough for the query, or topic is not time-sensitive
+        - If you suspect the sources may be too old, set satisfied=false to eagerly allow further information gathering
         - Check "Content Date" field of each source if available
 
         ### AUTHORITY
