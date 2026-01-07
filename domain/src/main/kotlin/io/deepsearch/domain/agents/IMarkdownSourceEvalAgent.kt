@@ -3,7 +3,6 @@ package io.deepsearch.domain.agents
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
-import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 /**
@@ -11,24 +10,17 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
  * Provides a single markdown source to evaluate and extract facts from.
  * 
  * The agent internally appends `site:<domain>` to the query for better context.
+ * Domain is extracted from the source URL.
  * 
- * @property searchQuery The original user query
  * @property markdownSource The markdown source to evaluate
- * @property expandedQuery Optional context-aware expanded query (preferred over raw query)
- * @property fulfillmentRequirements Optional list of requirements that must be satisfied
+ * @property expandedQuery Context-aware expanded query to evaluate against
+ * @property fulfillmentRequirements List of requirements that must be satisfied
  */
 data class MarkdownSourceEvalInput(
-    val searchQuery: SearchQuery,
     val markdownSource: MarkdownSource,
-    val expandedQuery: String? = null,
+    val expandedQuery: String,
     val fulfillmentRequirements: List<String> = emptyList()
-) : IAgent.IAgentInput {
-    /**
-     * Returns the query to use for evaluation.
-     * Prefers expandedQuery if available, otherwise uses the raw query.
-     */
-    val effectiveQuery: String get() = expandedQuery ?: searchQuery.query
-}
+) : IAgent.IAgentInput
 
 /**
  * Output from markdown source evaluation agent.

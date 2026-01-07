@@ -140,9 +140,8 @@ class HtmlSourceEvalAgentGenAiImpl(
     )
 
     override suspend fun generate(input: HtmlSourceEvalInput): HtmlSourceEvalOutput {
-        val searchQuery = input.searchQuery
         val htmlSource = input.htmlSource
-        val queryWithSite = "${searchQuery.query} site:${extractDomain(searchQuery.url)}"
+        val queryWithSite = "${input.expandedQuery} site:${extractDomain(htmlSource.url)}"
         
         logger.debug(
             "Evaluating HTML source for query: '{}', url: {}",
@@ -247,9 +246,7 @@ class HtmlSourceEvalAgentGenAiImpl(
     }
 
     private fun buildUserPrompt(input: HtmlSourceEvalInput): String {
-        // Use expanded query if available, otherwise fall back to raw query
-        val effectiveQuery = input.effectiveQuery
-        val queryWithSite = "$effectiveQuery site:${extractDomain(input.searchQuery.url)}"
+        val queryWithSite = "${input.expandedQuery} site:${extractDomain(input.htmlSource.url)}"
         val source = input.htmlSource
         return buildString {
             // Include current date for temporal context

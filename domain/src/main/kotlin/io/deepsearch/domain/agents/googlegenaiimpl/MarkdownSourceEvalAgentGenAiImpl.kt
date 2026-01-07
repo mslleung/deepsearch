@@ -148,9 +148,8 @@ class MarkdownSourceEvalAgentGenAiImpl(
     )
 
     override suspend fun generate(input: MarkdownSourceEvalInput): MarkdownSourceEvalOutput {
-        val searchQuery = input.searchQuery
         val markdownSource = input.markdownSource
-        val queryWithSite = "${searchQuery.query} site:${extractDomain(searchQuery.url)}"
+        val queryWithSite = "${input.expandedQuery} site:${extractDomain(markdownSource.url)}"
         
         logger.debug(
             "Evaluating markdown source for query: '{}', url: {}",
@@ -252,9 +251,7 @@ class MarkdownSourceEvalAgentGenAiImpl(
     }
 
     private fun buildUserPrompt(input: MarkdownSourceEvalInput, transformedMarkdown: String): String {
-        // Use expanded query if available, otherwise fall back to raw query
-        val effectiveQuery = input.effectiveQuery
-        val queryWithSite = "$effectiveQuery site:${extractDomain(input.searchQuery.url)}"
+        val queryWithSite = "${input.expandedQuery} site:${extractDomain(input.markdownSource.url)}"
         val source = input.markdownSource
         return buildString {
             // Include current date for temporal context

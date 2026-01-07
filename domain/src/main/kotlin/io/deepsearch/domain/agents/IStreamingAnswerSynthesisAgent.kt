@@ -11,14 +11,13 @@ import kotlinx.serialization.Serializable
  * Input for streaming answer synthesis agent.
  * Provides query and evaluated sources (with extracted facts) to generate an answer from.
  * 
- * @property query The original user query
+ * @property query The expanded/context-aware query to answer
  * @property evaluatedSources Sources with extracted facts to synthesize the answer from
  * @property imageDescriptions Map of image IDs to their text descriptions, fetched from DB.
  *           The agent uses these descriptions to help the LLM select relevant images.
  * @property previouslySearchedQueries List of queries that have already been searched.
  *           Used to prevent the agent from suggesting duplicate follow-up queries.
- * @property expandedQuery Optional context-aware expanded query (preferred over raw query)
- * @property fulfillmentRequirements Optional list of requirements that must ALL be satisfied
+ * @property fulfillmentRequirements List of requirements that must ALL be satisfied
  *           for the answer to be considered complete. Used for COVERAGE evaluation.
  */
 data class StreamingAnswerSynthesisInput(
@@ -26,15 +25,8 @@ data class StreamingAnswerSynthesisInput(
     val evaluatedSources: List<EvaluatedSource>,
     val imageDescriptions: Map<String, String> = emptyMap(),
     val previouslySearchedQueries: List<String> = emptyList(),
-    val expandedQuery: String? = null,
     val fulfillmentRequirements: List<String> = emptyList()
-) : IAgent.IAgentInput {
-    /**
-     * Returns the query to use for synthesis.
-     * Prefers expandedQuery if available, otherwise uses the raw query.
-     */
-    val effectiveQuery: String get() = expandedQuery ?: query
-}
+) : IAgent.IAgentInput
 
 /**
  * Assessment result for a single dimension of answer quality.

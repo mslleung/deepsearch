@@ -24,12 +24,14 @@ data class FullQueryBreakdownInput(
  * @property websiteContext Extracted context about the page (to be cached)
  * @property expandedQuery Query rewritten with context for clarity
  * @property fulfillmentRequirements Atomic requirements that must ALL be satisfied
+ * @property followUpQueries Suggested queries for early link discovery
  * @property tokenUsage Token usage metrics for this call
  */
 data class FullQueryBreakdownOutput(
     val websiteContext: WebsiteContext,
     val expandedQuery: String,
     val fulfillmentRequirements: List<String>,
+    val followUpQueries: List<String> = emptyList(),
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

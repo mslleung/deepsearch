@@ -107,16 +107,18 @@ class QueryProcessingService(
         )
 
         logger.info(
-            "[{}] Query processed with cached context: '{}' → '{}'",
+            "[{}] Query processed with cached context: '{}' → '{}', followUpQueries={}",
             sessionId.value,
             searchQuery.query,
-            output.expandedQuery
+            output.expandedQuery,
+            output.followUpQueries
         )
 
         return QueryProcessingResult(
             originalQuery = searchQuery.query,
             expandedQuery = output.expandedQuery,
             fulfillmentRequirements = output.fulfillmentRequirements,
+            followUpQueries = output.followUpQueries,
             websiteContext = context
         )
     }
@@ -159,16 +161,18 @@ class QueryProcessingService(
         )
 
         logger.info(
-            "[{}] Query processed with URL Context tool: '{}' → '{}' (context cached)",
+            "[{}] Query processed with URL Context tool: '{}' → '{}', followUpQueries={} (context cached)",
             sessionId.value,
             searchQuery.query,
-            output.expandedQuery
+            output.expandedQuery,
+            output.followUpQueries
         )
 
         return QueryProcessingResult(
             originalQuery = searchQuery.query,
             expandedQuery = output.expandedQuery,
             fulfillmentRequirements = output.fulfillmentRequirements,
+            followUpQueries = output.followUpQueries,
             websiteContext = output.websiteContext
         )
     }

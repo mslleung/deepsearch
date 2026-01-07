@@ -253,6 +253,22 @@ class AgenticBrowserSearchOrchestrator(
                 expandedQuery,
                 fulfillmentRequirements.size
             )
+            
+            // Emit follow-up queries from breakdown agent to discovery channel for early link discovery
+            if (queryProcessingResult.followUpQueries.isNotEmpty()) {
+                val newFollowUpQueries = queryProcessingResult.followUpQueries.filter { query ->
+                    previouslySearchedQueries.add(query)
+                }
+                if (newFollowUpQueries.isNotEmpty()) {
+                    logger.info(
+                        "[{}] Follow-up queries from query processing: {}",
+                        sessionId.value, newFollowUpQueries
+                    )
+                    newFollowUpQueries.forEach { query ->
+                        queryChannel.send(query)
+                    }
+                }
+            }
 
             // Unified evaluation flow: both preview and markdown sources are evaluated in parallel
             // and merged into a single stream of TaggedEvaluatedSource
@@ -264,7 +280,7 @@ class AgenticBrowserSearchOrchestrator(
                         .flatMapMerge(concurrency = 100) { htmlSource ->
                             flow {
                                 val evalResult = evaluateHtmlSource(
-                                    sessionId, searchQuery, htmlSource, expandedQuery, fulfillmentRequirements
+                                    sessionId, htmlSource, expandedQuery, fulfillmentRequirements
                                 )
                                 if (evalResult != null) {
                                     emit(TaggedEvaluatedSource(evalResult, isPreview = true))
@@ -283,7 +299,7 @@ class AgenticBrowserSearchOrchestrator(
                     .flatMapMerge(concurrency = 100) { markdownSource ->
                         flow {
                             val evalResult = evaluateMarkdownSource(
-                                sessionId, searchQuery, markdownSource, expandedQuery, fulfillmentRequirements
+                                sessionId, markdownSource, expandedQuery, fulfillmentRequirements
                             )
                             if (evalResult != null) {
                                 emit(TaggedEvaluatedSource(evalResult.evaluatedSource, isPreview = false))
@@ -298,7 +314,7 @@ class AgenticBrowserSearchOrchestrator(
                 .takeWhile { !currentAccumulator.isComplete }
                 .runningFold(currentAccumulator) { state, batch ->
                     aggregateBatchIntoAccumulator(
-                        sessionId, searchQuery, state, batch, channel,
+                        sessionId, state, batch, channel,
                         expandedQuery, fulfillmentRequirements
                     )
                 }
@@ -866,14 +882,12 @@ class AgenticBrowserSearchOrchestrator(
      */
     private suspend fun evaluateHtmlSource(
         sessionId: QuerySessionId,
-        searchQuery: SearchQuery,
         htmlSource: UrlContentResult.HtmlPreview,
-        expandedQuery: String? = null,
+        expandedQuery: String,
         fulfillmentRequirements: List<String> = emptyList()
     ): EvaluatedSource? {
         val evalOutput = htmlSourceEvalService.evaluate(
             HtmlSourceEvalInput(
-                searchQuery = searchQuery,
                 htmlSource = htmlSource,
                 expandedQuery = expandedQuery,
                 fulfillmentRequirements = fulfillmentRequirements
@@ -898,14 +912,12 @@ class AgenticBrowserSearchOrchestrator(
      */
     private suspend fun evaluateMarkdownSource(
         sessionId: QuerySessionId,
-        searchQuery: SearchQuery,
         markdownSource: MarkdownSource,
-        expandedQuery: String? = null,
+        expandedQuery: String,
         fulfillmentRequirements: List<String> = emptyList()
     ): MarkdownEvalResult? {
         val output = markdownSourceEvalAgent.generate(
             MarkdownSourceEvalInput(
-                searchQuery = searchQuery,
                 markdownSource = markdownSource,
                 expandedQuery = expandedQuery,
                 fulfillmentRequirements = fulfillmentRequirements
@@ -933,10 +945,9 @@ class AgenticBrowserSearchOrchestrator(
      */
     private suspend fun synthesizeAnswer(
         sessionId: QuerySessionId,
-        query: String,
+        expandedQuery: String,
         evaluatedSources: List<EvaluatedSource>,
         previouslySearchedQueries: List<String> = emptyList(),
-        expandedQuery: String? = null,
         fulfillmentRequirements: List<String> = emptyList()
     ): SynthesisResult {
         val answerBuilder = StringBuilder()
@@ -948,10 +959,9 @@ class AgenticBrowserSearchOrchestrator(
 
         streamingAnswerSynthesisAgent.generateStream(
             StreamingAnswerSynthesisInput(
-                query = query,
+                query = expandedQuery,
                 evaluatedSources = evaluatedSources,
                 previouslySearchedQueries = previouslySearchedQueries,
-                expandedQuery = expandedQuery,
                 fulfillmentRequirements = fulfillmentRequirements
             )
         ).collect { item ->
@@ -989,11 +999,10 @@ class AgenticBrowserSearchOrchestrator(
      */
     private suspend fun aggregateBatchIntoAccumulator(
         sessionId: QuerySessionId,
-        searchQuery: SearchQuery,
         state: SourceAccumulator,
         batch: List<TaggedEvaluatedSource>,
         eventChannel: SendChannel<SearchEvent>,
-        expandedQuery: String? = null,
+        expandedQuery: String,
         fulfillmentRequirements: List<String> = emptyList()
     ): SourceAccumulator {
         if (batch.isEmpty()) {
@@ -1043,10 +1052,9 @@ class AgenticBrowserSearchOrchestrator(
         // Synthesize answer with updated sources
         val synthesis = synthesizeAnswer(
             sessionId = sessionId,
-            query = searchQuery.query,
+            expandedQuery = expandedQuery,
             evaluatedSources = updatedSourcesByUrl.values.map { it.source },
             previouslySearchedQueries = state.searchedQueries,
-            expandedQuery = expandedQuery,
             fulfillmentRequirements = fulfillmentRequirements
         )
 

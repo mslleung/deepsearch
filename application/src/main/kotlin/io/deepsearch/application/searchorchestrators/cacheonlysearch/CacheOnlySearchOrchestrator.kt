@@ -181,11 +181,15 @@ class CacheOnlySearchOrchestrator(
             val markdownSources = buildMarkdownSources(validWebpages, fileSearchResult, kgResult, domain)
 
             // Step 2: Evaluate each markdown source in parallel
+            // Cache-only search uses raw query as expandedQuery (no query processing)
             val evaluatedSources: List<EvaluatedSource> = markdownSources.asFlow()
                 .flatMapMerge(concurrency = 100) { source ->
                     flow {
                         val output = markdownSourceEvalAgent.generate(
-                            MarkdownSourceEvalInput(searchQuery, source)
+                            MarkdownSourceEvalInput(
+                                markdownSource = source,
+                                expandedQuery = searchQuery.query
+                            )
                         )
                         
                         tokenUsageService.recordTokenUsage(

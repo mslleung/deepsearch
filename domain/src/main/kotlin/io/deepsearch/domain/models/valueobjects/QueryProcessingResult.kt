@@ -22,6 +22,12 @@ data class QueryProcessingResult(
      */
     val fulfillmentRequirements: List<String>,
     
+    /**
+     * Follow-up queries for early link discovery.
+     * These are emitted to the discovery channel immediately after query processing.
+     */
+    val followUpQueries: List<String> = emptyList(),
+    
     /** The website context used to generate this result */
     val websiteContext: WebsiteContext
 )

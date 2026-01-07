@@ -3,7 +3,6 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import io.deepsearch.domain.agents.HtmlSourceEvalInput
 import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -67,8 +66,8 @@ class HtmlSourceEvalAgentTest : KoinTest {
         )
 
         val input = HtmlSourceEvalInput(
-            searchQuery = SearchQuery("Who is the CEO of SleekFlow?", "https://sleekflow.io"),
-            htmlSource = htmlSource
+            htmlSource = htmlSource,
+            expandedQuery = "Who is the CEO of SleekFlow?"
         )
 
         val output = agent.generate(input)
@@ -132,8 +131,8 @@ class HtmlSourceEvalAgentTest : KoinTest {
         )
 
         val input = HtmlSourceEvalInput(
-            searchQuery = SearchQuery("Does the Pro plan have any SLA guarantee?", "https://sleekflow.io"),
-            htmlSource = htmlSource
+            htmlSource = htmlSource,
+            expandedQuery = "Does the Pro plan have any SLA guarantee?"
         )
 
         val output = agent.generate(input)
@@ -168,8 +167,8 @@ class HtmlSourceEvalAgentTest : KoinTest {
         )
 
         val input = HtmlSourceEvalInput(
-            searchQuery = SearchQuery("Does the platform support AI analytics?", "https://example.com"),
-            htmlSource = htmlSource
+            htmlSource = htmlSource,
+            expandedQuery = "Does the platform support AI analytics?"
         )
 
         val output = agent.generate(input)
@@ -212,8 +211,8 @@ class HtmlSourceEvalAgentTest : KoinTest {
         )
 
         val input = HtmlSourceEvalInput(
-            searchQuery = SearchQuery("What is the pricing for the Pro plan?", "https://example.com"),
-            htmlSource = htmlSource
+            htmlSource = htmlSource,
+            expandedQuery = "What is the pricing for the Pro plan?"
         )
 
         val output = agent.generate(input)
@@ -248,8 +247,8 @@ class HtmlSourceEvalAgentTest : KoinTest {
         )
 
         val input = HtmlSourceEvalInput(
-            searchQuery = SearchQuery("What is the pricing?", "https://example.com"),
-            htmlSource = htmlSource
+            htmlSource = htmlSource,
+            expandedQuery = "What is the pricing?"
         )
 
         val output = agent.generate(input)

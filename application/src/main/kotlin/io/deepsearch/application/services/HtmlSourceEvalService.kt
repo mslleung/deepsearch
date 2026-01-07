@@ -63,8 +63,8 @@ class HtmlSourceEvalService(
 
     override suspend fun evaluate(input: HtmlSourceEvalInput, sessionId: SessionId): HtmlSourceEvalOutput {
         val htmlSource = input.htmlSource
-        val searchQuery = input.searchQuery
-        val queryWithSite = "${searchQuery.query} site:${extractDomain(searchQuery.url)}"
+        // Use expandedQuery with site context from source URL for cache key
+        val queryWithSite = "${input.expandedQuery} site:${extractDomain(htmlSource.url)}"
         
         // Compute content hash for caching (query + cleanedHtml)
         val contentHash = computeContentHash(queryWithSite, htmlSource.cleanedHtml)

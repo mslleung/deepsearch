@@ -8,7 +8,6 @@ import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
-import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -605,8 +604,8 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
 
         // Step 1: Evaluate the HTML source with HtmlSourceEvalAgent
         val evalInput = HtmlSourceEvalInput(
-            searchQuery = SearchQuery("What are the current SleekFlow pricing plans?", "https://sleekflow.io"),
-            htmlSource = sleekflowPricing2024Html
+            htmlSource = sleekflowPricing2024Html,
+            expandedQuery = "What are the current SleekFlow pricing plans?"
         )
 
         val evalOutput = htmlEvalAgent.generate(evalInput)

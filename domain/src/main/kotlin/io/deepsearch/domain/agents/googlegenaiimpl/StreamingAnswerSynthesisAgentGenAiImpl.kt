@@ -693,7 +693,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             // Static content first (for cache optimization)
             appendLine("# Query")
             // Use expanded query if available, otherwise use original query
-            appendLine(input.effectiveQuery)
+            appendLine(input.query)
             appendLine()
             
             // Include fulfillment requirements if available (critical for COVERAGE evaluation)

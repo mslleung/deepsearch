@@ -4,7 +4,6 @@ import io.deepsearch.domain.agents.IMarkdownSourceEvalAgent
 import io.deepsearch.domain.agents.MarkdownSourceEvalInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
-import io.deepsearch.domain.models.valueobjects.SearchQuery
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -39,17 +38,14 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         )
 
         val input = MarkdownSourceEvalInput(
-            searchQuery = SearchQuery("What is the pricing for the Enterprise plan?", "https://example.com"),
-            markdownSource = source
+            markdownSource = source,
+            expandedQuery = "What is the pricing for the Enterprise plan?"
         )
 
         val output = agent.generate(input)
 
         assertNotNull(output)
         assertNotNull(output.tokenUsage)
-        
-        // The content is about the company, not pricing, so it should be marked as not relevant
-        // Note: The LLM behavior may vary - this tests the flow works correctly
     }
 
     @Test
@@ -81,8 +77,8 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         )
 
         val input = MarkdownSourceEvalInput(
-            searchQuery = SearchQuery("What is machine learning?", "https://example.com"),
-            markdownSource = source
+            markdownSource = source,
+            expandedQuery = "What is machine learning?"
         )
 
         val output = agent.generate(input)
@@ -115,27 +111,13 @@ class MarkdownSourceEvalAgentTest : KoinTest {
                 ## Types of Machine Learning
                 
                 ### Supervised Learning
-                Uses labeled training data to learn the mapping from inputs to outputs. Examples include:
-                - Linear Regression
-                - Logistic Regression
-                - Decision Trees
-                - Random Forests
-                - Neural Networks
+                Uses labeled training data to learn the mapping from inputs to outputs.
                 
                 ### Unsupervised Learning
-                Finds patterns in unlabeled data. Examples include:
-                - K-Means Clustering
-                - Hierarchical Clustering
-                - Principal Component Analysis (PCA)
+                Finds patterns in unlabeled data.
                 
                 ### Reinforcement Learning
                 Learns through interaction with an environment using rewards and penalties.
-                
-                ## Real-World Applications
-                - Healthcare: Disease diagnosis, drug discovery
-                - Finance: Fraud detection, algorithmic trading
-                - Retail: Recommendation systems, demand forecasting
-                - Transportation: Autonomous vehicles, route optimization
                 
                 ## How Machine Learning Works
                 1. Data Collection: Gather relevant data
@@ -147,8 +129,8 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         )
 
         val input = MarkdownSourceEvalInput(
-            searchQuery = SearchQuery("What is machine learning and how does it work?", "https://example.com"),
-            markdownSource = source
+            markdownSource = source,
+            expandedQuery = "What is machine learning and how does it work?"
         )
 
         val output = agent.generate(input)
@@ -172,17 +154,17 @@ class MarkdownSourceEvalAgentTest : KoinTest {
                 
                 | Plan | Price | Features |
                 |------|-------|----------|
-                | Basic | $9/month | 5 users, 10GB storage |
-                | Pro | $29/month | 25 users, 100GB storage |
-                | Enterprise | $99/month | Unlimited users, 1TB storage |
+                | Basic | 9/month | 5 users, 10GB storage |
+                | Pro | 29/month | 25 users, 100GB storage |
+                | Enterprise | 99/month | Unlimited users, 1TB storage |
                 
                 All plans include 24/7 support.
             """.trimIndent()
         )
 
         val input = MarkdownSourceEvalInput(
-            searchQuery = SearchQuery("What is the pricing?", "https://example.com"),
-            markdownSource = source
+            markdownSource = source,
+            expandedQuery = "What is the pricing?"
         )
 
         val output = agent.generate(input)
@@ -190,11 +172,8 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertNotNull(output)
         assertNotNull(output.evaluatedSource, "Should have evaluated source for pricing content")
         
-        // Unlike HTML preview, markdown tables are properly processed
-        // So pricing facts should be included
         val pricingFacts = output.evaluatedSource!!.relevantFacts
             .filter { 
-                it.fact.contains("$", ignoreCase = true) || 
                 it.fact.contains("price", ignoreCase = true) ||
                 it.fact.contains("month", ignoreCase = true)
             }
@@ -227,8 +206,8 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         )
 
         val input = MarkdownSourceEvalInput(
-            searchQuery = SearchQuery("What are the main features?", "https://example.com"),
-            markdownSource = source
+            markdownSource = source,
+            expandedQuery = "What are the main features?"
         )
 
         val output = agent.generate(input)
@@ -238,13 +217,9 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         
         val evaluatedSource = output.evaluatedSource!!
         
-        // Verify metadata is preserved
         assertTrue(evaluatedSource.url == source.url, "URL should be preserved")
         assertTrue(evaluatedSource.title == source.title, "Title should be preserved")
         assertTrue(evaluatedSource.description == source.description, "Description should be preserved")
-        
-        // Verify intention is set
         assertTrue(evaluatedSource.intention.isNotBlank(), "Should have intention describing the page purpose")
     }
-
 }

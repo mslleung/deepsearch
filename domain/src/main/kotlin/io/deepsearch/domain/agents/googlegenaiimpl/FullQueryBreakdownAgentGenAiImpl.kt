@@ -39,7 +39,7 @@ class FullQueryBreakdownAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Website context extraction with query expansion and requirements")
+        .description("Website context extraction with query expansion, requirements, and follow-up queries")
         .properties(
             mapOf(
                 "pageTitle" to Schema.builder()
@@ -69,10 +69,20 @@ class FullQueryBreakdownAgentGenAiImpl(
                             .description("A single atomic requirement")
                             .build()
                     )
+                    .build(),
+                "followUpQueries" to Schema.builder()
+                    .type("ARRAY")
+                    .description("Search queries to find information for each requirement")
+                    .items(
+                        Schema.builder()
+                            .type("STRING")
+                            .description("A search query")
+                            .build()
+                    )
                     .build()
             )
         )
-        .required(listOf("contentSummary", "expandedQuery", "fulfillmentRequirements"))
+        .required(listOf("contentSummary", "expandedQuery", "fulfillmentRequirements", "followUpQueries"))
         .build()
 
     private val systemInstruction = """
@@ -101,13 +111,19 @@ class FullQueryBreakdownAgentGenAiImpl(
         - Minimal: No redundancy, only what's necessary
         - Specific: Clear statements of what information is needed
         
+        ## Step 4: Generate Follow-up Queries
+        - Generate search queries that would help find information for each requirement
+        - These queries will be used for link discovery on the target website
+        - Make them specific and actionable
+        
         ## Output Format
         {
             "pageTitle": "Title of the page",
             "pageDescription": "Brief description from meta or content",
             "contentSummary": "Brief description of what this page is about",
             "expandedQuery": "Clear, context-aware version of the query",
-            "fulfillmentRequirements": ["Requirement 1", "Requirement 2", ...]
+            "fulfillmentRequirements": ["Requirement 1", "Requirement 2", ...],
+            "followUpQueries": ["search query 1", "search query 2", ...]
         }
     """.trimIndent()
 
@@ -117,7 +133,8 @@ class FullQueryBreakdownAgentGenAiImpl(
         val pageDescription: String? = null,
         val contentSummary: String,
         val expandedQuery: String,
-        val fulfillmentRequirements: List<String>
+        val fulfillmentRequirements: List<String>,
+        val followUpQueries: List<String> = emptyList()
     )
 
     override suspend fun generate(input: FullQueryBreakdownInput): FullQueryBreakdownOutput {
@@ -168,11 +185,12 @@ class FullQueryBreakdownAgentGenAiImpl(
         }
 
         logger.debug(
-            "Full query breakdown result: title='{}', summary='{}', expanded='{}', requirements={}",
+            "Full query breakdown result: title='{}', summary='{}', expanded='{}', requirements={}, followUpQueries={}",
             response.pageTitle,
             response.contentSummary,
             response.expandedQuery,
-            response.fulfillmentRequirements
+            response.fulfillmentRequirements,
+            response.followUpQueries
         )
 
         val websiteContext = WebsiteContext(
@@ -186,6 +204,7 @@ class FullQueryBreakdownAgentGenAiImpl(
             websiteContext = websiteContext,
             expandedQuery = response.expandedQuery,
             fulfillmentRequirements = response.fulfillmentRequirements,
+            followUpQueries = response.followUpQueries,
             tokenUsage = tokenUsage
         )
     }

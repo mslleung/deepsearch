@@ -30,7 +30,7 @@ class SimpleQueryBreakdownAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Query expansion with fulfillment requirements")
+        .description("Query expansion with fulfillment requirements and follow-up queries")
         .properties(
             mapOf(
                 "expandedQuery" to Schema.builder()
@@ -46,10 +46,20 @@ class SimpleQueryBreakdownAgentGenAiImpl(
                             .description("A single atomic requirement")
                             .build()
                     )
+                    .build(),
+                "followUpQueries" to Schema.builder()
+                    .type("ARRAY")
+                    .description("Search queries to find information for each requirement")
+                    .items(
+                        Schema.builder()
+                            .type("STRING")
+                            .description("A search query")
+                            .build()
+                    )
                     .build()
             )
         )
-        .required(listOf("expandedQuery", "fulfillmentRequirements"))
+        .required(listOf("expandedQuery", "fulfillmentRequirements", "followUpQueries"))
         .build()
 
     private val systemInstruction = """
@@ -73,17 +83,24 @@ class SimpleQueryBreakdownAgentGenAiImpl(
         - Minimal: No redundancy, only what's necessary
         - Specific: Clear statements of what information is needed
         
+        ## Step 3: Generate Follow-up Queries
+        - Generate search queries that would help find information for each requirement
+        - These queries will be used for link discovery on the target website
+        - Make them specific and actionable
+        
         ## Output Format
         {
             "expandedQuery": "Clear, context-aware version of the query",
-            "fulfillmentRequirements": ["Requirement 1", "Requirement 2", ...]
+            "fulfillmentRequirements": ["Requirement 1", "Requirement 2", ...],
+            "followUpQueries": ["search query 1", "search query 2", ...]
         }
     """.trimIndent()
 
     @Serializable
     private data class QueryBreakdownResponse(
         val expandedQuery: String,
-        val fulfillmentRequirements: List<String>
+        val fulfillmentRequirements: List<String>,
+        val followUpQueries: List<String> = emptyList()
     )
 
     override suspend fun generate(input: SimpleQueryBreakdownInput): SimpleQueryBreakdownOutput {
@@ -132,14 +149,16 @@ class SimpleQueryBreakdownAgentGenAiImpl(
         }
 
         logger.debug(
-            "Query breakdown result: expanded='{}', requirements={}",
+            "Query breakdown result: expanded='{}', requirements={}, followUpQueries={}",
             response.expandedQuery,
-            response.fulfillmentRequirements
+            response.fulfillmentRequirements,
+            response.followUpQueries
         )
 
         return SimpleQueryBreakdownOutput(
             expandedQuery = response.expandedQuery,
             fulfillmentRequirements = response.fulfillmentRequirements,
+            followUpQueries = response.followUpQueries,
             tokenUsage = tokenUsage
         )
     }
