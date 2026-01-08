@@ -283,7 +283,7 @@ class AgenticBrowserSearchOrchestrator(
             }
 
             // Unified evaluation flow: both preview and markdown sources are evaluated in parallel
-            // and merged into a single stream of TaggedEvaluatedSource
+            // and merged into a single stream of EvaluatedSource (isPreview set by eval agents)
             val unifiedEvalFlow = merge(
                 // Preview path: fast HTML evaluation (when includeImages is false)
                 if (!includeImages) {
@@ -295,7 +295,7 @@ class AgenticBrowserSearchOrchestrator(
                                     sessionId, htmlSource, expandedQuery, fulfillmentRequirements
                                 )
                                 if (evalResult != null) {
-                                    emit(TaggedEvaluatedSource(evalResult, isPreview = true))
+                                    emit(evalResult) // isPreview=true set by HtmlSourceEvalAgent
                                 }
                             }
                         }
@@ -314,7 +314,7 @@ class AgenticBrowserSearchOrchestrator(
                                 sessionId, markdownSource, expandedQuery, fulfillmentRequirements
                             )
                             if (evalResult != null) {
-                                emit(TaggedEvaluatedSource(evalResult.evaluatedSource, isPreview = false))
+                                emit(evalResult) // isPreview=false (default)
                             }
                         }
                     }
@@ -914,24 +914,13 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Tagged evaluated source that tracks whether it came from preview (HTML) or full markdown.
-     * Used for URL-keyed accumulation where markdown replaces preview.
-     */
-    private data class TaggedEvaluatedSource(
-        val source: EvaluatedSource,
-        val isPreview: Boolean
-    ) {
-        val url: String get() = source.url
-    }
-
-    /**
      * Accumulator for unified answer generation with feedback loop support.
      * Uses URL-keyed source map where markdown sources replace preview sources.
      * Tracks sources, queries, and synthesis iterations.
      */
     private data class SourceAccumulator(
-        /** URL-keyed source map - markdown replaces preview when both arrive */
-        val sourcesByUrl: Map<String, TaggedEvaluatedSource> = emptyMap(),
+        /** URL-keyed source map - markdown (isPreview=false) replaces preview (isPreview=true) */
+        val sourcesByUrl: Map<String, EvaluatedSource> = emptyMap(),
         /** Whether the answer is complete (status=FINISH_SEARCH from synthesis agent) */
         val isComplete: Boolean = false,
         /** Full answer from the last answer synthesis attempt */
@@ -952,18 +941,11 @@ class AgenticBrowserSearchOrchestrator(
         val pendingFollowUpQueries: List<String> = emptyList()
     ) {
         /** Get all evaluated sources as a list (for synthesis agent) */
-        val evaluatedSources: List<EvaluatedSource> get() = sourcesByUrl.values.map { it.source }
+        val evaluatedSources: List<EvaluatedSource> get() = sourcesByUrl.values.toList()
 
         /** Get all processed URLs */
         val processedUrls: Set<String> get() = sourcesByUrl.keys
     }
-
-    /**
-     * Result from evaluating a single markdown source.
-     */
-    private data class MarkdownEvalResult(
-        val evaluatedSource: EvaluatedSource
-    )
 
     /**
      * Result from answer synthesis, containing all relevant data from the streaming response.
@@ -1030,7 +1012,7 @@ class AgenticBrowserSearchOrchestrator(
         markdownSource: MarkdownSource,
         expandedQuery: String,
         fulfillmentRequirements: List<String> = emptyList()
-    ): MarkdownEvalResult? {
+    ): EvaluatedSource? {
         val output = markdownSourceEvalAgent.generate(
             MarkdownSourceEvalInput(
                 markdownSource = markdownSource,
@@ -1048,9 +1030,7 @@ class AgenticBrowserSearchOrchestrator(
             output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
         )
 
-        return output.evaluatedSource?.let {
-            MarkdownEvalResult(it)
-        }
+        return output.evaluatedSource
     }
 
     /**
@@ -1108,14 +1088,14 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Aggregate a batch of tagged sources into the accumulator with URL-keyed replacement.
-     * Markdown sources replace preview sources for the same URL.
+     * Aggregate a batch of evaluated sources into the accumulator with URL-keyed replacement.
+     * Markdown sources (isPreview=false) replace preview sources (isPreview=true) for the same URL.
      * Triggers answer synthesis after updating sources.
      */
     private suspend fun aggregateBatchIntoAccumulator(
         sessionId: QuerySessionId,
         state: SourceAccumulator,
-        batch: List<TaggedEvaluatedSource>,
+        batch: List<EvaluatedSource>,
         eventChannel: SendChannel<SearchEvent>,
         expandedQuery: String,
         fulfillmentRequirements: List<String> = emptyList()
@@ -1129,19 +1109,19 @@ class AgenticBrowserSearchOrchestrator(
         var replacements = 0
         var additions = 0
 
-        for (taggedSource in batch) {
-            val url = taggedSource.url
+        for (source in batch) {
+            val url = source.url
             val existing = updatedSourcesByUrl[url]
 
             when {
                 // No existing entry - add new source
                 existing == null -> {
-                    updatedSourcesByUrl[url] = taggedSource
+                    updatedSourcesByUrl[url] = source
                     additions++
                 }
                 // Existing is preview and new is markdown - replace
-                existing.isPreview && !taggedSource.isPreview -> {
-                    updatedSourcesByUrl[url] = taggedSource
+                existing.isPreview && !source.isPreview -> {
+                    updatedSourcesByUrl[url] = source
                     replacements++
                     logger.debug(
                         "[{}] Replacing preview with markdown for URL: {}",
@@ -1168,7 +1148,7 @@ class AgenticBrowserSearchOrchestrator(
         val synthesis = synthesizeAnswer(
             sessionId = sessionId,
             expandedQuery = expandedQuery,
-            evaluatedSources = updatedSourcesByUrl.values.map { it.source },
+            evaluatedSources = updatedSourcesByUrl.values.toList(),
             previouslySearchedQueries = state.searchedQueries,
             fulfillmentRequirements = fulfillmentRequirements
         )

@@ -81,6 +81,9 @@ class HtmlSourceEvalAgentTest : KoinTest {
             .filter { it.fact.contains("Henson", ignoreCase = true) || it.fact.contains("CEO", ignoreCase = true) }
         
         assertTrue(ceoFacts.isNotEmpty(), "Should find facts about the CEO (prose facts are not filtered)")
+        
+        // Verify isPreview is set to true for HTML preview sources
+        assertTrue(output.evaluatedSource.isPreview, "HTML preview sources should have isPreview=true")
     }
 
     /**

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -221,5 +222,8 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertTrue(evaluatedSource.title == source.title, "Title should be preserved")
         assertTrue(evaluatedSource.description == source.description, "Description should be preserved")
         assertTrue(evaluatedSource.intention.isNotBlank(), "Should have intention describing the page purpose")
+        
+        // Verify isPreview is false for markdown sources (full content)
+        assertFalse(evaluatedSource.isPreview, "Markdown sources should have isPreview=false")
     }
 }

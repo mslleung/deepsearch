@@ -15,6 +15,8 @@ import kotlinx.serialization.Serializable
  * @property contentDate Date extracted from content (nullable if no date found)
  * @property intention Describes the purpose of the webpage (e.g., "Official pricing page showing subscription tiers")
  * @property relevantImageIds List of image IDs (format: "img-xxx") deemed relevant for this source
+ * @property isPreview True if this source was evaluated from HTML preview (partial content),
+ *           false if from full markdown. Preview sources may have incomplete facts.
  */
 @Serializable
 data class EvaluatedSource(
@@ -24,5 +26,6 @@ data class EvaluatedSource(
     val relevantFacts: List<RelevantFact>,
     val contentDate: String?,
     val intention: String,
-    val relevantImageIds: List<String> = emptyList()
+    val relevantImageIds: List<String> = emptyList(),
+    val isPreview: Boolean = false
 )

@@ -730,6 +730,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     source.relevantFacts.forEach { fact ->
                         appendLine("- ${fact.fact}")
                     }
+                    // Indicate if source is from preview (incomplete content)
+                    if (source.isPreview) {
+                        appendLine("- Continue search for more facts on this page...")
+                    }
 
                     // Show available images for this source with descriptions from input
                     val sourceImages = source.relevantImageIds.mapNotNull { imageId ->

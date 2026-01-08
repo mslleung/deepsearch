@@ -219,7 +219,8 @@ class HtmlSourceEvalAgentGenAiImpl(
             relevantFacts = filteredFacts,
             contentDate = response.contentDate,
             intention = response.intention,
-            relevantImageIds = emptyList() // Preview path doesn't handle images
+            relevantImageIds = emptyList(), // Preview path doesn't handle images
+            isPreview = true
         )
 
         logger.debug(
