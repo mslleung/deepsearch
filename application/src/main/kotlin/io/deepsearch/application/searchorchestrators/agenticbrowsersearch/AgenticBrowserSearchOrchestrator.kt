@@ -75,7 +75,11 @@ import kotlinx.coroutines.flow.first
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.FeedbackLoopReport
+import io.deepsearch.application.services.IKgHybridRetrievalService
+import io.deepsearch.application.services.ILlmTokenUsageService
+import io.deepsearch.application.services.IQueryProcessingService
 import io.deepsearch.domain.agents.AnswerAssessment
+import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
@@ -106,11 +110,12 @@ class AgenticBrowserSearchOrchestrator(
     private val webpageCacheService: WebpageCacheService,
     private val geminiFileSearchService: IGeminiFileSearchService,
     private val dispatchers: IDispatcherProvider,
-    private val tokenUsageService: io.deepsearch.application.services.ILlmTokenUsageService,
+    private val tokenUsageService: ILlmTokenUsageService,
     private val adaptiveRateLimiter: IAdaptiveRateLimiter,
     private val htmlPreviewService: IHtmlPreviewService,
-    private val kgHybridRetrievalService: io.deepsearch.application.services.IKgHybridRetrievalService,
-    private val queryProcessingService: io.deepsearch.application.services.IQueryProcessingService
+    private val kgHybridRetrievalService: IKgHybridRetrievalService,
+    private val queryProcessingService: IQueryProcessingService,
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -118,7 +123,7 @@ class AgenticBrowserSearchOrchestrator(
     companion object {
         // Default score for links from sources that don't provide scoring (SERPER, etc.)
         private const val DEFAULT_LINK_SCORE = 10
-        
+
         /**
          * URL normalization config for deduplication.
          * Strips locale segments from paths so /about, /en/about, /zh-cn/about are treated as duplicates.
@@ -164,22 +169,28 @@ class AgenticBrowserSearchOrchestrator(
             val queryProcessingFlow = queryProcessingService.processQueryFlow(searchQuery, maxCacheAge, sessionId)
                 .shareIn(this, SharingStarted.Eagerly, replay = 1)
 
-            val seenUrls = ConcurrentHashMap.newKeySet<String>()
-            
+            // Tracks URLs that have been fully processed (content fetched, markdown emitted)
+            // Used for content processing dedup - each URL only gets processed once
+            val processedUrls = ConcurrentHashMap.newKeySet<String>()
+
+            // Tracks (query, URL) pairs that have had link discovery done
+            // Used for link discovery dedup - allows re-analyzing same URL with different queries
+            val discoveredQueryUrls = ConcurrentHashMap.newKeySet<QueryUrlKey>()
+
             // Query channel - the top-level driver for the search flow
             // Initial query is sent first, follow-up queries are added via the feedback loop
             val queryChannel = Channel<String>(Channel.UNLIMITED)
             queryChannel.send(searchQuery.query)
-            
+
             // Track previously searched queries (thread-safe) for dedup context
             val previouslySearchedQueries = ConcurrentHashMap.newKeySet<String>()
             previouslySearchedQueries.add(searchQuery.query)
 
             // Priority buffer for discovered links - maintains global ordering by score
             val priorityLinkBuffer = PriorityLinkChannel(defaultScore = DEFAULT_LINK_SCORE)
-            
+
             // Channel for recursive link discovery (links found within processed pages)
-            val recursiveDiscoveredLinksChannel = Channel<WebpageLink>(Channel.UNLIMITED)
+            val recursiveDiscoveredLinksChannel = Channel<DiscoveredLink>(Channel.UNLIMITED)
 
             // Discovery flows - unified query-driven discovery
             // All queries (initial + follow-up) flow through the same pipeline:
@@ -189,7 +200,7 @@ class AgenticBrowserSearchOrchestrator(
                 processInitialLinkFlow(
                     sessionId,
                     searchQuery,
-                    seenUrls,
+                    processedUrls,
                     priorityLinkBuffer,
                     maxCacheAge,
                     proxyConfig,
@@ -205,12 +216,13 @@ class AgenticBrowserSearchOrchestrator(
                     channel
                 )
             )
-            
+
             // Link processing flow - pulls from priority buffer and processes URLs
             val linkProcessingFlow = processPriorityLinksFlow(
                 sessionId,
                 searchQuery,
-                seenUrls,
+                processedUrls,
+                discoveredQueryUrls,
                 budget,
                 priorityLinkBuffer,
                 recursiveDiscoveredLinksChannel,
@@ -245,7 +257,7 @@ class AgenticBrowserSearchOrchestrator(
             val queryProcessingResult = queryProcessingFlow.first()
             val expandedQuery = queryProcessingResult.expandedQuery
             val fulfillmentRequirements = queryProcessingResult.fulfillmentRequirements
-            
+
             logger.info(
                 "[{}] Query processing complete: '{}' → '{}' with {} requirements",
                 sessionId.value,
@@ -253,7 +265,7 @@ class AgenticBrowserSearchOrchestrator(
                 expandedQuery,
                 fulfillmentRequirements.size
             )
-            
+
             // Emit follow-up queries from breakdown agent to discovery channel for early link discovery
             if (queryProcessingResult.followUpQueries.isNotEmpty()) {
                 val newFollowUpQueries = queryProcessingResult.followUpQueries.filter { query ->
@@ -320,21 +332,22 @@ class AgenticBrowserSearchOrchestrator(
                 }
                 .onEach { accumulator ->
                     currentAccumulator = accumulator
-                    
+
                     // Process follow-up queries from synthesis (already deduped by synthesis agent)
-                    if (accumulator.pendingFollowUpQueries.isNotEmpty() && 
-                        accumulator.status == AnswerStatus.CONTINUE_SEARCH) {
+                    if (accumulator.pendingFollowUpQueries.isNotEmpty() &&
+                        accumulator.status == AnswerStatus.CONTINUE_SEARCH
+                    ) {
                         // Filter out queries we've already searched (thread-safe)
                         val newQueries = accumulator.pendingFollowUpQueries.filter { query ->
                             previouslySearchedQueries.add(query)
                         }
-                        
+
                         if (newQueries.isNotEmpty()) {
                             logger.info(
                                 "[{}] Follow-up queries from synthesis: {}",
                                 sessionId.value, newQueries
                             )
-                            
+
                             channel.send(
                                 SearchEvent.FollowUpSearchStarted(
                                     sessionId = sessionId,
@@ -343,14 +356,14 @@ class AgenticBrowserSearchOrchestrator(
                                     iterationNumber = accumulator.iterationNumber
                                 )
                             )
-                            
+
                             // Send to query channel to trigger discovery
                             newQueries.forEach { query ->
                                 queryChannel.send(query)
                             }
                         }
                     }
-                    
+
                     // Handle session completion
                     if (accumulator.isComplete && sessionCompleted.compareAndSet(false, true)) {
                         logger.info("[{}] Synthesis returned FINISH_SEARCH, completing session", sessionId.value)
@@ -391,7 +404,7 @@ class AgenticBrowserSearchOrchestrator(
     private fun processInitialLinkFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         priorityLinkBuffer: PriorityLinkChannel,
         maxCacheAge: Long?,
         proxyConfig: ProxyConfiguration,
@@ -400,11 +413,11 @@ class AgenticBrowserSearchOrchestrator(
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
-                // Add URL to seenUrls before processing to prevent duplicate processing
+                // Add URL to processedUrls before processing to prevent duplicate processing
                 // This must happen before processUrlAsFlow, not on each event, because
                 // multiple events (HtmlPreview, LinkDiscovery, MarkdownExtraction)
                 // share the same URL and would filter out subsequent events
-                seenUrls.add(normalizedUrl)
+                processedUrls.add(normalizedUrl)
                 eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
 
                 urlContentProcessingService.processUrlAsFlow(
@@ -418,8 +431,10 @@ class AgenticBrowserSearchOrchestrator(
                     .onEach { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                // Send discovered links to priority buffer
-                                event.discoveredLinks.forEach { priorityLinkBuffer.send(it) }
+                                // Send discovered links to priority buffer with initial query context
+                                event.discoveredLinks.forEach { link ->
+                                    priorityLinkBuffer.send(DiscoveredLink(link, searchQuery.query))
+                                }
                             }
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
@@ -494,7 +509,7 @@ class AgenticBrowserSearchOrchestrator(
         return queryChannel.receiveAsFlow()
             .flatMapMerge(concurrency = 3) { query ->
                 logger.info("[{}] Triggering full discovery for query: '{}'", sessionId.value, query)
-                
+
                 // Create a SearchQuery with this query but same URL context
                 val currentSearchQuery = SearchQuery(
                     rawQuery = query,
@@ -503,23 +518,34 @@ class AgenticBrowserSearchOrchestrator(
                     ocrLanguage = baseSearchQuery.ocrLanguage,
                     includeImages = baseSearchQuery.includeImages
                 )
-                
+
                 // Run all discovery mechanisms in parallel using flow composition
                 merge(
                     // 1. SERP Search
                     flow {
                         try {
-                            val serpLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(currentSearchQuery)
-                            logger.debug("[{}] SERP discovery for '{}': {} links", sessionId.value, query, serpLinks.size)
-                            serpLinks.forEach { priorityLinkBuffer.send(it) }
+                            val serpLinks =
+                                webpageLinkDiscoveryService.discoverRelevantLinksBySerper(currentSearchQuery)
+                            logger.debug(
+                                "[{}] SERP discovery for '{}': {} links",
+                                sessionId.value,
+                                query,
+                                serpLinks.size
+                            )
+                            serpLinks.forEach { priorityLinkBuffer.send(DiscoveredLink(it, query)) }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            logger.error("[{}] SERP discovery for query '{}' failed: {}", sessionId.value, query, e.message)
+                            logger.error(
+                                "[{}] SERP discovery for query '{}' failed: {}",
+                                sessionId.value,
+                                query,
+                                e.message
+                            )
                         }
                         emit(Unit)
                     },
-                    
+
                     // 2. Hybrid Search (from cache) - discover URLs from cached pages
                     flow {
                         try {
@@ -527,11 +553,14 @@ class AgenticBrowserSearchOrchestrator(
                                 query, baseSearchQuery.url, null, 15, sessionId
                             )
                             val links = hybridResults.map { webpage ->
-                                WebpageLink(
-                                    url = webpage.url,
-                                    source = LinkSource.HYBRID_SEARCH,
-                                    reason = "Hybrid search result for: $query",
-                                    score = DEFAULT_LINK_SCORE
+                                DiscoveredLink(
+                                    link = WebpageLink(
+                                        url = webpage.url,
+                                        source = LinkSource.HYBRID_SEARCH,
+                                        reason = "Hybrid search result for: $query",
+                                        score = DEFAULT_LINK_SCORE
+                                    ),
+                                    query = query
                                 )
                             }
                             logger.debug("[{}] Hybrid discovery for '{}': {} links", sessionId.value, query, links.size)
@@ -539,11 +568,16 @@ class AgenticBrowserSearchOrchestrator(
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            logger.error("[{}] Hybrid discovery for query '{}' failed: {}", sessionId.value, query, e.message)
+                            logger.error(
+                                "[{}] Hybrid discovery for query '{}' failed: {}",
+                                sessionId.value,
+                                query,
+                                e.message
+                            )
                         }
                         emit(Unit)
                     },
-                    
+
                     // 3. Knowledge Graph - discover URLs from KG entities
                     flow {
                         try {
@@ -557,11 +591,14 @@ class AgenticBrowserSearchOrchestrator(
                                 )
                                 val links = kgResult.subgraph?.entities?.flatMap { entity ->
                                     entity.sourceUrls.map { url ->
-                                        WebpageLink(
-                                            url = url,
-                                            source = LinkSource.KNOWLEDGE_GRAPH,
-                                            reason = "KG entity: ${entity.name}",
-                                            score = DEFAULT_LINK_SCORE
+                                        DiscoveredLink(
+                                            link = WebpageLink(
+                                                url = url,
+                                                source = LinkSource.KNOWLEDGE_GRAPH,
+                                                reason = "KG entity: ${entity.name}",
+                                                score = DEFAULT_LINK_SCORE
+                                            ),
+                                            query = query
                                         )
                                     }
                                 } ?: emptyList()
@@ -571,11 +608,16 @@ class AgenticBrowserSearchOrchestrator(
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            logger.error("[{}] KG discovery for query '{}' failed: {}", sessionId.value, query, e.message)
+                            logger.error(
+                                "[{}] KG discovery for query '{}' failed: {}",
+                                sessionId.value,
+                                query,
+                                e.message
+                            )
                         }
                         emit(Unit)
                     },
-                    
+
                     // 4. File Search - discover URLs from file search chunks
                     flow {
                         try {
@@ -593,20 +635,33 @@ class AgenticBrowserSearchOrchestrator(
                                     searchResult.tokenUsage.outputTokens, searchResult.tokenUsage.totalTokens
                                 )
                                 val links = searchResult.chunks.map { chunk ->
-                                    WebpageLink(
-                                        url = chunk.sourceUrl,
-                                        source = LinkSource.FILE_SEARCH,
-                                        reason = "File search chunk for: $query",
-                                        score = DEFAULT_LINK_SCORE
+                                    DiscoveredLink(
+                                        link = WebpageLink(
+                                            url = chunk.sourceUrl,
+                                            source = LinkSource.FILE_SEARCH,
+                                            reason = "File search chunk for: $query",
+                                            score = DEFAULT_LINK_SCORE
+                                        ),
+                                        query = query
                                     )
                                 }.distinctBy { it.url }
-                                logger.debug("[{}] File search discovery for '{}': {} links", sessionId.value, query, links.size)
+                                logger.debug(
+                                    "[{}] File search discovery for '{}': {} links",
+                                    sessionId.value,
+                                    query,
+                                    links.size
+                                )
                                 links.forEach { priorityLinkBuffer.send(it) }
                             }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            logger.error("[{}] File search discovery for query '{}' failed: {}", sessionId.value, query, e.message)
+                            logger.error(
+                                "[{}] File search discovery for query '{}' failed: {}",
+                                sessionId.value,
+                                query,
+                                e.message
+                            )
                         }
                         emit(Unit)
                     }
@@ -617,55 +672,114 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Process links from priority buffer in priority order.
      * Pulls from the priority buffer (highest score first) and processes URLs.
+     * 
+     * Implements two-level deduplication:
+     * 1. (query, URL) dedup via discoveredQueryUrls - allows re-analyzing same URL with different queries
+     * 2. URL dedup via processedUrls - ensures content is only fetched/emitted once per URL
+     * 
+     * When a URL is already processed but discovered by a new query:
+     * - Retrieves cached HTML from WebpageMarkdownRepository
+     * - Re-runs link relevance analysis with the new query context
+     * - Discovered links are sent to recursive channel
+     * - No markdown is re-emitted (already done on first processing)
      */
     @OptIn(DelicateCoroutinesApi::class)
     private fun processPriorityLinksFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
-        seenUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        discoveredQueryUrls: ConcurrentHashMap.KeySetView<QueryUrlKey, Boolean>,
         budget: SearchBudget,
         priorityLinkBuffer: PriorityLinkChannel,
-        recursiveChannel: Channel<WebpageLink>,
+        recursiveChannel: Channel<DiscoveredLink>,
         maxCacheAge: Long?,
         proxyConfig: ProxyConfiguration,
         eventChannel: SendChannel<SearchEvent>
     ): Flow<UrlContentResult> {
         val inFlight = ConcurrentHashMap.newKeySet<String>()
-        
+
         // Merge priority buffer with recursive discoveries
         return merge(
             priorityLinkBuffer.receiveAsFlow(),
             recursiveChannel.receiveAsFlow()
         )
             .takeWhile { !querySessionService.isBudgetExceeded(sessionId, budget) }
-            .filter { link ->
-                // Normalize URL with locale stripping for deduplication
-                // This ensures /about, /en/about, /zh-cn/about are treated as the same URL
-                val dedupKey = normalizeUrlService.normalize(link.url, DEDUP_URL_NORMALIZATION_CONFIG) 
-                    ?: normalizeUrlService.normalize(link.url) 
-                    ?: link.url
-                
-                // Apply language filter if configured
-                val languagePattern = searchQuery.parsedLanguagePattern
-                if (languagePattern != null) {
-                    // Use the original URL (not locale-stripped) for language pattern matching
-                    val normalizedUrl = normalizeUrlService.normalize(link.url) ?: link.url
-                    if (!languagePattern.matches(normalizedUrl, searchQuery.url)) {
-                        logger.debug("[{}] Link filtered by language pattern: {}", sessionId.value, normalizedUrl)
-                        return@filter false
-                    }
-                }
-                
-                // Use atomic add() which returns true only if element was NOT already present
-                val isNew = seenUrls.add(dedupKey)
-                if (!isNew) {
-                    logger.debug("[{}] Skipping locale variant: {} (dedup key: {})", sessionId.value, link.url, dedupKey)
-                }
-                isNew
-            }
-            .flatMapMerge(concurrency = 100) { link ->
+            .flatMapMerge(concurrency = 100) { discoveredLink ->
                 flow {
-                    val url = normalizeUrlService.normalize(link.url) ?: link.url
+                    val query = discoveredLink.query
+
+                    // Normalize URL with locale stripping for deduplication
+                    val dedupKey = normalizeUrlService.normalize(discoveredLink.url, DEDUP_URL_NORMALIZATION_CONFIG)
+                        ?: normalizeUrlService.normalize(discoveredLink.url)
+                        ?: discoveredLink.url
+                    val url = normalizeUrlService.normalize(discoveredLink.url) ?: discoveredLink.url
+
+                    // Apply language filter if configured
+                    val languagePattern = searchQuery.parsedLanguagePattern
+                    if (languagePattern != null) {
+                        if (!languagePattern.matches(url, searchQuery.url)) {
+                            logger.debug("[{}] Link filtered by language pattern: {}", sessionId.value, url)
+                            return@flow
+                        }
+                    }
+
+                    // 1. Check (query, URL) dedup - skip if already handled this pair
+                    val queryUrlKey = QueryUrlKey(query, dedupKey)
+                    if (!discoveredQueryUrls.add(queryUrlKey)) {
+                        logger.debug(
+                            "[{}] Skipping already-analyzed (query, URL) pair: query='{}', url='{}'",
+                            sessionId.value,
+                            query,
+                            dedupKey
+                        )
+                        return@flow
+                    }
+
+                    // 2. Check if URL was already processed (has cached content)
+                    if (processedUrls.contains(dedupKey)) {
+                        // Re-run link relevance analysis on CACHED HTML with new query context
+                        logger.debug(
+                            "[{}] Re-analyzing cached HTML for URL '{}' with query '{}'",
+                            sessionId.value,
+                            url,
+                            query
+                        )
+                        try {
+                            val cached = webpageMarkdownRepository.findByUrl(dedupKey)
+                            val cachedHtml = cached?.cleanedLinkRelevanceHtml
+                            if (cachedHtml != null) {
+                                val newLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
+                                    query = query,
+                                    html = cachedHtml,
+                                    url = dedupKey,
+                                    sessionId = sessionId
+                                )
+                                logger.debug(
+                                    "[{}] Re-analysis discovered {} links for URL '{}' with query '{}'",
+                                    sessionId.value, newLinks.size, url, query
+                                )
+                                // Send newly discovered links to recursive channel with query context
+                                newLinks.forEach { newLink ->
+                                    recursiveChannel.send(DiscoveredLink(newLink, query))
+                                }
+                            } else {
+                                logger.debug("[{}] No cached HTML available for re-analysis: {}", sessionId.value, url)
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.warn(
+                                "[{}] Failed to re-analyze cached HTML for {}: {}",
+                                sessionId.value,
+                                url,
+                                e.message
+                            )
+                        }
+                        return@flow  // Skip markdown emission (already done on first processing)
+                    }
+
+                    // 3. New URL: full processing (fetch + analyze + markdown)
+                    processedUrls.add(dedupKey)
                     inFlight.add(url)
                     eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, url))
 
@@ -702,15 +816,16 @@ class AgenticBrowserSearchOrchestrator(
                                             recursiveChannel.close()
                                         }
                                     }
+
                                     else -> throw e
                                 }
                             }
                             .onEach { event ->
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                        // Send newly discovered links to recursive channel
+                                        // Send newly discovered links to recursive channel with query context
                                         event.discoveredLinks.forEach { newLink ->
-                                            recursiveChannel.send(newLink)
+                                            recursiveChannel.send(DiscoveredLink(newLink, query))
                                         }
                                     }
 
@@ -838,7 +953,7 @@ class AgenticBrowserSearchOrchestrator(
     ) {
         /** Get all evaluated sources as a list (for synthesis agent) */
         val evaluatedSources: List<EvaluatedSource> get() = sourcesByUrl.values.map { it.source }
-        
+
         /** Get all processed URLs */
         val processedUrls: Set<String> get() = sourcesByUrl.keys
     }
@@ -863,7 +978,7 @@ class AgenticBrowserSearchOrchestrator(
     ) {
         /** Whether the answer is complete (status=FINISH_SEARCH from synthesis agent) */
         val isComplete: Boolean get() = status == AnswerStatus.FINISH_SEARCH
-        
+
         /** Returns a brief summary of unsatisfied dimensions for logging */
         fun getUnsatisfiedSummary(): String {
             val unsatisfied = mutableListOf<String>()
@@ -891,13 +1006,13 @@ class AgenticBrowserSearchOrchestrator(
                 htmlSource = htmlSource,
                 expandedQuery = expandedQuery,
                 fulfillmentRequirements = fulfillmentRequirements
-            ), 
+            ),
             sessionId
         )
-        
+
         // Cooperative cancellation check
         currentCoroutineContext().ensureActive()
-        
+
         return evalOutput.evaluatedSource?.also { source ->
             logger.debug(
                 "[{}] HTML source evaluation: url={}, {} facts",
@@ -933,8 +1048,8 @@ class AgenticBrowserSearchOrchestrator(
             output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
         )
 
-        return output.evaluatedSource?.let { 
-            MarkdownEvalResult(it) 
+        return output.evaluatedSource?.let {
+            MarkdownEvalResult(it)
         }
     }
 
@@ -1013,11 +1128,11 @@ class AgenticBrowserSearchOrchestrator(
         val updatedSourcesByUrl = state.sourcesByUrl.toMutableMap()
         var replacements = 0
         var additions = 0
-        
+
         for (taggedSource in batch) {
             val url = taggedSource.url
             val existing = updatedSourcesByUrl[url]
-            
+
             when {
                 // No existing entry - add new source
                 existing == null -> {
@@ -1086,7 +1201,7 @@ class AgenticBrowserSearchOrchestrator(
                 relevantCount = updatedSourcesByUrl.size,
                 isGoodEnough = synthesis.isComplete,
                 reason = if (synthesis.isComplete) "Answer is complete"
-                         else "Collecting more sources (unsatisfied: ${synthesis.getUnsatisfiedSummary()})"
+                else "Collecting more sources (unsatisfied: ${synthesis.getUnsatisfiedSummary()})"
             )
         )
 
@@ -1156,7 +1271,16 @@ class AgenticBrowserSearchOrchestrator(
         )
 
         eventChannel.send(SearchEvent.AnswerChunk(sessionId, fullAnswer))
-        finishSessionWithAnswer(sessionId, accumulator, budget, eventChannel, fullAnswer, answerFound, imageIds, finalLoopReport)
+        finishSessionWithAnswer(
+            sessionId,
+            accumulator,
+            budget,
+            eventChannel,
+            fullAnswer,
+            answerFound,
+            imageIds,
+            finalLoopReport
+        )
     }
 
     private suspend fun finishSessionWithAnswer(
@@ -1170,8 +1294,8 @@ class AgenticBrowserSearchOrchestrator(
         loopReport: FeedbackLoopReport? = null
     ) {
         // Use cited sources if available, otherwise fall back to all sources
-        val answerSources = accumulator.citedSourceUrls.ifEmpty { 
-            accumulator.evaluatedSources.map { it.url } 
+        val answerSources = accumulator.citedSourceUrls.ifEmpty {
+            accumulator.evaluatedSources.map { it.url }
         }
         if (answerSources.isNotEmpty()) {
             urlAccessService.markUrlsAsUsedInAnswer(sessionId, answerSources)

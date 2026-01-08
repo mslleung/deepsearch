@@ -1,6 +1,5 @@
 package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
-import io.deepsearch.domain.models.valueobjects.WebpageLink
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -8,7 +7,7 @@ import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * A priority-ordered buffer for WebpageLinks.
+ * A priority-ordered buffer for DiscoveredLinks in agentic search.
  * 
  * Links are ordered by score (descending - higher scores first).
  * Provides a Flow that emits links in priority order.
@@ -34,14 +33,14 @@ class PriorityLinkChannel(
      * Wrapper class for priority ordering.
      */
     private data class ScoredLink(
-        val link: WebpageLink,
+        val link: DiscoveredLink,
         val effectiveScore: Int
     )
 
     /**
      * Send a link to the priority buffer.
      */
-    suspend fun send(link: WebpageLink) {
+    suspend fun send(link: DiscoveredLink) {
         if (closed.get()) return
         
         val effectiveScore = link.score ?: defaultScore
@@ -66,7 +65,7 @@ class PriorityLinkChannel(
      * Returns a Flow that emits links in priority order (highest score first).
      * The flow completes when the channel is closed and the queue is empty.
      */
-    fun receiveAsFlow(): Flow<WebpageLink> = flow {
+    fun receiveAsFlow(): Flow<DiscoveredLink> = flow {
         while (true) {
             // Try to poll from queue
             val item = queue.poll()
@@ -103,4 +102,3 @@ class PriorityLinkChannel(
      */
     fun size(): Int = queue.size
 }
-
