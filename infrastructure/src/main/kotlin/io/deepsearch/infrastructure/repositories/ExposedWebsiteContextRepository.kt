@@ -35,8 +35,6 @@ class ExposedWebsiteContextRepository(
             keys = arrayOf(websiteContextTable.url)
         ) {
             it[url] = context.url
-            it[title] = context.title
-            it[description] = context.description
             it[contentSummary] = context.contentSummary
             it[cachedAtEpochMs] = context.cachedAt.toEpochMilliseconds()
         }
@@ -45,8 +43,6 @@ class ExposedWebsiteContextRepository(
     private fun mapRowToCachedWebsiteContext(row: ResultRow): CachedWebsiteContext {
         return CachedWebsiteContext(
             url = row[websiteContextTable.url],
-            title = row[websiteContextTable.title],
-            description = row[websiteContextTable.description],
             contentSummary = row[websiteContextTable.contentSummary],
             cachedAt = Instant.fromEpochMilliseconds(row[websiteContextTable.cachedAtEpochMs])
         )

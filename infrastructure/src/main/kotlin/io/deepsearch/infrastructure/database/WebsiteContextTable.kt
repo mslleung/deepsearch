@@ -4,13 +4,11 @@ import org.jetbrains.exposed.v1.core.Table
 
 /**
  * Database table for caching website context per URL.
- * Used to store extracted context (title, description, summary) for faster query processing.
+ * Used to store extracted content summary for faster query processing.
  */
 class WebsiteContextTable : Table("website_context") {
     val url = varchar("url", length = 2048)
-    val title = varchar("title", length = 500).nullable()
-    val description = text("description").nullable()
-    val contentSummary = text("content_summary").nullable()
+    val contentSummary = text("content_summary")
     val cachedAtEpochMs = long("cached_at_epoch_ms")
 
     init {

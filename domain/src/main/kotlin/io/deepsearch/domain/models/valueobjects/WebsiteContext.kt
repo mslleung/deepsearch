@@ -11,27 +11,12 @@ import kotlin.time.Instant
  */
 data class WebsiteContext(
     val url: String,
-    val title: String?,
-    val description: String?,
-    val contentSummary: String?  // Brief summary of what the page is about
+    val contentSummary: String  // Summary of what the page is about
 ) {
     /**
      * Returns a summary string for prompts.
-     * Example: "Stripe Pricing - Payment processing fees (stripe.com/pricing)"
      */
-    fun toPromptSummary(): String = buildString {
-        if (!title.isNullOrBlank()) {
-            append(title)
-        }
-        if (!description.isNullOrBlank()) {
-            if (isNotEmpty()) append(" - ")
-            append(description.take(200))
-        }
-        if (contentSummary != null && isNotEmpty()) {
-            append(" | ")
-            append(contentSummary.take(300))
-        }
-    }
+    fun toPromptSummary(): String = contentSummary.take(500)
 }
 
 /**
@@ -40,15 +25,11 @@ data class WebsiteContext(
 @OptIn(ExperimentalTime::class)
 data class CachedWebsiteContext(
     val url: String,
-    val title: String?,
-    val description: String?,
-    val contentSummary: String?,
+    val contentSummary: String,
     val cachedAt: Instant
 ) {
     fun toWebsiteContext(): WebsiteContext = WebsiteContext(
         url = url,
-        title = title,
-        description = description,
         contentSummary = contentSummary
     )
 }

@@ -1,13 +1,14 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.agents.FullQueryBreakdownInput
-import io.deepsearch.domain.agents.IFullQueryBreakdownAgent
-import io.deepsearch.domain.agents.ISimpleQueryBreakdownAgent
-import io.deepsearch.domain.agents.SimpleQueryBreakdownInput
+import io.deepsearch.domain.agents.IQueryBreakdownAgent
+import io.deepsearch.domain.agents.IUrlContextExtractionAgent
+import io.deepsearch.domain.agents.QueryBreakdownInput
+import io.deepsearch.domain.agents.UrlContextExtractionInput
 import io.deepsearch.domain.models.valueobjects.CachedWebsiteContext
 import io.deepsearch.domain.models.valueobjects.QueryProcessingResult
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.WebsiteContext
 import io.deepsearch.domain.repositories.IWebsiteContextRepository
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.flow.Flow
@@ -28,8 +29,8 @@ interface IQueryProcessingService {
      * 
      * Logic:
      * 1. Check cache for WebsiteContext by URL
-     * 2. If cache hit (and not expired): use SimpleQueryBreakdownAgent
-     * 3. If cache miss: use FullQueryBreakdownAgent (uses Gemini URL Context tool) → cache context
+     * 2. If cache hit (and not expired): use QueryBreakdownAgent directly
+     * 3. If cache miss: use UrlContextExtractionAgent first, then QueryBreakdownAgent → cache context
      * 
      * @param searchQuery The original user query
      * @param maxCacheAge Maximum cache age in milliseconds (null means no expiry)
@@ -46,8 +47,8 @@ interface IQueryProcessingService {
 @OptIn(ExperimentalTime::class)
 class QueryProcessingService(
     private val websiteContextRepository: IWebsiteContextRepository,
-    private val simpleQueryBreakdownAgent: ISimpleQueryBreakdownAgent,
-    private val fullQueryBreakdownAgent: IFullQueryBreakdownAgent,
+    private val queryBreakdownAgent: IQueryBreakdownAgent,
+    private val urlContextExtractionAgent: IUrlContextExtractionAgent,
     private val normalizeUrlService: INormalizeUrlService,
     private val tokenUsageService: ILlmTokenUsageService
 ) : IQueryProcessingService {
@@ -67,13 +68,13 @@ class QueryProcessingService(
         val cachedContext = websiteContextRepository.findByUrl(normalizedUrl)
 
         val result = if (cachedContext != null && !isExpired(cachedContext, maxCacheAge)) {
-            // Cache hit - use simple breakdown agent
+            // Cache hit - use query breakdown agent directly
             logger.debug("[{}] Website context cache HIT for {}", sessionId.value, normalizedUrl)
             processWithCachedContext(searchQuery, cachedContext.toWebsiteContext(), sessionId)
         } else {
-            // Cache miss - use full breakdown agent with URL Context tool
+            // Cache miss - extract context first, then break down query
             logger.debug("[{}] Website context cache MISS for {}", sessionId.value, normalizedUrl)
-            processWithUrlContext(searchQuery, normalizedUrl, sessionId)
+            processWithUrlContextExtraction(searchQuery, normalizedUrl, sessionId)
         }
 
         emit(result)
@@ -87,11 +88,11 @@ class QueryProcessingService(
 
     private suspend fun processWithCachedContext(
         searchQuery: SearchQuery,
-        context: io.deepsearch.domain.models.valueobjects.WebsiteContext,
+        context: WebsiteContext,
         sessionId: QuerySessionId
     ): QueryProcessingResult {
-        val output = simpleQueryBreakdownAgent.generate(
-            SimpleQueryBreakdownInput(
+        val output = queryBreakdownAgent.generate(
+            QueryBreakdownInput(
                 searchQuery = searchQuery,
                 websiteContext = context
             )
@@ -99,7 +100,7 @@ class QueryProcessingService(
 
         tokenUsageService.recordTokenUsage(
             sessionId = sessionId,
-            agentName = "SimpleQueryBreakdownAgent",
+            agentName = "QueryBreakdownAgent",
             modelName = output.tokenUsage.modelName,
             promptTokens = output.tokenUsage.promptTokens,
             outputTokens = output.tokenUsage.outputTokens,
@@ -124,56 +125,70 @@ class QueryProcessingService(
     }
 
     /**
-     * Process query using FullQueryBreakdownAgent which uses Gemini URL Context tool.
-     * The agent fetches page content via URL Context - no manual HTTP fetch needed.
+     * Process query by first extracting website context using URL Context tool,
+     * then using QueryBreakdownAgent with the extracted context.
      */
-    private suspend fun processWithUrlContext(
+    private suspend fun processWithUrlContextExtraction(
         searchQuery: SearchQuery,
         normalizedUrl: String,
         sessionId: QuerySessionId
     ): QueryProcessingResult {
-        // Use full breakdown agent - it uses Gemini URL Context tool to fetch the page
-        val output = fullQueryBreakdownAgent.generate(
-            FullQueryBreakdownInput(
-                searchQuery = searchQuery,
-                url = normalizedUrl
-            )
+        // Step 1: Extract website context using URL Context tool
+        val extractionOutput = urlContextExtractionAgent.generate(
+            UrlContextExtractionInput(url = normalizedUrl)
         )
 
         tokenUsageService.recordTokenUsage(
             sessionId = sessionId,
-            agentName = "FullQueryBreakdownAgent",
-            modelName = output.tokenUsage.modelName,
-            promptTokens = output.tokenUsage.promptTokens,
-            outputTokens = output.tokenUsage.outputTokens,
-            totalTokens = output.tokenUsage.totalTokens
+            agentName = "UrlContextExtractionAgent",
+            modelName = extractionOutput.tokenUsage.modelName,
+            promptTokens = extractionOutput.tokenUsage.promptTokens,
+            outputTokens = extractionOutput.tokenUsage.outputTokens,
+            totalTokens = extractionOutput.tokenUsage.totalTokens
         )
+
+        val websiteContext = extractionOutput.websiteContext
 
         // Cache the extracted context
         websiteContextRepository.upsert(
             CachedWebsiteContext(
                 url = normalizedUrl,
-                title = output.websiteContext.title,
-                description = output.websiteContext.description,
-                contentSummary = output.websiteContext.contentSummary,
+                contentSummary = websiteContext.contentSummary,
                 cachedAt = Clock.System.now()
             )
         )
 
+        // Step 2: Break down query with extracted context
+        val breakdownOutput = queryBreakdownAgent.generate(
+            QueryBreakdownInput(
+                searchQuery = searchQuery,
+                websiteContext = websiteContext
+            )
+        )
+
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "QueryBreakdownAgent",
+            modelName = breakdownOutput.tokenUsage.modelName,
+            promptTokens = breakdownOutput.tokenUsage.promptTokens,
+            outputTokens = breakdownOutput.tokenUsage.outputTokens,
+            totalTokens = breakdownOutput.tokenUsage.totalTokens
+        )
+
         logger.info(
-            "[{}] Query processed with URL Context tool: '{}' → '{}', followUpQueries={} (context cached)",
+            "[{}] Query processed with URL context extraction: '{}' → '{}', followUpQueries={} (context cached)",
             sessionId.value,
             searchQuery.query,
-            output.expandedQuery,
-            output.followUpQueries
+            breakdownOutput.expandedQuery,
+            breakdownOutput.followUpQueries
         )
 
         return QueryProcessingResult(
             originalQuery = searchQuery.query,
-            expandedQuery = output.expandedQuery,
-            fulfillmentRequirements = output.fulfillmentRequirements,
-            followUpQueries = output.followUpQueries,
-            websiteContext = output.websiteContext
+            expandedQuery = breakdownOutput.expandedQuery,
+            fulfillmentRequirements = breakdownOutput.fulfillmentRequirements,
+            followUpQueries = breakdownOutput.followUpQueries,
+            websiteContext = websiteContext
         )
     }
 }
