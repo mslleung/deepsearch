@@ -36,30 +36,34 @@ data class ImageClassificationOutput(
          */
         val imageType: String,
         /**
-         * Comprehensive description of what the image shows.
-         * This is not just extracted text but converted to standalone sentences/paragraphs.
-         * This field should NOT be used if containsTable is true.
+         * Comprehensive description of what the image shows, interpreting any visible
+         * text in context and converting the image content to coherent prose.
+         * This field should NOT be used if needsTableInterpretation is true.
          */
         val imageDescription: String?,
         /**
-         * Whether the image contains a table.
+         * Whether the image contains a table that needs specialized extraction.
+         * Only true for tables containing important/actionable data.
+         * False for illustrative tables (e.g., a teacher pointing at a whiteboard with dummy text).
          * If true, the imageDescription field should be discarded and a specialized
          * table extraction agent should be invoked instead.
          */
-        val containsTable: Boolean
+        val needsTableInterpretation: Boolean
     )
 }
 
 /**
- * Agent interface for classifying images and generating descriptions.
+ * Agent interface for classifying images with text and generating descriptions.
  *
- * This agent:
+ * This agent is used when OCR detects text in an image. It:
  * - Classifies the image type (icon, infographic, product image, portrait, etc.)
- * - Generates a comprehensive description of what the image shows
- * - Returns a flag indicating whether the image contains a table
+ * - Generates a comprehensive description interpreting visible text in context
+ * - Returns a flag indicating whether the image needs specialized table extraction
  *
- * If containsTable is true, the imageDescription should be discarded and
+ * If needsTableInterpretation is true, the imageDescription should be discarded and
  * a specialized table extraction agent should be used instead.
+ *
+ * For images WITHOUT text, use IImageDescriptionAgent instead.
  */
 interface IImageClassificationAgent : IAgent<ImageClassificationInput, ImageClassificationOutput> {
     override suspend fun generate(input: ImageClassificationInput): ImageClassificationOutput

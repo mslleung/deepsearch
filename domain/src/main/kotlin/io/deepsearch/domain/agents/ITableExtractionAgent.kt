@@ -42,7 +42,7 @@ data class TableExtractionOutput(
  * that are known to contain tables. It outputs tables in markdown format.
  *
  * Should only be invoked for images where a classification agent has
- * determined containsTable = true.
+ * determined needsTableInterpretation = true.
  */
 interface ITableExtractionAgent : IAgent<TableExtractionInput, TableExtractionOutput> {
     override suspend fun generate(input: TableExtractionInput): TableExtractionOutput

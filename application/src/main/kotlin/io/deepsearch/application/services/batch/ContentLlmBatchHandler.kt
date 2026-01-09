@@ -298,7 +298,7 @@ class ContentLlmBatchHandler(
                 val pending = preparations.imagePrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 if (result.success && result.generatedText != null) {
                     val classification = parseImageClassificationResponse(result.generatedText!!, jobId)
-                    if (classification?.containsTable == true) {
+                    if (classification?.needsTableInterpretation == true) {
                         preparations.imageDataMap[pending.hash]?.let { imagesWithTables[pending.hash] = it }
                     } else {
                         val text = classification?.text?.takeIf { it.isNotBlank() }

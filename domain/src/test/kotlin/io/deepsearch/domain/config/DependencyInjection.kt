@@ -97,6 +97,7 @@ private val domainCommonTestModule = module {
     singleOf(::MarkdownConversionAgentGenAiImpl) bind IMarkdownConversionAgent::class
     singleOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
     singleOf(::ImageClassificationAgentGenAiImpl) bind IImageClassificationAgent::class
+    singleOf(::ImageDescriptionAgentGenAiImpl) bind IImageDescriptionAgent::class
     singleOf(::TableExtractionAgentGenAiImpl) bind ITableExtractionAgent::class
     singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::QueryBreakdownAgentGenAiImpl) bind IQueryBreakdownAgent::class

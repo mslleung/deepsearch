@@ -114,7 +114,7 @@ data class IconLabelWrapper(
 data class ImageClassificationResponseWrapper(
     val imageType: String = "ILLUSTRATIVE",
     val text: String? = null,
-    val containsTable: Boolean = false
+    val needsTableInterpretation: Boolean = false
 )
 
 /**

@@ -5,9 +5,9 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
-import io.deepsearch.domain.agents.IImageClassificationAgent
-import io.deepsearch.domain.agents.ImageClassificationInput
-import io.deepsearch.domain.agents.ImageClassificationOutput
+import io.deepsearch.domain.agents.IImageDescriptionAgent
+import io.deepsearch.domain.agents.ImageDescriptionInput
+import io.deepsearch.domain.agents.ImageDescriptionOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
@@ -28,21 +28,19 @@ import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
- * Image classification agent for images that contain text.
+ * Image description agent for images that do not contain detectable text.
  *
- * This agent classifies images by type, interprets visible text in context to generate
- * coherent prose descriptions, and determines if the image contains important tabular
- * data that needs specialized extraction.
- *
- * For images WITHOUT text, use ImageDescriptionAgentGenAiImpl instead.
+ * This agent classifies images by type, identifies their purpose, and generates
+ * descriptions with detail proportional to image complexity. It uses type-specific
+ * instructions to ensure appropriate handling of different image categories.
  *
  * Each image is processed individually in its own LLM call to maximize
  * extraction quality, while processing multiple images in parallel for throughput.
  */
-class ImageClassificationAgentGenAiImpl(
+class ImageDescriptionAgentGenAiImpl(
     private val client: com.google.genai.Client,
     private val dispatcherProvider: IDispatcherProvider
-) : IImageClassificationAgent {
+) : IImageDescriptionAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
@@ -52,24 +50,24 @@ class ImageClassificationAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("image classification and description result for images containing text")
+        .description("image description result for images without text")
         .properties(
             mapOf(
                 "imageType" to Schema.builder()
                     .type("STRING")
                     .description("A textual classification of the image type: icon, logo, avatar, infographic, chart, diagram, product image, photograph, portrait, headshot, screenshot, UI mockup, decorative, background, or other descriptive category")
                     .build(),
-                "imageDescription" to Schema.builder()
+                "purpose" to Schema.builder()
                     .type("STRING")
-                    .description("Comprehensive description interpreting the image and its text content as coherent prose - convert all visible information into a readable paragraph")
+                    .description("The purpose or role of the image: navigation element, promotional banner, data visualization, product showcase, decorative element, profile picture, illustration, branding, call-to-action, or other purpose")
                     .build(),
-                "needsTableInterpretation" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("Whether the image contains a table with important/actionable data that needs specialized extraction. False for illustrative or decorative tables.")
+                "description" to Schema.builder()
+                    .type("STRING")
+                    .description("Description of the image that captures its visual content and meaning, with detail proportional to image complexity")
                     .build()
             )
         )
-        .required(listOf("imageType", "imageDescription", "needsTableInterpretation"))
+        .required(listOf("imageType", "purpose", "description"))
         .build()
 
     private val systemInstruction = """
@@ -99,28 +97,24 @@ class ImageClassificationAgentGenAiImpl(
         - The description can be brief or very comprehensive depending on how much useful information it contains.
         - For purely illustrative elements, briefly mention it, focus on the core message that the image conveys.
 
-        # Table Interpretation Decision
-        needsTableInterpretation = TRUE: Tables with actionable data (pricing, specifications, schedules, comparisons)
-        needsTableInterpretation = FALSE: Illustrative tables, placeholder content, examples in tutorials, tables in illustrations
-
         Expected output shape:
         {
             "imageType": "specific classification",
-            "imageDescription": "standalone paragraph replacing the image",
-            "needsTableInterpretation": boolean
+            "purpose": "role in the webpage (navigation, promotional, decorative, etc.)",
+            "description": "standalone paragraph replacing the image"
         }
     """.trimIndent()
 
     @Serializable
-    private data class SingleImageClassificationResponse(
+    private data class SingleImageDescriptionResponse(
         val imageType: String,
-        val imageDescription: String,
-        val needsTableInterpretation: Boolean
+        val purpose: String,
+        val description: String
     )
 
-    override suspend fun generate(input: ImageClassificationInput): ImageClassificationOutput {
+    override suspend fun generate(input: ImageDescriptionInput): ImageDescriptionOutput {
         logger.debug(
-            "Classifying {} images (processing each image individually in parallel)",
+            "Describing {} images without text (processing each image individually in parallel)",
             input.images.size
         )
 
@@ -128,8 +122,8 @@ class ImageClassificationAgentGenAiImpl(
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.images.isEmpty()) {
-            return ImageClassificationOutput(
-                classifications = emptyList(),
+            return ImageDescriptionOutput(
+                descriptions = emptyList(),
                 tokenUsage = emptyTokenUsage
             )
         }
@@ -137,9 +131,9 @@ class ImageClassificationAgentGenAiImpl(
         // Process each image individually, in parallel if multiple images
         return if (input.images.size == 1) {
             // Single image - process directly
-            val (classification, tokenUsage) = processSingleImage(input.images[0], 0)
-            ImageClassificationOutput(
-                classifications = listOf(classification),
+            val (description, tokenUsage) = processSingleImage(input.images[0], 0)
+            ImageDescriptionOutput(
+                descriptions = listOf(description),
                 tokenUsage = tokenUsage
             )
         } else {
@@ -151,9 +145,9 @@ class ImageClassificationAgentGenAiImpl(
     /**
      * Process multiple images in parallel, each with its own LLM call.
      */
-    private suspend fun processImagesInParallel(images: List<ImageClassificationInput.ImageItem>): ImageClassificationOutput =
+    private suspend fun processImagesInParallel(images: List<ImageDescriptionInput.ImageItem>): ImageDescriptionOutput =
         coroutineScope {
-            logger.debug("Processing {} images in parallel", images.size)
+            logger.debug("Processing {} images in parallel for description", images.size)
 
             // Process all images in parallel
             val results = images.mapIndexed { index, image ->
@@ -163,7 +157,7 @@ class ImageClassificationAgentGenAiImpl(
             }.awaitAll()
 
             // Combine results in order
-            val allClassifications = results.map { it.first }
+            val allDescriptions = results.map { it.first }
             val aggregatedTokenUsage =
                 results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
                     TokenUsageMetrics(
@@ -174,45 +168,45 @@ class ImageClassificationAgentGenAiImpl(
                     )
                 }
 
-            ImageClassificationOutput(
-                classifications = allClassifications,
+            ImageDescriptionOutput(
+                descriptions = allDescriptions,
                 tokenUsage = aggregatedTokenUsage
             )
         }
 
     /**
      * Process a single image with a dedicated LLM call.
-     * Returns a Pair of (classification, tokenUsage) for aggregation.
+     * Returns a Pair of (description, tokenUsage) for aggregation.
      */
     private suspend fun processSingleImage(
-        image: ImageClassificationInput.ImageItem,
+        image: ImageDescriptionInput.ImageItem,
         imageIndex: Int
-    ): Pair<ImageClassificationOutput.ImageClassification, TokenUsageMetrics> {
+    ): Pair<ImageDescriptionOutput.ImageDescription, TokenUsageMetrics> {
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Check if image is too large
         if (isImageTooLarge(image.bytes, image.mimeType)) {
             logger.warn(
-                "Image at position {} is too large (resolution exceeds {} pixels); skipping classification",
+                "Image at position {} is too large (resolution exceeds {} pixels); skipping description",
                 imageIndex,
                 MAX_PIXEL_COUNT
             )
-            return ImageClassificationOutput.ImageClassification(
+            return ImageDescriptionOutput.ImageDescription(
                 imageType = "unknown",
-                imageDescription = null,
-                needsTableInterpretation = false
+                purpose = "unknown",
+                description = ""
             ) to tokenUsage
         }
 
         // Build content with single image
         val contentParts = listOf(
             Part.fromBytes(image.bytes, image.mimeType.value),
-            Part.fromText("Classify this image and provide a comprehensive description")
+            Part.fromText("Describe this image, identifying its type, purpose, and visual content")
         )
 
         val response = withContext(dispatcherProvider.io) {
-            retryLlmCall<SingleImageClassificationResponse>(this@ImageClassificationAgentGenAiImpl::class.simpleName!!) {
+            retryLlmCall<SingleImageDescriptionResponse>(this@ImageDescriptionAgentGenAiImpl::class.simpleName!!) {
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(*(contentParts.toTypedArray()))),
@@ -246,23 +240,24 @@ class ImageClassificationAgentGenAiImpl(
             }
         }
 
-        val description = response.imageDescription.takeIf { it.isNotBlank() }?.trim()
+        val description = response.description.trim().ifBlank { "" }
         val imageType = response.imageType.trim().ifBlank { "unknown" }
+        val purpose = response.purpose.trim().ifBlank { "unknown" }
 
-        // Log classification result for debugging
+        // Log description result for debugging
         logger.debug(
-            "Image {} classified: imageType={}, needsTableInterpretation={}, descriptionLength={}, descriptionPreview={}",
+            "Image {} described: imageType={}, purpose={}, descriptionLength={}, descriptionPreview={}",
             imageIndex,
             imageType,
-            response.needsTableInterpretation,
-            description?.length ?: 0,
-            description?.take(100)?.replace("\n", "\\n") ?: "<null>"
+            purpose,
+            description.length,
+            description.take(100).replace("\n", "\\n")
         )
 
-        return ImageClassificationOutput.ImageClassification(
+        return ImageDescriptionOutput.ImageDescription(
             imageType = imageType,
-            imageDescription = description,
-            needsTableInterpretation = response.needsTableInterpretation
+            purpose = purpose,
+            description = description
         ) to tokenUsage
     }
 
@@ -290,35 +285,36 @@ class ImageClassificationAgentGenAiImpl(
     @OptIn(ExperimentalEncodingApi::class)
     override fun prepareBatchRequest(
         requestId: String,
-        image: ImageClassificationInput.ImageItem
+        image: ImageDescriptionInput.ImageItem
     ): BatchContentRequest {
         return BatchContentRequest(
             requestId = requestId,
             modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
             systemInstruction = systemInstruction,
-            userPrompt = "Classify this image and provide a comprehensive description",
+            userPrompt = "Describe this image, identifying its type, purpose, and visual content",
             imageData = Base64.encode(image.bytes),
             imageMimeType = image.mimeType.value,
             temperature = 1.0f
-        ).withSchema(outputSchema) // Use same schema as interactive mode
+        ).withSchema(outputSchema)
     }
 
-    override fun parseBatchResponse(responseText: String): ImageClassificationOutput.ImageClassification {
+    override fun parseBatchResponse(responseText: String): ImageDescriptionOutput.ImageDescription {
         return try {
-            val response = batchJson.decodeFromString<SingleImageClassificationResponse>(responseText)
-            val description = response.imageDescription.takeIf { it.isNotBlank() }?.trim()
+            val response = batchJson.decodeFromString<SingleImageDescriptionResponse>(responseText)
+            val description = response.description.trim().ifBlank { "" }
             val imageType = response.imageType.trim().ifBlank { "unknown" }
-            ImageClassificationOutput.ImageClassification(
+            val purpose = response.purpose.trim().ifBlank { "unknown" }
+            ImageDescriptionOutput.ImageDescription(
                 imageType = imageType,
-                imageDescription = description,
-                needsTableInterpretation = response.needsTableInterpretation
+                purpose = purpose,
+                description = description
             )
         } catch (e: Exception) {
             logger.warn("Failed to parse batch response: {}", e.message)
-            ImageClassificationOutput.ImageClassification(
+            ImageDescriptionOutput.ImageDescription(
                 imageType = "unknown",
-                imageDescription = null,
-                needsTableInterpretation = false
+                purpose = "unknown",
+                description = ""
             )
         }
     }

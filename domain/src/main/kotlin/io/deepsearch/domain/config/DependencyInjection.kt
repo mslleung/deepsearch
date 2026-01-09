@@ -90,6 +90,7 @@ val domainModule = module {
     singleOf(::LinkRelevanceAnalysisAgentGenAiImpl) bind ILinkRelevanceAnalysisAgent::class
     singleOf(::MultiIconInterpreterAgentGenAiImpl) bind IMultiIconInterpreterAgent::class
     singleOf(::ImageClassificationAgentGenAiImpl) bind IImageClassificationAgent::class
+    singleOf(::ImageDescriptionAgentGenAiImpl) bind IImageDescriptionAgent::class
     singleOf(::TableExtractionAgentGenAiImpl) bind ITableExtractionAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class

@@ -79,7 +79,7 @@ class ImageClassificationAgentTest : KoinTest {
         )
 
         assertEquals(1, output.classifications.size, "Should return one classification")
-        assertTrue(output.classifications[0].containsTable, "Table image should have containsTable=true")
+        assertTrue(output.classifications[0].needsTableInterpretation, "Table image should have needsTableInterpretation=true")
     }
 
     @Test
@@ -108,10 +108,10 @@ class ImageClassificationAgentTest : KoinTest {
         assertTrue(output.classifications[0].imageDescription!!.isNotBlank(), "First classification description should not be blank")
 
         // Check second image detects table
-        assertTrue(output.classifications[1].containsTable, "Second image should have containsTable=true")
+        assertTrue(output.classifications[1].needsTableInterpretation, "Second image should have needsTableInterpretation=true")
 
-        // Third image (icon) should not contain table
-        assertFalse(output.classifications[2].containsTable, "Icon should have containsTable=false")
+        // Third image (icon) should not need table interpretation
+        assertFalse(output.classifications[2].needsTableInterpretation, "Icon should have needsTableInterpretation=false")
     }
 
     @Test
@@ -139,8 +139,8 @@ class ImageClassificationAgentTest : KoinTest {
         assertNotNull(output.classifications[0].imageDescription, "Position 0 should have description")
         assertTrue(output.classifications[0].imageDescription!!.isNotBlank(), "Position 0 description should not be blank")
 
-        // Position 2: table image should have containsTable=true
-        assertTrue(output.classifications[2].containsTable, "Position 2 should have containsTable=true")
+        // Position 2: table image should have needsTableInterpretation=true
+        assertTrue(output.classifications[2].needsTableInterpretation, "Position 2 should have needsTableInterpretation=true")
     }
 
     @Test
@@ -162,6 +162,6 @@ class ImageClassificationAgentTest : KoinTest {
             output.classifications[0].imageType.isNotBlank(),
             "Icon should have a non-blank image type"
         )
-        assertFalse(output.classifications[0].containsTable, "Icon should not contain table")
+        assertFalse(output.classifications[0].needsTableInterpretation, "Icon should not need table interpretation")
     }
 }

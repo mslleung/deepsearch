@@ -2,8 +2,10 @@ package io.deepsearch.application.services
 
 import io.deepsearch.application.services.batch.MediaData
 import io.deepsearch.domain.agents.IImageClassificationAgent
+import io.deepsearch.domain.agents.IImageDescriptionAgent
 import io.deepsearch.domain.agents.ITableExtractionAgent
 import io.deepsearch.domain.agents.ImageClassificationInput
+import io.deepsearch.domain.agents.ImageDescriptionInput
 import io.deepsearch.domain.agents.TableExtractionInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.WebpageImage
@@ -109,6 +111,7 @@ interface IWebpageImageTextExtractionService {
 
 class WebpageImageTextExtractionService(
     private val imageClassificationAgent: IImageClassificationAgent,
+    private val imageDescriptionAgent: IImageDescriptionAgent,
     private val tableExtractionAgent: ITableExtractionAgent,
     private val webpageImageRepository: IWebpageImageRepository,
     private val ocrService: IOcrImageTextExtractionService,
@@ -274,44 +277,73 @@ class WebpageImageTextExtractionService(
         if (uncachedImages.isNotEmpty()) {
             logger.debug("Processing {} uncached images", uncachedImages.size)
             
-            // Filter images by OCR text detection
+            // Use OCR to partition images into those with text and those without
             val imagesWithText = mutableListOf<IBrowserPage.WebImage>()
+            val imagesWithoutText = mutableListOf<IBrowserPage.WebImage>()
             
-            /*coroutineScope {
+            coroutineScope {
                 val ocrResults = uncachedImages.map { image ->
-                    async { image to !ocrService.extractText(image.bytes, image.mimeType, ocrLanguage).isEmpty() }
+                    async { image to ocrService.extractText(image.bytes, image.mimeType, ocrLanguage).isNotEmpty() }
                 }.awaitAll()
-
-                val imagesToCacheWithoutText = mutableListOf<WebpageImage>()
                 
                 ocrResults.forEach { (image, hasText) ->
                     if (hasText) {
                         imagesWithText.add(image)
                     } else {
-                        logger.debug("No text detected in image by OCR, skipping LLM")
-                        // Cache as having no text, but still store raw bytes
-                        imagesToCacheWithoutText.add(
-                            WebpageImage(
-                                imageBytesHash = image.bytesHash,
-                                imageBytes = image.bytes,
-                                mimeType = image.mimeType.value,
-                                extractedText = null
-                            )
-                        )
-                        cachedResults[Base64.encode(image.bytesHash)] = null
+                        imagesWithoutText.add(image)
                     }
                 }
+            }
+            
+            logger.debug(
+                "OCR detection complete: {} images with text, {} images without text",
+                imagesWithText.size,
+                imagesWithoutText.size
+            )
+            
+            // Process images WITHOUT text using ImageDescriptionAgent
+            if (imagesWithoutText.isNotEmpty()) {
+                logger.debug("Describing {} images without text using ImageDescriptionAgent", imagesWithoutText.size)
                 
-                if (imagesToCacheWithoutText.isNotEmpty()) {
-                    webpageImageRepository.batchUpsert(imagesToCacheWithoutText)
+                val descriptionOutput = imageDescriptionAgent.generate(
+                    ImageDescriptionInput(
+                        images = imagesWithoutText.map { image ->
+                            ImageDescriptionInput.ImageItem(
+                                bytes = image.bytes,
+                                mimeType = image.mimeType
+                            )
+                        }
+                    )
+                )
+                
+                // Record token usage for description
+                recordTokenUsage(sessionId, "ImageDescriptionAgent", descriptionOutput.tokenUsage)
+                
+                // Store description results - combine type, purpose, and description into searchable text
+                imagesWithoutText.zip(descriptionOutput.descriptions).forEach { (image, description) ->
+                    val combinedDescription = buildString {
+                        append("[${description.imageType}]")
+                        if (description.purpose.isNotBlank() && description.purpose != "unknown") {
+                            append(" [${description.purpose}]")
+                        }
+                        if (description.description.isNotBlank()) {
+                            append(" ${description.description}")
+                        }
+                    }.trim().takeIf { it.isNotBlank() }
+                    cachedResults[Base64.encode(image.bytesHash)] = combinedDescription
                 }
-            }*/
-
-            // Process images with text using two-stage approach
-//            if (imagesWithText.isNotEmpty()) {
-//                logger.debug("Text detected by OCR in {} images, using LLM for classification", imagesWithText.size)
                 
-                // Stage 1: Classify all images and extract initial text
+                // Log description results for debugging
+                val imageTypes = descriptionOutput.descriptions.groupBy { it.imageType }
+                    .mapValues { it.value.size }
+                logger.debug("Description results: imageTypes={}", imageTypes)
+            }
+            
+            // Process images WITH text using ImageClassificationAgent
+            if (imagesWithText.isNotEmpty()) {
+                logger.debug("Classifying {} images with text using ImageClassificationAgent", imagesWithText.size)
+                
+                // Stage 1: Classify all images with text and extract initial description
                 val classificationOutput = imageClassificationAgent.generate(
                     ImageClassificationInput(
                         images = imagesWithText.map { image ->
@@ -326,33 +358,33 @@ class WebpageImageTextExtractionService(
                 // Record token usage for classification
                 recordTokenUsage(sessionId, "ImageClassificationAgent", classificationOutput.tokenUsage)
 
-                // Partition images by containsTable flag
+                // Partition images by needsTableInterpretation flag
                 val imageClassifications = imagesWithText.zip(classificationOutput.classifications)
-                val imagesWithTables = imageClassifications.filter { it.second.containsTable }
-                val imagesWithoutTables = imageClassifications.filter { !it.second.containsTable }
+                val imagesNeedingTableExtraction = imageClassifications.filter { it.second.needsTableInterpretation }
+                val imagesNotNeedingTableExtraction = imageClassifications.filter { !it.second.needsTableInterpretation }
 
                 // Log detailed classification results for debugging
                 val imageTypes = classificationOutput.classifications.groupBy { it.imageType }
                     .mapValues { it.value.size }
                 logger.debug(
-                    "Classification results: imageTypes={}, {} with tables, {} without tables",
+                    "Classification results: imageTypes={}, {} need table extraction, {} don't need table extraction",
                     imageTypes,
-                    imagesWithTables.size,
-                    imagesWithoutTables.size
+                    imagesNeedingTableExtraction.size,
+                    imagesNotNeedingTableExtraction.size
                 )
 
-                // For images without tables, use classification description directly
-                imagesWithoutTables.forEach { (image, classification) ->
+                // For images that don't need table extraction, use classification description directly
+                imagesNotNeedingTableExtraction.forEach { (image, classification) ->
                     cachedResults[Base64.encode(image.bytesHash)] = classification.imageDescription?.takeIf { it.isNotBlank() }
                 }
 
-                // Stage 2: Extract tables from images that contain them
-                if (imagesWithTables.isNotEmpty()) {
-                    logger.debug("Extracting tables from {} images", imagesWithTables.size)
+                // Stage 2: Extract tables from images that need specialized table extraction
+                if (imagesNeedingTableExtraction.isNotEmpty()) {
+                    logger.debug("Extracting tables from {} images", imagesNeedingTableExtraction.size)
                     
                     val tableExtractionOutput = tableExtractionAgent.generate(
                         TableExtractionInput(
-                            images = imagesWithTables.map { (image, _) ->
+                            images = imagesNeedingTableExtraction.map { (image, _) ->
                                 TableExtractionInput.ImageItem(
                                     bytes = image.bytes,
                                     mimeType = image.mimeType
@@ -365,14 +397,15 @@ class WebpageImageTextExtractionService(
                     recordTokenUsage(sessionId, "TableExtractionAgent", tableExtractionOutput.tokenUsage)
 
                     // Store table extraction results
-                    imagesWithTables.zip(tableExtractionOutput.extractions).forEach { (imageClassification, extraction) ->
+                    imagesNeedingTableExtraction.zip(tableExtractionOutput.extractions).forEach { (imageClassification, extraction) ->
                         val (image, _) = imageClassification
                         cachedResults[Base64.encode(image.bytesHash)] = extraction.extractedText?.takeIf { it.isNotBlank() }
+                    }
                     }
                 }
 
                 // Cache all results with raw bytes
-                val imagesToCache = imagesWithText.map { image ->
+            val imagesToCache = uncachedImages.map { image ->
                     val extractedText = cachedResults[Base64.encode(image.bytesHash)]
                     WebpageImage(
                         imageBytesHash = image.bytesHash,
@@ -382,7 +415,6 @@ class WebpageImageTextExtractionService(
                     )
                 }
                 webpageImageRepository.batchUpsert(imagesToCache)
-//            }
         }
 
         // Return results in original order with hashes
