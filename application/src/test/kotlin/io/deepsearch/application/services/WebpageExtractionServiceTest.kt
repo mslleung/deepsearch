@@ -41,12 +41,10 @@ class WebpageExtractionServiceTest : KoinTest {
     fun `extract webpage text`(url: String) = runTest(testCoroutineDispatcher) {
         browserPool.withPage { page ->
             page.navigate(url)
-            withContext(Dispatchers.IO) {
-                val text = webpageExtractionService.extractWebpage(page, QuerySessionId("test-session-id"))
+            val text = webpageExtractionService.extractWebpage(page, QuerySessionId("test-session-id"))
 
-                assertTrue(text.markdown.length > 200)
-                println(text)
-            }
+            assertTrue(text.markdown.length > 200)
+            println(text)
         }
     }
 }
