@@ -277,7 +277,7 @@ class WebpageImageTextExtractionService(
             // Filter images by OCR text detection
             val imagesWithText = mutableListOf<IBrowserPage.WebImage>()
             
-            coroutineScope {
+            /*coroutineScope {
                 val ocrResults = uncachedImages.map { image ->
                     async { image to !ocrService.extractText(image.bytes, image.mimeType, ocrLanguage).isEmpty() }
                 }.awaitAll()
@@ -305,11 +305,11 @@ class WebpageImageTextExtractionService(
                 if (imagesToCacheWithoutText.isNotEmpty()) {
                     webpageImageRepository.batchUpsert(imagesToCacheWithoutText)
                 }
-            }
+            }*/
 
             // Process images with text using two-stage approach
-            if (imagesWithText.isNotEmpty()) {
-                logger.debug("Text detected by OCR in {} images, using LLM for classification", imagesWithText.size)
+//            if (imagesWithText.isNotEmpty()) {
+//                logger.debug("Text detected by OCR in {} images, using LLM for classification", imagesWithText.size)
                 
                 // Stage 1: Classify all images and extract initial text
                 val classificationOutput = imageClassificationAgent.generate(
@@ -382,7 +382,7 @@ class WebpageImageTextExtractionService(
                     )
                 }
                 webpageImageRepository.batchUpsert(imagesToCache)
-            }
+//            }
         }
 
         // Return results in original order with hashes
