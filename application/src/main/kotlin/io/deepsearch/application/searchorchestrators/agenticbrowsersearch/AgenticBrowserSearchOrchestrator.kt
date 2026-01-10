@@ -80,11 +80,17 @@ import io.deepsearch.application.services.ILlmTokenUsageService
 import io.deepsearch.application.services.IQueryProcessingService
 import io.deepsearch.domain.agents.AnswerAssessment
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
+import kotlinx.coroutines.FlowPreview
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.timeout
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator
 
@@ -135,6 +141,7 @@ class AgenticBrowserSearchOrchestrator(
         )
     }
 
+    @OptIn(FlowPreview::class)
     override fun execute(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
@@ -191,6 +198,9 @@ class AgenticBrowserSearchOrchestrator(
 
             // Channel for recursive link discovery (links found within processed pages)
             val recursiveDiscoveredLinksChannel = Channel<DiscoveredLink>(Channel.UNLIMITED)
+            
+            // Track in-flight discovery operations - used to know when discovery is truly done
+            val inFlightDiscovery = AtomicInteger(0)
 
             // Discovery flows - unified query-driven discovery
             // All queries (initial + follow-up) flow through the same pipeline:
@@ -213,6 +223,7 @@ class AgenticBrowserSearchOrchestrator(
                     searchQuery,
                     queryChannel,
                     priorityLinkBuffer,
+                    inFlightDiscovery,
                     channel
                 )
             )
@@ -223,9 +234,10 @@ class AgenticBrowserSearchOrchestrator(
                 searchQuery,
                 processedUrls,
                 discoveredQueryUrls,
-                budget,
                 priorityLinkBuffer,
                 recursiveDiscoveredLinksChannel,
+                queryChannel,
+                inFlightDiscovery,
                 maxCacheAge,
                 proxyConfig,
                 channel
@@ -236,16 +248,30 @@ class AgenticBrowserSearchOrchestrator(
             val sourceProcessingJob = Job(coroutineContext[Job])
             val sourceProcessingScope = CoroutineScope(coroutineContext + sourceProcessingJob)
 
-            // Merge discovery and link processing into a single source flow
-            val sourceFlow = merge(discoveryFlows, linkProcessingFlow)
-                .cancellable()
-                .shareIn(sourceProcessingScope, SharingStarted.Eagerly)
-
-            // Track current accumulator state
-            var currentAccumulator = SourceAccumulator(searchedQueries = listOf(searchQuery.query))
+            // Track current accumulator state using AtomicReference so it's accessible
+            // in the sourceFlow completion handler
+            val accumulatorRef = AtomicReference(
+                SourceAccumulator(searchedQueries = listOf(searchQuery.query))
+            )
 
             // Ensure exactly-once session completion
             val sessionCompleted = AtomicBoolean(false)
+
+            // Merge discovery and link processing into a single source flow
+            // onCompletion handler triggers finishQuerySession when all channels close (LINKS_EXHAUSTED)
+            val sourceFlow = merge(discoveryFlows, linkProcessingFlow)
+                .cancellable()
+                .onCompletion { cause ->
+                    if (cause == null && sessionCompleted.compareAndSet(false, true)) {
+                        logger.info("[{}] Source flow completed normally - links exhausted, finalizing session", sessionId.value)
+                        try {
+                            finishQuerySession(sessionId, searchQuery, accumulatorRef.get(), budget, channel)
+                        } catch (e: Exception) {
+                            logger.error("[{}] Error finalizing session on source completion: {}", sessionId.value, e.message, e)
+                        }
+                    }
+                }
+                .shareIn(sourceProcessingScope, SharingStarted.Eagerly)
 
             // When includeImages is enabled, skip preview path evaluation
             val includeImages = searchQuery.includeImages
@@ -323,15 +349,24 @@ class AgenticBrowserSearchOrchestrator(
             // Batch sources with timeout, then accumulate and synthesize
             unifiedEvalFlow
                 .chunkedWithTimeout(chunkSize = 100, timeoutMs = 300)
-                .takeWhile { !currentAccumulator.isComplete }
-                .runningFold(currentAccumulator) { state, batch ->
+                .takeWhile { !accumulatorRef.get().isComplete }
+                .runningFold(accumulatorRef.get()) { state, batch ->
                     aggregateBatchIntoAccumulator(
                         sessionId, state, batch, channel,
                         expandedQuery, fulfillmentRequirements
                     )
                 }
                 .onEach { accumulator ->
-                    currentAccumulator = accumulator
+                    accumulatorRef.set(accumulator)
+
+                    // Check budget - if exceeded, cancel upstream and let flow complete naturally
+                    if (querySessionService.isBudgetExceeded(sessionId, budget)) {
+                        if (!sourceProcessingJob.isCancelled) {
+                            logger.info("[{}] Budget exceeded (maxLinks), cancelling source processing", sessionId.value)
+                            sourceProcessingJob.cancel()
+                        }
+                        return@onEach
+                    }
 
                     // Process follow-up queries from synthesis (already deduped by synthesis agent)
                     if (accumulator.pendingFollowUpQueries.isNotEmpty() &&
@@ -343,10 +378,7 @@ class AgenticBrowserSearchOrchestrator(
                         }
 
                         if (newQueries.isNotEmpty()) {
-                            logger.info(
-                                "[{}] Follow-up queries from synthesis: {}",
-                                sessionId.value, newQueries
-                            )
+                            logger.info("[{}] Follow-up queries from synthesis: {}", sessionId.value, newQueries)
 
                             channel.send(
                                 SearchEvent.FollowUpSearchStarted(
@@ -358,28 +390,32 @@ class AgenticBrowserSearchOrchestrator(
                             )
 
                             // Send to query channel to trigger discovery
-                            newQueries.forEach { query ->
-                                queryChannel.send(query)
-                            }
+                            newQueries.forEach { query -> queryChannel.send(query) }
                         }
                     }
 
-                    // Handle session completion
+                    // Handle session completion (synthesis returned FINISH_SEARCH)
                     if (accumulator.isComplete && sessionCompleted.compareAndSet(false, true)) {
                         logger.info("[{}] Synthesis returned FINISH_SEARCH, completing session", sessionId.value)
                         sourceProcessingJob.cancel()
-                        queryChannel.close()
-                        priorityLinkBuffer.close()
                         finishQuerySession(sessionId, searchQuery, accumulator, budget, channel)
                     }
                 }
                 .takeWhile { !sessionCompleted.get() }
-                .onCompletion {
-                    // Handle case where flow completed without FINISH_SEARCH (sources exhausted)
+                .timeout(budget.timeLimitMs.milliseconds)
+                .onCompletion { cause ->
+                    // Single place handles ALL completion scenarios:
+                    // - cause == null: normal completion (FINISH_SEARCH or LINKS_EXHAUSTED)
+                    // - cause is TimeoutCancellationException: budget time exceeded
                     if (sessionCompleted.compareAndSet(false, true)) {
-                        logger.info("[{}] Flow completed without FINISH_SEARCH, finalizing session", sessionId.value)
+                        val reason = when (cause) {
+                            is TimeoutCancellationException -> "Budget timeout reached"
+                            null -> "Flow completed (links exhausted)"
+                            else -> "Flow ended (${cause.message})"
+                        }
+                        logger.info("[{}] {}, finalizing session", sessionId.value, reason)
                         sourceProcessingJob.cancel()
-                        finishQuerySession(sessionId, searchQuery, currentAccumulator, budget, channel)
+                        finishQuerySession(sessionId, searchQuery, accumulatorRef.get(), budget, channel)
                     }
                 }
                 .collect()
@@ -504,11 +540,13 @@ class AgenticBrowserSearchOrchestrator(
         baseSearchQuery: SearchQuery,
         queryChannel: Channel<String>,
         priorityLinkBuffer: PriorityLinkChannel,
+        inFlightDiscovery: AtomicInteger,
         eventChannel: SendChannel<SearchEvent>
     ): Flow<Unit> {
         return queryChannel.receiveAsFlow()
             .flatMapMerge(concurrency = 3) { query ->
-                logger.info("[{}] Triggering full discovery for query: '{}'", sessionId.value, query)
+                inFlightDiscovery.incrementAndGet()
+                logger.info("[{}] Triggering full discovery for query: '{}' (inFlightDiscovery={})", sessionId.value, query, inFlightDiscovery.get())
 
                 // Create a SearchQuery with this query but same URL context
                 val currentSearchQuery = SearchQuery(
@@ -665,7 +703,10 @@ class AgenticBrowserSearchOrchestrator(
                         }
                         emit(Unit)
                     }
-                )
+                ).onCompletion {
+                    val remaining = inFlightDiscovery.decrementAndGet()
+                    logger.debug("[{}] Discovery completed for query '{}' (inFlightDiscovery={})", sessionId.value, query, remaining)
+                }
             }
     }
 
@@ -689,9 +730,10 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         discoveredQueryUrls: ConcurrentHashMap.KeySetView<QueryUrlKey, Boolean>,
-        budget: SearchBudget,
         priorityLinkBuffer: PriorityLinkChannel,
         recursiveChannel: Channel<DiscoveredLink>,
+        queryChannel: Channel<String>,
+        inFlightDiscovery: AtomicInteger,
         maxCacheAge: Long?,
         proxyConfig: ProxyConfiguration,
         eventChannel: SendChannel<SearchEvent>
@@ -699,11 +741,16 @@ class AgenticBrowserSearchOrchestrator(
         val inFlight = ConcurrentHashMap.newKeySet<String>()
 
         // Merge priority buffer with recursive discoveries
+        // When priority buffer completes (closes), also close recursive channel and queryChannel
+        // to allow discoveryFlows to complete (LINKS_EXHAUSTED scenario)
         return merge(
-            priorityLinkBuffer.receiveAsFlow(),
+            priorityLinkBuffer.receiveAsFlow().onCompletion {
+                logger.info("[{}] Priority buffer flow completed - closing recursiveChannel and queryChannel", sessionId.value)
+                recursiveChannel.close()
+                queryChannel.close()
+            },
             recursiveChannel.receiveAsFlow()
         )
-            .takeWhile { !querySessionService.isBudgetExceeded(sessionId, budget) }
             .flatMapMerge(concurrency = 100) { discoveredLink ->
                 flow {
                     val query = discoveredLink.query
@@ -812,7 +859,15 @@ class AgenticBrowserSearchOrchestrator(
                                                 errorMessage = e.reason
                                             )
                                         )
-                                        if (priorityLinkBuffer.isClosedForSend() && inFlight.isEmpty()) {
+                                        // Check if discovery is complete - close both buffers when no discovery in progress AND no pending queries
+                                        if (inFlightDiscovery.get() == 0 && queryChannel.isEmpty && !priorityLinkBuffer.isClosedForSend()) {
+                                            logger.info("[{}] Discovery complete (inFlightDiscovery=0, queryChannel empty) - closing priorityLinkBuffer and recursiveChannel", sessionId.value)
+                                            priorityLinkBuffer.close()
+                                            recursiveChannel.close()
+                                        }
+                                        // If priority buffer is already closed but recursive isn't, close it
+                                        if (priorityLinkBuffer.isClosedForSend() && !recursiveChannel.isClosedForSend) {
+                                            logger.info("[{}] Priority buffer closed - also closing recursiveChannel", sessionId.value)
                                             recursiveChannel.close()
                                         }
                                     }
@@ -824,8 +879,16 @@ class AgenticBrowserSearchOrchestrator(
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
                                         // Send newly discovered links to recursive channel with query context
-                                        event.discoveredLinks.forEach { newLink ->
-                                            recursiveChannel.send(DiscoveredLink(newLink, query))
+                                        // Only send if channel is still open
+                                        if (!recursiveChannel.isClosedForSend) {
+                                            event.discoveredLinks.forEach { newLink ->
+                                                try {
+                                                    recursiveChannel.send(DiscoveredLink(newLink, query))
+                                                } catch (e: kotlinx.coroutines.channels.ClosedSendChannelException) {
+                                                    // Channel closed while sending - this is expected during shutdown
+                                                    logger.debug("[{}] Recursive channel closed, skipping link: {}", sessionId.value, newLink)
+                                                }
+                                            }
                                         }
                                     }
 
@@ -847,7 +910,15 @@ class AgenticBrowserSearchOrchestrator(
                                             )
                                         )
                                         inFlight.remove(event.url)
-                                        if (priorityLinkBuffer.isClosedForSend() && inFlight.isEmpty()) {
+                                        // Check if discovery is complete - close both buffers when no discovery in progress AND no pending queries
+                                        if (inFlightDiscovery.get() == 0 && queryChannel.isEmpty && !priorityLinkBuffer.isClosedForSend()) {
+                                            logger.info("[{}] Discovery complete after URL processed (inFlightDiscovery=0, queryChannel empty) - closing priorityLinkBuffer and recursiveChannel", sessionId.value)
+                                            priorityLinkBuffer.close()
+                                            recursiveChannel.close()
+                                        }
+                                        // If priority buffer is already closed but recursive isn't, close it
+                                        if (priorityLinkBuffer.isClosedForSend() && !recursiveChannel.isClosedForSend) {
+                                            logger.info("[{}] Priority buffer closed after URL - also closing recursiveChannel", sessionId.value)
                                             recursiveChannel.close()
                                         }
                                     }
@@ -886,6 +957,19 @@ class AgenticBrowserSearchOrchestrator(
                                 }
                             }
                             .collect { emit(it) }
+                    }
+                }.onCompletion {
+                    // After each link is processed (whether skipped or emitted), check if discovery is complete
+                    // Close both buffers when no discovery in progress AND no pending queries
+                    if (inFlightDiscovery.get() == 0 && queryChannel.isEmpty && !priorityLinkBuffer.isClosedForSend()) {
+                        logger.info("[{}] Discovery complete after link processing (inFlightDiscovery=0, queryChannel empty) - closing priorityLinkBuffer and recursiveChannel", sessionId.value)
+                        priorityLinkBuffer.close()
+                        recursiveChannel.close()
+                    }
+                    // If priority buffer is already closed but recursive isn't, close it
+                    if (priorityLinkBuffer.isClosedForSend() && !recursiveChannel.isClosedForSend) {
+                        logger.info("[{}] Priority buffer closed after link - also closing recursiveChannel", sessionId.value)
+                        recursiveChannel.close()
                     }
                 }
             }
