@@ -141,10 +141,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Check "Content Date" field of each source if available
 
         ### AUTHORITY
-        - Sources are credible
+        - All sources come from the official website URL, you should assess authority based on the intention purpose of the webpage
         - High credibility: official docs, product pages, pricing pages, Terms of Service etc.
-        - Low credibility: blog posts, third-party sites, or user-generated content
-        - Check "Intention" field of each source, authority requirement depends on the query
+        - Low credibility: blog posts, press-release
+        - Low credibility sources can still be used, authority matters in conflict resolution
 
         ### CONSISTENCY
         - Facts from different sources agree
@@ -164,6 +164,8 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Same language as the query
         - Only include information from provided facts
         - When facts conflict, note the conflicts and present as much information as possible
+        - Cite the sources by appending [1], [2] etc. where the number is the position of the source in citedSourceUrls
+        - citedSourceUrls should only cite sources that are used in the answer
 
         ## Step 4: Generate Follow-up Queries
         

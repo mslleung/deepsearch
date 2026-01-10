@@ -92,8 +92,14 @@ class TextLinkDiscoveryAgentGenAiImpl(
     override suspend fun generate(input: TextLinkDiscoveryInput): TextLinkDiscoveryOutput {
         logger.debug("Analyzing text for relevant links, query: '{}'", input.query)
 
-        val baseHost = URI(input.sourceUrl).host?.lowercase()
-            ?: return TextLinkDiscoveryOutput.empty()
+        val baseHost = try {
+            // URL-encode spaces in the source URL path to handle malformed URLs
+            val encodedUrl = input.sourceUrl.replace(" ", "%20")
+            URI(encodedUrl).host?.lowercase()
+        } catch (e: Exception) {
+            logger.warn("Failed to parse source URL '{}': {}", input.sourceUrl, e.message)
+            return TextLinkDiscoveryOutput.empty()
+        } ?: return TextLinkDiscoveryOutput.empty()
 
         if (!URL_PATTERN.containsMatchIn(input.text)) {
             logger.debug("No URLs found in text, skipping LLM analysis")
@@ -167,7 +173,9 @@ class TextLinkDiscoveryAgentGenAiImpl(
 
     private fun isSameDomain(url: String, baseHost: String): Boolean {
         return try {
-            val linkUri = URI(url)
+            // URL-encode spaces to handle malformed URLs
+            val encodedUrl = url.replace(" ", "%20")
+            val linkUri = URI(encodedUrl)
             val linkHost = linkUri.host?.lowercase()
             linkHost == baseHost && (linkUri.scheme == "http" || linkUri.scheme == "https")
         } catch (e: Exception) {

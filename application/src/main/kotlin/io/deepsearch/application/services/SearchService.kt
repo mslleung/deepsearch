@@ -92,22 +92,36 @@ class SearchService(
             SearchMode.CACHE_ONLY -> cacheOnlySearchOrchestrator
         }
         
-        // Collect the flow until we get a terminal event
-        val completionDeferred = CompletableDeferred<SearchEvent.SessionCompleted>()
+        // Collect the flow until we get a terminal event (either success or error)
+        val completionDeferred = CompletableDeferred<SearchEvent>()
 
         val job = applicationScope.scope.launch {
             orchestrator.execute(searchQuery, maxCacheAge, apiKeyId, proxyConfig)
-                .filterIsInstance<SearchEvent.SessionCompleted>()
-                .onEach {
-                    completionDeferred.complete(it)
+                .onEach { event ->
+                    // Complete on any terminal event
+                    when (event) {
+                        is SearchEvent.SessionCompleted -> completionDeferred.complete(event)
+                        is SearchEvent.SessionError -> completionDeferred.complete(event)
+                        else -> { /* Ignore non-terminal events */ }
+                    }
                 }
-                .first()
+                .first { it is SearchEvent.SessionCompleted || it is SearchEvent.SessionError }
         }
 
-        val completionEvent = completionDeferred.await()
+        val terminalEvent = completionDeferred.await()
         job.cancel()
         
-        return querySessionService.getSessionDetail(completionEvent.sessionId, userId)
+        // Handle both success and error cases
+        return when (terminalEvent) {
+            is SearchEvent.SessionCompleted -> {
+                querySessionService.getSessionDetail(terminalEvent.sessionId, userId)
+            }
+            is SearchEvent.SessionError -> {
+                // For errors, still return the session detail (which will contain the error state)
+                querySessionService.getSessionDetail(terminalEvent.sessionId, userId)
+            }
+            else -> throw IllegalStateException("Unexpected terminal event type: ${terminalEvent::class.simpleName}")
+        }
     }
 
     override suspend fun executeStreaming(
