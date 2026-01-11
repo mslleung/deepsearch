@@ -1,30 +1,12 @@
 package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
-import io.deepsearch.application.services.IHtmlPreviewService
-import io.deepsearch.application.services.IHtmlSourceEvalService
-import io.deepsearch.application.services.IPdfSourceEvalService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
-import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.application.services.SearchEvent
-import io.deepsearch.application.services.WebpageCacheService
-import io.deepsearch.domain.services.IGeminiFileSearchService
-import io.deepsearch.domain.agents.IAnswerReviewerAgent
-import io.deepsearch.domain.agents.IMarkdownSourceEvalAgent
-import io.deepsearch.domain.agents.IQueryBreakdownAgent
-import io.deepsearch.domain.agents.ISerpQueryOptimizationAgent
-import io.deepsearch.domain.agents.IStreamingAnswerAgent
-import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
-import io.deepsearch.domain.agents.HtmlSourceEvalInput
-import io.deepsearch.domain.agents.MarkdownSourceEvalInput
-import io.deepsearch.domain.agents.PdfSourceEvalInput
-import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
-import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.config.IApplicationCoroutineScope
-import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.exceptions.MarkdownConversionException
 import io.deepsearch.domain.exceptions.NetworkConnectionException
 import io.deepsearch.domain.proxy.ProxyConfiguration
@@ -33,16 +15,13 @@ import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
-import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
-import io.deepsearch.domain.models.valueobjects.QueryProcessingResult
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
-import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.ext.chunkedWithTimeout
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -56,7 +35,6 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.flatMapConcat
 import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -71,16 +49,11 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.FeedbackLoopReport
-import io.deepsearch.application.services.IKgHybridRetrievalService
-import io.deepsearch.application.services.ILlmTokenUsageService
 import io.deepsearch.application.services.IQueryProcessingService
-import io.deepsearch.domain.agents.AnswerAssessment
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import kotlinx.coroutines.FlowPreview
 import java.util.concurrent.ConcurrentHashMap
@@ -99,32 +72,30 @@ interface IAgenticBrowserSearchOrchestrator : ISearchOrchestrator
 /**
  * Orchestrates agentic search using a reactive flow-based approach.
  * Returns a Flow<SearchEvent> that emits events as the search progresses.
+ * 
+ * Delegates to facade services for:
+ * - Link discovery (SERP, Hybrid, KG, File Search) via LinkDiscoveryFacadeService
+ * - Source evaluation (HTML, PDF, Markdown) via SourceEvaluationFacadeService
+ * - Answer synthesis via AnswerSynthesisFacadeService
  */
 @OptIn(ExperimentalCoroutinesApi::class, ExperimentalTime::class)
 class AgenticBrowserSearchOrchestrator(
+    // Infrastructure
     private val applicationScope: IApplicationCoroutineScope,
-    private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
-    private val normalizeUrlService: INormalizeUrlService,
-    private val serpQueryOptimizationAgent: ISerpQueryOptimizationAgent,
-    private val queryBreakdownAgent: IQueryBreakdownAgent,
+    // Facade services
+    private val linkDiscoveryFacadeService: ILinkDiscoveryFacadeService,
+    private val sourceEvaluationFacadeService: ISourceEvaluationFacadeService,
+    private val answerSynthesisFacadeService: IAnswerSynthesisFacadeService,
+    // URL Processing
     private val urlContentProcessingService: IUrlContentProcessingService,
-    private val streamingAnswerAgent: IStreamingAnswerAgent,
-    private val answerReviewerAgent: IAnswerReviewerAgent,
-    private val htmlSourceEvalService: IHtmlSourceEvalService,
-    private val markdownSourceEvalAgent: IMarkdownSourceEvalAgent,
-    private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
+    private val adaptiveRateLimiter: IAdaptiveRateLimiter,
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository,
+    // Session/Tracking
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
-    private val webpageCacheService: WebpageCacheService,
-    private val geminiFileSearchService: IGeminiFileSearchService,
-    private val dispatchers: IDispatcherProvider,
-    private val tokenUsageService: ILlmTokenUsageService,
-    private val adaptiveRateLimiter: IAdaptiveRateLimiter,
-    private val htmlPreviewService: IHtmlPreviewService,
-    private val kgHybridRetrievalService: IKgHybridRetrievalService,
     private val queryProcessingService: IQueryProcessingService,
-    private val webpageMarkdownRepository: IWebpageMarkdownRepository,
-    private val pdfSourceEvalService: IPdfSourceEvalService
+    // URL utilities
+    private val normalizeUrlService: INormalizeUrlService
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -252,8 +223,7 @@ class AgenticBrowserSearchOrchestrator(
                     queryChannel,
                     priorityLinkBuffer,
                     inFlightDiscovery,
-                    ::checkAndCloseIfIdle,
-                    channel
+                    ::checkAndCloseIfIdle
                 )
             )
 
@@ -346,7 +316,7 @@ class AgenticBrowserSearchOrchestrator(
                         .filterIsInstance<UrlContentResult.HtmlPreview>()
                         .flatMapMerge(concurrency = 100) { htmlSource ->
                             flow {
-                                val evalResult = evaluateHtmlSource(
+                                val evalResult = sourceEvaluationFacadeService.evaluateHtmlSource(
                                     sessionId, htmlSource, expandedQuery, fulfillmentRequirements
                                 )
                                 if (evalResult != null) {
@@ -366,7 +336,7 @@ class AgenticBrowserSearchOrchestrator(
                     .filter { it.extractedText.isNotBlank() }
                     .flatMapMerge(concurrency = 100) { pdfSource ->
                         flow {
-                            val evalResult = evaluatePdfSource(
+                            val evalResult = sourceEvaluationFacadeService.evaluatePdfSource(
                                 sessionId, pdfSource, expandedQuery, fulfillmentRequirements
                             )
                             if (evalResult != null) {
@@ -382,7 +352,7 @@ class AgenticBrowserSearchOrchestrator(
                     .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
                     .flatMapMerge(concurrency = 100) { markdownSource ->
                         flow {
-                            val evalResult = evaluateMarkdownSource(
+                            val evalResult = sourceEvaluationFacadeService.evaluateMarkdownSource(
                                 sessionId, markdownSource, expandedQuery, fulfillmentRequirements
                             )
                             if (evalResult != null) {
@@ -607,7 +577,7 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Process queries from the query channel and trigger full link discovery.
      * Each query gets the same treatment as the initial query: SERP + Hybrid + KG + File Search.
-     * Uses flow composition (merge) instead of launch for consistency and proper cancellation.
+     * Delegates to LinkDiscoveryFacadeService for the actual discovery.
      */
     private fun processQueryDrivenDiscoveryFlow(
         sessionId: QuerySessionId,
@@ -615,168 +585,19 @@ class AgenticBrowserSearchOrchestrator(
         queryChannel: Channel<String>,
         priorityLinkBuffer: PriorityLinkChannel,
         inFlightDiscovery: AtomicInteger,
-        checkAndCloseIfIdle: () -> Boolean,
-        eventChannel: SendChannel<SearchEvent>
+        checkAndCloseIfIdle: () -> Boolean
     ): Flow<Unit> {
         return queryChannel.receiveAsFlow()
             .flatMapMerge(concurrency = 3) { query ->
                 inFlightDiscovery.incrementAndGet()
                 logger.info("[{}] Triggering full discovery for query: '{}' (inFlightDiscovery={})", sessionId.value, query, inFlightDiscovery.get())
 
-                // Create a SearchQuery with this query but same URL context
-                val currentSearchQuery = SearchQuery(
-                    rawQuery = query,
-                    url = baseSearchQuery.url,
-                    languagePattern = baseSearchQuery.languagePattern,
-                    ocrLanguage = baseSearchQuery.ocrLanguage,
-                    includeImages = baseSearchQuery.includeImages
-                )
-
-                // Run all discovery mechanisms in parallel using flow composition
-                merge(
-                    // 1. SERP Search
-                    flow {
-                        try {
-                            val serpLinks =
-                                webpageLinkDiscoveryService.discoverRelevantLinksBySerper(currentSearchQuery)
-                            logger.debug(
-                                "[{}] SERP discovery for '{}': {} links",
-                                sessionId.value,
-                                query,
-                                serpLinks.size
-                            )
-                            serpLinks.forEach { priorityLinkBuffer.send(DiscoveredLink(it, query)) }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.error(
-                                "[{}] SERP discovery for query '{}' failed: {}",
-                                sessionId.value,
-                                query,
-                                e.message
-                            )
-                        }
-                        emit(Unit)
-                    },
-
-                    // 2. Hybrid Search (from cache) - discover URLs from cached pages
-                    flow {
-                        try {
-                            val hybridResults = webpageCacheService.searchHybrid(
-                                query, baseSearchQuery.url, null, 15, sessionId
-                            )
-                            val links = hybridResults.map { webpage ->
-                                DiscoveredLink(
-                                    link = WebpageLink(
-                                        url = webpage.url,
-                                        source = LinkSource.HYBRID_SEARCH,
-                                        reason = "Hybrid search result for: $query",
-                                        score = DEFAULT_LINK_SCORE
-                                    ),
-                                    query = query
-                                )
-                            }
-                            logger.debug("[{}] Hybrid discovery for '{}': {} links", sessionId.value, query, links.size)
-                            links.forEach { priorityLinkBuffer.send(it) }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.error(
-                                "[{}] Hybrid discovery for query '{}' failed: {}",
-                                sessionId.value,
-                                query,
-                                e.message
-                            )
-                        }
-                        emit(Unit)
-                    },
-
-                    // 3. Knowledge Graph - discover URLs from KG entities
-                    flow {
-                        try {
-                            val urlPrefix = normalizeUrlService.normalize(baseSearchQuery.url) ?: baseSearchQuery.url
-                            if (kgHybridRetrievalService.hasDataForUrlPrefix(urlPrefix)) {
-                                val kgResult = kgHybridRetrievalService.retrieve(
-                                    query = query,
-                                    baseUrl = urlPrefix,
-                                    maxCacheAge = null,
-                                    sessionId = sessionId
-                                )
-                                val links = kgResult.subgraph?.entities?.flatMap { entity ->
-                                    entity.sourceUrls.map { url ->
-                                        DiscoveredLink(
-                                            link = WebpageLink(
-                                                url = url,
-                                                source = LinkSource.KNOWLEDGE_GRAPH,
-                                                reason = "KG entity: ${entity.name}",
-                                                score = DEFAULT_LINK_SCORE
-                                            ),
-                                            query = query
-                                        )
-                                    }
-                                } ?: emptyList()
-                                logger.debug("[{}] KG discovery for '{}': {} links", sessionId.value, query, links.size)
-                                links.forEach { priorityLinkBuffer.send(it) }
-                            }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.error(
-                                "[{}] KG discovery for query '{}' failed: {}",
-                                sessionId.value,
-                                query,
-                                e.message
-                            )
-                        }
-                        emit(Unit)
-                    },
-
-                    // 4. File Search - discover URLs from file search chunks
-                    flow {
-                        try {
-                            val domain = extractDomain(baseSearchQuery.url)
-                            val storeInfo = geminiFileSearchService.findStore(domain)
-                            if (storeInfo != null) {
-                                val searchResult = geminiFileSearchService.queryStore(
-                                    storeName = storeInfo.name,
-                                    query = query,
-                                    maxAgeMs = null
-                                )
-                                tokenUsageService.recordTokenUsage(
-                                    sessionId, "QueryDrivenDiscovery.FileSearch",
-                                    searchResult.tokenUsage.modelName, searchResult.tokenUsage.promptTokens,
-                                    searchResult.tokenUsage.outputTokens, searchResult.tokenUsage.totalTokens
-                                )
-                                val links = searchResult.chunks.map { chunk ->
-                                    DiscoveredLink(
-                                        link = WebpageLink(
-                                            url = chunk.sourceUrl,
-                                            source = LinkSource.FILE_SEARCH,
-                                            reason = "File search chunk for: $query",
-                                            score = DEFAULT_LINK_SCORE
-                                        ),
-                                        query = query
-                                    )
-                                }.distinctBy { it.url }
-                                logger.debug(
-                                    "[{}] File search discovery for '{}': {} links",
-                                    sessionId.value,
-                                    query,
-                                    links.size
-                                )
-                                links.forEach { priorityLinkBuffer.send(it) }
-                            }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.error(
-                                "[{}] File search discovery for query '{}' failed: {}",
-                                sessionId.value,
-                                query,
-                                e.message
-                            )
-                        }
-                        emit(Unit)
+                linkDiscoveryFacadeService.discoverLinksForQuery(
+                    query = query,
+                    baseSearchQuery = baseSearchQuery,
+                    sessionId = sessionId,
+                    onLinkDiscovered = { discoveredLink ->
+                        priorityLinkBuffer.send(discoveredLink)
                     }
                 ).onCompletion {
                     val remaining = inFlightDiscovery.decrementAndGet()
@@ -796,7 +617,7 @@ class AgenticBrowserSearchOrchestrator(
      * 
      * When a URL is already processed but discovered by a new query:
      * - Retrieves cached HTML from WebpageMarkdownRepository
-     * - Re-runs link relevance analysis with the new query context
+     * - Re-runs link relevance analysis with the new query context (via LinkDiscoveryFacadeService)
      * - Discovered links are sent to recursive channel
      * - No markdown is re-emitted (already done on first processing)
      */
@@ -870,9 +691,9 @@ class AgenticBrowserSearchOrchestrator(
                             val cached = webpageMarkdownRepository.findByUrl(dedupKey)
                             val cachedHtml = cached?.cleanedLinkRelevanceHtml
                             if (cachedHtml != null) {
-                                val newLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
+                                val newLinks = linkDiscoveryFacadeService.reanalyzeCachedHtml(
                                     query = query,
-                                    html = cachedHtml,
+                                    cachedHtml = cachedHtml,
                                     url = dedupKey,
                                     sessionId = sessionId
                                 )
@@ -1039,28 +860,6 @@ class AgenticBrowserSearchOrchestrator(
             }
     }
 
-    private fun extractDomain(url: String): String {
-        return try {
-            java.net.URI(url).host?.lowercase() ?: url
-        } catch (e: Exception) {
-            url
-        }
-    }
-
-    /**
-     * Creates a flow that discovers links via SERP search.
-     */
-    private fun createSerperSearchLinkDiscoveryFlow(
-        sessionId: QuerySessionId,
-        searchQuery: SearchQuery
-    ): Flow<WebpageLink> = flow {
-        try {
-            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery).forEach { emit(it) }
-        } catch (e: Exception) {
-            logger.error("[{}] SERP search failed: {}", sessionId.value, e.message)
-        }
-    }
-
     /**
      * Accumulator for unified answer generation with feedback loop support.
      * Uses URL-keyed source map where markdown sources replace preview sources.
@@ -1096,179 +895,9 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Result from answer synthesis, containing all relevant data from the streaming response.
-     */
-    private data class SynthesisResult(
-        val answer: String,
-        val citedSourceUrls: List<String>,
-        val assessment: AnswerAssessment,
-        val status: AnswerStatus,
-        val followUpQueries: List<String>,
-        val imageIds: List<String>
-    ) {
-        /** Whether the answer is complete (status=FINISH_SEARCH from synthesis agent) */
-        val isComplete: Boolean get() = status == AnswerStatus.FINISH_SEARCH
-
-        /** Returns a brief summary of unsatisfied dimensions for logging */
-        fun getUnsatisfiedSummary(): String {
-            val unsatisfied = mutableListOf<String>()
-            if (!assessment.coverage.satisfied) unsatisfied.add("coverage")
-            if (!assessment.depth.satisfied) unsatisfied.add("depth")
-            if (!assessment.temporality.satisfied) unsatisfied.add("temporality")
-            if (!assessment.authority.satisfied) unsatisfied.add("authority")
-            if (!assessment.consistency.satisfied) unsatisfied.add("consistency")
-            return if (unsatisfied.isEmpty()) "all satisfied" else unsatisfied.joinToString(", ")
-        }
-    }
-
-    /**
-     * Evaluate a single HTML preview source using the HtmlSourceEvalService.
-     * Returns null if the source is not relevant.
-     */
-    private suspend fun evaluateHtmlSource(
-        sessionId: QuerySessionId,
-        htmlSource: UrlContentResult.HtmlPreview,
-        expandedQuery: String,
-        fulfillmentRequirements: List<String> = emptyList()
-    ): EvaluatedSource? {
-        val evalOutput = htmlSourceEvalService.evaluate(
-            HtmlSourceEvalInput(
-                htmlSource = htmlSource,
-                expandedQuery = expandedQuery,
-                fulfillmentRequirements = fulfillmentRequirements
-            ),
-            sessionId
-        )
-
-        // Cooperative cancellation check
-        currentCoroutineContext().ensureActive()
-
-        return evalOutput.evaluatedSource?.also { source ->
-            logger.debug(
-                "[{}] HTML source evaluation: url={}, {} facts",
-                sessionId.value, htmlSource.url, source.relevantFacts.size
-            )
-        }
-    }
-
-    /**
-     * Evaluate a single PDF preview source using the PdfSourceEvalService.
-     * Returns null if the source is not relevant or all facts are garbled/from tables.
-     */
-    private suspend fun evaluatePdfSource(
-        sessionId: QuerySessionId,
-        pdfSource: UrlContentResult.PdfPreview,
-        expandedQuery: String,
-        fulfillmentRequirements: List<String> = emptyList()
-    ): EvaluatedSource? {
-        val evalOutput = pdfSourceEvalService.evaluate(
-            PdfSourceEvalInput(
-                pdfSource = pdfSource,
-                expandedQuery = expandedQuery,
-                fulfillmentRequirements = fulfillmentRequirements
-            ),
-            sessionId
-        )
-
-        // Cooperative cancellation check
-        currentCoroutineContext().ensureActive()
-
-        return evalOutput.evaluatedSource?.also { source ->
-            logger.debug(
-                "[{}] PDF source evaluation: url={}, {} facts",
-                sessionId.value, pdfSource.url, source.relevantFacts.size
-            )
-        }
-    }
-
-    /**
-     * Evaluate a single markdown source using the stateless MarkdownSourceEvalAgent.
-     * Returns null if the source is not relevant.
-     */
-    private suspend fun evaluateMarkdownSource(
-        sessionId: QuerySessionId,
-        markdownSource: MarkdownSource,
-        expandedQuery: String,
-        fulfillmentRequirements: List<String> = emptyList()
-    ): EvaluatedSource? {
-        val output = markdownSourceEvalAgent.generate(
-            MarkdownSourceEvalInput(
-                markdownSource = markdownSource,
-                expandedQuery = expandedQuery,
-                fulfillmentRequirements = fulfillmentRequirements
-            )
-        )
-
-        // Cooperative cancellation check
-        currentCoroutineContext().ensureActive()
-
-        tokenUsageService.recordTokenUsage(
-            sessionId, "MarkdownSourceEvalAgent",
-            output.tokenUsage.modelName, output.tokenUsage.promptTokens,
-            output.tokenUsage.outputTokens, output.tokenUsage.totalTokens
-        )
-
-        return output.evaluatedSource
-    }
-
-    /**
-     * Synthesize an answer from evaluated sources.
-     * Handles streaming collection and token usage recording.
-     * Supports the feedback loop with previouslySearchedQueries.
-     */
-    private suspend fun synthesizeAnswer(
-        sessionId: QuerySessionId,
-        expandedQuery: String,
-        evaluatedSources: List<EvaluatedSource>,
-        previouslySearchedQueries: List<String> = emptyList(),
-        fulfillmentRequirements: List<String> = emptyList()
-    ): SynthesisResult {
-        val answerBuilder = StringBuilder()
-        lateinit var status: AnswerStatus
-        lateinit var assessment: AnswerAssessment
-        var citedSourceUrls = emptyList<String>()
-        var followUpQueries = emptyList<String>()
-        var imageIds = emptyList<String>()
-
-        streamingAnswerSynthesisAgent.generateStream(
-            StreamingAnswerSynthesisInput(
-                query = expandedQuery,
-                evaluatedSources = evaluatedSources,
-                previouslySearchedQueries = previouslySearchedQueries,
-                fulfillmentRequirements = fulfillmentRequirements
-            )
-        ).collect { item ->
-            when (item) {
-                is StreamingAnswerStreamItem.Chunk -> answerBuilder.append(item.text)
-                is StreamingAnswerStreamItem.Complete -> {
-                    tokenUsageService.recordTokenUsage(
-                        sessionId, "StreamingAnswerSynthesisAgent",
-                        item.tokenUsage.modelName, item.tokenUsage.promptTokens,
-                        item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
-                    )
-                    assessment = item.assessment
-                    citedSourceUrls = item.citedSourceUrls
-                    status = item.status
-                    followUpQueries = item.followUpQueries
-                    imageIds = item.imageIds
-                }
-            }
-        }
-
-        return SynthesisResult(
-            answer = answerBuilder.toString(),
-            citedSourceUrls = citedSourceUrls,
-            assessment = assessment,
-            status = status,
-            followUpQueries = followUpQueries,
-            imageIds = imageIds
-        )
-    }
-
-    /**
      * Aggregate a batch of evaluated sources into the accumulator with URL-keyed replacement.
      * Markdown sources (isPreview=false) replace preview sources (isPreview=true) for the same URL.
-     * Triggers answer synthesis after updating sources.
+     * Triggers answer synthesis (via AnswerSynthesisFacadeService) after updating sources.
      */
     private suspend fun aggregateBatchIntoAccumulator(
         sessionId: QuerySessionId,
@@ -1322,8 +951,8 @@ class AgenticBrowserSearchOrchestrator(
             sessionId.value, batch.size, additions, replacements
         )
 
-        // Synthesize answer with updated sources
-        val synthesis = synthesizeAnswer(
+        // Synthesize answer with updated sources (via facade service)
+        val synthesis = answerSynthesisFacadeService.synthesizeAnswer(
             sessionId = sessionId,
             expandedQuery = expandedQuery,
             evaluatedSources = updatedSourcesByUrl.values.toList(),

@@ -1,7 +1,13 @@
 package io.deepsearch.application.config
 
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.AgenticBrowserSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.AnswerSynthesisFacadeService
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAnswerSynthesisFacadeService
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.ILinkDiscoveryFacadeService
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.ISourceEvaluationFacadeService
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.LinkDiscoveryFacadeService
+import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.SourceEvaluationFacadeService
 import io.deepsearch.application.searchorchestrators.cacheonlysearch.CacheOnlySearchOrchestrator
 import io.deepsearch.application.searchorchestrators.cacheonlysearch.ICacheOnlySearchOrchestrator
 import io.deepsearch.application.searchorchestrators.googlesearch.GoogleSearchOrchestrator
@@ -132,13 +138,15 @@ private val applicationCommonTestModule = module {
     singleOf(::AuthService) bind IAuthService::class
     singleOf(::UserSubscriptionService) bind IUserSubscriptionService::class
     singleOf(::UsageService) bind IUsageService::class
-    single<IAgenticBrowserSearchOrchestrator> {
-        AgenticBrowserSearchOrchestrator(
-            get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
-            get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
-            get(), get(), get()
-        )
-    }
+    
+    // Agentic search facade services (group related services for cleaner orchestration)
+    singleOf(::LinkDiscoveryFacadeService) bind ILinkDiscoveryFacadeService::class
+    singleOf(::SourceEvaluationFacadeService) bind ISourceEvaluationFacadeService::class
+    singleOf(::AnswerSynthesisFacadeService) bind IAnswerSynthesisFacadeService::class
+    
+    // Agentic search orchestrator (now uses facade services, reduced to 11 dependencies)
+    singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
+    
     singleOf(::CacheOnlySearchOrchestrator) bind ICacheOnlySearchOrchestrator::class
     singleOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
     singleOf(::UserService) bind IUserService::class
