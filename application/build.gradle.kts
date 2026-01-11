@@ -32,6 +32,9 @@ dependencies {
     
     // PDF processing
     implementation(libs.apache.pdfbox)
+    
+    // Lucene for multilingual keyword extraction
+    implementation(libs.lucene.analysis.common)
 
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
