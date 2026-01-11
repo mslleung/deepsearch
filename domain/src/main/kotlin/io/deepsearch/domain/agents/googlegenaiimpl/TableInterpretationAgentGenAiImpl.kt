@@ -271,7 +271,10 @@ class TableInterpretationAgentGenAiImpl(
         return if (additionalInfo.isNullOrBlank()) {
             markdown
         } else {
-            "$markdown\n**Additional Information:**\n$additionalInfo\n\n"
+            // Format additional info as blockquote for better readability and easier chunking
+            val formattedInfo = additionalInfo.lines()
+                .joinToString("\n") { "> $it" }
+            "$markdown\n\n$formattedInfo\n"
         }
     }
 

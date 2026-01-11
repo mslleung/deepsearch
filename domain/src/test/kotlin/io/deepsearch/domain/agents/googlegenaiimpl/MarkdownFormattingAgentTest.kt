@@ -94,10 +94,10 @@ Our program can provide assistance in the following areas:
 | Innovation | Promoting value creation and collaboration through creativity. |
 | Values | Nurturing a sense of purpose at work to advance positive images of a company. |
 | Endurance | Sustaining a competitive advantage and promoting sustainable shifts in the workforce. |
-**Additional Information:**
-The structure appears to be a list of service blocks arranged in three rows and two columns implicitly based on the bounding boxes, representing the six categories of the THRIVE program. Since this is a list of benefits/features, the structure is best represented as a single-column table where the first column contains the category and the second column contains the description, inferring a header row from the provided column list.
 
-The HTML block for 'Endurance' (`ds-bounding-box="789 317 1139 589"`) contains the text "endurance" outside the `<h3>` tag, which has been omitted in the final table structure as it seems redundant or extraneous.
+> The structure appears to be a list of service blocks arranged in three rows and two columns implicitly based on the bounding boxes, representing the six categories of the THRIVE program. Since this is a list of benefits/features, the structure is best represented as a single-column table where the first column contains the category and the second column contains the description, inferring a header row from the provided column list.
+> 
+> The HTML block for 'Endurance' (`ds-bounding-box="789 317 1139 589"`) contains the text "endurance" outside the `<h3>` tag, which has been omitted in the final table structure as it seems redundant or extraneous.
 How is THRIVE delivered?
 | Assessment Phase | Delivery Phase | Self-enablement |
 |---|---|---|
@@ -106,14 +106,14 @@ How is THRIVE delivered?
 | Review Health Plan | Therapy | |
 | Evaluate Health Culture | 121 Coaching to explore issues, set goals, and overcome challenges through a series of one-on-one conversations | |
 | Evaluate Organisational Culture | | |
-**Additional Information:**
-The table structure was inferred from blocks of content presented side-by-side, corresponding to the columns described in the auxiliary info: Assessment Phase, Delivery Phase, and Self-enablement. Content within each phase (list items) forms the rows under that respective column.
+
+> The table structure was inferred from blocks of content presented side-by-side, corresponding to the columns described in the auxiliary info: Assessment Phase, Delivery Phase, and Self-enablement. Content within each phase (list items) forms the rows under that respective column.
 Key Benefits
 | Increase Workplace Productivity | Improve Employee Health Behaviours |
 |---|---|
 | Reduce Elevated Health Risks | Decrease Absenteeism |
-**Additional Information:**
-The provided HTML structure represents a grid of benefits, not a traditional HTML table. It has been converted into a 2x2 markdown table structure where the content of each cell is the text associated with the benefit image/icon. The original auxiliary info described 4 columns, but the visual structure suggests 2 rows and 2 columns of content blocks.
+
+> The provided HTML structure represents a grid of benefits, not a traditional HTML table. It has been converted into a 2x2 markdown table structure where the content of each cell is the text associated with the benefit image/icon. The original auxiliary info described 4 columns, but the visual structure suggests 2 rows and 2 columns of content blocks.
 Addressing wellbeing at work increases productivity by as much as 12%
 Source:
 https://www.mentalhealth.org.uk/publications/how-support-mental-health-work
@@ -135,8 +135,8 @@ No matter which stage you are in your corporate health journey, our training pro
 |---|---|
 | 1. Mental health awareness [?] | - Introductions to Mental Health for all Employees
 - Mental Health awareness when managing a team |
-**Additional Information:**
-The input is structured as an accordion, not a traditional HTML table, but it represents categorical data with associated details, which is being coerced into a Markdown table. The columns specified in the auxiliary info (Mental health awa..., Resilience in the..., Lifestyle & healt...) do not perfectly align with the structure of the provided HTML, which only details content for the first category ("1. Mental health awareness"). The table structure is inferred based on the header-content relationship shown in the accordion item.
+
+> The input is structured as an accordion, not a traditional HTML table, but it represents categorical data with associated details, which is being coerced into a Markdown table. The columns specified in the auxiliary info (Mental health awa..., Resilience in the..., Lifestyle & healt...) do not perfectly align with the structure of the provided HTML, which only details content for the first category ("1. Mental health awareness"). The table structure is inferred based on the header-content relationship shown in the accordion item.
 ![Circular icon with three stylized human figures and medical cross symbol representing group health services](#img-4)
 2. Resilience in the face of changing work and social dynamics
 question mark in a box
@@ -153,8 +153,8 @@ Maintaining fitness and losing weight to improve cardiovascular fitness and brai
 |---|---|---|
 | Get in touch with a member of our team by email to learn more about our corporate training programs, talks and workshops. | Take our free quick quiz to see how your employee wellbeing initiatives fare to global standards, which areas can be improved and how. | Schedule a free 15 or 30 minute discussion with one of our corporate representatives to learn more about how OT&P can help your business. |
 | Submit Form | Take The Quiz | Schedule A Time |
-**Additional Information:**
-The provided HTML structure represents three distinct service blocks laid out horizontally (in a responsive design) rather than a strict HTML table. The columns are inferred from the auxiliary info: "Contact our team", "Test your corporate ...", and "Book a meeting". The content under each title (description and button) is treated as cell content.
+
+> The provided HTML structure represents three distinct service blocks laid out horizontally (in a responsive design) rather than a strict HTML table. The columns are inferred from the auxiliary info: "Contact our team", "Test your corporate ...", and "Book a meeting". The content under each title (description and button) is treated as cell content.
 More Corporate Health & Wellness Programs
 | Program | Description | Included Programs/Services |
 |---|---|---|
@@ -164,25 +164,24 @@ More Corporate Health & Wellness Programs
 - Bespoke Health Checks
 - Pandemic Response and COVID Testing |
 
-**Additional Information:**
-The provided HTML structure does not strictly conform to a standard HTML table (<table>). It is a structured layout of divs that semantically represents a single entry in a list or a program description, rather than a multi-row/multi-column grid of data suitable for a standard Markdown table. 
-
-Based on the Auxiliary Info ("Related corporate health and wellness programs." and "Columns: OT&PHealth & Wellness Pr..."), I will structure the output to represent the OT&P Health & Wellness Program details as one row entry.
-
-*   The image description is included in the additional information as it provides context for the program entry.
-*   The button text 'Learn More' is captured as an action associated with this program.
+> The provided HTML structure does not strictly conform to a standard HTML table (<table>). It is a structured layout of divs that semantically represents a single entry in a list or a program description, rather than a multi-row/multi-column grid of data suitable for a standard Markdown table. 
+> 
+> Based on the Auxiliary Info ("Related corporate health and wellness programs." and "Columns: OT&PHealth & Wellness Pr..."), I will structure the output to represent the OT&P Health & Wellness Program details as one row entry.
+> 
+> *   The image description is included in the additional information as it provides context for the program entry.
+> *   The button text 'Learn More' is captured as an action associated with this program.
 Our Blog
 | Long Covid Update 2025: Symptoms, Causes, and Latest Clinical Insights | Accelerated Brain Ageing Linked to COVID-19: Understanding the Long-Term Impacts | COVID-19 Traveling Restriction Update |
 |---|---|---|
 | OT&P Healthcare logo, QR code to follow Hong Kong OT&P Healthcare, modern reception area photo | Black button with Apple logo: "Download on the App Store" | Button with Google Play logo: "GET IT ON Google Play" |
-**Additional Information:**
-The HTML structure appears to represent a list of recent blog posts presented in three columns, which are interpreted as three distinct rows in the markdown table, with implied shared content or context based on the auxiliary info describing columns.
 
-Since the HTML structure shows three items side-by-side, I am treating each item as a cell in a single row of content, matching the description of three columns: "Long Covid Update 20...", "Accelerated Brain Ag...", "COVID-19 Traveling R...".
-
-Images are described in placeholder tags and are omitted from the table content itself, as they are not structured data points.
-
-The bottom element is a CTA: "user profile Go to our blog", which is placed in 'additionalInfo' as it does not fit the main table structure.
+> The HTML structure appears to represent a list of recent blog posts presented in three columns, which are interpreted as three distinct rows in the markdown table, with implied shared content or context based on the auxiliary info describing columns.
+> 
+> Since the HTML structure shows three items side-by-side, I am treating each item as a cell in a single row of content, matching the description of three columns: "Long Covid Update 20...", "Accelerated Brain Ag...", "COVID-19 Traveling R...".
+> 
+> Images are described in placeholder tags and are omitted from the table content itself, as they are not structured data points.
+> 
+> The bottom element is a CTA: "user profile Go to our blog", which is placed in 'additionalInfo' as it does not fit the main table structure.
         """.trimIndent()
 
         val input = MarkdownFormattingInput(

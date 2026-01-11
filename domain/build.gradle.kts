@@ -43,6 +43,9 @@ dependencies {
     implementation(libs.tesseract)
     implementation(libs.opencv)
 
+    // Multi-language text processing (sentence boundary detection)
+    implementation(libs.icu4j)
+
     // Coroutines
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.rx3)
