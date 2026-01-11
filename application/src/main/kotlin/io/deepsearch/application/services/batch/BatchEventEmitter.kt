@@ -20,7 +20,17 @@ class BatchEventEmitter(
         val counts = try {
             batchUrlStateRepository.countByStage(requireNotNull(job.id))
         } catch (e: Exception) {
-            BatchUrlStageCounts(0, 0, 0, 0, 0, 0, 0)
+            BatchUrlStageCounts(
+                total = 0,
+                pending = 0,
+                extracted = 0,
+                contentLlmDone = 0,
+                finalLlmDone = 0,
+                pendingFileUpload = 0,
+                fileUploaded = 0,
+                cached = 0,
+                failed = 0
+            )
         }
 
         eventFlow.emit(
@@ -35,6 +45,8 @@ class BatchEventEmitter(
                 urlsFinalProcessed = job.urlsFinalProcessed,
                 urlsCached = job.urlsCached,
                 totalUrls = counts.total,
+                filesPendingUpload = counts.pendingFileUpload,
+                filesUploaded = counts.fileUploaded,
                 batchJobIds = job.batchJobIds,
                 errorMessage = job.errorMessage,
                 message = message

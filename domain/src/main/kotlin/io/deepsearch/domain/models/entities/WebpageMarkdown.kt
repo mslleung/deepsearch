@@ -17,6 +17,13 @@ data class WebpageMarkdown(
     val mimeType: String?,
     val embedding: List<Float>? = null, // 1536-dimensional embedding vector for semantic search
     val isPreview: Boolean = false, // true if content is from simple text extraction (no LLM processing)
+    /**
+     * For FILE type URLs: Gemini File Search document resource name.
+     * Format: "fileSearchStores/{store}/documents/{doc}"
+     * Used to delete files from Gemini when the cached content is deleted.
+     * Null for HTML type URLs.
+     */
+    val fileSearchDocumentName: String? = null,
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now(),
     var version: Long = 0

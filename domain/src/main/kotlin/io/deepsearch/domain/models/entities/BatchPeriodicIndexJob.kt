@@ -21,6 +21,8 @@ enum class BatchPeriodicIndexJobState {
     PARALLEL_EMBEDDING_AND_KG_EXTRACTION,
     /** Stage 5: Batch embedding for KG entities */
     KG_ENTITY_EMBEDDINGS,
+    /** Stage 6: Waiting for background file uploads to complete */
+    PROCESSING_FILES,
     /** Successfully completed all stages */
     COMPLETED,
     /** Failed due to an error */
@@ -106,7 +108,7 @@ class BatchPeriodicIndexJob(
     var urlsCached: Int = 0
 ) {
     /**
-     * Get the current stage number (1-5).
+     * Get the current stage number (1-6).
      */
     fun currentStage(): Int = when (state) {
         BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> 1
@@ -114,7 +116,8 @@ class BatchPeriodicIndexJob(
         BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> 3
         BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION -> 4
         BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> 5
-        BatchPeriodicIndexJobState.COMPLETED -> 5
+        BatchPeriodicIndexJobState.PROCESSING_FILES -> 6
+        BatchPeriodicIndexJobState.COMPLETED -> 6
         BatchPeriodicIndexJobState.FAILED, BatchPeriodicIndexJobState.STOPPED -> currentStageFromProgress()
     }
 
@@ -134,6 +137,7 @@ class BatchPeriodicIndexJob(
         BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> "Processing with Gemini (table interpretation)"
         BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION -> "Generating embeddings & extracting knowledge graph"
         BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> "Generating entity embeddings"
+        BatchPeriodicIndexJobState.PROCESSING_FILES -> "Uploading files to Gemini File Search"
         BatchPeriodicIndexJobState.COMPLETED -> "Completed"
         BatchPeriodicIndexJobState.FAILED -> "Failed: ${errorMessage ?: "Unknown error"}"
         BatchPeriodicIndexJobState.STOPPED -> "Stopped"
@@ -148,7 +152,8 @@ class BatchPeriodicIndexJob(
             BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION
             BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION
             BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION -> BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS
-            BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> BatchPeriodicIndexJobState.COMPLETED
+            BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> BatchPeriodicIndexJobState.PROCESSING_FILES
+            BatchPeriodicIndexJobState.PROCESSING_FILES -> BatchPeriodicIndexJobState.COMPLETED
             else -> state // No transition for terminal states
         }
         updatedAt = Clock.System.now()

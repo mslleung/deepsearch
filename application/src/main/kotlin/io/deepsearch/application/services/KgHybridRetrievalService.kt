@@ -12,6 +12,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.net.URI
 import java.util.UUID
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -64,6 +65,19 @@ class KgHybridRetrievalService(
     companion object {
         private const val SEMANTIC_SEARCH_LIMIT = 10
         private const val GRAPH_TRAVERSAL_HOPS = 2
+        
+        /**
+         * Extract domain from URL for graph filtering.
+         * e.g., "https://docs.notion.so/path" -> "docs.notion.so"
+         */
+        private fun extractDomain(url: String?): String? {
+            if (url == null) return null
+            return try {
+                URI(url).host
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 
     override suspend fun retrieve(
@@ -72,7 +86,8 @@ class KgHybridRetrievalService(
         maxCacheAge: Long?,
         sessionId: SessionId
     ): KgHybridRetrievalResult {
-        logger.debug("KG hybrid retrieval starting for query: '{}', baseUrl: {}", query, baseUrl)
+        val domain = extractDomain(baseUrl)
+        logger.debug("KG hybrid retrieval starting for query: '{}', baseUrl: {}, domain: {}", query, baseUrl, domain)
         
         return coroutineScope {
             // Run both strategies in parallel
@@ -81,7 +96,7 @@ class KgHybridRetrievalService(
             }
             
             val cypherResultDeferred = async {
-                performTextToCypher(query, sessionId)
+                performTextToCypher(query, domain, sessionId)
             }
             
             // Wait for both to complete
@@ -194,6 +209,7 @@ class KgHybridRetrievalService(
      */
     private suspend fun performTextToCypher(
         query: String,
+        domain: String?,
         sessionId: SessionId
     ): Triple<List<Map<String, String>>?, String?, Boolean> {
         return try {
@@ -205,11 +221,12 @@ class KgHybridRetrievalService(
                 return Triple(null, null, false)
             }
             
-            // Generate Cypher query
+            // Generate Cypher query with domain filter
             val cypherOutput = textToCypherAgent.generate(
                 TextToCypherInput(
                     query = query,
-                    schemaDescription = schemaDescription
+                    schemaDescription = schemaDescription,
+                    domain = domain
                 )
             )
             

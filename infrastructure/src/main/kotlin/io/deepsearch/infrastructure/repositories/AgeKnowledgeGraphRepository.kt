@@ -24,6 +24,7 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.net.URI
 import java.util.UUID
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -46,6 +47,32 @@ class AgeKnowledgeGraphRepository(
     private val logger: Logger = LoggerFactory.getLogger(AgeKnowledgeGraphRepository::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
+    companion object {
+        private const val GRAPH_NAME = "knowledge_graph"
+
+        /**
+         * Extract domain from URL for graph partitioning.
+         * e.g., "https://docs.notion.so/path" -> "docs.notion.so"
+         */
+        fun extractDomain(url: String): String {
+            return try {
+                URI(url).host ?: "unknown"
+            } catch (e: Exception) {
+                "unknown"
+            }
+        }
+
+        /**
+         * Escape a string for use in Cypher queries.
+         * Handles single quotes and backslashes.
+         */
+        private fun escapeCypher(value: String): String {
+            return value
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+        }
+    }
+
     // ========================================
     // INDEXING OPERATIONS
     // ========================================
@@ -61,16 +88,17 @@ class AgeKnowledgeGraphRepository(
         }
 
         val now = Clock.System.now().toEpochMilliseconds()
+        val domain = extractDomain(url)
 
         transactionService.withTransaction {
-            // Step 1: Remove old provenance for this URL
+            // Step 1: Remove old provenance for this URL (also removes from AGE graph)
             removeProvenanceForUrl(url)
 
             // Step 2: Resolve entities (find existing or create new)
             val resolvedEntities = mutableMapOf<String, UUID>()
             for (entity in extraction.entities) {
                 val embedding = embeddings[entity.name]
-                val entityId = resolveEntityWithEmbedding(entity, url, now, embedding)
+                val entityId = resolveEntityWithEmbedding(entity, url, now, embedding, domain)
                 resolvedEntities[entity.name] = entityId
             }
 
@@ -80,7 +108,7 @@ class AgeKnowledgeGraphRepository(
                 val toId = resolvedEntities[rel.toEntity]
 
                 if (fromId != null && toId != null) {
-                    indexRelationship(fromId, toId, rel.relationType, rel.confidence, url, now)
+                    indexRelationship(fromId, toId, rel.relationType, rel.confidence, url, now, domain)
                 } else {
                     logger.debug(
                         "Skipping relationship {}->{} - entity not resolved (from={}, to={})",
@@ -91,10 +119,11 @@ class AgeKnowledgeGraphRepository(
         }
 
         logger.debug(
-            "Indexed {} entities and {} relationships from URL: {}",
+            "Indexed {} entities and {} relationships from URL: {} (domain: {})",
             extraction.entities.size,
             extraction.relationships.size,
-            url
+            url,
+            domain
         )
     }
 
@@ -118,14 +147,16 @@ class AgeKnowledgeGraphRepository(
             for ((url, extraction) in extractions) {
                 if (extraction.isEmpty()) continue
 
-                // Remove old provenance
+                val domain = extractDomain(url)
+
+                // Remove old provenance (also removes from AGE graph)
                 removeProvenanceForUrl(url)
 
                 // Resolve entities with pre-computed embeddings
                 val resolvedEntities = mutableMapOf<String, UUID>()
                 for (entity in extraction.entities) {
                     val embedding = embeddings[entity.name]
-                    val entityId = resolveEntityWithEmbedding(entity, url, now, embedding)
+                    val entityId = resolveEntityWithEmbedding(entity, url, now, embedding, domain)
                     resolvedEntities[entity.name] = entityId
                 }
 
@@ -135,7 +166,7 @@ class AgeKnowledgeGraphRepository(
                     val toId = resolvedEntities[rel.toEntity]
 
                     if (fromId != null && toId != null) {
-                        indexRelationship(fromId, toId, rel.relationType, rel.confidence, url, now)
+                        indexRelationship(fromId, toId, rel.relationType, rel.confidence, url, now, domain)
                     }
                 }
             }
@@ -156,21 +187,23 @@ class AgeKnowledgeGraphRepository(
     ): List<KgEntity> {
         return transactionService.withTransaction {
             // Configure HNSW iterative index scan for better recall with filters
-            exec("""
+            exec(
+                """
                 SET LOCAL hnsw.iterative_scan = 'strict_order';
                 SET LOCAL hnsw.max_scan_tuples = 20000;
-            """.trimIndent())
-            
+            """.trimIndent()
+            )
+
             // Format query embedding as pgvector string: '[1.0,2.0,3.0,...]'
             val embeddingStr = "[${queryEmbedding.joinToString(",")}]"
-            
+
             // Create custom SQL expression for cosine distance using pgvector's <=> operator
             val cosineDistanceExpr = object : Expression<Double>() {
                 override fun toQueryBuilder(queryBuilder: QueryBuilder) {
                     queryBuilder.append("(${entityEmbeddingsTable.tableName}.embedding <=> '$embeddingStr'::vector)")
                 }
             }
-            
+
             // EXISTS subquery filter for URL prefix and/or extraction time
             // Uses the composite index on (entity_id, source_url) for efficient prefix matching
             val existsFilter: Expression<Boolean>? = if (urlPrefix != null || minExtractedAtEpochMs != null) {
@@ -190,7 +223,7 @@ class AgeKnowledgeGraphRepository(
             } else {
                 null
             }
-            
+
             // Build and execute the query using pgvector's native cosine distance
             val results = entityEmbeddingsTable.selectAll()
                 .where {
@@ -211,7 +244,7 @@ class AgeKnowledgeGraphRepository(
                     )
                 }
                 .toList()
-            
+
             // Batch fetch entity details for all results at once
             batchFetchEntityDetails(results)
         }
@@ -237,13 +270,13 @@ class AgeKnowledgeGraphRepository(
 
                 // Batch query all relationships from current hop entities
                 val allRels = batchQueryRelationshipsFrom(currentHop.toList())
-                
+
                 // Collect all destination entity IDs we need to load
                 val missingEntityIds = allRels
                     .map { it.second }
                     .filter { !entities.containsKey(it) }
                     .distinct()
-                
+
                 // Batch load missing entities
                 if (missingEntityIds.isNotEmpty()) {
                     val loadedEntities = batchLoadEntitiesByIds(missingEntityIds)
@@ -251,13 +284,13 @@ class AgeKnowledgeGraphRepository(
                         entities[UUID.fromString(entity.id)] = entity
                     }
                 }
-                
+
                 // Build relationships and determine next hop
                 val nextHop = mutableSetOf<UUID>()
                 for ((fromId, toId, relationType) in allRels) {
                     val fromEntity = entities[fromId]
                     val toEntity = entities[toId]
-                    
+
                     if (fromEntity != null && toEntity != null) {
                         relationships.add(
                             KgRelationship(
@@ -267,7 +300,7 @@ class AgeKnowledgeGraphRepository(
                             )
                         )
                     }
-                    
+
                     // Add to next hop if newly discovered
                     if (!currentHop.contains(toId) && entities.containsKey(toId)) {
                         nextHop.add(toId)
@@ -289,17 +322,17 @@ class AgeKnowledgeGraphRepository(
         if (cypherQuery.isBlank()) {
             return emptyList()
         }
-        
+
         // Build Apache AGE SQL query
         val sql = buildAgeCypherSql(cypherQuery)
-        
+
         logger.debug("Executing Cypher query via AGE: {}", cypherQuery)
         logger.debug("Generated SQL: {}", sql)
-        
+
         return try {
             val rawResults = transactionService.executeRawQuery(sql, timeoutSeconds)
             logger.debug("Raw results count: {}", rawResults.size)
-            
+
             // Parse agtype results into simple string maps
             rawResults.map { row ->
                 row.mapValues { (_, value) -> parseAgtypeValue(value) }
@@ -309,7 +342,7 @@ class AgeKnowledgeGraphRepository(
             emptyList()
         }
     }
-    
+
     /**
      * Build the SQL statement to execute a Cypher query via Apache AGE.
      * Uses dollar-quoting to safely embed the Cypher query.
@@ -321,7 +354,7 @@ class AgeKnowledgeGraphRepository(
     private fun buildAgeCypherSql(cypherQuery: String): String {
         // Extract column names from the RETURN clause for the AS definition
         val returnColumns = extractReturnColumns(cypherQuery)
-        
+
         // Build column definitions for the AS clause
         val columnDefs = if (returnColumns.isNotEmpty()) {
             returnColumns.joinToString(", ") { "$it agtype" }
@@ -329,11 +362,11 @@ class AgeKnowledgeGraphRepository(
             // Default to single 'result' column if we can't parse RETURN
             "result agtype"
         }
-        
+
         // Single statement query - AGE is auto-loaded via session_preload_libraries
         return """SELECT * FROM cypher('knowledge_graph', ${'$'}${'$'}$cypherQuery${'$'}${'$'}) AS ($columnDefs)"""
     }
-    
+
     /**
      * Extract column names from the RETURN clause of a Cypher query.
      * Handles patterns like:
@@ -344,22 +377,23 @@ class AgeKnowledgeGraphRepository(
      */
     private fun extractReturnColumns(cypherQuery: String): List<String> {
         // Find the RETURN clause (case-insensitive)
-        val returnMatch = Regex("(?i)\\bRETURN\\s+(.+?)(?:\\s+ORDER\\s+BY|\\s+LIMIT|\\s+SKIP|$)", RegexOption.DOT_MATCHES_ALL)
-            .find(cypherQuery)
-            ?: return emptyList()
-        
+        val returnMatch =
+            Regex("(?i)\\bRETURN\\s+(.+?)(?:\\s+ORDER\\s+BY|\\s+LIMIT|\\s+SKIP|$)", RegexOption.DOT_MATCHES_ALL)
+                .find(cypherQuery)
+                ?: return emptyList()
+
         val returnClause = returnMatch.groupValues[1].trim()
-        
+
         // Split by comma and extract column names with their full expressions
         val rawColumns = returnClause.split(",").mapNotNull { part ->
             val trimmed = part.trim()
-            
+
             // Check for AS alias - use it directly
             val asMatch = Regex("(?i)\\bAS\\s+(\\w+)$").find(trimmed)
             if (asMatch != null) {
                 return@mapNotNull asMatch.groupValues[1] to asMatch.groupValues[1]
             }
-            
+
             // Check for property access (n.property) - preserve full expression for uniqueness
             val propMatch = Regex("(\\w+)\\.(\\w+)$").find(trimmed)
             if (propMatch != null) {
@@ -367,17 +401,17 @@ class AgeKnowledgeGraphRepository(
                 val propName = propMatch.groupValues[2]
                 return@mapNotNull "${varName}_${propName}" to propName
             }
-            
+
             // Check for simple variable name
             val varMatch = Regex("^(\\w+)$").find(trimmed)
             if (varMatch != null) {
                 val name = varMatch.groupValues[1]
                 return@mapNotNull name to name
             }
-            
+
             null
         }
-        
+
         // Deduplicate column names - if there are duplicates, use the full alias (var_prop)
         val nameCounts = rawColumns.groupingBy { it.second }.eachCount()
         return rawColumns.map { (fullAlias, simpleName) ->
@@ -390,19 +424,20 @@ class AgeKnowledgeGraphRepository(
             }
         }
     }
-    
+
     /**
      * Parse an agtype value into a string.
      * AGE returns JSON-like values that need unwrapping.
      */
     private fun parseAgtypeValue(value: String): String {
         if (value.isBlank()) return ""
-        
+
         // agtype strings are wrapped in quotes: "value"
         // Numbers and booleans are returned as-is
         return when {
-            value.startsWith("\"") && value.endsWith("\"") -> 
+            value.startsWith("\"") && value.endsWith("\"") ->
                 value.drop(1).dropLast(1)
+
             value == "null" -> ""
             else -> value
         }
@@ -465,7 +500,8 @@ class AgeKnowledgeGraphRepository(
         entity: ExtractedEntity,
         sourceUrl: String,
         now: Long,
-        embedding: List<Float>?
+        embedding: List<Float>?,
+        domain: String
     ): UUID {
         val canonicalName = entity.name.lowercase().trim()
 
@@ -481,7 +517,7 @@ class AgeKnowledgeGraphRepository(
             .map { it[entityEmbeddingsTable.entityId] }
             .singleOrNull()
 
-        val entityId = existingByName ?: createNewEntity(entity, canonicalName, embedding, now)
+        val entityId = existingByName ?: createNewEntity(entity, canonicalName, embedding, now, domain)
 
         // Record provenance
         entitySourcesTable.upsert(
@@ -501,7 +537,8 @@ class AgeKnowledgeGraphRepository(
         entity: ExtractedEntity,
         canonicalName: String,
         embedding: List<Float>?,
-        now: Long
+        now: Long,
+        domain: String
     ): UUID {
         val entityId = UUID.randomUUID()
 
@@ -517,6 +554,19 @@ class AgeKnowledgeGraphRepository(
             it[updatedAtEpochMs] = now
         }
 
+        // Also create vertex in AGE graph with domain for filtering
+        val cypherCreate = $$"""
+                SELECT * FROM cypher('$$GRAPH_NAME', $$
+                    CREATE (e:Entity {
+                        id: '$${entityId}',
+                        name: '$${escapeCypher(entity.name)}',
+                        type: '$${entity.type.name}',
+                        domain: '$${escapeCypher(domain)}'
+                    })
+                $$) AS (v agtype)
+            """.trimIndent()
+        transactionService.executeRawUpdate(cypherCreate)
+
         return entityId
     }
 
@@ -526,7 +576,8 @@ class AgeKnowledgeGraphRepository(
         relationType: RelationType,
         confidence: Float,
         sourceUrl: String,
-        now: Long
+        now: Long,
+        domain: String
     ) {
         // Record provenance
         relationshipSourcesTable.upsert(
@@ -542,6 +593,16 @@ class AgeKnowledgeGraphRepository(
             it[relationshipSourcesTable.confidence] = confidence
             it[extractedAtEpochMs] = now
         }
+
+        // Also create edge in AGE graph
+        // Using MERGE to avoid duplicate edges, matching by entity IDs
+        val cypherCreate = $$"""
+                SELECT * FROM cypher('$$GRAPH_NAME', $$
+                    MATCH (from:Entity {id: '$${fromId}'}), (to:Entity {id: '$${toId}'})
+                    CREATE (from)-[:$${relationType.name} {domain: '$${escapeCypher(domain)}', confidence: $${confidence}}]->(to)
+                $$) AS (e agtype)
+            """.trimIndent()
+        transactionService.executeRawUpdate(cypherCreate)
     }
 
     private suspend fun garbageCollectOrphanedEntities() {
@@ -559,10 +620,22 @@ class AgeKnowledgeGraphRepository(
 
         val orphanedIds = allEntityIds.filter { !entitiesWithSources.contains(it) }
 
-        // Delete orphaned entities
+        // Delete orphaned entities from relational table and AGE graph
         if (orphanedIds.isNotEmpty()) {
             entityEmbeddingsTable.deleteWhere { entityEmbeddingsTable.entityId inList orphanedIds }
-            logger.debug("Garbage collected {} orphaned entities", orphanedIds.size)
+
+            // Delete from AGE graph - delete vertices and their edges
+            for (entityId in orphanedIds) {
+                val cypherDelete = $$"""
+                        SELECT * FROM cypher('$$GRAPH_NAME', $$
+                            MATCH (e:Entity {id: '$${entityId}'})
+                            DETACH DELETE e
+                        $$) AS (v agtype)
+                    """.trimIndent()
+                transactionService.executeRawUpdate(cypherDelete)
+            }
+
+            logger.debug("Garbage collected {} orphaned entities (relational + AGE)", orphanedIds.size)
         }
     }
 
@@ -607,7 +680,7 @@ class AgeKnowledgeGraphRepository(
      */
     private suspend fun batchQueryRelationshipsFrom(fromIds: List<UUID>): List<Triple<UUID, UUID, RelationType>> {
         if (fromIds.isEmpty()) return emptyList()
-        
+
         return relationshipSourcesTable.selectAll()
             .where { relationshipSourcesTable.fromEntityId inList fromIds }
             .map { row ->
@@ -690,7 +763,7 @@ class AgeKnowledgeGraphRepository(
         if (entities.isEmpty()) return emptyList()
 
         val entityIds = entities.map { it.first }
-        
+
         // Get all facts and sources for these entities in one query
         val allSourceData = entitySourcesTable.selectAll()
             .where { entitySourcesTable.entityId inList entityIds }

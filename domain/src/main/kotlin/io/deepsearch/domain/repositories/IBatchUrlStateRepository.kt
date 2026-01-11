@@ -70,6 +70,18 @@ interface IBatchUrlStateRepository {
      * (stage=FINAL_LLM_DONE, no error)
      */
     suspend fun findNeedingCaching(jobId: Long): List<BatchUrlState>
+    
+    /**
+     * Find all FILE URLs that are pending upload to Gemini File Search.
+     * (stage=PENDING_FILE_UPLOAD, no error)
+     */
+    suspend fun findPendingFileUploads(jobId: Long): List<BatchUrlState>
+    
+    /**
+     * Find all FILE URLs that have been uploaded and are ready for caching.
+     * (stage=FILE_UPLOADED, no error)
+     */
+    suspend fun findUploadedFilesNeedingCaching(jobId: Long): List<BatchUrlState>
 
     /**
      * Count URLs by stage for a job.
@@ -94,9 +106,26 @@ interface IBatchUrlStateRepository {
 data class BatchUrlStageCounts(
     val total: Int,
     val pending: Int,
+    // HTML track
     val extracted: Int,
     val contentLlmDone: Int,
     val finalLlmDone: Int,
+    // FILE track
+    val pendingFileUpload: Int,
+    val fileUploaded: Int,
+    // Converged
     val cached: Int,
     val failed: Int
-)
+) {
+    /** Total HTML URLs */
+    val totalHtml: Int get() = extracted + contentLlmDone + finalLlmDone
+    
+    /** Total FILE URLs */
+    val totalFiles: Int get() = pendingFileUpload + fileUploaded
+    
+    /** HTML URLs ready for caching */
+    val htmlReadyForCaching: Int get() = finalLlmDone
+    
+    /** FILE URLs ready for caching */
+    val filesReadyForCaching: Int get() = fileUploaded
+}

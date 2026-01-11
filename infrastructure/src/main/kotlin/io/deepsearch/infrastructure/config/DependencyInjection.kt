@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.config
 import io.deepsearch.domain.proxy.IProxyRuleRepository
 import io.deepsearch.domain.repositories.*
 import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
+import io.deepsearch.domain.services.ITemporaryFileStorageService
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
 import io.deepsearch.infrastructure.services.DatabaseConfigurationService
@@ -11,6 +12,7 @@ import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
+import io.deepsearch.infrastructure.storage.GcsTemporaryFileStorageService
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -23,6 +25,14 @@ val infrastructureModule = module {
     singleOf(::DatabaseConfigurationService) bind IDatabaseConfigurationService::class
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
     singleOf(::TransactionService) bind ITransactionService::class
+    
+    // Google Cloud Storage for temporary file storage during batch processing
+    // Uses GCS Free Tier: 5GB regional storage (US regions)
+    single<ITemporaryFileStorageService> {
+        val bucketName = System.getenv("GCS_TEMP_BUCKET_NAME")
+            ?: throw IllegalStateException("GCS_TEMP_BUCKET_NAME environment variable not set")
+        GcsTemporaryFileStorageService(bucketName, get())
+    }
     
     // DatabaseTables container (lazily resolves all tables via Koin instance, not GlobalContext)
     single { DatabaseTables(getKoin()) }

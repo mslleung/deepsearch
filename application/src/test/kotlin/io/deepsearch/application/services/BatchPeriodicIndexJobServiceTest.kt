@@ -234,6 +234,20 @@ class BatchPeriodicIndexJobServiceTest {
                 it.stage == BatchUrlProcessingStage.FINAL_LLM_DONE && 
                 it.errorMessage == null 
             }
+        
+        override suspend fun findPendingFileUploads(jobId: Long): List<BatchUrlState> =
+            states.values.filter { 
+                it.jobId == jobId && 
+                it.stage == BatchUrlProcessingStage.PENDING_FILE_UPLOAD && 
+                it.errorMessage == null 
+            }
+        
+        override suspend fun findUploadedFilesNeedingCaching(jobId: Long): List<BatchUrlState> =
+            states.values.filter { 
+                it.jobId == jobId && 
+                it.stage == BatchUrlProcessingStage.FILE_UPLOADED && 
+                it.errorMessage == null 
+            }
 
         override suspend fun countByStage(jobId: Long): BatchUrlStageCounts {
             val jobStates = states.values.filter { it.jobId == jobId }
@@ -243,6 +257,8 @@ class BatchPeriodicIndexJobServiceTest {
                 extracted = jobStates.count { it.stage == BatchUrlProcessingStage.EXTRACTED },
                 contentLlmDone = jobStates.count { it.stage == BatchUrlProcessingStage.CONTENT_LLM_DONE },
                 finalLlmDone = jobStates.count { it.stage == BatchUrlProcessingStage.FINAL_LLM_DONE },
+                pendingFileUpload = jobStates.count { it.stage == BatchUrlProcessingStage.PENDING_FILE_UPLOAD },
+                fileUploaded = jobStates.count { it.stage == BatchUrlProcessingStage.FILE_UPLOADED },
                 cached = jobStates.count { it.stage == BatchUrlProcessingStage.CACHED },
                 failed = jobStates.count { it.errorMessage != null }
             )

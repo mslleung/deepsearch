@@ -21,6 +21,8 @@ class WebpageMarkdownCacheTable(
     val embedding = vector("embedding", dimensions = 1536).nullable() // gemini-embedding-001 produces 1536-dim vectors
     val markdownSearchVector = tsvector("markdown_search_vector").nullable() // tsvector for full-text search
     val isPreview = bool("is_preview").default(false) // true if content is from simple text extraction (no LLM)
+    /** For FILE type URLs: Gemini File Search document name for deletion */
+    val fileSearchDocumentName = varchar("file_search_document_name", length = 512).nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

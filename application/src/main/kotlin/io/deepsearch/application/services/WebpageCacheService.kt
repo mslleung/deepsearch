@@ -76,6 +76,7 @@ interface IWebpageCacheService {
      * @param httpReason HTTP reason phrase
      * @param mimeType Content MIME type
      * @param sessionId Session ID for token tracking
+     * @param fileSearchDocumentName For FILE type URLs: Gemini File Search document name for deletion
      */
     suspend fun cacheWebpageBatch(
         url: String,
@@ -86,7 +87,8 @@ interface IWebpageCacheService {
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        sessionId: SessionId
+        sessionId: SessionId,
+        fileSearchDocumentName: String? = null
     )
 
     /**
@@ -239,10 +241,11 @@ class WebpageCacheService(
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        sessionId: SessionId
+        sessionId: SessionId,
+        fileSearchDocumentName: String?
     ) {
         // Batch mode: only cache, no async indexing (handled by batch stages)
-        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview = false)
+        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview = false, fileSearchDocumentName = fileSearchDocumentName)
     }
 
     private suspend fun cacheWebpageInternal(
@@ -254,7 +257,8 @@ class WebpageCacheService(
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        isPreview: Boolean
+        isPreview: Boolean,
+        fileSearchDocumentName: String? = null
     ) {
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
@@ -289,6 +293,7 @@ class WebpageCacheService(
                 mimeType = mimeType,
                 embedding = null, // Will be updated by indexing service
                 isPreview = isPreview,
+                fileSearchDocumentName = fileSearchDocumentName,
                 createdAt = existing?.createdAt ?: currentTime,
                 updatedAt = currentTime,
                 version = existing?.version ?: 0 // Preserve version for optimistic locking
@@ -296,13 +301,14 @@ class WebpageCacheService(
         )
 
         logger.debug(
-            "Cached webpage for URL: {} (status: {}, markdown: {} chars, cleanedPreviewHtml: {} chars, linkRelevanceHtml: {} chars, isPreview: {})",
+            "Cached webpage for URL: {} (status: {}, markdown: {} chars, cleanedPreviewHtml: {} chars, linkRelevanceHtml: {} chars, isPreview: {}, fileSearchDocumentName: {})",
             url,
             httpStatus,
             markdown?.length ?: 0,
             cleanedPreviewHtml?.length ?: 0,
             cleanedLinkRelevanceHtml?.length ?: 0,
-            isPreview
+            isPreview,
+            fileSearchDocumentName
         )
     }
 

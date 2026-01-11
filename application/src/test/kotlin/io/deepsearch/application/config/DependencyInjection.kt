@@ -13,6 +13,7 @@ import io.deepsearch.application.services.batch.BatchEventEmitter
 import io.deepsearch.application.services.batch.BatchPeriodicIndexOrchestrator
 import io.deepsearch.application.services.batch.ContentLlmBatchHandler
 import io.deepsearch.application.services.batch.CrawlAndExtractHandler
+import io.deepsearch.application.services.batch.FileUploadBackgroundWorker
 import io.deepsearch.application.services.batch.ParallelEmbeddingAndKgHandler
 import io.deepsearch.application.services.batch.KgEntityEmbeddingsHandler
 import io.deepsearch.application.services.batch.IBatchPeriodicIndexOrchestrator
@@ -169,6 +170,7 @@ private val applicationCommonTestModule = module {
     singleOf(::TableInterpretationBatchHandler)
     singleOf(::ParallelEmbeddingAndKgHandler)
     singleOf(::KgEntityEmbeddingsHandler)
+    singleOf(::FileUploadBackgroundWorker) // Background worker for file uploads
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 

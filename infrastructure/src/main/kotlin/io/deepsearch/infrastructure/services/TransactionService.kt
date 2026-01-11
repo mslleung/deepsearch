@@ -24,6 +24,15 @@ interface ITransactionService {
      * @throws IllegalStateException if connection pool is not available
      */
     suspend fun executeRawQuery(sql: String, timeoutSeconds: Int = 30): List<Map<String, String>>
+    
+    /**
+     * Execute a raw SQL statement that doesn't return results (CREATE, UPDATE, DELETE).
+     * Used for Apache AGE mutations (creating/deleting vertices and edges).
+     * 
+     * @param sql The SQL statement to execute
+     * @throws IllegalStateException if connection pool is not available
+     */
+    suspend fun executeRawUpdate(sql: String)
 }
 
 class TransactionService(
@@ -105,6 +114,38 @@ class TransactionService(
                 throw e
             } finally {
                 // Return connection to pool
+                try {
+                    Flux.from(connection.close()).awaitFirstOrNull()
+                } catch (e: Exception) {
+                    logger.warn("Error closing connection: {}", e.message)
+                }
+            }
+        }
+    }
+    
+    /**
+     * Execute a raw SQL statement that doesn't return results.
+     * Used for Apache AGE mutations (creating/deleting vertices and edges).
+     */
+    override suspend fun executeRawUpdate(sql: String) {
+        val pool = databaseConfigurationService.getConnectionPool()
+            ?: throw IllegalStateException("Connection pool not available. Raw SQL execution requires PostgreSQL.")
+
+        withContext(dispatchProvider.io) {
+            val connection = Flux.from(pool.create()).awaitFirstOrNull()
+                ?: throw IllegalStateException("Failed to acquire database connection")
+
+            try {
+                val statement = connection.createStatement(sql)
+                // Execute and consume results (even for mutations, AGE returns rows)
+                Flux.from(statement.execute())
+                    .flatMap { result -> Flux.from(result.rowsUpdated) }
+                    .asFlow()
+                    .toList()
+            } catch (e: Exception) {
+                logger.error("Error executing raw SQL update: {}", e.message, e)
+                throw e
+            } finally {
                 try {
                     Flux.from(connection.close()).awaitFirstOrNull()
                 } catch (e: Exception) {

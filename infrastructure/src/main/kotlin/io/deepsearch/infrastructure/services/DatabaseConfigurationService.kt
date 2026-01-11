@@ -109,7 +109,8 @@ class DatabaseConfigurationService(
                 // Enable Apache AGE extension for graph database functionality
                 // NOTE: Apache AGE must be installed on the PostgreSQL server
                 // See: https://age.apache.org/age-manual/master/intro/setup.html
-                exec("""
+                exec(
+                    $$"""
                     DO $$
                     DECLARE
                         db_name TEXT := current_database();
@@ -123,12 +124,13 @@ class DatabaseConfigurationService(
                             EXECUTE format('ALTER DATABASE %I SET session_preload_libraries = ''age''', db_name);
                             
                             -- Set database-level search_path: public first for regular tables, ag_catalog included for AGE access
-                            EXECUTE format('ALTER DATABASE %I SET search_path = public, "${'$'}user", ag_catalog', db_name);
+                            EXECUTE format('ALTER DATABASE %I SET search_path = public, "$user", ag_catalog', db_name);
                             
                             -- Set search path for current session
-                            SET search_path = public, "${'$'}user", ag_catalog;
+                            SET search_path = public, "$user", ag_catalog;
                             
                             -- Create the knowledge_graph if it doesn't exist
+                            -- Note: Vertex and edge labels are auto-created by AGE on first use
                             IF NOT EXISTS (SELECT 1 FROM ag_graph WHERE name = 'knowledge_graph') THEN
                                 PERFORM create_graph('knowledge_graph');
                             END IF;

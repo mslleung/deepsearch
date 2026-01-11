@@ -1,5 +1,7 @@
 package io.deepsearch.application.services.batch
 
+import io.deepsearch.application.services.ContentTypeResult
+import io.deepsearch.application.services.IHttpContentTypeResolutionService
 import io.deepsearch.application.services.IProxyResolutionService
 import io.deepsearch.application.services.IProxySettingsService
 import io.deepsearch.domain.browser.IBrowserPage
@@ -16,6 +18,7 @@ import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.INormalizeUrlService
+import io.deepsearch.domain.services.ITemporaryFileStorageService
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.domain.exceptions.AllProxiesFailedException
 import kotlinx.coroutines.CancellationException
@@ -42,17 +45,23 @@ import java.util.concurrent.ConcurrentHashMap
  * 
  * Combines link discovery and browser extraction in a single browser visit per URL.
  * Uses sliding window concurrency for optimal throughput.
+ * 
+ * Now supports both HTML and FILE URLs:
+ * - HTML URLs: Browser extraction + link discovery
+ * - FILE URLs: Download + store for background upload to Gemini File Search
  */
 @OptIn(kotlinx.coroutines.FlowPreview::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class CrawlAndExtractHandler(
     private val batchJobRepository: IBatchPeriodicIndexJobRepository,
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val browserPool: IBrowserPool,
+    private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
     private val proxyResolutionService: IProxyResolutionService,
     private val proxySettingsService: IProxySettingsService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val normalizeUrlService: INormalizeUrlService,
     private val adaptiveRateLimiter: IAdaptiveRateLimiter,
+    private val temporaryFileStorage: ITemporaryFileStorageService,
     private val eventEmitter: BatchEventEmitter
 ) : IBatchStageHandler {
 
@@ -99,7 +108,9 @@ class CrawlAndExtractHandler(
         val existingUrls = batchUrlStateRepository.findByJobId(jobId)
         existingUrls.forEach { 
             seenUrls.add(it.url)
-            if (it.isExtracted()) {
+            // Count both HTML (EXTRACTED) and FILE (PENDING_FILE_UPLOAD+) as processed in Stage 1
+            if (it.isExtracted() || it.stage == BatchUrlProcessingStage.PENDING_FILE_UPLOAD || 
+                it.stage == BatchUrlProcessingStage.FILE_UPLOADED || it.stage == BatchUrlProcessingStage.CACHED) {
                 processedCount.incrementAndGet()
             }
         }
@@ -190,7 +201,7 @@ class CrawlAndExtractHandler(
     }
 
     /**
-     * Process a single URL: crawl + extract in one browser visit.
+     * Process a single URL: detect content type, then crawl+extract (HTML) or download (FILE).
      */
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class, kotlin.time.ExperimentalTime::class)
     private suspend fun processSingleUrl(
@@ -205,73 +216,157 @@ class CrawlAndExtractHandler(
             batchUrlStateRepository.create(urlState)
         }
         
-        if (urlState.isExtracted()) {
+        // Skip if already processed (either HTML or FILE track)
+        if (urlState.isExtracted() || urlState.stage == BatchUrlProcessingStage.PENDING_FILE_UPLOAD ||
+            urlState.stage == BatchUrlProcessingStage.FILE_UPLOADED) {
             return CrawlExtractResult(url, emptyList(), success = false)
         }
         
         return try {
-            var discoveredLinks = emptyList<String>()
-            
             adaptiveRateLimiter.withRateLimit(url) {
-                // Resolve proxy and acquire page (navigation is handled internally)
-                withResolvedPage(url, proxyConfig) { page ->
-                    val html = page.getFullHtml()
-                    
-                    // Parallel browser captures
-                    val (snapshot, icons, images) = coroutineScope {
-                        val snapshotDeferred = async { page.capturePageSnapshot() }
-                        val iconsDeferred = async { page.extractIcons() }
-                        val imagesDeferred = async { page.extractImages() }
-                        Triple(snapshotDeferred.await(), iconsDeferred.await(), imagesDeferred.await())
+                // First, detect content type
+                when (val contentType = httpContentTypeResolutionService.resolve(url)) {
+                    is ContentTypeResult.Html -> {
+                        // HTML: Use browser extraction
+                        processHtmlUrl(jobId, url, urlState, proxyConfig, contentType)
                     }
-
-                    // Convert icons/images to serializable format
-                    val batchIcons = icons.map { icon ->
-                        val hashBytes = MessageDigest.getInstance("SHA-256").digest(icon.bytes)
-                        BatchIconData(
-                            bytesBase64 = kotlin.io.encoding.Base64.encode(icon.bytes),
-                            mimeType = icon.mimeType.value,
-                            cssSelectors = icon.cssSelectors,
-                            hashBase64 = kotlin.io.encoding.Base64.encode(hashBytes)
-                        )
+                    is ContentTypeResult.SupportedFile -> {
+                        // FILE: Store for background upload
+                        processFileUrl(jobId, url, urlState, contentType)
                     }
-                    
-                    val batchImages = images.map { image ->
-                        val hashBytes = MessageDigest.getInstance("SHA-256").digest(image.bytes)
-                        BatchImageData(
-                            bytesBase64 = kotlin.io.encoding.Base64.encode(image.bytes),
-                            mimeType = image.mimeType.value,
-                            cssSelectors = image.cssSelectors,
-                            hashBase64 = kotlin.io.encoding.Base64.encode(hashBytes)
-                        )
+                    is ContentTypeResult.Unsupported -> {
+                        logger.debug("[{}] Unsupported content type for {}: {}", jobId, url, contentType.contentType)
+                        urlState.markFailed("Unsupported content type: ${contentType.contentType}")
+                        batchUrlStateRepository.update(urlState)
+                        CrawlExtractResult(url, emptyList(), success = false)
                     }
-
-                    // Store HTML, bounding boxes, icons, and images for later stages
-                    val snapshotData = BatchUrlSnapshotData(
-                        html = html,
-                        boundingBoxes = snapshot.boundingBoxes,
-                        icons = batchIcons.takeIf { it.isNotEmpty() },
-                        images = batchImages.takeIf { it.isNotEmpty() }
-                    )
-                    urlState.markExtracted(
-                        json.encodeToString(snapshotData),
-                        snapshot.title,
-                        snapshot.description
-                    )
-                    batchUrlStateRepository.update(urlState)
-                    
-                    discoveredLinks = webpageLinkDiscoveryService.discoverAllLinks(html, url)
-                        .map { it.url }
+                    is ContentTypeResult.FileTooLarge -> {
+                        logger.debug("[{}] File too large for {}: {} bytes", jobId, url, contentType.contentLength)
+                        urlState.markFailed("File too large: ${contentType.contentLength} bytes")
+                        batchUrlStateRepository.update(urlState)
+                        CrawlExtractResult(url, emptyList(), success = false)
+                    }
                 }
             }
-            
-            CrawlExtractResult(url, discoveredLinks, success = true)
         } catch (e: Exception) {
-            logger.warn("[{}] Failed to crawl+extract {}: {}", jobId, url, e.message)
-            urlState.markFailed(e.message ?: "Crawl+extract failed")
+            logger.warn("[{}] Failed to process {}: {}", jobId, url, e.message)
+            urlState.markFailed(e.message ?: "Processing failed")
             batchUrlStateRepository.update(urlState)
             CrawlExtractResult(url, emptyList(), success = false)
         }
+    }
+    
+    /**
+     * Process an HTML URL using browser extraction.
+     */
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    private suspend fun processHtmlUrl(
+        jobId: Long,
+        url: String,
+        urlState: BatchUrlState,
+        proxyConfig: ProxyConfiguration,
+        htmlResult: ContentTypeResult.Html
+    ): CrawlExtractResult {
+        var discoveredLinks = emptyList<String>()
+        
+        // Use browser for full extraction (icons, images, snapshots)
+        withResolvedPage(url, proxyConfig) { page ->
+            val html = page.getFullHtml()
+            
+            // Parallel browser captures
+            val (snapshot, icons, images) = coroutineScope {
+                val snapshotDeferred = async { page.capturePageSnapshot() }
+                val iconsDeferred = async { page.extractIcons() }
+                val imagesDeferred = async { page.extractImages() }
+                Triple(snapshotDeferred.await(), iconsDeferred.await(), imagesDeferred.await())
+            }
+
+            // Convert icons/images to serializable format
+            val batchIcons = icons.map { icon ->
+                val hashBytes = MessageDigest.getInstance("SHA-256").digest(icon.bytes)
+                BatchIconData(
+                    bytesBase64 = kotlin.io.encoding.Base64.encode(icon.bytes),
+                    mimeType = icon.mimeType.value,
+                    cssSelectors = icon.cssSelectors,
+                    hashBase64 = kotlin.io.encoding.Base64.encode(hashBytes)
+                )
+            }
+            
+            val batchImages = images.map { image ->
+                val hashBytes = MessageDigest.getInstance("SHA-256").digest(image.bytes)
+                BatchImageData(
+                    bytesBase64 = kotlin.io.encoding.Base64.encode(image.bytes),
+                    mimeType = image.mimeType.value,
+                    cssSelectors = image.cssSelectors,
+                    hashBase64 = kotlin.io.encoding.Base64.encode(hashBytes)
+                )
+            }
+
+            // Store HTML, bounding boxes, icons, and images for later stages
+            val snapshotData = BatchUrlSnapshotData(
+                html = html,
+                boundingBoxes = snapshot.boundingBoxes,
+                icons = batchIcons.takeIf { it.isNotEmpty() },
+                images = batchImages.takeIf { it.isNotEmpty() }
+            )
+            urlState.markExtracted(
+                json.encodeToString(snapshotData),
+                snapshot.title,
+                snapshot.description
+            )
+            batchUrlStateRepository.update(urlState)
+            
+            discoveredLinks = webpageLinkDiscoveryService.discoverAllLinks(html, url)
+                .map { it.url }
+        }
+        
+        logger.debug("[{}] HTML extracted: {} ({} links discovered)", jobId, url, discoveredLinks.size)
+        return CrawlExtractResult(url, discoveredLinks, success = true)
+    }
+    
+    /**
+     * Process a FILE URL by storing it in GCS for background upload to Gemini File Search.
+     * 
+     * Files are stored in Google Cloud Storage (not database) for:
+     * - Server restart survival
+     * - Avoiding database bloat
+     * - Cost-effective storage (GCS free tier: 5GB)
+     */
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    private suspend fun processFileUrl(
+        jobId: Long,
+        url: String,
+        urlState: BatchUrlState,
+        fileResult: ContentTypeResult.SupportedFile
+    ): CrawlExtractResult {
+        // Calculate file hash for deduplication
+        val hashBytes = MessageDigest.getInstance("SHA-256").digest(fileResult.bytes)
+        val fileHash = kotlin.io.encoding.Base64.encode(hashBytes)
+        
+        // Extract filename from URL for title
+        val fileName = url.substringAfterLast('/').substringBefore('?').ifEmpty { "document" }
+        
+        // Store file bytes in GCS (not database) for background worker
+        val storagePath = temporaryFileStorage.store(
+            jobId = jobId,
+            fileHash = fileHash,
+            bytes = fileResult.bytes,
+            mimeType = fileResult.mimeType
+        )
+        
+        urlState.markPendingFileUpload(
+            mimeType = fileResult.mimeType,
+            hash = fileHash,
+            storagePath = storagePath,
+            fileName = fileName
+        )
+        batchUrlStateRepository.update(urlState)
+        
+        logger.debug("[{}] File stored in GCS for upload: {} ({}, {} bytes) → {}", 
+            jobId, url, fileResult.mimeType, fileResult.bytes.size, storagePath)
+        
+        // Files don't discover new links
+        return CrawlExtractResult(url, emptyList(), success = true)
     }
 
     /**

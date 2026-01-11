@@ -5,7 +5,9 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
 data class TextToCypherInput(
     val query: String,
-    val schemaDescription: String
+    val schemaDescription: String,
+    /** Domain to filter results by (e.g., "docs.notion.so"). If null, no domain filtering. */
+    val domain: String? = null
 ) : IAgent.IAgentInput
 
 data class TextToCypherOutput(

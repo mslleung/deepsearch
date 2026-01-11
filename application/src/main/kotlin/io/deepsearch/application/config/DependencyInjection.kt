@@ -70,6 +70,7 @@ val applicationModule = module {
     singleOf(::TableInterpretationBatchHandler)
     singleOf(::ParallelEmbeddingAndKgHandler)
     singleOf(::KgEntityEmbeddingsHandler)
+    singleOf(::FileUploadBackgroundWorker) // Background worker for file uploads to Gemini File Search
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 

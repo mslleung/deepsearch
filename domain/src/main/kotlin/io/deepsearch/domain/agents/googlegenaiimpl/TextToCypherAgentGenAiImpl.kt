@@ -50,14 +50,16 @@ class TextToCypherAgentGenAiImpl(
         .required(listOf("cypherQuery", "explanation", "isValid"))
         .build()
 
-    private val systemInstruction = """
+    private fun buildSystemInstruction(domain: String?): String {
+        return """
         You are a Cypher query generation agent for Apache AGE (PostgreSQL graph extension).
         
         Graph Schema:
-        - Vertices have label :Entity with properties: id (UUID), name (TEXT), type (TEXT)
+        - Vertices have label :Entity with properties: id (UUID), name (TEXT), type (TEXT), domain (TEXT)
         - Entity types: PRODUCT, PRICING_TIER, FEATURE, COMPANY, PERSON, INTEGRATION, DATE, PRICE, TECHNOLOGY, OTHER
         - Edge types (relationships): HAS_PRICE, HAS_FEATURE, INCLUDES, PART_OF, INTEGRATES_WITH, COMPETES_WITH, OWNED_BY, RELEASED_ON, UPDATED_ON, SUPERSEDES, RELATED_TO
-        
+        - Edges also have a 'domain' property for filtering
+            - Example: MATCH (e:Entity) WHERE e.domain = '$domain' AND e.name =~ '(?i).*pro.*' RETURN e.name
         Generate a Cypher query that answers the user's question. The query will be wrapped in:
         SELECT * FROM ag_catalog.cypher('knowledge_graph', $$ YOUR_QUERY $$) AS (result agtype)
         
@@ -71,7 +73,7 @@ class TextToCypherAgentGenAiImpl(
         
         Output format:
         {
-          "cypherQuery": "MATCH (e:Entity) WHERE e.name =~ '(?i).*pro.*' RETURN e.name, e.type LIMIT 10",
+          "cypherQuery": "MATCH (e:Entity) WHERE ${if (domain != null) "e.domain = '$domain' AND " else ""}e.name =~ '(?i).*pro.*' RETURN e.name, e.type LIMIT 10",
           "explanation": "Finds entities with 'pro' in their name",
           "isValid": true
         }
@@ -89,6 +91,7 @@ class TextToCypherAgentGenAiImpl(
         - Finding connected entities (e.g., "what integrates with X?")
         - Multi-hop traversals (e.g., "what is related to things that include Y?")
     """.trimIndent()
+    }
 
     @Serializable
     private data class CypherResponse(
@@ -98,16 +101,19 @@ class TextToCypherAgentGenAiImpl(
     )
 
     override suspend fun generate(input: TextToCypherInput): TextToCypherOutput {
-        logger.debug("Generating Cypher for query: '{}'", input.query)
+        logger.debug("Generating Cypher for query: '{}', domain: {}", input.query, input.domain)
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
+        
+        val systemInstruction = buildSystemInstruction(input.domain)
 
         val userPrompt = """
             User Query: ${input.query}
             
             Additional Schema Information:
             ${input.schemaDescription}
+            ${if (input.domain != null) "\nDomain Filter: ${input.domain} (MUST be included in all queries)" else ""}
             
             Generate a Cypher query to answer this question, or indicate if it cannot be translated.
         """.trimIndent()

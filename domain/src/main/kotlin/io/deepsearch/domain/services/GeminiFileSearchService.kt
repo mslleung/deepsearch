@@ -137,7 +137,7 @@ class GeminiFileSearchService(
 
     companion object {
         private const val MAX_POLL_ATTEMPTS = 60
-        private const val POLL_INTERVAL_MS = 5000L
+        private const val POLL_INTERVAL_MS = 1000L
         private const val STORE_DISPLAY_NAME_PREFIX = "deepsearch-"
     }
 

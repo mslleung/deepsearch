@@ -46,6 +46,7 @@ class ExposedWebpageMarkdownRepository(
             webpageMarkdownTable.mimeType,
             webpageMarkdownTable.embedding,
             webpageMarkdownTable.isPreview,
+            webpageMarkdownTable.fileSearchDocumentName,
             webpageMarkdownTable.createdAtEpochMs,
             webpageMarkdownTable.updatedAtEpochMs,
             webpageMarkdownTable.version
@@ -117,6 +118,7 @@ class ExposedWebpageMarkdownRepository(
             it[mimeType] = webpage.mimeType
             it[embedding] = webpage.embedding
             it[isPreview] = webpage.isPreview
+            it[fileSearchDocumentName] = webpage.fileSearchDocumentName
             it[createdAtEpochMs] = webpage.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpage.updatedAt.toEpochMilliseconds()
             it[version] = newVersion
@@ -359,6 +361,7 @@ class ExposedWebpageMarkdownRepository(
             mimeType = row[webpageMarkdownTable.mimeType],
             embedding = row[webpageMarkdownTable.embedding],
             isPreview = row[webpageMarkdownTable.isPreview],
+            fileSearchDocumentName = row[webpageMarkdownTable.fileSearchDocumentName],
             createdAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.updatedAtEpochMs]),
             version = row[webpageMarkdownTable.version]

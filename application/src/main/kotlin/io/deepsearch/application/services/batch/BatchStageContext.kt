@@ -19,15 +19,19 @@ data class BatchPeriodicIndexEvent(
     val state: BatchPeriodicIndexJobState,
     val stage: Int,
     val stageDescription: String,
-    /** Stage 1: URLs that have been crawled + browser extracted */
+    /** Stage 1: HTML URLs that have been crawled + browser extracted */
     val urlsProcessed: Int,
-    /** Stage 2: URLs with content LLM processing complete */
+    /** Stage 2: HTML URLs with content LLM processing complete */
     val urlsContentProcessed: Int,
-    /** Stage 3: URLs with final LLM processing complete */
+    /** Stage 3: HTML URLs with final LLM processing complete */
     val urlsFinalProcessed: Int,
-    /** Stage 4: URLs written to cache */
+    /** Stage 4: URLs written to cache (both HTML and FILE) */
     val urlsCached: Int,
     val totalUrls: Int,
+    /** File URLs pending upload (discovered, waiting to be uploaded) */
+    val filesPendingUpload: Int = 0,
+    /** File URLs that have been uploaded (ready for Stage 4 processing) */
+    val filesUploaded: Int = 0,
     /** Active Gemini batch job IDs for the current stage (1 for most stages, 2 for stage 4) */
     val batchJobIds: List<String> = emptyList(),
     val estimatedCompletionTime: String? = null,
@@ -175,8 +179,4 @@ data class TableRequestMapping(
     val urlStateId: BatchUrlStateId,
     val tableDataId: TableDataId,
     val requestIndex: Int
-) {
-    fun toKey(): TableKey = TableKey(urlStateId, tableDataId)
-}
-
-
+)

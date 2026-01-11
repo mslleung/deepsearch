@@ -7,7 +7,10 @@ import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.IGeminiBatchService
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
@@ -36,13 +39,20 @@ interface IBatchPeriodicIndexOrchestrator {
 }
 
 /**
- * Orchestrates the 5-stage batch periodic index pipeline.
+ * Orchestrates the 6-stage batch periodic index pipeline.
  * 
+ * HTML Pipeline (Stages 1-5):
  * Stage 1: CRAWL_AND_EXTRACT - Browser-based crawl + extraction (single visit per URL)
- * Stage 2: CONTENT_LLM_BATCH - LLM batch for semantic/table/icon identification
- * Stage 3: LLM_TABLE_INTERPRETATION - LLM batch for table interpretation
- * Stage 4: PARALLEL_EMBEDDING_AND_KG_EXTRACTION - Page embedding batch + KG extraction batch (run in parallel)
+ *          + FILE URLs are downloaded and queued for background upload
+ * Stage 2: CONTENT_LLM_BATCH - LLM batch for semantic/table/icon identification (HTML only)
+ * Stage 3: LLM_TABLE_INTERPRETATION - LLM batch for table interpretation (HTML only)
+ * Stage 4: PARALLEL_EMBEDDING_AND_KG_EXTRACTION - Page embedding batch + KG extraction batch (HTML only)
  * Stage 5: KG_ENTITY_EMBEDDINGS - Batch embedding for extracted KG entities
+ * Stage 6: PROCESSING_FILES - Wait for any remaining file uploads to complete
+ * 
+ * FILE UPLOAD: A background worker runs independently throughout stages 1-5,
+ * uploading discovered files to Gemini File Search without blocking the HTML pipeline.
+ * Stage 6 ensures all files are uploaded before marking the job as complete.
  * 
  * Each stage is handled by a dedicated handler class.
  * State is persisted at each stage for resumption after server restarts.
@@ -59,6 +69,8 @@ class BatchPeriodicIndexOrchestrator(
     private val tableInterpretationHandler: TableInterpretationBatchHandler,
     private val parallelEmbeddingAndKgHandler: ParallelEmbeddingAndKgHandler,
     private val kgEntityEmbeddingsHandler: KgEntityEmbeddingsHandler,
+    // Background workers
+    private val fileUploadBackgroundWorker: FileUploadBackgroundWorker,
     private val eventEmitter: BatchEventEmitter
 ) : IBatchPeriodicIndexOrchestrator {
 
@@ -125,6 +137,12 @@ class BatchPeriodicIndexOrchestrator(
     ) {
         val jobId = requireNotNull(job.id)
         
+        // Start background file upload worker - runs independently throughout the pipeline
+        val fileUploadJob = fileUploadBackgroundWorker.start(
+            jobId, 
+            CoroutineScope(currentCoroutineContext())
+        )
+        
         try {
             job.markResumed()
             batchJobRepository.update(job)
@@ -132,6 +150,9 @@ class BatchPeriodicIndexOrchestrator(
             emitEvent(job, eventFlow, "Starting batch pipeline")
 
             // Run stages based on current state
+            // Note: FILE processing happens completely independently via fileUploadBackgroundWorker
+            // The main pipeline (Stages 1-5) only handles HTML URLs
+            // Stage 6 waits for any remaining file uploads to complete
             while (!job.isTerminal()) {
                 when (job.state) {
                     BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> 
@@ -144,6 +165,8 @@ class BatchPeriodicIndexOrchestrator(
                         parallelEmbeddingAndKgHandler.execute(job, eventFlow)
                     BatchPeriodicIndexJobState.KG_ENTITY_EMBEDDINGS -> 
                         kgEntityEmbeddingsHandler.execute(job, eventFlow)
+                    BatchPeriodicIndexJobState.PROCESSING_FILES ->
+                        waitForFileUploads(job, eventFlow)
                     else -> break
                 }
             }
@@ -157,6 +180,8 @@ class BatchPeriodicIndexOrchestrator(
             batchJobRepository.update(job)
             emitEvent(job, eventFlow, "Pipeline failed: ${e.message}")
         } finally {
+            // Stop the background file upload worker
+            fileUploadJob.cancel()
             runs.remove(jobId)
         }
     }
@@ -167,6 +192,51 @@ class BatchPeriodicIndexOrchestrator(
         message: String
     ) {
         eventEmitter.emit(job, eventFlow, message)
+    }
+
+    /**
+     * Stage 6: Wait for any remaining file uploads to complete.
+     * 
+     * This ensures all discovered files are uploaded to Gemini File Search
+     * before marking the batch job as complete.
+     */
+    private suspend fun waitForFileUploads(
+        job: BatchPeriodicIndexJob,
+        eventFlow: MutableSharedFlow<BatchPeriodicIndexEvent>
+    ) {
+        val jobId = requireNotNull(job.id)
+        logger.info("[{}] Stage 6: Waiting for file uploads to complete", jobId)
+        
+        while (true) {
+            val counts = batchUrlStateRepository.countByStage(jobId)
+            
+            if (counts.pendingFileUpload == 0) {
+                // All files uploaded (or no files at all)
+                val totalFiles = counts.fileUploaded
+                if (totalFiles > 0) {
+                    logger.info("[{}] All {} files uploaded to Gemini File Search", jobId, totalFiles)
+                    emitEvent(job, eventFlow, "Stage 6 complete: $totalFiles files uploaded")
+                } else {
+                    emitEvent(job, eventFlow, "Stage 6 complete: No files to upload")
+                }
+                
+                job.advanceToNextStage()
+                batchJobRepository.update(job)
+                return
+            }
+            
+            // Files still uploading - emit progress and wait
+            val uploaded = counts.fileUploaded
+            val total = uploaded + counts.pendingFileUpload
+            logger.debug("[{}] File uploads: {}/{} complete", jobId, uploaded, total)
+            emitEvent(job, eventFlow, "Uploading files to Gemini File Search: $uploaded/$total complete")
+            
+            delay(FILE_UPLOAD_POLL_INTERVAL_MS)
+        }
+    }
+
+    companion object {
+        private const val FILE_UPLOAD_POLL_INTERVAL_MS = 5_000L
     }
 }
 

@@ -31,6 +31,9 @@ dependencies {
     // pgvector support
     implementation("com.pgvector:pgvector:0.1.6")
     
+    // Google Cloud Storage for temporary file storage
+    implementation(libs.google.cloud.storage)
+    
     // Dependency injection
     implementation(libs.koin.ktor)
     implementation(libs.koin.logger.slf4j)

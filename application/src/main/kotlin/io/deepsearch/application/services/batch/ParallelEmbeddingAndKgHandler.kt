@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory
 /**
  * Stage 4: Parallel embedding and knowledge graph extraction handler.
  * 
- * This stage runs two batch jobs in parallel:
+ * This stage runs two batch jobs in parallel for HTML URLs only:
  * 1. Page embedding batch - generates embeddings for page markdown
  * 2. KG extraction batch - extracts entities and relationships from markdown
  * 
@@ -37,6 +37,8 @@ import org.slf4j.LoggerFactory
  * - Page embeddings are stored in the webpage cache
  * - KG extraction results are stored in URL state for Stage 5 entity embedding
  * - Pages are cached to the webpage cache service
+ * 
+ * Note: FILE URLs are processed independently by FileUploadBackgroundWorker.
  */
 class ParallelEmbeddingAndKgHandler(
     private val batchJobRepository: IBatchPeriodicIndexJobRepository,
@@ -65,25 +67,28 @@ class ParallelEmbeddingAndKgHandler(
         eventFlow: MutableSharedFlow<BatchPeriodicIndexEvent>
     ) {
         val jobId = requireNotNull(job.id)
-        logger.info("[{}] Stage 4: Parallel embedding and KG extraction", jobId)
+        logger.info("[{}] Stage 4: Parallel embedding and KG extraction (HTML only)", jobId)
         eventEmitter.emit(job, eventFlow, "Stage 4: Generating embeddings & extracting knowledge graph...")
 
-        val urlsNeedingCaching = batchUrlStateRepository.findNeedingCaching(jobId)
-        logger.info("[{}] {} URLs need processing", jobId, urlsNeedingCaching.size)
+        // Get HTML URLs only (FINAL_LLM_DONE)
+        // FILE URLs are processed independently by FileUploadBackgroundWorker
+        val htmlUrlsNeedingCaching = batchUrlStateRepository.findNeedingCaching(jobId)
+        
+        logger.info("[{}] {} HTML URLs need processing", jobId, htmlUrlsNeedingCaching.size)
 
-        if (urlsNeedingCaching.isEmpty()) {
+        if (htmlUrlsNeedingCaching.isEmpty()) {
             job.advanceToNextStage()
             batchJobRepository.update(job)
-            eventEmitter.emit(job, eventFlow, "Stage 4 complete: No URLs to process")
+            eventEmitter.emit(job, eventFlow, "Stage 4 complete: No HTML URLs to process")
             return
         }
 
         val sessionId = PeriodicIndexSessionId(jobId)
 
-        // Step 1: Prepare markdown for each URL
+        // Step 1: Prepare markdown for each HTML URL
         val urlDataMap = mutableMapOf<Long, UrlCacheData>()
 
-        urlsNeedingCaching.forEach { urlState ->
+        htmlUrlsNeedingCaching.forEach { urlState ->
             try {
                 val snapshotData = urlState.snapshotData?.let {
                     json.decodeFromString<BatchUrlSnapshotData>(it)
@@ -96,7 +101,7 @@ class ParallelEmbeddingAndKgHandler(
                     snapshotData = snapshotData
                 )
             } catch (e: Exception) {
-                logger.warn("[{}] Failed to prepare markdown for {}: {}", jobId, urlState.url, e.message)
+                logger.warn("[{}] Failed to prepare markdown for HTML {}: {}", jobId, urlState.url, e.message)
             }
         }
 
@@ -248,7 +253,7 @@ class ParallelEmbeddingAndKgHandler(
             }
         }
 
-        // Step 5: Cache all pages and store KG results in snapshot data for Stage 5
+        // Step 5: Cache all HTML pages and store KG results in snapshot data for Stage 5
         urlDataMap.values.forEach { data ->
             try {
                 // Update snapshot data with KG extraction result for Stage 5
@@ -278,6 +283,7 @@ class ParallelEmbeddingAndKgHandler(
                 if (updatedSnapshotData != null) {
                     data.urlState.snapshotData = json.encodeToString(updatedSnapshotData)
                 }
+                
                 data.urlState.markCached()
                 batchUrlStateRepository.update(data.urlState)
                 job.urlsCached++

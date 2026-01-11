@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
 import io.deepsearch.domain.models.entities.BatchUrlState
+import io.deepsearch.domain.models.entities.BatchUrlType
 import io.deepsearch.domain.repositories.BatchUrlStageCounts
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.infrastructure.database.BatchUrlStateTable
@@ -41,6 +42,12 @@ class ExposedBatchUrlStateRepository(
             it[snapshotData] = urlState.snapshotData
             it[title] = urlState.title
             it[description] = urlState.description
+            // File-specific fields
+            it[urlType] = urlState.urlType.name
+            it[fileMimeType] = urlState.fileMimeType
+            it[fileHash] = urlState.fileHash
+            it[fileSearchDocumentName] = urlState.fileSearchDocumentName
+            it[fileStoragePath] = urlState.fileStoragePath
         }[table.id]
 
         urlState.id = id
@@ -63,6 +70,12 @@ class ExposedBatchUrlStateRepository(
                 it[snapshotData] = urlState.snapshotData
                 it[title] = urlState.title
                 it[description] = urlState.description
+                // File-specific fields
+                it[urlType] = urlState.urlType.name
+                it[fileMimeType] = urlState.fileMimeType
+                it[fileHash] = urlState.fileHash
+                it[fileSearchDocumentName] = urlState.fileSearchDocumentName
+                it[fileStoragePath] = urlState.fileStoragePath
             }[table.id]
             urlState.id = id
         }
@@ -79,6 +92,12 @@ class ExposedBatchUrlStateRepository(
             it[snapshotData] = urlState.snapshotData
             it[title] = urlState.title
             it[description] = urlState.description
+            // File-specific fields
+            it[urlType] = urlState.urlType.name
+            it[fileMimeType] = urlState.fileMimeType
+            it[fileHash] = urlState.fileHash
+            it[fileSearchDocumentName] = urlState.fileSearchDocumentName
+            it[fileStoragePath] = urlState.fileStoragePath
         }
         
         if (affectedRows == 0) {
@@ -161,6 +180,30 @@ class ExposedBatchUrlStateRepository(
             .map { mapRow(it) }
             .toList()
     }
+    
+    override suspend fun findPendingFileUploads(jobId: Long): List<BatchUrlState> = transactionService.withTransaction {
+        table.selectAll()
+            .where { 
+                (table.jobId eq jobId) and 
+                (table.stage eq BatchUrlProcessingStage.PENDING_FILE_UPLOAD.name) and 
+                table.errorMessage.isNull()
+            }
+            .orderBy(table.id to SortOrder.ASC)
+            .map { mapRow(it) }
+            .toList()
+    }
+    
+    override suspend fun findUploadedFilesNeedingCaching(jobId: Long): List<BatchUrlState> = transactionService.withTransaction {
+        table.selectAll()
+            .where { 
+                (table.jobId eq jobId) and 
+                (table.stage eq BatchUrlProcessingStage.FILE_UPLOADED.name) and 
+                table.errorMessage.isNull()
+            }
+            .orderBy(table.id to SortOrder.ASC)
+            .map { mapRow(it) }
+            .toList()
+    }
 
     override suspend fun countByStage(jobId: Long): BatchUrlStageCounts = transactionService.withTransaction {
         val allStates = table.selectAll()
@@ -171,9 +214,14 @@ class ExposedBatchUrlStateRepository(
         BatchUrlStageCounts(
             total = allStates.size,
             pending = allStates.count { it.stage == BatchUrlProcessingStage.PENDING },
+            // HTML track
             extracted = allStates.count { it.stage == BatchUrlProcessingStage.EXTRACTED },
             contentLlmDone = allStates.count { it.stage == BatchUrlProcessingStage.CONTENT_LLM_DONE },
             finalLlmDone = allStates.count { it.stage == BatchUrlProcessingStage.FINAL_LLM_DONE },
+            // FILE track
+            pendingFileUpload = allStates.count { it.stage == BatchUrlProcessingStage.PENDING_FILE_UPLOAD },
+            fileUploaded = allStates.count { it.stage == BatchUrlProcessingStage.FILE_UPLOADED },
+            // Converged
             cached = allStates.count { it.stage == BatchUrlProcessingStage.CACHED },
             failed = allStates.count { it.errorMessage != null }
         )
@@ -200,6 +248,12 @@ class ExposedBatchUrlStateRepository(
         errorMessage = row[table.errorMessage],
         snapshotData = row[table.snapshotData],
         title = row[table.title],
-        description = row[table.description]
+        description = row[table.description],
+        // File-specific fields
+        urlType = row[table.urlType].let { BatchUrlType.valueOf(it) },
+        fileMimeType = row[table.fileMimeType],
+        fileHash = row[table.fileHash],
+        fileSearchDocumentName = row[table.fileSearchDocumentName],
+        fileStoragePath = row[table.fileStoragePath]
     )
 }

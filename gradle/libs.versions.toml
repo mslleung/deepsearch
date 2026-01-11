@@ -18,6 +18,7 @@ playwright-axe-core-version = "4.10.1"
 tesseract-version = "5.5.1-1.5.12"
 google-adk-version = "0.4.0"
 google-genai-version = "1.32.0"
+google-cloud-storage-version = "2.48.2"
 apache-pdfbox-version = "3.0.6"
 apache-httpclient5-version = "5.5"
 apache-httpcore5-version = "5.3.4"
@@ -71,6 +72,7 @@ tesseract = { module = "org.bytedeco:tesseract-platform", version.ref = "tessera
 google-adk = { module = "com.google.adk:google-adk", version.ref = "google-adk-version" }
 google-adk-dev = { module = "com.google.adk:google-adk-dev", version.ref = "google-adk-version" }
 google-genai = { module = "com.google.genai:google-genai", version.ref = "google-genai-version" }
+google-cloud-storage = { module = "com.google.cloud:google-cloud-storage", version.ref = "google-cloud-storage-version" }
 apache-pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "apache-pdfbox-version" }
 apache-httpclient5 = { module = "org.apache.httpcomponents.client5:httpclient5", version.ref = "apache-httpclient5-version" }
 apache-httpcore5 = { module = "org.apache.httpcomponents.core5:httpcore5", version.ref = "apache-httpcore5-version" }
