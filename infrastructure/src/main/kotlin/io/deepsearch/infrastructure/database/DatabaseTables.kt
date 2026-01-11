@@ -38,6 +38,7 @@ class DatabaseTables(private val koin: Koin) {
     val kgRelationshipSourcesTable: KgRelationshipSourcesTable by lazy { koin.get() }
     val markdownIndexingTaskTable: MarkdownIndexingTaskTable by lazy { koin.get() }
     val htmlSourceEvalCacheTable: HtmlSourceEvalCacheTable by lazy { koin.get() }
+    val pdfSourceEvalCacheTable: PdfSourceEvalCacheTable by lazy { koin.get() }
     val websiteContextTable: WebsiteContextTable by lazy { koin.get() }
 
     /**
@@ -70,6 +71,7 @@ class DatabaseTables(private val koin: Koin) {
             kgRelationshipSourcesTable,
             markdownIndexingTaskTable,
             htmlSourceEvalCacheTable,
+            pdfSourceEvalCacheTable,
             websiteContextTable,
         )
     }

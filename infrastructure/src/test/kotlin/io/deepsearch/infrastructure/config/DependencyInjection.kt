@@ -76,6 +76,9 @@ private val infrastructureCommonTestModule = module {
     // HTML source eval cache table
     singleOf(::HtmlSourceEvalCacheTable)
     
+    // PDF source eval cache table
+    singleOf(::PdfSourceEvalCacheTable)
+    
     // Website context cache table (for query processing)
     singleOf(::WebsiteContextTable)
 
@@ -109,6 +112,9 @@ private val infrastructureCommonTestModule = module {
     
     // HTML source eval cache repository
     singleOf(::ExposedHtmlSourceEvalCacheRepository) bind IHtmlSourceEvalCacheRepository::class
+    
+    // PDF source eval cache repository
+    singleOf(::ExposedPdfSourceEvalCacheRepository) bind IPdfSourceEvalCacheRepository::class
     
     // Website context cache repository (for query processing)
     singleOf(::ExposedWebsiteContextRepository) bind IWebsiteContextRepository::class

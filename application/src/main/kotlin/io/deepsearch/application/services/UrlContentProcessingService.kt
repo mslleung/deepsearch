@@ -59,6 +59,18 @@ interface IUrlContentProcessingService {
             val title: String?,
             val description: String?
         ) : UrlProcessingEvent
+
+        /**
+         * Emitted immediately after PDF is downloaded, before Gemini upload.
+         * Contains text extracted via PDFTextStripper for preview source evaluation.
+         * Only emitted for PDF files (application/pdf).
+         */
+        data class PdfPreviewReady(
+            override val url: String,
+            val extractedText: String,
+            val title: String?,
+            val pageCount: Int
+        ) : UrlProcessingEvent
     }
 
     /**
@@ -107,7 +119,8 @@ class UrlContentProcessingService(
     private val tokenUsageService: ILlmTokenUsageService,
     private val urlProcessingLockRegistry: UrlProcessingLockRegistry,
     private val webpageImageLinkageRepository: IWebpageImageLinkageRepository,
-    private val htmlPreviewService: IHtmlPreviewService
+    private val htmlPreviewService: IHtmlPreviewService,
+    private val pdfPreviewService: IPdfPreviewService
 ) : IUrlContentProcessingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -502,11 +515,12 @@ class UrlContentProcessingService(
      * Process a supported file (PDF, docx, etc.) using Gemini File Search.
      *
      * Flow (similar to processHtmlUrlAsFlow):
-     * 1. Use FileSearchService to ingest (upload if needed) the file
-     * 2. Query the file search store for relevant content
-     * 3. Emit MarkdownExtractionComplete with file search results
-     * 4. Discover links from the extracted markdown (not the entire file)
-     * 5. Emit LinkDiscoveryComplete with discovered links
+     * 1. For PDFs: Emit PdfPreviewReady immediately using local PDFTextStripper (fast path)
+     * 2. Use FileSearchService to ingest (upload if needed) the file
+     * 3. Query the file search store for relevant content
+     * 4. Emit MarkdownExtractionComplete with file search results (replaces preview)
+     * 5. Discover links from the extracted markdown (not the entire file)
+     * 6. Emit LinkDiscoveryComplete with discovered links
      *
      * @param discoverLinks Lambda to discover links from the extracted markdown.
      *        For relevant links: uses LLM to find query-relevant URLs.
@@ -525,6 +539,30 @@ class UrlContentProcessingService(
             normalizedUrl, result.bytes.size, result.mimeType
         )
 
+        // For PDFs: Emit preview IMMEDIATELY using local extraction (fast path)
+        // This mirrors HTML preview - provides early results while Gemini upload runs
+        val isPdf = result.mimeType.contains("pdf", ignoreCase = true)
+        if (isPdf) {
+            val previewResult = pdfPreviewService.extract(result.bytes, normalizedUrl, query)
+            if (previewResult.extractedText.isNotBlank()) {
+                logger.debug(
+                    "PDF preview ready for {}: {} pages, {} chars",
+                    normalizedUrl, previewResult.pageCount, previewResult.extractedText.length
+                )
+                send(
+                    UrlProcessingEvent.PdfPreviewReady(
+                        url = normalizedUrl,
+                        extractedText = previewResult.extractedText,
+                        title = previewResult.title,
+                        pageCount = previewResult.pageCount
+                    )
+                )
+            } else {
+                logger.debug("PDF preview extraction returned empty text for {}, skipping preview", normalizedUrl)
+            }
+        }
+
+        // Continue with Gemini upload/query (full path - runs in parallel with preview evaluation)
         // First, ingest the file (upload if needed)
         val ingestResult = fileSearchService.ingest(
             url = normalizedUrl,

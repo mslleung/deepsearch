@@ -514,6 +514,9 @@ class PeriodicIndexJobRegistry(
                             is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
                                 // Ignored for periodic index
                             }
+                            is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
+                                // Ignored for periodic index
+                            }
                         }
                     }
             }

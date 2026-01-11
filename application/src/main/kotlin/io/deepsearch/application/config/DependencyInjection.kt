@@ -44,6 +44,7 @@ val applicationModule = module {
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
+    singleOf(::PdfPreviewService) bind IPdfPreviewService::class
     singleOf(::LinkRelevanceHtmlService) bind ILinkRelevanceHtmlService::class
     singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
@@ -82,12 +83,19 @@ val applicationModule = module {
     // Request-scoped services (user/auth related)
     requestScope {
         scopedOf(::HtmlSourceEvalService) bind IHtmlSourceEvalService::class
+        scopedOf(::PdfSourceEvalService) bind IPdfSourceEvalService::class
         scopedOf(::ApiKeyService) bind IApiKeyService::class
         scopedOf(::AuthService) bind IAuthService::class
         scopedOf(::UserSubscriptionService) bind IUserSubscriptionService::class
         scopedOf(::UsageService) bind IUsageService::class
         scopedOf(::QueryProcessingService) bind IQueryProcessingService::class
-        scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
+        scoped<IAgenticBrowserSearchOrchestrator> {
+            AgenticBrowserSearchOrchestrator(
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get()
+            )
+        }
         scopedOf(::CacheOnlySearchOrchestrator) bind ICacheOnlySearchOrchestrator::class
         scopedOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
         scopedOf(::UserService) bind IUserService::class

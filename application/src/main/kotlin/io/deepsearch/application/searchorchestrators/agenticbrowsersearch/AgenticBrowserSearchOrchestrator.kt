@@ -3,6 +3,7 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.application.services.IHtmlPreviewService
 import io.deepsearch.application.services.IHtmlSourceEvalService
+import io.deepsearch.application.services.IPdfSourceEvalService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
@@ -18,6 +19,7 @@ import io.deepsearch.domain.agents.IStreamingAnswerAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
 import io.deepsearch.domain.agents.HtmlSourceEvalInput
 import io.deepsearch.domain.agents.MarkdownSourceEvalInput
+import io.deepsearch.domain.agents.PdfSourceEvalInput
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
@@ -121,7 +123,8 @@ class AgenticBrowserSearchOrchestrator(
     private val htmlPreviewService: IHtmlPreviewService,
     private val kgHybridRetrievalService: IKgHybridRetrievalService,
     private val queryProcessingService: IQueryProcessingService,
-    private val webpageMarkdownRepository: IWebpageMarkdownRepository
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository,
+    private val pdfSourceEvalService: IPdfSourceEvalService
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -334,10 +337,10 @@ class AgenticBrowserSearchOrchestrator(
                 }
             }
 
-            // Unified evaluation flow: both preview and markdown sources are evaluated in parallel
+            // Unified evaluation flow: preview (HTML/PDF) and markdown sources are evaluated in parallel
             // and merged into a single stream of EvaluatedSource (isPreview set by eval agents)
             val unifiedEvalFlow = merge(
-                // Preview path: fast HTML evaluation (when includeImages is false)
+                // HTML Preview path: fast HTML evaluation (when includeImages is false)
                 if (!includeImages) {
                     sourceFlow
                         .filterIsInstance<UrlContentResult.HtmlPreview>()
@@ -355,7 +358,24 @@ class AgenticBrowserSearchOrchestrator(
                     flowOf() // Empty flow when includeImages is enabled
                 },
 
-                // Markdown path: full markdown evaluation  
+                // PDF Preview path: fast PDF evaluation using local text extraction
+                // Provides early results while Gemini upload runs
+                // Note: PDF text extraction doesn't include images, so this runs regardless of includeImages
+                sourceFlow
+                    .filterIsInstance<UrlContentResult.PdfPreview>()
+                    .filter { it.extractedText.isNotBlank() }
+                    .flatMapMerge(concurrency = 100) { pdfSource ->
+                        flow {
+                            val evalResult = evaluatePdfSource(
+                                sessionId, pdfSource, expandedQuery, fulfillmentRequirements
+                            )
+                            if (evalResult != null) {
+                                emit(evalResult) // isPreview=true set by PdfSourceEvalAgent
+                            }
+                        }
+                    },
+
+                // Markdown path: full markdown evaluation (replaces preview when it arrives)
                 sourceFlow
                     .filterIsInstance<UrlContentResult.FullMarkdown>()
                     .filter { it.markdown.isNotBlank() }
@@ -537,10 +557,23 @@ class AgenticBrowserSearchOrchestrator(
                                     sessionId.value, event.url, event.cleanedHtml.length
                                 )
                             }
+
+                            is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
+                                // Record URL access for PDF preview (fast path)
+                                urlAccessService.recordUrlAccess(
+                                    sessionId,
+                                    UncachedUrlAccess(event.url, Clock.System.now())
+                                )
+                                logger.debug(
+                                    "[{}] PDF preview ready for {}: {} pages, {} chars",
+                                    sessionId.value, event.url, event.pageCount, event.extractedText.length
+                                )
+                            }
                         }
                     }
                     .filter { event ->
                         event is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ||
+                                event is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ||
                                 event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
                     }
                     .map { event ->
@@ -551,6 +584,15 @@ class AgenticBrowserSearchOrchestrator(
                                     event.title,
                                     event.description,
                                     event.cleanedHtml
+                                )
+
+                            is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ->
+                                UrlContentResult.PdfPreview(
+                                    event.url,
+                                    event.title,
+                                    "PDF document with ${event.pageCount} pages",
+                                    event.extractedText,
+                                    event.pageCount
                                 )
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
@@ -945,10 +987,18 @@ class AgenticBrowserSearchOrchestrator(
                                             UncachedUrlAccess(event.url, Clock.System.now())
                                         )
                                     }
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
+                                        urlAccessService.recordUrlAccess(
+                                            sessionId,
+                                            UncachedUrlAccess(event.url, Clock.System.now())
+                                        )
+                                    }
                                 }
                             }
                             .filter { event ->
                                 event is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ||
+                                        event is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ||
                                         event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
                             }
                             .map { event ->
@@ -959,6 +1009,15 @@ class AgenticBrowserSearchOrchestrator(
                                             event.title,
                                             event.description,
                                             event.cleanedHtml
+                                        )
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ->
+                                        UrlContentResult.PdfPreview(
+                                            event.url,
+                                            event.title,
+                                            "PDF document with ${event.pageCount} pages",
+                                            event.extractedText,
+                                            event.pageCount
                                         )
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
@@ -1088,6 +1147,36 @@ class AgenticBrowserSearchOrchestrator(
             logger.debug(
                 "[{}] HTML source evaluation: url={}, {} facts",
                 sessionId.value, htmlSource.url, source.relevantFacts.size
+            )
+        }
+    }
+
+    /**
+     * Evaluate a single PDF preview source using the PdfSourceEvalService.
+     * Returns null if the source is not relevant or all facts are garbled/from tables.
+     */
+    private suspend fun evaluatePdfSource(
+        sessionId: QuerySessionId,
+        pdfSource: UrlContentResult.PdfPreview,
+        expandedQuery: String,
+        fulfillmentRequirements: List<String> = emptyList()
+    ): EvaluatedSource? {
+        val evalOutput = pdfSourceEvalService.evaluate(
+            PdfSourceEvalInput(
+                pdfSource = pdfSource,
+                expandedQuery = expandedQuery,
+                fulfillmentRequirements = fulfillmentRequirements
+            ),
+            sessionId
+        )
+
+        // Cooperative cancellation check
+        currentCoroutineContext().ensureActive()
+
+        return evalOutput.evaluatedSource?.also { source ->
+            logger.debug(
+                "[{}] PDF source evaluation: url={}, {} facts",
+                sessionId.value, pdfSource.url, source.relevantFacts.size
             )
         }
     }

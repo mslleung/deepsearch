@@ -106,6 +106,7 @@ private val domainCommonTestModule = module {
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
     singleOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
     singleOf(::HtmlSourceEvalAgentGenAiImpl) bind IHtmlSourceEvalAgent::class
+    singleOf(::PdfSourceEvalAgentGenAiImpl) bind IPdfSourceEvalAgent::class
     singleOf(::MarkdownSourceEvalAgentGenAiImpl) bind IMarkdownSourceEvalAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class

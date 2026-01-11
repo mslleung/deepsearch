@@ -30,4 +30,17 @@ sealed class UrlContentResult {
         override val description: String?,
         val markdown: String
     ) : UrlContentResult()
+
+    /**
+     * Fast PDF preview for early evaluation.
+     * Contains text extracted via PDFTextStripper (local, no Gemini).
+     * Used in the preview path similar to HtmlPreview.
+     */
+    data class PdfPreview(
+        override val url: String,
+        override val title: String?,
+        override val description: String?,
+        val extractedText: String,
+        val pageCount: Int
+    ) : UrlContentResult()
 }

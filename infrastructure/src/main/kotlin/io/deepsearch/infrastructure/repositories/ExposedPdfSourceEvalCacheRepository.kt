@@ -1,8 +1,8 @@
 package io.deepsearch.infrastructure.repositories
 
-import io.deepsearch.domain.models.entities.HtmlSourceEvalCache
-import io.deepsearch.domain.repositories.IHtmlSourceEvalCacheRepository
-import io.deepsearch.infrastructure.database.HtmlSourceEvalCacheTable
+import io.deepsearch.domain.models.entities.PdfSourceEvalCache
+import io.deepsearch.domain.repositories.IPdfSourceEvalCacheRepository
+import io.deepsearch.infrastructure.database.PdfSourceEvalCacheTable
 import io.deepsearch.infrastructure.services.ITransactionService
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -18,17 +18,17 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 /**
- * Exposed/R2DBC implementation of the HTML source evaluation cache repository.
+ * Exposed/R2DBC implementation of the PDF source evaluation cache repository.
  */
 @OptIn(ExperimentalTime::class, ExperimentalEncodingApi::class)
-class ExposedHtmlSourceEvalCacheRepository(
-    private val table: HtmlSourceEvalCacheTable,
+class ExposedPdfSourceEvalCacheRepository(
+    private val table: PdfSourceEvalCacheTable,
     private val transactionService: ITransactionService
-) : IHtmlSourceEvalCacheRepository {
+) : IPdfSourceEvalCacheRepository {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun findByHash(contentHash: ByteArray): HtmlSourceEvalCache? = 
+    override suspend fun findByHash(contentHash: ByteArray): PdfSourceEvalCache? = 
         transactionService.withTransaction {
             val hashBase64 = Base64.encode(contentHash)
             table.selectAll()
@@ -37,7 +37,7 @@ class ExposedHtmlSourceEvalCacheRepository(
                 .singleOrNull()
         }
 
-    override suspend fun upsert(cache: HtmlSourceEvalCache): Unit = 
+    override suspend fun upsert(cache: PdfSourceEvalCache): Unit = 
         transactionService.withTransaction {
             val hashBase64 = Base64.encode(cache.contentHash)
 
@@ -51,11 +51,11 @@ class ExposedHtmlSourceEvalCacheRepository(
                 it[version] = cache.version
             }
             
-            logger.debug("Cached HTML source eval result: hash={}", hashBase64.take(16))
+            logger.debug("Cached PDF source eval result: hash={}", hashBase64.take(16))
         }
 
-    private fun mapRowToCache(row: ResultRow): HtmlSourceEvalCache {
-        return HtmlSourceEvalCache(
+    private fun mapRowToCache(row: ResultRow): PdfSourceEvalCache {
+        return PdfSourceEvalCache(
             contentHash = Base64.decode(row[table.contentHash]),
             evaluatedSourceJson = row[table.evaluatedSourceJson],
             createdAt = Instant.fromEpochMilliseconds(row[table.createdAtEpochMs]),
@@ -64,4 +64,3 @@ class ExposedHtmlSourceEvalCacheRepository(
         )
     }
 }
-

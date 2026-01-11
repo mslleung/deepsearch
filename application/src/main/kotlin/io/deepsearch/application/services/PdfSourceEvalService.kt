@@ -1,14 +1,14 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.agents.HtmlSourceEvalInput
-import io.deepsearch.domain.agents.HtmlSourceEvalOutput
-import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
-import io.deepsearch.domain.models.entities.HtmlSourceEvalCache
+import io.deepsearch.domain.agents.PdfSourceEvalInput
+import io.deepsearch.domain.agents.PdfSourceEvalOutput
+import io.deepsearch.domain.agents.IPdfSourceEvalAgent
+import io.deepsearch.domain.models.entities.PdfSourceEvalCache
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
-import io.deepsearch.domain.repositories.IHtmlSourceEvalCacheRepository
+import io.deepsearch.domain.repositories.IPdfSourceEvalCacheRepository
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -19,31 +19,31 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 /**
- * Service for evaluating HTML sources with caching.
+ * Service for evaluating PDF sources with caching.
  * 
- * Wraps the HtmlSourceEvalAgent with:
- * - Hash-based caching using SHA-256 of (query + cleanedHtml)
+ * Wraps the PdfSourceEvalAgent with:
+ * - Hash-based caching using SHA-256 of (query + extractedText)
  * - Token usage tracking
  * 
  * Cache hits return stored results with original token counts for accurate usage tracking.
  */
-interface IHtmlSourceEvalService {
+interface IPdfSourceEvalService {
     /**
-     * Evaluate an HTML source for a search query.
+     * Evaluate a PDF source for a search query.
      * 
-     * @param input The HTML source and search query
+     * @param input The PDF source and search query
      * @param sessionId Session ID for token usage tracking
      * @return Evaluated source with extracted facts, or null if not relevant
      */
-    suspend fun evaluate(input: HtmlSourceEvalInput, sessionId: SessionId): HtmlSourceEvalOutput
+    suspend fun evaluate(input: PdfSourceEvalInput, sessionId: SessionId): PdfSourceEvalOutput
 }
 
 @OptIn(ExperimentalTime::class)
-class HtmlSourceEvalService(
-    private val htmlSourceEvalAgent: IHtmlSourceEvalAgent,
-    private val cacheRepository: IHtmlSourceEvalCacheRepository,
+class PdfSourceEvalService(
+    private val pdfSourceEvalAgent: IPdfSourceEvalAgent,
+    private val cacheRepository: IPdfSourceEvalCacheRepository,
     private val tokenUsageService: ILlmTokenUsageService
-) : IHtmlSourceEvalService {
+) : IPdfSourceEvalService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -61,37 +61,37 @@ class HtmlSourceEvalService(
         val intention: String
     )
 
-    override suspend fun evaluate(input: HtmlSourceEvalInput, sessionId: SessionId): HtmlSourceEvalOutput {
-        val htmlSource = input.htmlSource
+    override suspend fun evaluate(input: PdfSourceEvalInput, sessionId: SessionId): PdfSourceEvalOutput {
+        val pdfSource = input.pdfSource
         // Use expandedQuery with site context from source URL for cache key
-        val queryWithSite = "${input.expandedQuery} site:${extractDomain(htmlSource.url)}"
+        val queryWithSite = "${input.expandedQuery} site:${extractDomain(pdfSource.url)}"
         
-        // Compute content hash for caching (query + cleanedHtml)
-        val contentHash = computeContentHash(queryWithSite, htmlSource.cleanedHtml)
+        // Compute content hash for caching (query + extractedText)
+        val contentHash = computeContentHash(queryWithSite, pdfSource.extractedText)
         
         // Check cache first
         val cachedResult = cacheRepository.findByHash(contentHash)
         if (cachedResult != null) {
             logger.debug(
-                "[HtmlSourceEvalService] Cache HIT for {}, returning cached result",
-                htmlSource.url
+                "[PdfSourceEvalService] Cache HIT for {}, returning cached result",
+                pdfSource.url
             )
             
             // No token usage recorded on cache hit - tokens were already counted
             // when the original evaluation was cached. Recording again would double-count.
             
-            return deserializeCachedResult(cachedResult, htmlSource.url)
+            return deserializeCachedResult(cachedResult, pdfSource.url)
         }
         
-        logger.debug("[HtmlSourceEvalService] Cache MISS for {}, calling agent", htmlSource.url)
+        logger.debug("[PdfSourceEvalService] Cache MISS for {}, calling agent", pdfSource.url)
         
         // Call the agent
-        val output = htmlSourceEvalAgent.generate(input)
+        val output = pdfSourceEvalAgent.generate(input)
         
         // Record token usage
         tokenUsageService.recordTokenUsage(
             sessionId = sessionId,
-            agentName = "HtmlSourceEvalAgent",
+            agentName = "PdfSourceEvalAgent",
             modelName = output.tokenUsage.modelName,
             promptTokens = output.tokenUsage.promptTokens,
             outputTokens = output.tokenUsage.outputTokens,
@@ -105,12 +105,12 @@ class HtmlSourceEvalService(
     }
 
     /**
-     * Computes SHA-256 hash of the query + cleanedHtml for cache key.
+     * Computes SHA-256 hash of the query + extractedText for cache key.
      */
-    private fun computeContentHash(query: String, cleanedHtml: String): ByteArray {
+    private fun computeContentHash(query: String, extractedText: String): ByteArray {
         val digest = MessageDigest.getInstance("SHA-256")
         digest.update(query.toByteArray(Charsets.UTF_8))
-        digest.update(cleanedHtml.toByteArray(Charsets.UTF_8))
+        digest.update(extractedText.toByteArray(Charsets.UTF_8))
         return digest.digest()
     }
 
@@ -134,7 +134,7 @@ class HtmlSourceEvalService(
                 json.encodeToString(cached)
             }
 
-            val cache = HtmlSourceEvalCache(
+            val cache = PdfSourceEvalCache(
                 contentHash = contentHash,
                 evaluatedSourceJson = cachedJson,
                 createdAt = Clock.System.now(),
@@ -143,17 +143,17 @@ class HtmlSourceEvalService(
             )
             cacheRepository.upsert(cache)
         } catch (e: Exception) {
-            logger.warn("Failed to cache HTML source eval result: {}", e.message)
+            logger.warn("Failed to cache PDF source eval result: {}", e.message)
         }
     }
 
     /**
-     * Deserializes a cached result back to HtmlSourceEvalOutput.
+     * Deserializes a cached result back to PdfSourceEvalOutput.
      */
     private fun deserializeCachedResult(
-        cached: HtmlSourceEvalCache,
+        cached: PdfSourceEvalCache,
         url: String
-    ): HtmlSourceEvalOutput {
+    ): PdfSourceEvalOutput {
         val tokenUsage = TokenUsageMetrics(
             modelName = "cached",
             promptTokens = 0,
@@ -171,7 +171,8 @@ class HtmlSourceEvalService(
                     relevantFacts = cachedSource.relevantFacts.map { RelevantFact(fact = it) },
                     contentDate = cachedSource.contentDate,
                     intention = cachedSource.intention,
-                    relevantImageIds = emptyList()
+                    relevantImageIds = emptyList(),
+                    isPreview = true  // PDF preview sources are always preview
                 )
             } catch (e: Exception) {
                 logger.warn("Failed to deserialize cached result for {}: {}", url, e.message)
@@ -179,7 +180,7 @@ class HtmlSourceEvalService(
             }
         }
 
-        return HtmlSourceEvalOutput(
+        return PdfSourceEvalOutput(
             evaluatedSource = evaluatedSource,
             tokenUsage = tokenUsage
         )
@@ -196,4 +197,3 @@ class HtmlSourceEvalService(
         }
     }
 }
-

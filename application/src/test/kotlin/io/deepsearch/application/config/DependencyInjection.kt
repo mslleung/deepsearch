@@ -34,6 +34,10 @@ import io.deepsearch.application.services.HtmlPreviewService
 import io.deepsearch.application.services.HtmlSourceEvalService
 import io.deepsearch.application.services.IHtmlPreviewService
 import io.deepsearch.application.services.IHtmlSourceEvalService
+import io.deepsearch.application.services.PdfPreviewService
+import io.deepsearch.application.services.PdfSourceEvalService
+import io.deepsearch.application.services.IPdfPreviewService
+import io.deepsearch.application.services.IPdfSourceEvalService
 import io.deepsearch.application.services.LinkRelevanceHtmlService
 import io.deepsearch.application.services.ILinkRelevanceHtmlService
 import io.deepsearch.application.services.IApiKeyService
@@ -128,7 +132,13 @@ private val applicationCommonTestModule = module {
     singleOf(::AuthService) bind IAuthService::class
     singleOf(::UserSubscriptionService) bind IUserSubscriptionService::class
     singleOf(::UsageService) bind IUsageService::class
-    singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
+    single<IAgenticBrowserSearchOrchestrator> {
+        AgenticBrowserSearchOrchestrator(
+            get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            get(), get(), get()
+        )
+    }
     singleOf(::CacheOnlySearchOrchestrator) bind ICacheOnlySearchOrchestrator::class
     singleOf(::GoogleSearchOrchestrator) bind IGoogleSearchOrchestrator::class
     singleOf(::UserService) bind IUserService::class
@@ -144,7 +154,9 @@ private val applicationCommonTestModule = module {
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
+    singleOf(::PdfPreviewService) bind IPdfPreviewService::class
     singleOf(::HtmlSourceEvalService) bind IHtmlSourceEvalService::class
+    singleOf(::PdfSourceEvalService) bind IPdfSourceEvalService::class
     singleOf(::LinkRelevanceHtmlService) bind ILinkRelevanceHtmlService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
     singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class

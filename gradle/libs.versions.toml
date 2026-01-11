@@ -20,6 +20,7 @@ google-adk-version = "0.4.0"
 google-genai-version = "1.32.0"
 google-cloud-storage-version = "2.48.2"
 apache-pdfbox-version = "3.0.6"
+lucene-version = "9.12.1"
 apache-httpclient5-version = "5.5"
 apache-httpcore5-version = "5.3.4"
 r2dbc-h2-version = "1.1.0.RELEASE"
@@ -74,6 +75,7 @@ google-adk-dev = { module = "com.google.adk:google-adk-dev", version.ref = "goog
 google-genai = { module = "com.google.genai:google-genai", version.ref = "google-genai-version" }
 google-cloud-storage = { module = "com.google.cloud:google-cloud-storage", version.ref = "google-cloud-storage-version" }
 apache-pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "apache-pdfbox-version" }
+lucene-analysis-common = { module = "org.apache.lucene:lucene-analysis-common", version.ref = "lucene-version" }
 apache-httpclient5 = { module = "org.apache.httpcomponents.client5:httpclient5", version.ref = "apache-httpclient5-version" }
 apache-httpcore5 = { module = "org.apache.httpcomponents.core5:httpcore5", version.ref = "apache-httpcore5-version" }
 apache-httpcore5-h2 = { module = "org.apache.httpcomponents.core5:httpcore5-h2", version.ref = "apache-httpcore5-version" }
