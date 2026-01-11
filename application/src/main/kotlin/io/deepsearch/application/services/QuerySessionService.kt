@@ -56,8 +56,14 @@ data class DomainStat(
  * Business rules live inside the `QuerySession` entity.
  */
 interface IQuerySessionService {
-    /** Create a new query session with the specified search mode. */
-    suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId, searchMode: SearchMode): QuerySession
+    /** Create a new query session with the specified search mode and budget. */
+    suspend fun createSession(
+        query: String,
+        url: String,
+        apiKeyId: ApiKeyId,
+        searchMode: SearchMode,
+        searchBudget: SearchBudget = SearchBudget()
+    ): QuerySession
 
     /**
      * Complete the session with a final answer.
@@ -82,18 +88,19 @@ interface IQuerySessionService {
 
     /**
      * Check if the search budget has been exceeded.
+     * Uses the budget stored in the session.
      * Returns true if budget was exceeded, false otherwise.
      */
-    suspend fun isBudgetExceeded(sessionId: QuerySessionId, budget: SearchBudget): Boolean
+    suspend fun isBudgetExceeded(sessionId: QuerySessionId): Boolean
 
     /**
      * Mark the session as having exceeded budget with appropriate finish reason.
+     * Uses the budget stored in the session to determine which limit was exceeded.
      */
     suspend fun completeSessionBudgetExceeded(
         sessionId: QuerySessionId,
         answer: String,
         answerFound: Boolean,
-        budget: SearchBudget,
         imageIds: List<String> = emptyList()
     )
 
@@ -189,17 +196,24 @@ class QuerySessionService(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    override suspend fun createSession(query: String, url: String, apiKeyId: ApiKeyId, searchMode: SearchMode): QuerySession {
+    override suspend fun createSession(
+        query: String,
+        url: String,
+        apiKeyId: ApiKeyId,
+        searchMode: SearchMode,
+        searchBudget: SearchBudget
+    ): QuerySession {
         val sessionId = QuerySessionId(UUID.randomUUID().toString())
-        val session = QuerySession(sessionId, query, url, apiKeyId, searchMode)
+        val session = QuerySession(sessionId, query, url, apiKeyId, searchMode, searchBudget)
         val saved = querySessionRepository.save(session)
         logger.info(
-            "[{}] Session created: query='{}', url='{}', apiKeyId={}, mode={}",
+            "[{}] Session created: query='{}', url='{}', apiKeyId={}, mode={}, budget={}",
             sessionId.value,
             query,
             url,
             apiKeyId.value,
-            searchMode.name
+            searchMode.name,
+            searchBudget
         )
         return saved
     }
@@ -238,8 +252,9 @@ class QuerySessionService(
         )
     }
 
-    override suspend fun isBudgetExceeded(sessionId: QuerySessionId, budget: SearchBudget): Boolean {
+    override suspend fun isBudgetExceeded(sessionId: QuerySessionId): Boolean {
         val session = getSessionOrThrow(sessionId)
+        val budget = session.searchBudget
 
         // Check time budget in domain entity
         val isTimeBudgetExceeded = session.getDuration() > budget.timeLimitMs.milliseconds
@@ -252,10 +267,10 @@ class QuerySessionService(
         sessionId: QuerySessionId, 
         answer: String, 
         answerFound: Boolean,
-        budget: SearchBudget,
         imageIds: List<String>
     ) {
         val session = getSessionOrThrow(sessionId)
+        val budget = session.searchBudget
 
         // Determine which budget was exceeded
         val isTimeBudgetExceeded = session.getDuration() > budget.timeLimitMs.milliseconds

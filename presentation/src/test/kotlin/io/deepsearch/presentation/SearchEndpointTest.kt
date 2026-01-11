@@ -38,6 +38,10 @@ class SearchEndpointTest {
                 url = "https://www.otandp.com/",
                 query = "Who is the CEO?"
             ),
+//            SearchTestCase(
+//                url = "https://sleekflow.io/",
+//                query = "Tell me about pricing"
+//            ),
 /*            SearchTestCase(
                 url = "https://www.wikipedia.org/",
                 query = "What is artificial intelligence?"

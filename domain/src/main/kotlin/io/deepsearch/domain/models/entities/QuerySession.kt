@@ -34,13 +34,20 @@ class QuerySession(
     var version: Long = 0
 ) {
 
-    constructor(id: QuerySessionId, query: String, url: String, apiKeyId: ApiKeyId, searchMode: SearchMode) : this(
+    constructor(
+        id: QuerySessionId,
+        query: String,
+        url: String,
+        apiKeyId: ApiKeyId,
+        searchMode: SearchMode,
+        searchBudget: SearchBudget = SearchBudget()
+    ) : this(
         id = id,
         query = query,
         url = url,
         apiKeyId = apiKeyId,
         searchMode = searchMode,
-        searchBudget = SearchBudget(),
+        searchBudget = searchBudget,
         finishReason = null,
         answer = null,
         answerFound = false,
