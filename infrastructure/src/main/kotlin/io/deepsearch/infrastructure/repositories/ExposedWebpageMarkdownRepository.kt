@@ -10,6 +10,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.*
 import org.jetbrains.exposed.v1.r2dbc.select
 import org.jetbrains.exposed.v1.r2dbc.selectAll
@@ -47,6 +48,7 @@ class ExposedWebpageMarkdownRepository(
             webpageMarkdownTable.embedding,
             webpageMarkdownTable.isPreview,
             webpageMarkdownTable.fileSearchDocumentName,
+            webpageMarkdownTable.imageMapping,
             webpageMarkdownTable.createdAtEpochMs,
             webpageMarkdownTable.updatedAtEpochMs,
             webpageMarkdownTable.version
@@ -62,7 +64,7 @@ class ExposedWebpageMarkdownRepository(
 
     override suspend fun findByUrls(urls: List<String>): List<WebpageMarkdown> {
         if (urls.isEmpty()) return emptyList()
-        
+
         return transactionService.withTransaction {
             webpageMarkdownTable
                 .select(webpageMarkdownColumns)
@@ -79,29 +81,32 @@ class ExposedWebpageMarkdownRepository(
             .where { webpageMarkdownTable.url eq webpage.url }
             .map { Pair(it[webpageMarkdownTable.version], it[webpageMarkdownTable.isPreview]) }
             .singleOrNull()
-        
+
         val existingVersion = existingRecord?.first
         val existingIsPreview = existingRecord?.second
-        
+
         // If record exists, verify version matches to prevent concurrent modification issues
         if (existingVersion != null && existingVersion != webpage.version) {
             throw OptimisticLockException("WebpageMarkdown", webpage.url, webpage.version)
         }
-        
+
         // Prevent preview from overwriting full markdown
         // This can happen if preview extraction runs after full extraction in a race condition
         if (existingIsPreview == false && webpage.isPreview) {
             logger.debug("Skipping preview upsert - full markdown already exists for {}", webpage.url)
             return@withTransaction
         }
-        
+
         // Calculate new version (increment from existing, or use provided version for new records)
         val newVersion = if (existingVersion != null) existingVersion + 1 else webpage.version
-        
+
         // Sanitize markdown for full-text search (removes problematic Unicode that breaks R2DBC tsvector decoding)
         // Stored separately so original markdown with emoji/special chars is preserved
         val sanitizedMarkdown = webpage.markdown?.let { sanitizeForFullTextSearch(it) }
-        
+
+        // Serialize image mapping to JSON
+        val imageMappingJson = webpage.imageMapping?.let { Json.encodeToString(it) }
+
         // Upsert webpage markdown record with incremented version
         webpageMarkdownTable.upsert(
             keys = arrayOf(webpageMarkdownTable.url)
@@ -119,26 +124,34 @@ class ExposedWebpageMarkdownRepository(
             it[embedding] = webpage.embedding
             it[isPreview] = webpage.isPreview
             it[fileSearchDocumentName] = webpage.fileSearchDocumentName
+            it[imageMapping] = imageMappingJson
             it[createdAtEpochMs] = webpage.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpage.updatedAt.toEpochMilliseconds()
             it[version] = newVersion
         }
-        
+
         // Update the webpage object's version to reflect the new version
         webpage.version = newVersion
-        
-        logger.debug("Upserted webpage for URL: {} (version: {} -> {}, isPreview: {})", webpage.url, existingVersion ?: "new", newVersion, webpage.isPreview)
+
+        logger.debug(
+            "Upserted webpage for URL: {} (version: {} -> {}, isPreview: {})",
+            webpage.url,
+            existingVersion ?: "new",
+            newVersion,
+            webpage.isPreview
+        )
     }
 
-    override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
-        webpageMarkdownTable
-            .select(webpageMarkdownColumns)
-            .where { webpageMarkdownTable.url like ("$prefix%") }
-            .limit(limit)
-            .offset(offset.toLong())
-            .map { mapRowToWebpageMarkdown(it) }
-            .toList()
-    }
+    override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> =
+        transactionService.withTransaction {
+            webpageMarkdownTable
+                .select(webpageMarkdownColumns)
+                .where { webpageMarkdownTable.url like ("$prefix%") }
+                .limit(limit)
+                .offset(offset.toLong())
+                .map { mapRowToWebpageMarkdown(it) }
+                .toList()
+        }
 
     override suspend fun countByDomainPrefix(prefix: String): Long = transactionService.withTransaction {
         webpageMarkdownTable.selectAll()
@@ -146,16 +159,17 @@ class ExposedWebpageMarkdownRepository(
             .count()
     }
 
-    override suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown> = transactionService.withTransaction {
-        val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
-        webpageMarkdownTable
-            .select(webpageMarkdownColumns)
-            .where { webpageMarkdownTable.url like pattern }
-            .limit(limit)
-            .offset(offset.toLong())
-            .map { mapRowToWebpageMarkdown(it) }
-            .toList()
-    }
+    override suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown> =
+        transactionService.withTransaction {
+            val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
+            webpageMarkdownTable
+                .select(webpageMarkdownColumns)
+                .where { webpageMarkdownTable.url like pattern }
+                .limit(limit)
+                .offset(offset.toLong())
+                .map { mapRowToWebpageMarkdown(it) }
+                .toList()
+        }
 
     override suspend fun countSearchByUrl(query: String): Long = transactionService.withTransaction {
         val pattern = "%${query.replace("%", "\\%").replace("_", "\\_")}%"
@@ -172,11 +186,12 @@ class ExposedWebpageMarkdownRepository(
         limit: Int
     ): List<WebpageMarkdown> {
         val startTime = Clock.System.now()
-        
+
         // Perform keyword and semantic searches in parallel
         val (keywordResults, semanticResults) = coroutineScope {
             val keywordDeferred = async { performKeywordSearch(textQuery, urlPrefix, minUpdatedAtEpochMs, limit) }
-            val semanticDeferred = async { performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit) }
+            val semanticDeferred =
+                async { performSemanticSearch(queryEmbedding, urlPrefix, minUpdatedAtEpochMs, limit) }
 
             Pair(keywordDeferred.await(), semanticDeferred.await())
         }
@@ -184,40 +199,40 @@ class ExposedWebpageMarkdownRepository(
         // Track URLs from each source
         val keywordUrls = keywordResults.map { it.url }.toSet()
         val semanticUrls = semanticResults.map { it.url }.toSet()
-        
+
         // Log search results
         logger.debug("Keyword search returned {} results: {}", keywordResults.size, keywordUrls)
         logger.debug("Semantic search returned {} results: {}", semanticResults.size, semanticUrls)
-        
+
         // Combine results using Reciprocal Rank Fusion (RRF)
         // Reference: https://github.com/pgvector/pgvector?tab=readme-ov-file#hybrid-search
         // RRF Formula: score = 1 / (k + rank), where k=60 is standard constant
         val rrfK = 60
         val rrfScores = mutableMapOf<String, Double>()
-        
+
         // Add scores from keyword search
         keywordResults.forEachIndexed { index, webpage ->
             val rank = index + 1
             val score = 1.0 / (rrfK + rank)
             rrfScores[webpage.url] = rrfScores.getOrDefault(webpage.url, 0.0) + score
         }
-        
+
         // Add scores from semantic search
         semanticResults.forEachIndexed { index, webpage ->
             val rank = index + 1
             val score = 1.0 / (rrfK + rank)
             rrfScores[webpage.url] = rrfScores.getOrDefault(webpage.url, 0.0) + score
         }
-        
+
         // Combine all unique webpages
         val allWebpages = (keywordResults + semanticResults).associateBy { it.url }
-        
+
         // Sort by RRF score and return top results
         val finalResults = rrfScores.entries
             .sortedByDescending { it.value }
             .take(limit)
             .mapNotNull { allWebpages[it.key] }
-        
+
         // Log each final result with its source
         finalResults.forEachIndexed { index, webpage ->
             val source = when {
@@ -228,14 +243,18 @@ class ExposedWebpageMarkdownRepository(
             }
             logger.debug("Final result #{}: {} (source: {})", index + 1, webpage.url, source)
         }
-        
+
         // Log summary
         val duration = Clock.System.now() - startTime
-        logger.info("Hybrid search completed in {}ms, returned {} results", duration.inWholeMilliseconds, finalResults.size)
-        
+        logger.info(
+            "Hybrid search completed in {}ms, returned {} results",
+            duration.inWholeMilliseconds,
+            finalResults.size
+        )
+
         return finalResults
     }
-    
+
     /**
      * Perform keyword-based full-text search on markdown content.
      * Uses raw SQL via custom expressions to properly implement PostgreSQL full-text search operators.
@@ -250,46 +269,46 @@ class ExposedWebpageMarkdownRepository(
         // Sanitize and limit query to prevent tsquery buffer overflow issues
         // PostgreSQL websearch_to_tsquery can generate very large tsquery expressions for long queries
         val sanitizedQuery = sanitizeSearchQuery(textQuery)
-        
+
         // Log if query was truncated
         if (sanitizedQuery != textQuery) {
             logger.warn(
                 "Search query was sanitized/truncated (original length: {}, sanitized length: {}). " +
-                "Original: '{}...', Sanitized: '{}'",
+                        "Original: '{}...', Sanitized: '{}'",
                 textQuery.length,
                 sanitizedQuery.length,
                 textQuery.take(100),
                 sanitizedQuery
             )
         }
-        
+
         // Escape single quotes for SQL safety
         val escapedQuery = sanitizedQuery.replace("'", "''")
-        
+
         // Create custom SQL expression for full-text search match using @@ operator
         // This ensures documents that don't match the query are filtered out
         val tsQueryExpr = "websearch_to_tsquery('english', '$escapedQuery')"
-        
+
         val tsMatchExpr = object : Expression<Boolean>() {
             override fun toQueryBuilder(queryBuilder: QueryBuilder) {
                 queryBuilder.append("(${webpageMarkdownTable.tableName}.markdown_search_vector @@ $tsQueryExpr)")
             }
         }
-        
+
         // Create custom SQL expression for ts_rank to sort by relevance
         val tsRankExpr = object : Expression<Double>() {
             override fun toQueryBuilder(queryBuilder: QueryBuilder) {
                 queryBuilder.append("ts_rank(${webpageMarkdownTable.tableName}.markdown_search_vector, $tsQueryExpr)")
             }
         }
-        
+
         // Build query with WHERE conditions - filter for documents matching the full-text search query
         // Use select() with specific columns to avoid R2DBC issues with tsvector decoding
         webpageMarkdownTable.select(webpageMarkdownColumns)
             .where {
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
                 val markdownCondition = webpageMarkdownTable.markdown.isNotNull()
-                
+
                 if (minUpdatedAtEpochMs != null) {
                     urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and markdownCondition and tsMatchExpr
                 } else {
@@ -301,7 +320,7 @@ class ExposedWebpageMarkdownRepository(
             .map { mapRowToWebpageMarkdown(it) }
             .toList()
     }
-    
+
     /**
      * Perform semantic vector similarity search
      */
@@ -312,21 +331,23 @@ class ExposedWebpageMarkdownRepository(
         limit: Int
     ): List<WebpageMarkdown> = transactionService.withTransaction {
         // Configure HNSW iterative index scan for better recall with filters
-        exec("""
+        exec(
+            """
             SET LOCAL hnsw.iterative_scan = 'strict_order';
             SET LOCAL hnsw.max_scan_tuples = 20000;
-        """.trimIndent())
-        
+        """.trimIndent()
+        )
+
         // Format query embedding as pgvector string: '[1.0,2.0,3.0,...]'
         val embeddingStr = "[${queryEmbedding.joinToString(",")}]"
-        
+
         // Create custom SQL expression for cosine distance using pgvector's <=> operator
         val cosineDistanceExpr = object : Expression<Double>() {
             override fun toQueryBuilder(queryBuilder: QueryBuilder) {
                 queryBuilder.append("(${webpageMarkdownTable.tableName}.embedding <=> '$embeddingStr'::vector)")
             }
         }
-        
+
         // Build query filtering for documents with embeddings
         // Use select() with specific columns to avoid R2DBC issues with tsvector decoding
         webpageMarkdownTable
@@ -335,7 +356,7 @@ class ExposedWebpageMarkdownRepository(
                 val urlCondition = webpageMarkdownTable.url like "$urlPrefix%"
                 val markdownCondition = webpageMarkdownTable.markdown.isNotNull()
                 val embeddingCondition = webpageMarkdownTable.embedding.isNotNull()
-                
+
                 if (minUpdatedAtEpochMs != null) {
                     urlCondition and (webpageMarkdownTable.updatedAtEpochMs greaterEq minUpdatedAtEpochMs) and markdownCondition and embeddingCondition
                 } else {
@@ -349,6 +370,12 @@ class ExposedWebpageMarkdownRepository(
     }
 
     private fun mapRowToWebpageMarkdown(row: ResultRow): WebpageMarkdown {
+        // Parse image mapping JSON
+        val imageMappingJson = row[webpageMarkdownTable.imageMapping]
+        val imageMapping: Map<String, String>? = imageMappingJson?.let {
+            Json.decodeFromString(it)
+        }
+
         return WebpageMarkdown(
             url = row[webpageMarkdownTable.url],
             title = row[webpageMarkdownTable.title],
@@ -362,6 +389,7 @@ class ExposedWebpageMarkdownRepository(
             embedding = row[webpageMarkdownTable.embedding],
             isPreview = row[webpageMarkdownTable.isPreview],
             fileSearchDocumentName = row[webpageMarkdownTable.fileSearchDocumentName],
+            imageMapping = imageMapping,
             createdAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.updatedAtEpochMs]),
             version = row[webpageMarkdownTable.version]
@@ -375,7 +403,7 @@ class ExposedWebpageMarkdownRepository(
          * that exceed R2DBC buffer limits (>100KB), causing IndexOutOfBoundsException.
          */
         private const val MAX_SEARCH_QUERY_LENGTH = 500
-        
+
         /**
          * Sanitizes and limits search query for PostgreSQL websearch_to_tsquery.
          * Prevents buffer overflow issues by:
@@ -393,7 +421,7 @@ class ExposedWebpageMarkdownRepository(
                 .replace(Regex("\\s+"), " ")                 // Collapse multiple whitespace
                 .trim()
         }
-        
+
         /**
          * Sanitizes text for PostgreSQL full-text search (tsvector).
          * Removes Unicode characters that can cause R2DBC decoding issues:

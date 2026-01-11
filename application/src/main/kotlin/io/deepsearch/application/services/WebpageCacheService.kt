@@ -47,6 +47,7 @@ interface IWebpageCacheService {
      * @param mimeType Content MIME type
      * @param sessionId Session ID for token tracking
      * @param isPreview True if content is from simple text extraction (no LLM processing)
+     * @param imageMapping Mapping of image numbers to original hash IDs: {"1": "img-abc123"}
      */
     suspend fun cacheWebpage(
         url: String,
@@ -58,7 +59,8 @@ interface IWebpageCacheService {
         httpReason: String,
         mimeType: String?,
         sessionId: SessionId,
-        isPreview: Boolean = false
+        isPreview: Boolean = false,
+        imageMapping: Map<String, String>? = null
     )
 
     /**
@@ -191,9 +193,10 @@ class WebpageCacheService(
         httpReason: String,
         mimeType: String?,
         sessionId: SessionId,
-        isPreview: Boolean
+        isPreview: Boolean,
+        imageMapping: Map<String, String>?
     ) {
-        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview)
+        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview, imageMapping = imageMapping)
 
         // Create indexing tasks for async processing
         if (!markdown.isNullOrBlank()) {
@@ -258,7 +261,8 @@ class WebpageCacheService(
         httpReason: String,
         mimeType: String?,
         isPreview: Boolean,
-        fileSearchDocumentName: String? = null
+        fileSearchDocumentName: String? = null,
+        imageMapping: Map<String, String>? = null
     ) {
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
@@ -294,6 +298,7 @@ class WebpageCacheService(
                 embedding = null, // Will be updated by indexing service
                 isPreview = isPreview,
                 fileSearchDocumentName = fileSearchDocumentName,
+                imageMapping = imageMapping,
                 createdAt = existing?.createdAt ?: currentTime,
                 updatedAt = currentTime,
                 version = existing?.version ?: 0 // Preserve version for optimistic locking

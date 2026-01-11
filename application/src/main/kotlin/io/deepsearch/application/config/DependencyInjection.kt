@@ -45,6 +45,7 @@ val applicationModule = module {
     singleOf(::TableIdentificationService) bind ITableIdentificationService::class
     singleOf(::TableInterpretationService) bind ITableInterpretationService::class
     singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
+    singleOf(::MarkdownFormattingService) bind IMarkdownFormattingService::class
     singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
     singleOf(::FileSearchService) bind IFileSearchService::class

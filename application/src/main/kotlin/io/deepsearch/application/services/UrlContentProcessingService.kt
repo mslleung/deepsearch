@@ -45,7 +45,9 @@ interface IUrlContentProcessingService {
             val markdown: String,
             val title: String?,
             val description: String?,
-            val wasCached: Boolean
+            val wasCached: Boolean,
+            /** Mapping of image numbers to hash IDs for new markdown format. Null for legacy format. */
+            val imageMapping: Map<String, String>? = null
         ) : UrlProcessingEvent
 
         /**
@@ -299,7 +301,8 @@ class UrlContentProcessingService(
                 cached.markdown ?: "",
                 cached.title,
                 cached.description,
-                wasCached = true
+                wasCached = true,
+                imageMapping = cached.imageMapping
             )
         )
     }
@@ -406,7 +409,8 @@ class UrlContentProcessingService(
                         httpReason = "OK",
                         mimeType = "text/html",
                         sessionId = sessionId,
-                        isPreview = false
+                        isPreview = false,
+                        imageMapping = extractionResult.imageMapping.takeIf { it.isNotEmpty() }
                     )
 
                     // Update URL-to-image linkages
@@ -423,7 +427,8 @@ class UrlContentProcessingService(
                             extractionResult.markdown,
                             extractionResult.title,
                             extractionResult.description,
-                            wasCached = false
+                            wasCached = false,
+                            imageMapping = extractionResult.imageMapping.takeIf { it.isNotEmpty() }
                         )
                     )
                 } catch (e: Exception) {

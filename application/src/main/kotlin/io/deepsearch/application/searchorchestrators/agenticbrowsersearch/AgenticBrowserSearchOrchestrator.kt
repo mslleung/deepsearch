@@ -349,11 +349,12 @@ class AgenticBrowserSearchOrchestrator(
                 sourceFlow
                     .filterIsInstance<UrlContentResult.FullMarkdown>()
                     .filter { it.markdown.isNotBlank() }
-                    .map { MarkdownSource(it.url, it.title, it.description, it.markdown) }
-                    .flatMapMerge(concurrency = 100) { markdownSource ->
+                    .flatMapMerge(concurrency = 100) { fullMarkdown ->
                         flow {
+                            val markdownSource = MarkdownSource(fullMarkdown.url, fullMarkdown.title, fullMarkdown.description, fullMarkdown.markdown)
                             val evalResult = sourceEvaluationFacadeService.evaluateMarkdownSource(
-                                sessionId, markdownSource, expandedQuery, fulfillmentRequirements
+                                sessionId, markdownSource, expandedQuery, fulfillmentRequirements,
+                                imageMapping = fullMarkdown.imageMapping
                             )
                             if (evalResult != null) {
                                 emit(evalResult) // isPreview=false (default)
@@ -566,7 +567,7 @@ class AgenticBrowserSearchOrchestrator(
                                 )
 
                             is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                                UrlContentResult.FullMarkdown(event.url, event.title, event.description, event.markdown)
+                                UrlContentResult.FullMarkdown(event.url, event.title, event.description, event.markdown, event.imageMapping)
 
                             else -> throw IllegalStateException("Unexpected event type")
                         }
@@ -846,7 +847,8 @@ class AgenticBrowserSearchOrchestrator(
                                             event.url,
                                             event.title,
                                             event.description,
-                                            event.markdown
+                                            event.markdown,
+                                            event.imageMapping
                                         )
 
                                     else -> throw IllegalStateException("Unexpected event type")

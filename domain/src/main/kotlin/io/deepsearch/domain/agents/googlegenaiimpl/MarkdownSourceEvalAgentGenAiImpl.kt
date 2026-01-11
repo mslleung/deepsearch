@@ -116,7 +116,7 @@ class MarkdownSourceEvalAgentGenAiImpl(
            - If the page is not relevant, return an empty array
         
         4. **Select Relevant Images** (relevantImageIds):
-           - Sources may contain images in format: `<image id="N">description</image>` or `<image id="N" placeholder>alt text</image>`
+           - Sources contain images in markdown format: `![description](#img-N)`
            - Identify images that would genuinely help answer the query (e.g., product screenshots, pricing tables, feature diagrams, charts)
            - Return an array of image IDs (the number only, e.g., ["1", "3"]) for images that add value
            - Most sources should return an EMPTY array [] - only include images that are truly necessary
@@ -160,9 +160,8 @@ class MarkdownSourceEvalAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        // Extract images from markdown and transform to numbered IDs for LLM
-        val imageExtraction = extractImagesFromMarkdown(markdownSource.markdown)
-        val userPrompt = buildUserPrompt(input, imageExtraction.transformedMarkdown)
+        // Markdown already has numbered IDs in format ![desc](#img-N)
+        val userPrompt = buildUserPrompt(input, markdownSource.markdown)
 
         val response = withContext(dispatcherProvider.io) {
             retryLlmCall<EvalResponse>(this@MarkdownSourceEvalAgentGenAiImpl::class.simpleName!!) {
@@ -221,11 +220,10 @@ class MarkdownSourceEvalAgentGenAiImpl(
             RelevantFact(fact = llmFact.fact)
         }
 
-        // Map LLM-selected numbered image IDs back to original hash-based IDs
-        val relevantImageIds = mapSelectedImagesToOriginal(
-            response.relevantImageIds,
-            imageExtraction.images
-        )
+        // Map LLM-selected numbered image IDs back to original hash-based IDs using imageMapping
+        val relevantImageIds = input.imageMapping?.let { mapping ->
+            mapSelectedImagesToOriginalWithMapping(response.relevantImageIds, mapping)
+        } ?: emptyList()
 
         val evaluatedSource = EvaluatedSource(
             url = markdownSource.url,
@@ -298,99 +296,20 @@ class MarkdownSourceEvalAgentGenAiImpl(
             }
         }
 
-        // Regex patterns for image tag matching
-        private val FULL_IMAGE_REGEX = """<image\s+id="(img-[^"]+)"(?:\s*>([^<]*)</image>|[^>]*/>)""".toRegex()
-        private val PLACEHOLDER_IMAGE_REGEX = """<image\s+placeholder(?:\s+alt="([^"]*)")?(?:\s*/)?>""".toRegex()
-
-        /**
-         * Represents an extracted image from markdown.
-         * The numbered ID is derived from the position in the list (index + 1).
-         * 
-         * @property imageId The full image ID (e.g., "img-abc123"), or null for placeholder images
-         * @property description The text description of the image
-         */
-        data class ExtractedImage(
-            val imageId: String?,  // null for placeholder images
-            val description: String
-        )
-
-        /**
-         * Result of extracting images from markdown.
-         * @property transformedMarkdown The markdown with numbered image IDs (1, 2, 3...)
-         * @property images Ordered list of extracted images (index + 1 = numbered ID)
-         */
-        data class ImageExtractionResult(
-            val transformedMarkdown: String,
-            val images: List<ExtractedImage>
-        )
-
-        /**
-         * Extracts images from markdown and transforms to numbered IDs for LLM comprehension.
-         *
-         * - Converts `<image id="img-xxx">description</image>` to `<image id="1">description</image>`
-         * - Converts `<image placeholder alt="..."/>` to `<image id="1" placeholder>alt text</image>`
-         *
-         * @return ImageExtractionResult with transformed markdown and ordered list of images
-         */
-        fun extractImagesFromMarkdown(markdown: String): ImageExtractionResult {
-            val images = mutableListOf<ExtractedImage>()
-            var imageCounter = 0
-
-            // First pass: transform full images with hash IDs
-            var transformedMarkdown = FULL_IMAGE_REGEX.replace(markdown) { matchResult ->
-                imageCounter++
-                val numberedId = imageCounter.toString()
-                val originalId = matchResult.groupValues[1]
-                val description = matchResult.groupValues.getOrNull(2)?.takeIf { it.isNotEmpty() } ?: ""
-
-                images.add(ExtractedImage(imageId = originalId, description = description))
-
-                if (description.isNotEmpty()) {
-                    """<image id="$numberedId">$description</image>"""
-                } else {
-                    """<image id="$numberedId"/>"""
-                }
-            }
-
-            // Second pass: transform placeholder images
-            transformedMarkdown = PLACEHOLDER_IMAGE_REGEX.replace(transformedMarkdown) { matchResult ->
-                imageCounter++
-                val numberedId = imageCounter.toString()
-                val altText = matchResult.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: ""
-
-                images.add(ExtractedImage(imageId = null, description = altText))  // null = placeholder
-
-                if (altText.isNotEmpty()) {
-                    """<image id="$numberedId" placeholder>$altText</image>"""
-                } else {
-                    """<image id="$numberedId" placeholder/>"""
-                }
-            }
-
-            return ImageExtractionResult(
-                transformedMarkdown = transformedMarkdown,
-                images = images
-            )
-        }
-
         /**
          * Maps LLM-selected numbered image IDs back to original hash-based IDs.
-         * Filters out placeholder images.
+         * Used for markdown format ![desc](#img-N) with provided imageMapping.
          *
          * @param selectedNumberedIds List of numbered IDs selected by the LLM (e.g., ["1", "3"])
-         * @param extractedImages Ordered list of extracted images from the markdown
+         * @param imageMapping Mapping of image numbers to hash IDs: {"1": "img-abc123"}
          * @return List of original hash-based image IDs
          */
-        fun mapSelectedImagesToOriginal(
+        fun mapSelectedImagesToOriginalWithMapping(
             selectedNumberedIds: List<String>,
-            extractedImages: List<ExtractedImage>
+            imageMapping: Map<String, String>
         ): List<String> {
             return selectedNumberedIds.mapNotNull { numberedId ->
-                val index = numberedId.toIntOrNull()?.minus(1) ?: return@mapNotNull null
-                val image = extractedImages.getOrNull(index) ?: return@mapNotNull null
-                
-                // Skip placeholders (null imageId)
-                image.imageId
+                imageMapping[numberedId]
             }
         }
     }

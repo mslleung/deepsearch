@@ -15,11 +15,14 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
  * @property markdownSource The markdown source to evaluate
  * @property expandedQuery Context-aware expanded query to evaluate against
  * @property fulfillmentRequirements List of requirements that must be satisfied
+ * @property imageMapping Mapping of image numbers to original hash IDs: {"1": "img-abc123"}
+ *                        Used for new markdown image format ![desc](#img-N). Null for legacy XML format.
  */
 data class MarkdownSourceEvalInput(
     val markdownSource: MarkdownSource,
     val expandedQuery: String,
-    val fulfillmentRequirements: List<String> = emptyList()
+    val fulfillmentRequirements: List<String> = emptyList(),
+    val imageMapping: Map<String, String>? = null
 ) : IAgent.IAgentInput
 
 /**

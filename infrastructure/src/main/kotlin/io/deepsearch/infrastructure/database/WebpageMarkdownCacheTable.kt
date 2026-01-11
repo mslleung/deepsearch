@@ -23,6 +23,8 @@ class WebpageMarkdownCacheTable(
     val isPreview = bool("is_preview").default(false) // true if content is from simple text extraction (no LLM)
     /** For FILE type URLs: Gemini File Search document name for deletion */
     val fileSearchDocumentName = varchar("file_search_document_name", length = 512).nullable()
+    /** Mapping of image numbers to original image hash IDs. JSON format: {"1": "img-abc123", "2": "img-def456"} */
+    val imageMapping = text("image_mapping").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

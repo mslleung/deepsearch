@@ -45,13 +45,15 @@ interface ISourceEvaluationFacadeService {
 
     /**
      * Evaluate a markdown source for relevance.
+     * @param imageMapping Mapping of image numbers to hash IDs for new markdown format. Null for legacy format.
      * @return EvaluatedSource if relevant, null otherwise
      */
     suspend fun evaluateMarkdownSource(
         sessionId: QuerySessionId,
         markdownSource: MarkdownSource,
         expandedQuery: String,
-        fulfillmentRequirements: List<String> = emptyList()
+        fulfillmentRequirements: List<String> = emptyList(),
+        imageMapping: Map<String, String>? = null
     ): EvaluatedSource?
 }
 
@@ -120,13 +122,15 @@ class SourceEvaluationFacadeService(
         sessionId: QuerySessionId,
         markdownSource: MarkdownSource,
         expandedQuery: String,
-        fulfillmentRequirements: List<String>
+        fulfillmentRequirements: List<String>,
+        imageMapping: Map<String, String>?
     ): EvaluatedSource? {
         val output = markdownSourceEvalAgent.generate(
             MarkdownSourceEvalInput(
                 markdownSource = markdownSource,
                 expandedQuery = expandedQuery,
-                fulfillmentRequirements = fulfillmentRequirements
+                fulfillmentRequirements = fulfillmentRequirements,
+                imageMapping = imageMapping
             )
         )
 

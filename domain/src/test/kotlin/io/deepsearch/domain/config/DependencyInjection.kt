@@ -114,6 +114,9 @@ private val domainCommonTestModule = module {
     singleOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class
     singleOf(::UrlContextExtractionAgentGenAiImpl) bind IUrlContextExtractionAgent::class
     
+    // Markdown formatting
+    singleOf(::MarkdownFormattingAgentGenAiImpl) bind IMarkdownFormattingAgent::class
+
     // Knowledge Graph agents
     singleOf(::EntityExtractionAgentGenAiImpl) bind IEntityExtractionAgent::class
     singleOf(::TextToCypherAgentGenAiImpl) bind ITextToCypherAgent::class

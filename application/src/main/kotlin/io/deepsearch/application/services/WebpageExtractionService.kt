@@ -26,7 +26,13 @@ data class WebpageExtractionResult(
     val markdown: String,
     val title: String?,
     val description: String?,
-    val imageHashes: List<ByteArray> = emptyList()
+    val imageHashes: List<ByteArray> = emptyList(),
+    /**
+     * Mapping of image numbers to original image hash IDs.
+     * Format: {"1": "img-abc123", "2": "img-def456"}
+     * Used to resolve ![description](#img-N) references in markdown back to actual image hashes.
+     */
+    val imageMapping: Map<String, String> = emptyMap()
 )
 
 interface IWebpageExtractionService {
@@ -44,7 +50,8 @@ class WebpageExtractionService(
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
     private val semanticIdentificationService: ISemanticIdentificationService,
     private val boundingBoxDerivationService: IBoundingBoxDerivationService,
-    private val jsoupDomService: IJsoupDomService
+    private val jsoupDomService: IJsoupDomService,
+    private val markdownFormattingService: IMarkdownFormattingService
 ) : IWebpageExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -56,7 +63,9 @@ class WebpageExtractionService(
         val tableIdentifications: List<TableIdentification>,
         val iconReplacements: List<CssSelectorReplacement>,
         val imageReplacements: List<CssSelectorReplacement>,
-        val imageHashes: List<ByteArray>
+        val imageHashes: List<ByteArray>,
+        /** Mapping of image numbers to original image hash IDs: {"1": "img-abc123"} */
+        val imageMapping: Map<String, String>
     )
 
     // ========== Pipeline Extension for Flow Composition ==========
@@ -121,12 +130,14 @@ class WebpageExtractionService(
 
         // ===== Await LLM Results =====
         val llmDuration = measureTimeMillis { awaitAll(semantic, tableId, iconRepl, imageRepl) }
+        val imageResult = imageRepl.await()
         val llmResults = LlmResults(
             semanticElements = semantic.await(),
             tableIdentifications = tableId.await(),
             iconReplacements = iconRepl.await().replacements,
-            imageReplacements = imageRepl.await().replacements,
-            imageHashes = imageRepl.await().hashes
+            imageReplacements = imageResult.replacements,
+            imageHashes = imageResult.hashes,
+            imageMapping = imageResult.imageMapping
         )
         logger.debug(
             "LLM operations complete in {} ms: {} semantic, {} tables, {} icons, {} images",
@@ -195,7 +206,9 @@ class WebpageExtractionService(
 
     private data class ImageInterpretationResult(
         val replacements: List<CssSelectorReplacement>,
-        val hashes: List<ByteArray>
+        val hashes: List<ByteArray>,
+        /** Mapping of image numbers to original image hash IDs: {"1": "img-abc123"} */
+        val imageMapping: Map<String, String>
     )
 
     private suspend fun doInterpretImages(
@@ -208,16 +221,32 @@ class WebpageExtractionService(
             val extractionResults = webpageImageTextExtractionService.extractTextFromImagesWithHashes(
                 images, sessionId, ocrLanguage
             )
+            
+            // Track image number assignments for the number-to-hash mapping
+            var imageCounter = 0
+            val imageMapping = mutableMapOf<String, String>()
+            
             val replacements = images.zip(extractionResults).flatMap { (image, extraction) ->
-                val wrappedText = wrapImageTextWithXmlTag(extraction)
+                // Only assign a number if there's extracted text (image is relevant)
+                val wrappedText = if (extraction.extractedText != null) {
+                    imageCounter++
+                    val imageNumber = imageCounter.toString()
+                    val imageId = extraction.toImageId()
+                    imageMapping[imageNumber] = imageId
+                    wrapImageTextAsMarkdown(extraction.extractedText, imageNumber)
+                } else {
+                    null
+                }
                 image.cssSelectors.map { CssSelectorReplacement(it, wrappedText) }
             }
             result = ImageInterpretationResult(
                 replacements = replacements,
-                hashes = extractionResults.map { it.imageBytesHash }
+                hashes = extractionResults.map { it.imageBytesHash },
+                imageMapping = imageMapping
             )
         }
-        logger.debug("Image interpretation took {} ms, {} replacements", duration, result.replacements.size)
+        logger.debug("Image interpretation took {} ms, {} replacements, {} mapped images", 
+            duration, result.replacements.size, result.imageMapping.size)
         return result
     }
 
@@ -228,6 +257,7 @@ class WebpageExtractionService(
         llmResults: LlmResults,
         sessionId: SessionId
     ): WebpageExtractionResult {
+        val imageMapping = llmResults.imageMapping
         val jsoupDoc = Jsoup.parse(snapshot.html)
 
         // ===== Step 1: Inject all identifiers into Jsoup document =====
@@ -277,51 +307,35 @@ class WebpageExtractionService(
         // ===== Step 6: Extract final text =====
         val extractedText = jsoupDomService.extractTextContent(jsoupDoc)
 
-        // Build markdown
-        val markdown = buildMarkdown(
+        // ===== Step 7: Format markdown using LLM =====
+        val markdown = markdownFormattingService.formatMarkdown(
+            rawText = extractedText,
             url = snapshot.url,
             title = snapshot.title,
             description = snapshot.description,
             popupText = popupText,
-            extractedText = extractedText
+            sessionId = sessionId
         )
 
         return WebpageExtractionResult(
             markdown = markdown,
             title = snapshot.title,
             description = snapshot.description,
-            imageHashes = llmResults.imageHashes
+            imageHashes = llmResults.imageHashes,
+            imageMapping = imageMapping
         )
     }
 
-    private fun buildMarkdown(
-        url: String,
-        title: String?,
-        description: String?,
-        popupText: String?,
-        extractedText: String
-    ): String = buildString {
-        appendLine("URL: $url")
-        appendLine("Title: $title")
-        if (!description.isNullOrBlank()) appendLine("Description: $description")
-        appendLine()
-        if (!popupText.isNullOrBlank()) appendLine(popupText)
-        appendLine()
-        appendLine(extractedText)
-    }.trim()
-
     /**
-     * Wraps extracted image text in XML tags with an image ID.
+     * Wraps extracted image text as markdown image syntax.
+     * Format: ![description](#img-N) where N is the sequential image number.
+     * 
+     * For multiline descriptions, uses a condensed single-line format.
      */
-    private fun wrapImageTextWithXmlTag(result: ImageExtractionResult): String? {
-        val text = result.extractedText ?: return null
-        val imageId = result.toImageId()
-
-        return if (text.contains('\n')) {
-            "<image id=\"$imageId\">\n$text\n</image>"
-        } else {
-            "<image id=\"$imageId\">$text</image>"
-        }
+    private fun wrapImageTextAsMarkdown(text: String, imageNumber: String): String {
+        // Condense multiline text to single line for markdown alt text
+        val condensedText = text.replace('\n', ' ').replace("\\s+".toRegex(), " ").trim()
+        return "![${condensedText}](#img-$imageNumber)"
     }
 
     /**

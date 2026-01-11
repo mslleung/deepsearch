@@ -179,6 +179,9 @@ class CacheOnlySearchOrchestrator(
 
             // Combine all markdown sources (including KG facts)
             val markdownSources = buildMarkdownSources(validWebpages, fileSearchResult, kgResult, domain)
+            
+            // Build URL-to-imageMapping lookup from cached webpages
+            val imageMappingByUrl = validWebpages.associate { it.url to it.imageMapping }
 
             // Step 2: Evaluate each markdown source in parallel
             // Cache-only search uses raw query as expandedQuery (no query processing)
@@ -188,7 +191,8 @@ class CacheOnlySearchOrchestrator(
                         val output = markdownSourceEvalAgent.generate(
                             MarkdownSourceEvalInput(
                                 markdownSource = source,
-                                expandedQuery = searchQuery.query
+                                expandedQuery = searchQuery.query,
+                                imageMapping = imageMappingByUrl[source.url]
                             )
                         )
                         

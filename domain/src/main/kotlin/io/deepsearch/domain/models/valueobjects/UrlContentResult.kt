@@ -28,7 +28,9 @@ sealed class UrlContentResult {
         override val url: String,
         override val title: String?,
         override val description: String?,
-        val markdown: String
+        val markdown: String,
+        /** Mapping of image numbers to hash IDs for new markdown format. Null for legacy format. */
+        val imageMapping: Map<String, String>? = null
     ) : UrlContentResult()
 
     /**

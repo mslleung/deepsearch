@@ -24,6 +24,12 @@ data class WebpageMarkdown(
      * Null for HTML type URLs.
      */
     val fileSearchDocumentName: String? = null,
+    /**
+     * Mapping of image numbers to original image hash IDs.
+     * Format: {"1": "img-abc123", "2": "img-def456"}
+     * Used to resolve ![description](#img-N) references in markdown back to actual image hashes.
+     */
+    val imageMapping: Map<String, String>? = null,
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now(),
     var version: Long = 0
