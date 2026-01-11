@@ -6,6 +6,7 @@ import io.deepsearch.domain.models.valueobjects.Email
 import io.deepsearch.domain.models.valueobjects.PasswordHash
 import io.deepsearch.domain.repositories.IUserRepository
 import io.deepsearch.infrastructure.config.infrastructureTestModule
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -26,10 +27,11 @@ class ExposedUserRepositoryTest : KoinTest {
         modules(infrastructureTestModule)
     }
 
+    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val userRepository by inject<IUserRepository>()
 
     @Test
-    fun `update increments version`() = runTest {
+    fun `update increments version`() = runTest(testCoroutineDispatcher) {
         val user = userRepository.save(
             User(
                 email = Email("optimistic@example.com"),
@@ -46,7 +48,7 @@ class ExposedUserRepositoryTest : KoinTest {
     }
 
     @Test
-    fun `stale update throws optimistic lock exception`() = runTest {
+    fun `stale update throws optimistic lock exception`() = runTest(testCoroutineDispatcher) {
         val baseline = userRepository.save(
             User(
                 email = Email("conflict@example.com"),

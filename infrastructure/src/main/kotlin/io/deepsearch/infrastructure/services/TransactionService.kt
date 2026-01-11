@@ -90,6 +90,12 @@ class TransactionService(
                 ?: throw IllegalStateException("Failed to acquire database connection")
 
             try {
+                // Ensure AGE is loaded and search_path includes ag_catalog for this connection.
+                // The database-level session_preload_libraries setting only affects new connections,
+                // so we explicitly initialize here to handle pooled connections that may have been
+                // created before the database settings were applied.
+                initializeAgeForConnection(connection)
+                
                 val statement = connection.createStatement(sql)
                 val results = mutableListOf<Map<String, String>>()
 
@@ -136,6 +142,12 @@ class TransactionService(
                 ?: throw IllegalStateException("Failed to acquire database connection")
 
             try {
+                // Ensure AGE is loaded and search_path includes ag_catalog for this connection.
+                // The database-level session_preload_libraries setting only affects new connections,
+                // so we explicitly initialize here to handle pooled connections that may have been
+                // created before the database settings were applied.
+                initializeAgeForConnection(connection)
+                
                 val statement = connection.createStatement(sql)
                 // Execute and consume results (even for mutations, AGE returns rows)
                 Flux.from(statement.execute())
@@ -152,6 +164,26 @@ class TransactionService(
                     logger.warn("Error closing connection: {}", e.message)
                 }
             }
+        }
+    }
+    
+    /**
+     * Initialize a connection for Apache AGE queries.
+     * Loads the AGE extension and sets the search_path to include ag_catalog.
+     * This is idempotent - safe to call multiple times on the same connection.
+     */
+    private suspend fun initializeAgeForConnection(connection: io.r2dbc.spi.Connection) {
+        try {
+            // LOAD 'age' ensures the AGE library is loaded for this session
+            // SET search_path ensures cypher() function is accessible without qualification
+            val initSql = "LOAD 'age'; SET search_path = public, \"\$user\", ag_catalog;"
+            Flux.from(connection.createStatement(initSql).execute())
+                .flatMap { result -> Flux.from(result.rowsUpdated) }
+                .asFlow()
+                .toList()
+        } catch (e: Exception) {
+            // Log but don't fail - AGE might already be loaded via session_preload_libraries
+            logger.debug("AGE initialization (may be redundant): {}", e.message)
         }
     }
 }
