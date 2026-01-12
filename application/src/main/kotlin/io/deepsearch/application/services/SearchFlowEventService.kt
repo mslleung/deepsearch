@@ -4,9 +4,8 @@ import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.entities.SearchFlowEventType
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.repositories.ISearchFlowEventRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 
 /**
@@ -15,7 +14,7 @@ import org.slf4j.LoggerFactory
  */
 interface ISearchFlowEventService {
     /**
-     * Emit an event - persists to DB asynchronously and returns mapped SearchEvent for SSE.
+     * Emit an event - persists to DB and returns mapped SearchEvent for SSE.
      * Called by orchestrator instead of directly sending to channel.
      * 
      * @param event The SearchFlowEvent to emit
@@ -68,10 +67,8 @@ data class TimelineStats(
  * 
  * This is the central service for the unified event system:
  * 1. Orchestrator calls emit() with SearchFlowEvent
- * 2. Event is persisted asynchronously for timeline visualization
+ * 2. Event is persisted for timeline visualization
  * 3. Mapped SearchEvent is returned for SSE streaming
- * 
- * The async persistence ensures that event emission doesn't slow down the search flow.
  */
 class SearchFlowEventService(
     private val repository: ISearchFlowEventRepository,
@@ -79,11 +76,10 @@ class SearchFlowEventService(
 ) : ISearchFlowEventService {
 
     private val logger = LoggerFactory.getLogger(SearchFlowEventService::class.java)
-    private val persistenceScope = CoroutineScope(Dispatchers.IO)
 
     override suspend fun emit(event: SearchFlowEvent): SearchEvent? {
-        // 1. Persist to database asynchronously (fire-and-forget)
-        persistenceScope.launch {
+        // 1. Persist to database (NonCancellable ensures completion even if caller is cancelled)
+        withContext(NonCancellable) {
             try {
                 repository.save(event)
             } catch (e: Exception) {

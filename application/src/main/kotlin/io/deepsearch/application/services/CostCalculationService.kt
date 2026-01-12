@@ -56,6 +56,10 @@ class CostCalculationService(
          * Source: https://ai.google.dev/gemini-api/docs/pricing
          */
         private val GEMINI_PRICING = mapOf(
+            // Pro models
+            ModelIds.GEMINI_2_5_PRO.modelId to Pair(1.25, 10.00),
+            ModelIds.GEMINI_3_PRO_PREVIEW.modelId to Pair(1.25, 10.00),
+
             // Flash models
             ModelIds.GEMINI_2_5_FLASH.modelId to Pair(0.15, 0.60),
             ModelIds.GEMINI_2_5_FLASH_PREVIEW.modelId to Pair(0.15, 0.60),
@@ -65,10 +69,6 @@ class CostCalculationService(
             ModelIds.GEMINI_2_5_FLASH_LITE.modelId to Pair(0.10, 0.40),
             ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId to Pair(0.10, 0.40),
             ModelIds.GEMINI_2_0_FLASH_LITE.modelId to Pair(0.075, 0.30),
-
-            // Pro models
-            ModelIds.GEMINI_2_5_PRO.modelId to Pair(1.25, 10.00),
-            ModelIds.GEMINI_3_PRO_PREVIEW.modelId to Pair(1.25, 10.00),
 
             // Embedding models (free for text input)
             ModelIds.GEMINI_EMBEDDING_001.modelId to Pair(0.0, 0.0),

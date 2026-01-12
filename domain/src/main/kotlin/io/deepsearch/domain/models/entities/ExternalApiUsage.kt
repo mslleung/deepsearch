@@ -36,7 +36,6 @@ data class ExternalApiUsage(
     companion object {
         // API name constants
         const val API_SERPER = "SERPER"
-        const val API_GOOGLE_MAPS = "GOOGLE_MAPS"
         
         // Serper endpoints
         const val ENDPOINT_SERPER_SEARCH = "/search"

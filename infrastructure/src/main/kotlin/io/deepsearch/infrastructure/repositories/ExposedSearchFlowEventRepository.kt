@@ -96,7 +96,6 @@ class ExposedSearchFlowEventRepository(
         searchFlowEventsTable.selectAll()
             .where { searchFlowEventsTable.sessionId eq sessionId.value }
             .count()
-            .toLong()
     }
 
     override suspend fun deleteBySessionId(sessionId: QuerySessionId): Long = transactionService.withTransaction {
@@ -169,7 +168,6 @@ class ExposedSearchFlowEventRepository(
             }
             is kotlinx.serialization.json.JsonArray -> element.map { jsonElementToAny(it) }
             is kotlinx.serialization.json.JsonObject -> element.mapValues { (_, v) -> jsonElementToAny(v) }
-            else -> element.toString()
         }
     }
 }

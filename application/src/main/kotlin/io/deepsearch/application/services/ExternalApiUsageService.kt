@@ -4,9 +4,8 @@ import io.deepsearch.domain.models.entities.ExternalApiUsage
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.ExternalApiUsageSummary
 import io.deepsearch.domain.repositories.IExternalApiUsageRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.util.UUID
 
@@ -60,7 +59,6 @@ interface IExternalApiUsageService {
 /**
  * Service for tracking external API usage (Serper, etc.) for cost calculation.
  * 
- * Records API calls asynchronously to avoid impacting search performance.
  * Provides methods to retrieve usage summaries for cost reporting.
  */
 class ExternalApiUsageService(
@@ -68,14 +66,13 @@ class ExternalApiUsageService(
 ) : IExternalApiUsageService {
 
     private val logger = LoggerFactory.getLogger(ExternalApiUsageService::class.java)
-    private val persistenceScope = CoroutineScope(Dispatchers.IO)
 
     override suspend fun recordSerperSearch(
         sessionId: SessionId,
         query: String,
         costUsd: Double
     ) {
-        persistenceScope.launch {
+        withContext(NonCancellable) {
             try {
                 val usage = ExternalApiUsage.serperSearch(
                     id = UUID.randomUUID().toString(),

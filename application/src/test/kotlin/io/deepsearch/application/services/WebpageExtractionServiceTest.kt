@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.application.config.applicationBenchmarkTestModule
 import io.deepsearch.application.config.applicationTestModule
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
@@ -20,7 +21,7 @@ class WebpageExtractionServiceTest : KoinTest {
     @JvmField
     @RegisterExtension
     val koinTestExtension = KoinTestExtension.create {
-        modules(applicationTestModule)
+        modules(applicationBenchmarkTestModule)
     }
 
     private val browserPool by inject<IBrowserPool>()
