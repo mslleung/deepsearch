@@ -79,6 +79,7 @@ val applicationModule = module {
     
     // Batch periodic index services (uses Gemini Batch API for cost-effective processing)
     singleOf(::BatchEventEmitter)
+    singleOf(::BatchTokenUsageRecorder) // Records token usage for batch operations
     singleOf(::CrawlAndExtractHandler)
     singleOf(::ContentLlmBatchHandler)
     singleOf(::TableInterpretationBatchHandler)

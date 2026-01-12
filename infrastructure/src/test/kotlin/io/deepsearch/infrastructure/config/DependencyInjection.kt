@@ -6,9 +6,11 @@ import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.proxy.IProxyRuleRepository
 import io.deepsearch.domain.repositories.*
+import io.deepsearch.domain.services.ITemporaryFileStorageService
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
 import io.deepsearch.infrastructure.services.*
+import io.deepsearch.infrastructure.storage.InMemoryTemporaryFileStorageService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.scopedOf
@@ -130,6 +132,9 @@ private val infrastructureCommonTestModule = module {
     
     // External API usage repository (for cost tracking)
     singleOf(::ExposedExternalApiUsageRepository) bind IExternalApiUsageRepository::class
+    
+    // In-memory temporary file storage for testing (replaces GCS in production)
+    singleOf(::InMemoryTemporaryFileStorageService) bind ITemporaryFileStorageService::class
 }
 
 val infrastructureTestModule = module {

@@ -2,7 +2,7 @@ package io.deepsearch.domain.models.valueobjects
 
 /**
  * Base class for session identifiers used to track operations across different contexts.
- * Sessions can originate from user queries or periodic index jobs.
+ * Sessions can originate from user queries, periodic index jobs, or batch periodic index jobs.
  */
 sealed class SessionId {
     abstract val value: String
@@ -14,10 +14,12 @@ sealed class SessionId {
     fun toStorageString(): String = when (this) {
         is QuerySessionId -> "query:$value"
         is PeriodicIndexSessionId -> "periodic:$jobId"
+        is BatchPeriodicIndexSessionId -> "batch:$jobId"
     }
 
     companion object {
         private val PERIODIC_PATTERN = Regex("""periodic:(\d+)""")
+        private val BATCH_PATTERN = Regex("""batch:(\d+)""")
         private val QUERY_PATTERN = Regex("""query:(.+)""")
 
         /**
@@ -27,6 +29,9 @@ sealed class SessionId {
         fun fromStorageString(storage: String): SessionId {
             PERIODIC_PATTERN.matchEntire(storage)?.let { match ->
                 return PeriodicIndexSessionId(match.groupValues[1].toLong())
+            }
+            BATCH_PATTERN.matchEntire(storage)?.let { match ->
+                return BatchPeriodicIndexSessionId(match.groupValues[1].toLong())
             }
             QUERY_PATTERN.matchEntire(storage)?.let { match ->
                 return QuerySessionId(match.groupValues[1])
@@ -53,3 +58,10 @@ data class PeriodicIndexSessionId(val jobId: Long) : SessionId() {
     override val value: String get() = "periodic-index-job-$jobId"
 }
 
+/**
+ * Session ID for batch periodic index job sessions.
+ * Used for cost tracking of batch API operations.
+ */
+data class BatchPeriodicIndexSessionId(val jobId: Long) : SessionId() {
+    override val value: String get() = "batch-periodic-index-job-$jobId"
+}

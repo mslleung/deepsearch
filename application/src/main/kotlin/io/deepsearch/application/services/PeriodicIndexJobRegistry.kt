@@ -392,8 +392,9 @@ class PeriodicIndexJobRegistry(
         job: PeriodicIndexJob
     ): Flow<WebpageLink> = flow {
         try {
+            val sessionId = PeriodicIndexSessionId(jobId)
             val query = SearchQuery(rawQuery = job.baseUrl, url = job.baseUrl)
-            val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(query)
+            val serperLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(query, sessionId)
                 .filter { 
                     val url = normalize(it.url)
                     url.startsWith(job.baseUrl) && matchesLanguageFilter(url, job)

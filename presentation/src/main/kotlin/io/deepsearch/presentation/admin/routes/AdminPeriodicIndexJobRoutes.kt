@@ -18,6 +18,11 @@ fun Application.configureAdminPeriodicIndexJobRoutes() {
                 controller.getPeriodicIndexJobById(call)
             }
 
+            get("/{id}/cost") {
+                val controller = call.scope.get<AdminPeriodicIndexJobController>()
+                controller.getPeriodicIndexJobCost(call)
+            }
+
             post("/{id}/stop") {
                 val controller = call.scope.get<AdminPeriodicIndexJobController>()
                 controller.stopPeriodicIndexJob(call)

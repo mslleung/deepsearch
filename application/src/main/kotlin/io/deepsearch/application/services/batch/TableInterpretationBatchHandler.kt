@@ -38,7 +38,8 @@ class TableInterpretationBatchHandler(
     private val jsoupDomService: IJsoupDomService,
     private val boundingBoxDerivationService: IBoundingBoxDerivationService,
     private val tableInterpretationService: ITableInterpretationService,
-    private val eventEmitter: BatchEventEmitter
+    private val eventEmitter: BatchEventEmitter,
+    private val batchTokenUsageRecorder: BatchTokenUsageRecorder
 ) : IBatchStageHandler {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -301,6 +302,11 @@ class TableInterpretationBatchHandler(
         logger.info("[{}] Processing table batch results from: {}", jobId, batchJobId)
 
         val results = geminiBatchService.fetchBatchResults(batchJobId)
+        
+        // Record token usage for table interpretation batch
+        val modelId = "gemini-2.5-flash-lite-preview-09-2025" // Table interpretation uses Flash Lite
+        batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "TableInterpretationBatch", modelId, results)
+        
         val batchJobIdTyped = BatchJobId(jobId)
         val mappings = tableInterpretationMappings.remove(batchJobIdTyped) ?: emptyList()
 

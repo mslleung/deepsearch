@@ -1,8 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
 import io.deepsearch.domain.models.entities.LlmTokenUsage
-import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
-import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.repositories.ILlmTokenUsageRepository
 import io.deepsearch.domain.repositories.TokenUsageSummary
@@ -20,9 +18,12 @@ import kotlin.time.Instant
 /**
  * Exposed ORM implementation of LlmTokenUsageRepository.
  * 
- * Handles both query sessions and periodic index jobs:
- * - For QuerySessionId: stores in query_session_id column
- * - For PeriodicIndexSessionId: stores in periodic_index_job_id column
+ * Uses a unified session_id column with storage string format:
+ * - For query sessions: "query:xxx"
+ * - For periodic index jobs: "periodic:123"
+ * - For batch periodic index jobs: "batch:456"
+ * 
+ * This is consistent with ExternalApiUsageRepository's approach.
  */
 @OptIn(ExperimentalTime::class)
 class ExposedLlmTokenUsageRepository(
@@ -33,21 +34,7 @@ class ExposedLlmTokenUsageRepository(
     override suspend fun save(usage: LlmTokenUsage): LlmTokenUsage = transactionService.withTransaction {
         llmTokenUsageTable.insert {
             it[id] = usage.id
-            // Store session ID in appropriate column based on type
-            when (val sessionId = usage.sessionId) {
-                is QuerySessionId -> {
-                    it[querySessionId] = sessionId.value
-                    it[periodicIndexJobId] = null
-                }
-                is PeriodicIndexSessionId -> {
-                    it[querySessionId] = null
-                    it[periodicIndexJobId] = sessionId.jobId
-                }
-                null -> {
-                    it[querySessionId] = null
-                    it[periodicIndexJobId] = null
-                }
-            }
+            it[sessionId] = usage.sessionId?.toStorageString() ?: ""
             it[agentName] = usage.agentName
             it[modelName] = usage.modelName
             it[promptTokens] = usage.promptTokens
@@ -60,37 +47,19 @@ class ExposedLlmTokenUsageRepository(
     }
 
     override suspend fun findBySessionId(sessionId: SessionId): List<LlmTokenUsage> = transactionService.withTransaction {
-        when (sessionId) {
-            is QuerySessionId -> {
-                llmTokenUsageTable.selectAll()
-                    .where { llmTokenUsageTable.querySessionId eq sessionId.value }
-                    .map { mapRowToLlmTokenUsage(it) }
-                    .toList()
-            }
-            is PeriodicIndexSessionId -> {
-                llmTokenUsageTable.selectAll()
-                    .where { llmTokenUsageTable.periodicIndexJobId eq sessionId.jobId }
-                    .map { mapRowToLlmTokenUsage(it) }
-                    .toList()
-            }
-        }
+        val storageString = sessionId.toStorageString()
+        llmTokenUsageTable.selectAll()
+            .where { llmTokenUsageTable.sessionId eq storageString }
+            .map { mapRowToLlmTokenUsage(it) }
+            .toList()
     }
 
     override suspend fun getTotalTokensBySessionId(sessionId: SessionId): TokenUsageSummary = transactionService.withTransaction {
-        val records = when (sessionId) {
-            is QuerySessionId -> {
-                llmTokenUsageTable.selectAll()
-                    .where { llmTokenUsageTable.querySessionId eq sessionId.value }
-                    .map { it }
-                    .toList()
-            }
-            is PeriodicIndexSessionId -> {
-                llmTokenUsageTable.selectAll()
-                    .where { llmTokenUsageTable.periodicIndexJobId eq sessionId.jobId }
-                    .map { it }
-                    .toList()
-            }
-        }
+        val storageString = sessionId.toStorageString()
+        val records = llmTokenUsageTable.selectAll()
+            .where { llmTokenUsageTable.sessionId eq storageString }
+            .map { it }
+            .toList()
         
         val totalPromptTokens = records.sumOf { it[llmTokenUsageTable.promptTokens].toLong() }
         val totalOutputTokens = records.sumOf { it[llmTokenUsageTable.outputTokens].toLong() }
@@ -106,13 +75,11 @@ class ExposedLlmTokenUsageRepository(
     }
 
     private fun mapRowToLlmTokenUsage(row: ResultRow): LlmTokenUsage {
-        // Reconstruct SessionId from either column
-        val sessionId: SessionId? = when {
-            row[llmTokenUsageTable.querySessionId] != null -> 
-                QuerySessionId(row[llmTokenUsageTable.querySessionId]!!)
-            row[llmTokenUsageTable.periodicIndexJobId] != null -> 
-                PeriodicIndexSessionId(row[llmTokenUsageTable.periodicIndexJobId]!!)
-            else -> null
+        val sessionIdStr = row[llmTokenUsageTable.sessionId]
+        val sessionId: SessionId? = if (sessionIdStr.isNotEmpty()) {
+            SessionId.fromStorageString(sessionIdStr)
+        } else {
+            null
         }
         
         return LlmTokenUsage(
@@ -127,4 +94,3 @@ class ExposedLlmTokenUsageRepository(
         )
     }
 }
-

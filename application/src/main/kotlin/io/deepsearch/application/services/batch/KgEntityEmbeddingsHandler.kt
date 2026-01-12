@@ -27,7 +27,8 @@ class KgEntityEmbeddingsHandler(
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val geminiBatchService: IGeminiBatchService,
     private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService,
-    private val eventEmitter: BatchEventEmitter
+    private val eventEmitter: BatchEventEmitter,
+    private val batchTokenUsageRecorder: BatchTokenUsageRecorder
 ) : IBatchStageHandler {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -127,6 +128,9 @@ class KgEntityEmbeddingsHandler(
             // Fetch results
             val batchResults = geminiBatchService.fetchBatchResults(batchJobId)
             logger.info("[{}] Retrieved {} entity embedding results", jobId, batchResults.size)
+            
+            // Record token usage for entity embedding batch (embeddings are free but we track for completeness)
+            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "KgEntityEmbeddingBatch", "gemini-embedding-001", batchResults)
 
             // Build entity embeddings map
             val entityEmbeddings = mutableMapOf<String, List<Float>>()

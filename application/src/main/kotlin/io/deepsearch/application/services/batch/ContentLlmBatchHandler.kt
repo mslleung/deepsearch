@@ -43,7 +43,8 @@ class ContentLlmBatchHandler(
     private val tableIdentificationService: ITableIdentificationService,
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
-    private val eventEmitter: BatchEventEmitter
+    private val eventEmitter: BatchEventEmitter,
+    private val batchTokenUsageRecorder: BatchTokenUsageRecorder
 ) : IBatchStageHandler {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -276,6 +277,11 @@ class ContentLlmBatchHandler(
         val newIconResults = mutableMapOf<MediaHash, String?>()
         if (batches.iconId != null) {
             val iconResults = geminiBatchService.fetchBatchResults(batches.iconId)
+            
+            // Record token usage for icon batch
+            val iconModelId = preparations.iconPrep.pendingRequests.firstOrNull()?.request?.modelId ?: "unknown"
+            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "IconInterpretationBatch", iconModelId, iconResults)
+            
             iconResults.forEachIndexed { index, result ->
                 val pending = preparations.iconPrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 if (result.success && result.generatedText != null) {
@@ -294,6 +300,11 @@ class ContentLlmBatchHandler(
         val imagesWithTables = mutableMapOf<MediaHash, MediaData>()
         if (batches.imageClassId != null) {
             val imageResults = geminiBatchService.fetchBatchResults(batches.imageClassId)
+            
+            // Record token usage for image classification batch
+            val imageModelId = preparations.imagePrep.pendingRequests.firstOrNull()?.request?.modelId ?: "unknown"
+            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "ImageClassificationBatch", imageModelId, imageResults)
+            
             imageResults.forEachIndexed { index, result ->
                 val pending = preparations.imagePrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 if (result.success && result.generatedText != null) {
@@ -342,6 +353,11 @@ class ContentLlmBatchHandler(
             pollBatchUntilComplete(job, eventFlow, tableExtractBatchId)
             
             val extractResults = geminiBatchService.fetchBatchResults(tableExtractBatchId)
+            
+            // Record token usage for image table extraction batch
+            val tableExtractModelId = tableExtractPrep.pendingRequests.firstOrNull()?.request?.modelId ?: "unknown"
+            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "ImageTableExtractionBatch", tableExtractModelId, extractResults)
+            
             extractResults.forEachIndexed { index, result ->
                 val pending = tableExtractPrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 if (result.success && result.generatedText != null) {
@@ -366,6 +382,11 @@ class ContentLlmBatchHandler(
         // Process semantic results
         if (batches.semanticId != null) {
             val semanticResults = geminiBatchService.fetchBatchResults(batches.semanticId)
+            
+            // Record token usage for semantic batch
+            val semanticModelId = preparations.semanticPrep.pendingRequests.firstOrNull()?.request?.modelId ?: "unknown"
+            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "SemanticIdentificationBatch", semanticModelId, semanticResults)
+            
             semanticResults.forEachIndexed { index, result ->
                 val pending = preparations.semanticPrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 val urlState = urlStates.find { it.id == pending.urlStateId.value } ?: return@forEachIndexed
@@ -395,6 +416,11 @@ class ContentLlmBatchHandler(
         // Process table identification results
         if (batches.tableId != null) {
             val tableResults = geminiBatchService.fetchBatchResults(batches.tableId)
+            
+            // Record token usage for table identification batch
+            val tableModelId = preparations.tablePrep.pendingRequests.firstOrNull()?.request?.modelId ?: "unknown"
+            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "TableIdentificationBatch", tableModelId, tableResults)
+            
             tableResults.forEachIndexed { index, result ->
                 val pending = preparations.tablePrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 val urlState = urlStates.find { it.id == pending.urlStateId.value } ?: return@forEachIndexed

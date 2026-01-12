@@ -6,16 +6,16 @@ import org.jetbrains.exposed.v1.core.Table
  * Database table for storing LLM token usage records.
  * Tracks token usage from all LLM API calls for cost analysis.
  * 
- * Supports both query sessions and periodic index jobs:
- * - For query sessions: query_session_id is set, periodic_index_job_id is null
- * - For periodic index jobs: periodic_index_job_id is set, query_session_id is null
+ * Uses a unified session_id column with storage string format:
+ * - For query sessions: "query:xxx"
+ * - For periodic index jobs: "periodic:123"
+ * - For batch periodic index jobs: "batch:456"
+ * 
+ * This is consistent with ExternalApiUsageTable's approach.
  */
-class LlmTokenUsageTable(
-    private val querySessionTable: QuerySessionTable
-) : Table("llm_token_usage") {
+class LlmTokenUsageTable : Table("llm_token_usage") {
     val id = varchar("id", 255)
-    val querySessionId = varchar("query_session_id", 255).nullable()
-    val periodicIndexJobId = long("periodic_index_job_id").nullable()
+    val sessionId = varchar("session_id", 255).index()
     val agentName = varchar("agent_name", 255)
     val modelName = varchar("model_name", 255)
     val promptTokens = integer("prompt_tokens")
@@ -25,4 +25,3 @@ class LlmTokenUsageTable(
 
     override val primaryKey = PrimaryKey(id)
 }
-

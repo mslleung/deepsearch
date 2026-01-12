@@ -48,7 +48,8 @@ class ParallelEmbeddingAndKgHandler(
     private val webpageCacheService: IWebpageCacheService,
     private val hybridSearchIndexingService: IHybridSearchIndexingService,
     private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService,
-    private val eventEmitter: BatchEventEmitter
+    private val eventEmitter: BatchEventEmitter,
+    private val batchTokenUsageRecorder: BatchTokenUsageRecorder
 ) : IBatchStageHandler {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -184,6 +185,9 @@ class ParallelEmbeddingAndKgHandler(
                 try {
                     val batchResults = geminiBatchService.fetchBatchResults(batchId)
                     logger.info("[{}] Retrieved {} embedding batch results", jobId, batchResults.size)
+                    
+                    // Record token usage for embedding batch (embeddings are free but we track for completeness)
+                    batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "PageEmbeddingBatch", "gemini-embedding-001", batchResults)
 
                     batchResults.forEachIndexed { index, result ->
                         val requestId = embeddingRequests.getOrNull(index)?.requestId ?: return@forEachIndexed
@@ -205,6 +209,10 @@ class ParallelEmbeddingAndKgHandler(
                 try {
                     val batchResults = geminiBatchService.fetchBatchResults(batchId)
                     logger.info("[{}] Retrieved {} KG batch results", jobId, batchResults.size)
+                    
+                    // Record token usage for KG extraction batch
+                    val kgModelId = kgRequests.firstOrNull()?.request?.modelId ?: "unknown"
+                    batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "KgExtractionBatch", kgModelId, batchResults)
 
                     batchResults.forEachIndexed { index, result ->
                         val kgRequest = kgRequests.getOrNull(index) ?: return@forEachIndexed

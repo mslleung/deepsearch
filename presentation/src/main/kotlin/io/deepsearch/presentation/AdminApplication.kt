@@ -41,6 +41,7 @@ fun Application.adminModule() {
     configureAdminUsageRoutes()
     configureAdminQuerySessionRoutes()
     configureAdminPeriodicIndexJobRoutes()
+    configureAdminBatchPeriodicIndexJobRoutes()
 }
 
 private fun Application.configureSerialization() {

@@ -91,11 +91,15 @@ private val applicationCommonTestModule = module {
     singleOf(::HybridSearchIndexingService) bind IHybridSearchIndexingService::class
     singleOf(::KnowledgeGraphIndexingService) bind IKnowledgeGraphIndexingService::class
     
+    // Knowledge Graph query services
+    singleOf(::KgHybridRetrievalService) bind IKgHybridRetrievalService::class
+    
     // Markdown indexing worker (starts automatically via init block)
     singleOf(::MarkdownIndexingWorker) bind IMarkdownIndexingWorker::class
     
     // Batch periodic index services
     singleOf(::BatchEventEmitter)
+    singleOf(::BatchTokenUsageRecorder) // Records token usage for batch operations
     singleOf(::CrawlAndExtractHandler)
     singleOf(::ContentLlmBatchHandler)
     singleOf(::TableInterpretationBatchHandler)
