@@ -4,6 +4,26 @@ import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.entities.SearchFlowEventType
 
 /**
+ * Interface for SearchFlowEventMapper.
+ * Maps SearchFlowEvent (unified timeline events) to SearchEvent (SSE streaming events).
+ */
+interface ISearchFlowEventMapper {
+    /**
+     * Maps a SearchFlowEvent to its corresponding SearchEvent for SSE streaming.
+     * 
+     * @param event The unified flow event from the orchestrator
+     * @return The mapped SSE event, or null if this event type doesn't have an SSE equivalent
+     */
+    fun toStreamingSearchEndpointEvent(event: SearchFlowEvent): SearchEvent?
+
+    /**
+     * Check if a SearchFlowEventType should be sent to the streaming search endpoint.
+     * Useful for filtering which events to send over SSE.
+     */
+    fun isStreamingSearchEndpointEvent(eventType: SearchFlowEventType): Boolean
+}
+
+/**
  * Maps SearchFlowEvent (unified timeline events) to SearchEvent (SSE streaming events).
  * 
  * This mapper is the bridge between the internal event system (SearchFlowEvent) and
@@ -15,16 +35,10 @@ import io.deepsearch.domain.models.entities.SearchFlowEventType
  * 2. Timeline events can be persisted for debugging without affecting the SSE stream
  * 3. The orchestrator only needs to emit one type of event
  */
-class SearchFlowEventMapper {
+class SearchFlowEventMapper : ISearchFlowEventMapper {
 
-    /**
-     * Maps a SearchFlowEvent to its corresponding SearchEvent for SSE streaming.
-     * 
-     * @param event The unified flow event from the orchestrator
-     * @return The mapped SSE event, or null if this event type doesn't have an SSE equivalent
-     */
     @Suppress("UNCHECKED_CAST")
-    fun toSearchEvent(event: SearchFlowEvent): SearchEvent? = when (event.eventType) {
+    override fun toStreamingSearchEndpointEvent(event: SearchFlowEvent): SearchEvent? = when (event.eventType) {
         SearchFlowEventType.SESSION_STARTED -> SearchEvent.SessionCreated(
             sessionId = event.sessionId,
             query = event.query ?: "",
@@ -126,11 +140,7 @@ class SearchFlowEventMapper {
         SearchFlowEventType.SYNTHESIS_STARTED -> null
     }
 
-    /**
-     * Check if a SearchFlowEventType has an SSE equivalent.
-     * Useful for filtering which events to send over SSE.
-     */
-    fun hasSSEEquivalent(eventType: SearchFlowEventType): Boolean = when (eventType) {
+    override fun isStreamingSearchEndpointEvent(eventType: SearchFlowEventType): Boolean = when (eventType) {
         SearchFlowEventType.SESSION_STARTED,
         SearchFlowEventType.URL_PROCESSING_STARTED,
         SearchFlowEventType.URL_HTML_PREVIEW_READY,

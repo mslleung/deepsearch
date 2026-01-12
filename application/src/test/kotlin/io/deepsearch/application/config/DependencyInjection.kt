@@ -81,6 +81,12 @@ private val applicationCommonTestModule = module {
     singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
     singleOf(::QueryProcessingService) bind IQueryProcessingService::class
     
+    // Search flow event tracking services (for timeline visualization)
+    singleOf(::SearchFlowEventMapper) bind ISearchFlowEventMapper::class
+    singleOf(::SearchFlowEventService) bind ISearchFlowEventService::class
+    singleOf(::ExternalApiUsageService) bind IExternalApiUsageService::class
+    singleOf(::CostCalculationService) bind ICostCalculationService::class
+    
     // Indexing services (handle both interactive fire-and-forget and batch modes)
     singleOf(::HybridSearchIndexingService) bind IHybridSearchIndexingService::class
     singleOf(::KnowledgeGraphIndexingService) bind IKnowledgeGraphIndexingService::class

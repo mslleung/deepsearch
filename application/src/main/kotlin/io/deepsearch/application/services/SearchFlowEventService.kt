@@ -75,7 +75,7 @@ data class TimelineStats(
  */
 class SearchFlowEventService(
     private val repository: ISearchFlowEventRepository,
-    private val mapper: SearchFlowEventMapper
+    private val mapper: ISearchFlowEventMapper
 ) : ISearchFlowEventService {
 
     private val logger = LoggerFactory.getLogger(SearchFlowEventService::class.java)
@@ -92,7 +92,7 @@ class SearchFlowEventService(
         }
 
         // 2. Map to SearchEvent for SSE (returns null if no SSE equivalent)
-        return mapper.toSearchEvent(event)
+        return mapper.toStreamingSearchEndpointEvent(event)
     }
 
     override suspend fun getEventsForSession(sessionId: QuerySessionId): List<SearchFlowEvent> {

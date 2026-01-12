@@ -41,7 +41,7 @@ val applicationModule = module {
     singleOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
     
     // Search flow event tracking services (for timeline visualization)
-    singleOf(::SearchFlowEventMapper)
+    singleOf(::SearchFlowEventMapper) bind ISearchFlowEventMapper::class
     singleOf(::SearchFlowEventService) bind ISearchFlowEventService::class
     singleOf(::ExternalApiUsageService) bind IExternalApiUsageService::class
     singleOf(::CostCalculationService) bind ICostCalculationService::class

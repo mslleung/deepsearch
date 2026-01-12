@@ -81,6 +81,12 @@ private val infrastructureCommonTestModule = module {
     
     // Website context cache table (for query processing)
     singleOf(::WebsiteContextTable)
+    
+    // Search flow events table (for timeline visualization)
+    singleOf(::SearchFlowEventsTable)
+    
+    // External API usage table (for cost tracking)
+    singleOf(::ExternalApiUsageTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -118,6 +124,12 @@ private val infrastructureCommonTestModule = module {
     
     // Website context cache repository (for query processing)
     singleOf(::ExposedWebsiteContextRepository) bind IWebsiteContextRepository::class
+    
+    // Search flow events repository (for timeline visualization)
+    singleOf(::ExposedSearchFlowEventRepository) bind ISearchFlowEventRepository::class
+    
+    // External API usage repository (for cost tracking)
+    singleOf(::ExposedExternalApiUsageRepository) bind IExternalApiUsageRepository::class
 }
 
 val infrastructureTestModule = module {
