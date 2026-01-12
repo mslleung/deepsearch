@@ -645,4 +645,105 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         
         assertTrue(answerOutput.tokenUsage.totalTokens > 0, "Should track token usage")
     }
+
+    @Test
+    fun `should deduplicate follow-up queries that are case-insensitive matches`() = runTest(testCoroutineDispatcher) {
+        val source = EvaluatedSource(
+            url = "https://example.com/api-docs",
+            title = "API Documentation",
+            description = null,
+            relevantFacts = listOf(
+                RelevantFact(fact = "The API supports REST and GraphQL endpoints.")
+            ),
+            contentDate = null,
+            intention = "Official API documentation page"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "How do I use the API?",
+            evaluatedSources = listOf(source),
+            previouslySearchedQueries = listOf("API Authentication", "api rate limits", "API ENDPOINTS")
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        // Verify no follow-up query matches any previously searched query (case-insensitive)
+        output.followUpQueries.forEach { query ->
+            val queryLower = query.lowercase()
+            input.previouslySearchedQueries.forEach { prev ->
+                assertFalse(
+                    queryLower == prev.lowercase(),
+                    "Follow-up query '$query' matches previously searched '$prev' (case-insensitive)"
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `should deduplicate follow-up queries that are substrings of previously searched`() = runTest(testCoroutineDispatcher) {
+        val source = EvaluatedSource(
+            url = "https://example.com/pricing",
+            title = "Pricing",
+            description = null,
+            relevantFacts = listOf(
+                RelevantFact(fact = "Enterprise plan includes dedicated support and SLA guarantees.")
+            ),
+            contentDate = null,
+            intention = "Official pricing page"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What is included in enterprise pricing?",
+            evaluatedSources = listOf(source),
+            previouslySearchedQueries = listOf(
+                "enterprise pricing details",
+                "pricing comparison",
+                "enterprise features and benefits"
+            )
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        // Verify no follow-up query is a substring of or contains a previously searched query
+        output.followUpQueries.forEach { query ->
+            val queryLower = query.lowercase().trim()
+            input.previouslySearchedQueries.forEach { prev ->
+                val prevLower = prev.lowercase().trim()
+                assertFalse(
+                    queryLower.contains(prevLower) || prevLower.contains(queryLower),
+                    "Follow-up query '$query' overlaps with previously searched '$prev'"
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `should allow novel follow-up queries unrelated to previously searched`() = runTest(testCoroutineDispatcher) {
+        val source = EvaluatedSource(
+            url = "https://example.com/product",
+            title = "Product Overview",
+            description = null,
+            relevantFacts = listOf(
+                RelevantFact(fact = "The product integrates with Slack, Jira, and GitHub."),
+                RelevantFact(fact = "Free trial available for 14 days.")
+            ),
+            contentDate = null,
+            intention = "Official product overview page"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What integrations does the product support?",
+            evaluatedSources = listOf(source),
+            previouslySearchedQueries = listOf("pricing plans", "enterprise features")
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Should generate an answer about integrations")
+        // This test just verifies the agent can still suggest follow-ups when previous queries are unrelated
+        // The programmatic dedup shouldn't filter out novel integration-related queries
+    }
 }

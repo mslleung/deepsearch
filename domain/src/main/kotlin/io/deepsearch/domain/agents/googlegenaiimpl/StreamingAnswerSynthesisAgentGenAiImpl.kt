@@ -160,9 +160,10 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         ## Step 3: Generate Answer
         
         - Synthesize facts into a comprehensive, standalone answer for answering the original query and the requirements
+        - Eagerly provide as much information as possible
         - Use markdown formatting (headings, lists, bold)
         - Same language as the query
-        - Only include information from provided facts
+        - Only include information from provided facts, do not invent
         - When facts conflict, note the conflicts and present as much information as possible
         - Cite the sources by appending [1], [2] etc. where the number is the position of the source in citedSourceUrls
         - citedSourceUrls should only cite sources that are used in the answer
@@ -172,7 +173,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Suggest queries that could enhance or extend the current answer
         - Focus on related information that would make the answer more complete
         - These are independent of the assessment - even complete answers can have useful follow-ups
-        - Check the "Follow-up queries" section for queries that have already been searched, do not duplicate queries
+        - CRITICAL: Check "Previously searched queries" section - NEVER suggest any query that appears there or is semantically equivalent
         
         ## Output Format
         {
@@ -319,12 +320,19 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
         val answerAssessment = response.toAnswerAssessment()
 
+        // Programmatic deduplication as safety measure
+        val dedupedFollowUpQueries = deduplicateFollowUpQueries(
+            response.followUpQueries,
+            input.previouslySearchedQueries
+        )
+
         logger.debug(
-            "Answer synthesis complete: {} chars, status: {}, {} images, citedSources: {}, followUpQueries: {}",
+            "Answer synthesis complete: {} chars, status: {}, {} images, citedSources: {}, followUpQueries: {} (deduped from {})",
             response.answer.length,
             response.continuation_status,
             originalImageIds.size,
             response.citedSourceUrls.size,
+            dedupedFollowUpQueries.size,
             response.followUpQueries.size
         )
 
@@ -333,7 +341,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             citedSourceUrls = response.citedSourceUrls,
             assessment = answerAssessment,
             status = response.continuation_status,
-            followUpQueries = response.followUpQueries,
+            followUpQueries = dedupedFollowUpQueries,
             imageIds = originalImageIds,
             tokenUsage = tokenUsage
         )
@@ -443,15 +451,21 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         // Extract assessment, status, citedSourceUrls, followUpQueries, and imageIds from the complete JSON
         val citedSourceUrls = extractCitedSourceUrls(accumulatedJson)
         val status = extractStatus(accumulatedJson)
-        val followUpQueries = extractFollowUpQueries(accumulatedJson)
+        val rawFollowUpQueries = extractFollowUpQueries(accumulatedJson)
         val numberedImageIds = extractImageIds(accumulatedJson)
         val assessment = extractAssessment(accumulatedJson)
+        
+        // Programmatic deduplication as safety measure
+        val followUpQueries = deduplicateFollowUpQueries(
+            rawFollowUpQueries,
+            input.previouslySearchedQueries
+        )
         
         // Map LLM-selected numbered image IDs back to original hash-based IDs
         val originalImageIds = mapSelectedImagesToOriginal(numberedImageIds, globalImages)
         
-        logger.debug("Streaming answer synthesis complete: {} chars total, status: {}, {} images, citedSources: {}, followUpQueries: {}", 
-            lastAnswerLength, status, originalImageIds.size, citedSourceUrls.size, followUpQueries.size)
+        logger.debug("Streaming answer synthesis complete: {} chars total, status: {}, {} images, citedSources: {}, followUpQueries: {} (deduped from {})", 
+            lastAnswerLength, status, originalImageIds.size, citedSourceUrls.size, followUpQueries.size, rawFollowUpQueries.size)
         emit(StreamingAnswerStreamItem.Complete(
             tokenUsage = tokenUsage,
             assessment = assessment,
@@ -491,6 +505,29 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         return stringRegex.findAll(arrayContent)
             .map { it.groupValues[1] }
             .toList()
+    }
+
+    /**
+     * Deduplicate follow-up queries against previously searched queries.
+     * Uses case-insensitive comparison and removes queries that are substrings or superstrings.
+     */
+    private fun deduplicateFollowUpQueries(
+        followUpQueries: List<String>,
+        previouslySearchedQueries: List<String>
+    ): List<String> {
+        if (previouslySearchedQueries.isEmpty()) return followUpQueries
+        
+        val previousLowercase = previouslySearchedQueries.map { it.lowercase().trim() }
+        
+        return followUpQueries.filter { query ->
+            val queryLower = query.lowercase().trim()
+            // Filter out if exact match, or if query contains/is contained by a previous query
+            previousLowercase.none { prev ->
+                queryLower == prev ||
+                    queryLower.contains(prev) ||
+                    prev.contains(queryLower)
+            }
+        }
     }
 
     /**
@@ -709,7 +746,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             
             // Previously searched queries for follow-up deduplication
             if (input.previouslySearchedQueries.isNotEmpty()) {
-                appendLine("# Follow-up queries")
+                appendLine("# Previously searched queries (DO NOT suggest these again)")
                 input.previouslySearchedQueries.forEach { query ->
                     appendLine("- $query")
                 }
