@@ -104,7 +104,7 @@ class LinkDiscoveryFacadeService(
             // 1. SERP Search
             flow {
                 try {
-                    val serpLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(currentSearchQuery)
+                    val serpLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(currentSearchQuery, sessionId)
                     logger.debug("[{}] SERP discovery for '{}': {} links", sessionId.value, query, serpLinks.size)
                     serpLinks.forEach { onLinkDiscovered(DiscoveredLink(it, query)) }
                 } catch (e: CancellationException) {
@@ -222,7 +222,7 @@ class LinkDiscoveryFacadeService(
         sessionId: QuerySessionId
     ): Flow<WebpageLink> = flow {
         try {
-            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery).forEach { emit(it) }
+            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery, sessionId).forEach { emit(it) }
         } catch (e: Exception) {
             logger.error("[{}] SERP search failed: {}", sessionId.value, e.message)
         }

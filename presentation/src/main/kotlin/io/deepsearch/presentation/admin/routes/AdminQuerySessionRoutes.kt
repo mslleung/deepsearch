@@ -12,6 +12,15 @@ fun Application.configureAdminQuerySessionRoutes() {
                 val controller = call.scope.get<AdminQuerySessionController>()
                 controller.getQuerySessionById(call)
             }
+            
+            /**
+             * Get the search flow timeline for a session, including events and cost breakdown.
+             * Used by the admin UI to visualize search flow and analyze costs.
+             */
+            get("/{id}/timeline") {
+                val controller = call.scope.get<AdminQuerySessionController>()
+                controller.getTimeline(call)
+            }
         }
     }
 }

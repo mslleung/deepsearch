@@ -2,9 +2,12 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.application.services.IQuerySessionService
+import io.deepsearch.application.services.ISearchFlowEventService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.SearchEvent
+import io.deepsearch.domain.models.entities.SearchFlowEvent
+import io.deepsearch.domain.models.entities.SearchFlowEventType
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.exceptions.MarkdownConversionException
@@ -94,6 +97,8 @@ class AgenticBrowserSearchOrchestrator(
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val queryProcessingService: IQueryProcessingService,
+    // Event tracking (for timeline visualization)
+    private val searchFlowEventService: ISearchFlowEventService,
     // URL utilities
     private val normalizeUrlService: INormalizeUrlService
 ) : IAgenticBrowserSearchOrchestrator {
@@ -133,15 +138,8 @@ class AgenticBrowserSearchOrchestrator(
         val sessionId = session.id
 
         try {
-            // Emit session created
-            send(
-                SearchEvent.SessionCreated(
-                    sessionId = sessionId,
-                    query = searchQuery.query,
-                    url = searchQuery.url,
-                    mode = "live-crawling"
-                )
-            )
+            // Emit session created (persists to timeline + SSE)
+            emitSessionStarted(sessionId, searchQuery.query, searchQuery.url, channel)
             logger.debug("[{}] Executing search for query: {}", sessionId.value, searchQuery.query)
 
             // Query processing flow - runs in parallel with discovery (no latency penalty)
@@ -398,13 +396,12 @@ class AgenticBrowserSearchOrchestrator(
                         if (newQueries.isNotEmpty()) {
                             logger.info("[{}] Follow-up queries from synthesis: {}", sessionId.value, newQueries)
 
-                            channel.send(
-                                SearchEvent.FollowUpSearchStarted(
-                                    sessionId = sessionId,
-                                    followUpQueries = newQueries,
-                                    whatsMissing = "Follow-up queries",
-                                    iterationNumber = accumulator.iterationNumber
-                                )
+                            emitFollowUpSearchStarted(
+                                sessionId = sessionId,
+                                followUpQueries = newQueries,
+                                whatsMissing = "Follow-up queries",
+                                iterationNumber = accumulator.iterationNumber,
+                                eventChannel = channel
                             )
 
                             // Send to query channel to trigger discovery
@@ -447,12 +444,11 @@ class AgenticBrowserSearchOrchestrator(
         } catch (e: Exception) {
             logger.error("[{}] Error in execute: {}", sessionId.value, e.message, e)
             querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
-            send(
-                SearchEvent.SessionError(
-                    sessionId = sessionId,
-                    errorType = e::class.simpleName ?: "Unknown",
-                    errorMessage = e.message ?: "Unknown error"
-                )
+            emitSessionError(
+                sessionId = sessionId,
+                errorType = e::class.simpleName ?: "Unknown",
+                errorMessage = e.message ?: "Unknown error",
+                eventChannel = channel
             )
         }
     }
@@ -477,7 +473,7 @@ class AgenticBrowserSearchOrchestrator(
                 // multiple events (HtmlPreview, LinkDiscovery, MarkdownExtraction)
                 // share the same URL and would filter out subsequent events
                 processedUrls.add(normalizedUrl)
-                eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, normalizedUrl))
+                emitUrlProcessingStarted(sessionId, normalizedUrl, eventChannel)
 
                 urlContentProcessingService.processUrlAsFlow(
                     normalizedUrl,
@@ -505,15 +501,14 @@ class AgenticBrowserSearchOrchestrator(
                                     )
                                 }
                                 // Emit UrlProcessed for all markdown extractions (cached and uncached)
-                                eventChannel.send(
-                                    SearchEvent.UrlProcessed(
-                                        sessionId = sessionId,
-                                        url = event.url,
-                                        accessType = if (event.wasCached) "CACHED" else "UNCACHED",
-                                        title = event.title,
-                                        description = event.description,
-                                        markdownLength = event.markdown.length
-                                    )
+                                emitUrlProcessed(
+                                    sessionId = sessionId,
+                                    url = event.url,
+                                    title = event.title,
+                                    description = event.description,
+                                    markdownLength = event.markdown.length,
+                                    wasCached = event.wasCached,
+                                    eventChannel = eventChannel
                                 )
                             }
 
@@ -726,7 +721,7 @@ class AgenticBrowserSearchOrchestrator(
                     processedUrls.add(dedupKey)
                     inFlight.add(url)
                     inFlightLinkProcessing.incrementAndGet()
-                    eventChannel.send(SearchEvent.UrlProcessingStarted(sessionId, url))
+                    emitUrlProcessingStarted(sessionId, url, eventChannel)
 
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(url) {
@@ -750,14 +745,7 @@ class AgenticBrowserSearchOrchestrator(
                                         )
                                         inFlight.remove(e.url)
                                         inFlightLinkProcessing.decrementAndGet()
-                                        eventChannel.send(
-                                            SearchEvent.UrlProcessed(
-                                                sessionId,
-                                                e.url,
-                                                "FAILED",
-                                                errorMessage = e.reason
-                                            )
-                                        )
+                                        emitUrlProcessingFailed(sessionId, e.url, e.reason, eventChannel)
                                         checkAndCloseIfIdle()
                                     }
 
@@ -788,15 +776,14 @@ class AgenticBrowserSearchOrchestrator(
                                                 CachedUrlAccess(event.url, Clock.System.now())
                                             )
                                         }
-                                        eventChannel.send(
-                                            SearchEvent.UrlProcessed(
-                                                sessionId = sessionId,
-                                                url = event.url,
-                                                accessType = if (event.wasCached) "CACHED" else "UNCACHED",
-                                                title = event.title,
-                                                description = event.description,
-                                                markdownLength = event.markdown.length
-                                            )
+                                        emitUrlProcessed(
+                                            sessionId = sessionId,
+                                            url = event.url,
+                                            title = event.title,
+                                            description = event.description,
+                                            markdownLength = event.markdown.length,
+                                            wasCached = event.wasCached,
+                                            eventChannel = eventChannel
                                         )
                                         inFlight.remove(event.url)
                                         inFlightLinkProcessing.decrementAndGet()
@@ -971,27 +958,25 @@ class AgenticBrowserSearchOrchestrator(
             synthesis.citedSourceUrls.size, synthesis.followUpQueries.size
         )
 
-        // Emit synthesis iteration event
-        eventChannel.send(
-            SearchEvent.SynthesisIteration(
-                sessionId = sessionId,
-                iterationNumber = newIterationNumber,
-                status = synthesis.status.name,
-                sourceCount = updatedSourcesByUrl.size,
-                followUpQueries = synthesis.followUpQueries
-            )
+        // Emit synthesis iteration event (persists to timeline + SSE)
+        emitSynthesisComplete(
+            sessionId = sessionId,
+            iterationNumber = newIterationNumber,
+            status = synthesis.status.name,
+            sourceCount = updatedSourcesByUrl.size,
+            followUpQueries = synthesis.followUpQueries,
+            eventChannel = eventChannel
         )
 
-        // Emit sources evaluated event
-        eventChannel.send(
-            SearchEvent.SourcesEvaluated(
-                sessionId = sessionId,
-                processedUrlCount = updatedSourcesByUrl.size,
-                relevantCount = updatedSourcesByUrl.size,
-                isGoodEnough = synthesis.isComplete,
-                reason = if (synthesis.isComplete) "Answer is complete"
-                else "Collecting more sources (unsatisfied: ${synthesis.getUnsatisfiedSummary()})"
-            )
+        // Emit sources evaluated event (persists to timeline + SSE)
+        emitSourcesEvaluated(
+            sessionId = sessionId,
+            processedUrlCount = updatedSourcesByUrl.size,
+            relevantCount = updatedSourcesByUrl.size,
+            isGoodEnough = synthesis.isComplete,
+            reason = if (synthesis.isComplete) "Answer is complete"
+            else "Collecting more sources (unsatisfied: ${synthesis.getUnsatisfiedSummary()})",
+            eventChannel = eventChannel
         )
 
         // Capture follow-up queries for upstream processing
@@ -1058,7 +1043,7 @@ class AgenticBrowserSearchOrchestrator(
             finalLoopReport.totalSynthesisCalls
         )
 
-        eventChannel.send(SearchEvent.AnswerChunk(sessionId, fullAnswer))
+        emitAnswerChunk(sessionId, fullAnswer, eventChannel)
         finishSessionWithAnswer(
             sessionId,
             accumulator,
@@ -1127,6 +1112,225 @@ class AgenticBrowserSearchOrchestrator(
                 imageIds = imageIds,
                 loopReport = loopReport
             )
+        )
+    }
+
+    // ==================== Event Emission Helpers ====================
+    // These helpers emit SearchFlowEvents for timeline persistence and
+    // map them to SearchEvents for SSE streaming.
+
+    /**
+     * Emit a SearchFlowEvent, persist it for timeline, and send the mapped SearchEvent to the channel.
+     * If the event doesn't have an SSE equivalent, only persistence happens.
+     */
+    private suspend fun emitFlowEvent(
+        event: SearchFlowEvent,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        val searchEvent = searchFlowEventService.emit(event)
+        searchEvent?.let { eventChannel.send(it) }
+    }
+
+    /**
+     * Emit SESSION_STARTED event.
+     */
+    private suspend fun emitSessionStarted(
+        sessionId: QuerySessionId,
+        query: String,
+        url: String,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent.sessionStarted(sessionId, query, url),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit URL_PROCESSING_STARTED event.
+     */
+    private suspend fun emitUrlProcessingStarted(
+        sessionId: QuerySessionId,
+        url: String,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent.urlProcessingStarted(sessionId, url),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit URL_MARKDOWN_COMPLETE event (successful URL processing).
+     */
+    private suspend fun emitUrlProcessed(
+        sessionId: QuerySessionId,
+        url: String,
+        title: String?,
+        description: String?,
+        markdownLength: Int,
+        wasCached: Boolean,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent.urlMarkdownComplete(
+                sessionId = sessionId,
+                url = url,
+                title = title,
+                description = description,
+                markdownLength = markdownLength,
+                accessType = if (wasCached) "CACHED" else "UNCACHED",
+                wasCached = wasCached
+            ),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit URL_PROCESSING_FAILED event.
+     */
+    private suspend fun emitUrlProcessingFailed(
+        sessionId: QuerySessionId,
+        url: String,
+        errorMessage: String?,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent(
+                sessionId = sessionId,
+                eventType = SearchFlowEventType.URL_PROCESSING_FAILED,
+                url = url,
+                metadata = mapOf("errorMessage" to (errorMessage ?: "Unknown error"))
+            ),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit SOURCES_EVALUATED event.
+     */
+    private suspend fun emitSourcesEvaluated(
+        sessionId: QuerySessionId,
+        processedUrlCount: Int,
+        relevantCount: Int,
+        isGoodEnough: Boolean,
+        reason: String?,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent(
+                sessionId = sessionId,
+                eventType = SearchFlowEventType.SOURCES_EVALUATED,
+                metadata = mapOf(
+                    "processedUrlCount" to processedUrlCount,
+                    "relevantCount" to relevantCount,
+                    "isGoodEnough" to isGoodEnough,
+                    "reason" to (reason ?: "")
+                )
+            ),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit SYNTHESIS_COMPLETE event.
+     */
+    private suspend fun emitSynthesisComplete(
+        sessionId: QuerySessionId,
+        iterationNumber: Int,
+        status: String,
+        sourceCount: Int,
+        followUpQueries: List<String>,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent.synthesisComplete(
+                sessionId = sessionId,
+                iterationNumber = iterationNumber,
+                sourceCount = sourceCount,
+                status = status,
+                followUpQueries = followUpQueries
+            ),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit FOLLOW_UP_QUERY_GENERATED event.
+     */
+    private suspend fun emitFollowUpSearchStarted(
+        sessionId: QuerySessionId,
+        followUpQueries: List<String>,
+        whatsMissing: String?,
+        iterationNumber: Int,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent(
+                sessionId = sessionId,
+                eventType = SearchFlowEventType.FOLLOW_UP_QUERY_GENERATED,
+                metadata = mapOf(
+                    "followUpQueries" to followUpQueries,
+                    "whatsMissing" to (whatsMissing ?: ""),
+                    "iterationNumber" to iterationNumber
+                )
+            ),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit ANSWER_CHUNK event.
+     */
+    private suspend fun emitAnswerChunk(
+        sessionId: QuerySessionId,
+        chunk: String,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent(
+                sessionId = sessionId,
+                eventType = SearchFlowEventType.ANSWER_CHUNK,
+                metadata = mapOf("chunk" to chunk)
+            ),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit SESSION_ERROR event.
+     */
+    private suspend fun emitSessionError(
+        sessionId: QuerySessionId,
+        errorType: String,
+        errorMessage: String,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        emitFlowEvent(
+            SearchFlowEvent(
+                sessionId = sessionId,
+                eventType = SearchFlowEventType.SESSION_ERROR,
+                metadata = mapOf(
+                    "errorType" to errorType,
+                    "errorMessage" to errorMessage
+                )
+            ),
+            eventChannel
+        )
+    }
+
+    /**
+     * Emit DISCOVERY_SERP_COMPLETE event (timeline only, no SSE equivalent).
+     */
+    private suspend fun emitDiscoverySerperComplete(
+        sessionId: QuerySessionId,
+        query: String,
+        linksFound: Int,
+        durationMs: Long
+    ) {
+        // This event is for timeline only - no channel needed
+        searchFlowEventService.emit(
+            SearchFlowEvent.discoverySerperComplete(sessionId, query, linksFound, durationMs)
         )
     }
 

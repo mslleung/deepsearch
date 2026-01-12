@@ -37,8 +37,10 @@ interface IWebpageLinkDiscoveryService {
 
     /**
      * Discovers relevant links using SERP search (serper.dev API)
+     * @param searchQuery The search query
+     * @param sessionId The session ID for tracking API usage (optional for backward compatibility)
      */
-    suspend fun discoverRelevantLinksBySerper(searchQuery: SearchQuery): List<WebpageLink>
+    suspend fun discoverRelevantLinksBySerper(searchQuery: SearchQuery, sessionId: SessionId? = null): List<WebpageLink>
 
     /**
      * Discovers relevant links by analyzing links on the current webpage
@@ -83,7 +85,8 @@ class WebpageLinkDiscoveryService(
     private val sitemapCacheRepository: ISitemapCacheRepository,
     private val sitemapLockRegistry: ISitemapLinkDiscoveryLockRegistry,
     private val normalizeUrlService: INormalizeUrlService,
-    private val tokenUsageService: ILlmTokenUsageService
+    private val tokenUsageService: ILlmTokenUsageService,
+    private val externalApiUsageService: IExternalApiUsageService
 ) : IWebpageLinkDiscoveryService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -129,10 +132,15 @@ class WebpageLinkDiscoveryService(
         return output.links
     }
 
-    override suspend fun discoverRelevantLinksBySerper(searchQuery: SearchQuery): List<WebpageLink> {
+    override suspend fun discoverRelevantLinksBySerper(searchQuery: SearchQuery, sessionId: SessionId?): List<WebpageLink> {
         logger.debug("Discovering links via SERP search for query: '{}' on {}", searchQuery.query, searchQuery.url)
 
         val links = serperService.searchLinks(searchQuery)
+
+        // Record external API usage if session ID is provided
+        if (sessionId != null) {
+            externalApiUsageService.recordSerperSearch(sessionId, searchQuery.query)
+        }
 
         logger.debug("Discovered {} links from SERP search", links.size)
         return links

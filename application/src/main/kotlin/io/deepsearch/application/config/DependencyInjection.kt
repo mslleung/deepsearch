@@ -39,6 +39,12 @@ val applicationModule = module {
     // Singleton services needed by PeriodicIndexScheduler/PeriodicIndexJobRegistry
     singleOf(::UrlAccessService) bind IUrlAccessService::class
     singleOf(::LlmTokenUsageService) bind ILlmTokenUsageService::class
+    
+    // Search flow event tracking services (for timeline visualization)
+    singleOf(::SearchFlowEventMapper)
+    singleOf(::SearchFlowEventService) bind ISearchFlowEventService::class
+    singleOf(::ExternalApiUsageService) bind IExternalApiUsageService::class
+    singleOf(::CostCalculationService) bind ICostCalculationService::class
     singleOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     singleOf(::PopupContainerIdentificationService) bind IPopupContainerIdentificationService::class
