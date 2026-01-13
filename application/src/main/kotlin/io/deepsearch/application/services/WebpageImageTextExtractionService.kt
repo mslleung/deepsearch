@@ -301,101 +301,112 @@ class WebpageImageTextExtractionService(
                 imagesWithoutText.size
             )
             
-            // Process images WITHOUT text using ImageDescriptionAgent
-            if (imagesWithoutText.isNotEmpty()) {
-                logger.debug("Describing {} images without text using ImageDescriptionAgent", imagesWithoutText.size)
-                
-                val descriptionOutput = imageDescriptionAgent.generate(
-                    ImageDescriptionInput(
-                        images = imagesWithoutText.map { image ->
-                            ImageDescriptionInput.ImageItem(
-                                bytes = image.bytes,
-                                mimeType = image.mimeType
+            // Process images WITHOUT text and WITH text IN PARALLEL
+            // These two agents work on disjoint image sets, so they can run concurrently
+            coroutineScope {
+                // Start ImageDescriptionAgent for images without text
+                val descriptionDeferred = if (imagesWithoutText.isNotEmpty()) {
+                    logger.debug("Describing {} images without text using ImageDescriptionAgent", imagesWithoutText.size)
+                    async {
+                        imageDescriptionAgent.generate(
+                            ImageDescriptionInput(
+                                images = imagesWithoutText.map { image ->
+                                    ImageDescriptionInput.ImageItem(
+                                        bytes = image.bytes,
+                                        mimeType = image.mimeType
+                                    )
+                                }
                             )
-                        }
-                    )
-                )
-                
-                // Record token usage for description
-                recordTokenUsage(sessionId, "ImageDescriptionAgent", descriptionOutput.tokenUsage)
-                
-                // Store description results - combine type, purpose, and description into searchable text
-                // Note: Avoid using square brackets here as this text will be used in markdown alt text
-                // where brackets would create invalid syntax: ![text with [brackets]](#img-N)
-                imagesWithoutText.zip(descriptionOutput.descriptions).forEach { (image, description) ->
-                    cachedResults[Base64.encode(image.bytesHash)] = description.description
-                }
-                
-                // Log description results for debugging
-                val imageTypes = descriptionOutput.descriptions.groupBy { it.imageType }
-                    .mapValues { it.value.size }
-                logger.debug("Description results: imageTypes={}", imageTypes)
-            }
-            
-            // Process images WITH text using ImageClassificationAgent
-            if (imagesWithText.isNotEmpty()) {
-                logger.debug("Classifying {} images with text using ImageClassificationAgent", imagesWithText.size)
-                
-                // Stage 1: Classify all images with text and extract initial description
-                val classificationOutput = imageClassificationAgent.generate(
-                    ImageClassificationInput(
-                        images = imagesWithText.map { image ->
-                            ImageClassificationInput.ImageItem(
-                                bytes = image.bytes,
-                                mimeType = image.mimeType
-                            )
-                        }
-                    )
-                )
-
-                // Record token usage for classification
-                recordTokenUsage(sessionId, "ImageClassificationAgent", classificationOutput.tokenUsage)
-
-                // Partition images by needsTableInterpretation flag
-                val imageClassifications = imagesWithText.zip(classificationOutput.classifications)
-                val imagesNeedingTableExtraction = imageClassifications.filter { it.second.needsTableInterpretation }
-                val imagesNotNeedingTableExtraction = imageClassifications.filter { !it.second.needsTableInterpretation }
-
-                // Log detailed classification results for debugging
-                val imageTypes = classificationOutput.classifications.groupBy { it.imageType }
-                    .mapValues { it.value.size }
-                logger.debug(
-                    "Classification results: imageTypes={}, {} need table extraction, {} don't need table extraction",
-                    imageTypes,
-                    imagesNeedingTableExtraction.size,
-                    imagesNotNeedingTableExtraction.size
-                )
-
-                // For images that don't need table extraction, use classification description directly
-                imagesNotNeedingTableExtraction.forEach { (image, classification) ->
-                    cachedResults[Base64.encode(image.bytesHash)] = classification.imageDescription?.takeIf { it.isNotBlank() }
-                }
-
-                // Stage 2: Extract tables from images that need specialized table extraction
-                if (imagesNeedingTableExtraction.isNotEmpty()) {
-                    logger.debug("Extracting tables from {} images", imagesNeedingTableExtraction.size)
-                    
-                    val tableExtractionOutput = tableExtractionAgent.generate(
-                        TableExtractionInput(
-                            images = imagesNeedingTableExtraction.map { (image, _) ->
-                                TableExtractionInput.ImageItem(
-                                    bytes = image.bytes,
-                                    mimeType = image.mimeType
-                                )
-                            }
                         )
+                    }
+                } else null
+                
+                // Start ImageClassificationAgent for images with text (in parallel)
+                val classificationDeferred = if (imagesWithText.isNotEmpty()) {
+                    logger.debug("Classifying {} images with text using ImageClassificationAgent", imagesWithText.size)
+                    async {
+                        imageClassificationAgent.generate(
+                            ImageClassificationInput(
+                                images = imagesWithText.map { image ->
+                                    ImageClassificationInput.ImageItem(
+                                        bytes = image.bytes,
+                                        mimeType = image.mimeType
+                                    )
+                                }
+                            )
+                        )
+                    }
+                } else null
+                
+                // Process description results
+                descriptionDeferred?.await()?.let { descriptionOutput ->
+                    // Record token usage for description
+                    recordTokenUsage(sessionId, "ImageDescriptionAgent", descriptionOutput.tokenUsage)
+                    
+                    // Store description results - combine type, purpose, and description into searchable text
+                    // Note: Avoid using square brackets here as this text will be used in markdown alt text
+                    // where brackets would create invalid syntax: ![text with [brackets]](#img-N)
+                    imagesWithoutText.zip(descriptionOutput.descriptions).forEach { (image, description) ->
+                        cachedResults[Base64.encode(image.bytesHash)] = description.description
+                    }
+                    
+                    // Log description results for debugging
+                    val imageTypes = descriptionOutput.descriptions.groupBy { it.imageType }
+                        .mapValues { it.value.size }
+                    logger.debug("Description results: imageTypes={}", imageTypes)
+                }
+                
+                // Process classification results
+                classificationDeferred?.await()?.let { classificationOutput ->
+                    // Record token usage for classification
+                    recordTokenUsage(sessionId, "ImageClassificationAgent", classificationOutput.tokenUsage)
+
+                    // Partition images by needsTableInterpretation flag
+                    val imageClassifications = imagesWithText.zip(classificationOutput.classifications)
+                    val imagesNeedingTableExtraction = imageClassifications.filter { it.second.needsTableInterpretation }
+                    val imagesNotNeedingTableExtraction = imageClassifications.filter { !it.second.needsTableInterpretation }
+
+                    // Log detailed classification results for debugging
+                    val imageTypes = classificationOutput.classifications.groupBy { it.imageType }
+                        .mapValues { it.value.size }
+                    logger.debug(
+                        "Classification results: imageTypes={}, {} need table extraction, {} don't need table extraction",
+                        imageTypes,
+                        imagesNeedingTableExtraction.size,
+                        imagesNotNeedingTableExtraction.size
                     )
 
-                    // Record token usage for table extraction
-                    recordTokenUsage(sessionId, "TableExtractionAgent", tableExtractionOutput.tokenUsage)
-
-                    // Store table extraction results
-                    imagesNeedingTableExtraction.zip(tableExtractionOutput.extractions).forEach { (imageClassification, extraction) ->
-                        val (image, _) = imageClassification
-                        cachedResults[Base64.encode(image.bytesHash)] = extraction.extractedText?.takeIf { it.isNotBlank() }
+                    // For images that don't need table extraction, use classification description directly
+                    imagesNotNeedingTableExtraction.forEach { (image, classification) ->
+                        cachedResults[Base64.encode(image.bytesHash)] = classification.imageDescription?.takeIf { it.isNotBlank() }
                     }
+
+                    // Stage 2: Extract tables from images that need specialized table extraction
+                    if (imagesNeedingTableExtraction.isNotEmpty()) {
+                        logger.debug("Extracting tables from {} images", imagesNeedingTableExtraction.size)
+                        
+                        val tableExtractionOutput = tableExtractionAgent.generate(
+                            TableExtractionInput(
+                                images = imagesNeedingTableExtraction.map { (image, _) ->
+                                    TableExtractionInput.ImageItem(
+                                        bytes = image.bytes,
+                                        mimeType = image.mimeType
+                                    )
+                                }
+                            )
+                        )
+
+                        // Record token usage for table extraction
+                        recordTokenUsage(sessionId, "TableExtractionAgent", tableExtractionOutput.tokenUsage)
+
+                        // Store table extraction results
+                        imagesNeedingTableExtraction.zip(tableExtractionOutput.extractions).forEach { (imageClassification, extraction) ->
+                            val (image, _) = imageClassification
+                            cachedResults[Base64.encode(image.bytesHash)] = extraction.extractedText?.takeIf { it.isNotBlank() }
+                        }
                     }
                 }
+            }
 
                 // Cache all results with raw bytes
             val imagesToCache = uncachedImages.map { image ->
