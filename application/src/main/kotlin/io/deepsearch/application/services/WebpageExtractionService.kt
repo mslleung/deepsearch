@@ -107,12 +107,22 @@ class WebpageExtractionService(
 
         // ===== Browser Captures (all parallel) =====
         val snapshotDeferred = async { webpage.capturePageSnapshot() }
+        val screenshotDeferred = async { webpage.takeFullPageScreenshot() }
         val iconsDeferred = async { webpage.extractIcons() }
         val imagesDeferred = async { webpage.extractImages() }
 
         // ===== LLM Operations (pipelined from captures) =====
-        val semantic = pipeFrom(snapshotDeferred) { doIdentifySemanticElements(sessionId, it) }
-        val tableId = pipeFrom(snapshotDeferred) { doIdentifyTables(sessionId, it) }
+        // Both semantic and table identification use vision-based detection (share screenshot)
+        val semantic = async {
+            val snapshot = snapshotDeferred.await()
+            val screenshot = screenshotDeferred.await()
+            doIdentifySemanticElements(sessionId, snapshot, screenshot)
+        }
+        val tableId = async {
+            val snapshot = snapshotDeferred.await()
+            val screenshot = screenshotDeferred.await()
+            doIdentifyTables(sessionId, snapshot, screenshot)
+        }
         val iconRepl = pipeFrom(iconsDeferred) { doInterpretIcons(it, sessionId) }
         val imageRepl = pipeFrom(imagesDeferred) { doInterpretImages(it, sessionId, ocrLanguage) }
 
@@ -122,6 +132,7 @@ class WebpageExtractionService(
         val images: List<IBrowserPage.WebImage>
         val browserDuration = measureTimeMillis {
             snapshot = snapshotDeferred.await()
+            screenshotDeferred.await() // Wait for screenshot before releasing browser
             icons = iconsDeferred.await()
             images = imagesDeferred.await()
         }
@@ -162,11 +173,12 @@ class WebpageExtractionService(
 
     private suspend fun doIdentifySemanticElements(
         sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshotWithMetadata
+        snapshot: IBrowserPage.PageSnapshotWithMetadata,
+        screenshot: IBrowserPage.Screenshot
     ): SemanticElements {
         val result: SemanticElements
         val duration = measureTimeMillis {
-            result = semanticIdentificationService.identifySemanticElements(sessionId, snapshot)
+            result = semanticIdentificationService.identifySemanticElements(sessionId, snapshot, screenshot)
         }
         logger.debug("Semantic identification took {} ms", duration)
         return result
@@ -174,13 +186,15 @@ class WebpageExtractionService(
 
     private suspend fun doIdentifyTables(
         sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshotWithMetadata
+        snapshot: IBrowserPage.PageSnapshotWithMetadata,
+        screenshot: IBrowserPage.Screenshot
     ): List<TableIdentification> {
         val result: List<TableIdentification>
         val duration = measureTimeMillis {
-            result = tableIdentificationService.identifyTables(sessionId, snapshot)
+            result = tableIdentificationService.identifyTables(sessionId, snapshot, screenshot)
         }
-        logger.debug("Table identification took {} ms, found {} tables", duration, result.size)
+        logger.debug("Table identification took {} ms, found {} tables ({} hidden containers)", 
+            duration, result.size, snapshot.hiddenContainers.size)
         return result
     }
 

@@ -19,7 +19,9 @@ import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IBoundingBoxDerivationService
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IGeminiFileSearchService
+import io.deepsearch.domain.services.IImageDimensionService
 import io.deepsearch.domain.services.IJsoupDomService
+import io.deepsearch.domain.services.ImageDimensionService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
@@ -65,6 +67,7 @@ val domainModule = module {
     singleOf(::BoundingBoxDerivationService) bind IBoundingBoxDerivationService::class
     singleOf(::JsoupDomService) bind IJsoupDomService::class
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
+    singleOf(::ImageDimensionService) bind IImageDimensionService::class
     
     // Gemini Batch API service for cost-effective large-scale processing
     // Uses inline requests for batches under 20MB, 50% cost savings

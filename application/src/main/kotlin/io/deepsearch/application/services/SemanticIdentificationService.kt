@@ -40,18 +40,18 @@ data class SemanticBatchPreparation(
 interface ISemanticIdentificationService {
     /**
      * Identifies all semantic elements (navigation elements + popups) on a webpage.
+     * Uses vision-based detection for accurate identification of visible elements.
      * Uses a hash-based cache to avoid redundant LLM calls for similar page layouts.
-     *
-     * Only requires the pre-captured page snapshot - no live browser needed.
-     * The browser can be released before semantic identification begins.
      *
      * @param sessionId Session ID for token tracking
      * @param pageSnapshot Pre-captured page snapshot containing HTML and bounding boxes
+     * @param screenshot Full-page screenshot for vision-based detection
      * @return SemanticElements containing all identified semantic elements grouped by type
      */
     suspend fun identifySemanticElements(
         sessionId: SessionId,
-        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
+        screenshot: IBrowserPage.Screenshot
     ): SemanticElements
     
     // ========== Batch API Methods ==========
@@ -73,9 +73,18 @@ interface ISemanticIdentificationService {
      * 
      * @param responseText JSON response from batch API
      * @param htmlWithIds HTML with injected IDs (from SemanticBatchPreparation.htmlWithIdsMap)
+     * @param boundingBoxes Optional bounding boxes for vision IoU mapping
+     * @param pageWidth Optional page width for vision mapping
+     * @param pageHeight Optional page height for vision mapping
      * @return Parsed SemanticElements
      */
-    fun parseBatchResponse(responseText: String, htmlWithIds: String): SemanticElements
+    fun parseBatchResponse(
+        responseText: String,
+        htmlWithIds: String,
+        boundingBoxes: Map<String, IBrowserPage.BoundingBox>? = null,
+        pageWidth: Double? = null,
+        pageHeight: Double? = null
+    ): SemanticElements
     
     /**
      * Cache semantic elements result.
@@ -117,10 +126,19 @@ class SemanticIdentificationService(
                 continue
             }
 
-            // Prepare batch request using agent
+            // Calculate page dimensions from bounding boxes for vision mapping
+            val pageWidth = pageData.boundingBoxes.values.maxOfOrNull { it.right }
+            val pageHeight = pageData.boundingBoxes.values.maxOfOrNull { it.bottom }
+            
+            // Prepare batch request using agent (with vision if screenshot available)
             val batchRequest = semanticIdentificationAgent.prepareBatchRequest(
                 requestId = "$jobId-semantic-${urlStateId.value}",
-                html = pageData.html
+                html = pageData.html,
+                screenshotBase64 = pageData.screenshotBase64,
+                screenshotMimeType = pageData.screenshotMimeType,
+                boundingBoxes = pageData.boundingBoxes,
+                pageWidth = pageWidth,
+                pageHeight = pageHeight
             )
             
             pendingRequests.add(
@@ -140,8 +158,14 @@ class SemanticIdentificationService(
         )
     }
 
-    override fun parseBatchResponse(responseText: String, htmlWithIds: String): SemanticElements {
-        return semanticIdentificationAgent.parseBatchResponse(responseText, htmlWithIds)
+    override fun parseBatchResponse(
+        responseText: String,
+        htmlWithIds: String,
+        boundingBoxes: Map<String, IBrowserPage.BoundingBox>?,
+        pageWidth: Double?,
+        pageHeight: Double?
+    ): SemanticElements {
+        return semanticIdentificationAgent.parseBatchResponse(responseText, htmlWithIds, boundingBoxes, pageWidth, pageHeight)
     }
 
     @OptIn(ExperimentalTime::class)
@@ -158,7 +182,8 @@ class SemanticIdentificationService(
 
     override suspend fun identifySemanticElements(
         sessionId: SessionId,
-        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
+        screenshot: IBrowserPage.Screenshot
     ): SemanticElements {
         // Use html hash for caching
         val pageHash = MessageDigest.getInstance("SHA-256").digest(pageSnapshot.html.toByteArray())
@@ -171,7 +196,8 @@ class SemanticIdentificationService(
 
         val identificationResult = semanticIdentificationAgent.generate(
             SemanticIdentificationInput(
-                pageSnapshot = pageSnapshot
+                pageSnapshot = pageSnapshot,
+                screenshot = screenshot
             )
         )
 

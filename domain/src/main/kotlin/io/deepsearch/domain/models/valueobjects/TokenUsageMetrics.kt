@@ -10,6 +10,19 @@ data class TokenUsageMetrics(
     val outputTokens: Int,
     val totalTokens: Int
 ) {
+    /**
+     * Combines token usage from multiple LLM calls.
+     * Uses the model name from this instance.
+     */
+    operator fun plus(other: TokenUsageMetrics): TokenUsageMetrics {
+        return TokenUsageMetrics(
+            modelName = this.modelName,
+            promptTokens = this.promptTokens + other.promptTokens,
+            outputTokens = this.outputTokens + other.outputTokens,
+            totalTokens = this.totalTokens + other.totalTokens
+        )
+    }
+
     companion object {
         /**
          * Empty metrics for operations that don't use tokens (e.g., cached results, fallbacks).

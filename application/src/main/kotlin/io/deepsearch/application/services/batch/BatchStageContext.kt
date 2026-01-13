@@ -50,7 +50,11 @@ data class UrlPageData(
     val html: String,
     val boundingBoxes: Map<String, IBrowserPage.BoundingBox>,
     val iconHashes: List<MediaHash>,
-    val imageHashes: List<MediaHash>
+    val imageHashes: List<MediaHash>,
+    /** Base64-encoded screenshot for vision-based identification */
+    val screenshotBase64: String? = null,
+    /** Screenshot MIME type */
+    val screenshotMimeType: String? = null
 )
 
 /**
@@ -64,10 +68,16 @@ data class ContentCollectionResult(
 ) {
     /**
      * Get the pages map in the format expected by batch services.
+     * Includes screenshot data for vision-based identification.
      */
     fun pagesForBatchServices(): Map<BatchUrlStateId, PageHtmlWithBoundingBoxes> {
         return urlPages.mapValues { (_, data) -> 
-            PageHtmlWithBoundingBoxes(data.html, data.boundingBoxes) 
+            PageHtmlWithBoundingBoxes(
+                html = data.html, 
+                boundingBoxes = data.boundingBoxes,
+                screenshotBase64 = data.screenshotBase64,
+                screenshotMimeType = data.screenshotMimeType
+            ) 
         }
     }
     
@@ -159,7 +169,11 @@ data class MediaData(
  */
 data class PageHtmlWithBoundingBoxes(
     val html: String,
-    val boundingBoxes: Map<String, IBrowserPage.BoundingBox>
+    val boundingBoxes: Map<String, IBrowserPage.BoundingBox>,
+    /** Base64-encoded full-page screenshot for vision-based identification */
+    val screenshotBase64: String? = null,
+    /** MIME type for screenshot (e.g., "image/png") */
+    val screenshotMimeType: String? = null
 )
 
 /**

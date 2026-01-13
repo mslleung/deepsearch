@@ -41,11 +41,13 @@ class TableInterpretationAgentTest : KoinTest {
         browserPool.withPage { page ->
             page.navigate(url)
             val pageSnapshot = page.capturePageSnapshot()
+            val screenshot = page.takeFullPageScreenshot()
 
-            // Identify tables (no longer requires browser reference)
+            // Identify tables using vision + hidden container detection
             val idOutput = tableIdentificationAgent.generate(
                 TableIdentificationInput(
-                    pageSnapshot = pageSnapshot
+                    pageSnapshot = pageSnapshot,
+                    screenshot = screenshot
                 )
             )
 

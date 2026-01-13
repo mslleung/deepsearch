@@ -46,6 +46,9 @@ dependencies {
     // Multi-language text processing (sentence boundary detection)
     implementation(libs.icu4j)
 
+    // Image dimension extraction (WebP support for screenshot dimensions)
+    implementation(libs.twelvemonkeys.imageio.webp)
+
     // Coroutines
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.rx3)

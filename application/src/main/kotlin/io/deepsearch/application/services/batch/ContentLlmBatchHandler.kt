@@ -144,7 +144,9 @@ class ContentLlmBatchHandler(
                     html = snapshotData.html,
                     boundingBoxes = snapshotData.boundingBoxes ?: emptyMap(),
                     iconHashes = iconHashes,
-                    imageHashes = imageHashes
+                    imageHashes = imageHashes,
+                    screenshotBase64 = snapshotData.screenshotBase64,
+                    screenshotMimeType = snapshotData.screenshotMimeType
                 )
             } catch (e: Exception) {
                 logger.warn("Failed to collect data for {}: {}", urlState.url, e.message)
@@ -397,10 +399,21 @@ class ContentLlmBatchHandler(
                         return@forEachIndexed
                     }
 
-                    val semanticElements = semanticIdentificationService.parseBatchResponse(result.generatedText!!, pending.htmlWithIds)
+                    // Get snapshot data for bounding boxes and page dimensions
+                    val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed
+                    val boundingBoxes = snapshotData.boundingBoxes
+                    val pageWidth = boundingBoxes?.values?.maxOfOrNull { it.right }
+                    val pageHeight = boundingBoxes?.values?.maxOfOrNull { it.bottom }
+                    
+                    val semanticElements = semanticIdentificationService.parseBatchResponse(
+                        result.generatedText!!,
+                        pending.htmlWithIds,
+                        boundingBoxes,
+                        pageWidth,
+                        pageHeight
+                    )
 
                     // Cache the result
-                    val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed
                     val htmlHash = MessageDigest.getInstance("SHA-256").digest(snapshotData.html.toByteArray())
                     semanticIdentificationService.cacheResult(htmlHash, semanticElements)
 
@@ -431,14 +444,22 @@ class ContentLlmBatchHandler(
                         return@forEachIndexed
                     }
 
+                    // Get snapshot data for bounding boxes and page dimensions
+                    val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed
+                    val boundingBoxes = snapshotData.boundingBoxes
+                    val pageWidth = boundingBoxes?.values?.maxOfOrNull { it.right }
+                    val pageHeight = boundingBoxes?.values?.maxOfOrNull { it.bottom }
+                    
                     val tableIdentifications = tableIdentificationService.parseBatchResponse(
                         result.generatedText!!,
                         pending.htmlWithIds,
-                        pending.request.metadata
+                        pending.request.metadata,
+                        boundingBoxes,
+                        pageWidth,
+                        pageHeight
                     )
 
                     // Cache the result
-                    val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed
                     val htmlHash = MessageDigest.getInstance("SHA-256").digest(snapshotData.html.toByteArray())
                     tableIdentificationService.cacheResult(htmlHash, tableIdentifications)
 

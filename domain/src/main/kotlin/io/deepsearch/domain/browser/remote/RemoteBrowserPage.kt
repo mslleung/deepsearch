@@ -193,6 +193,9 @@ class RemoteBrowserPage(
             html = r.html,
             boundingBoxes = r.boundingBoxes.mapValues { (_, b) ->
                 IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom)
+            },
+            hiddenContainers = r.hiddenContainers.map { h ->
+                IBrowserPage.HiddenContainer(h.id, h.xpath, h.html)
             }
         )
     }

@@ -27,14 +27,17 @@ data class TableIdentificationBatchPreparation(
 
 interface ITableIdentificationService {
     /**
-     * Identifies tables in webpage HTML using an LLM agent.
+     * Identifies tables in webpage HTML using hybrid detection:
+     * - Vision-based detection (from screenshot) for visible tables
+     * - HTML-based detection for hidden containers (accordions, tabs, etc.)
      * 
-     * Only requires the pre-captured page snapshot - no live browser needed.
+     * Only requires the pre-captured snapshot and screenshot - no live browser needed.
      * The browser can be released before table identification begins.
      */
     suspend fun identifyTables(
         sessionId: SessionId,
-        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
+        screenshot: IBrowserPage.Screenshot
     ): List<TableIdentification>
     
     // ========== Batch API Methods ==========
@@ -57,12 +60,18 @@ interface ITableIdentificationService {
      * @param responseText JSON response from batch API
      * @param htmlWithIds HTML with injected IDs (from TableIdentificationBatchPreparation.htmlWithIdsMap)
      * @param metadata Optional metadata from the batch request (contains programmaticTables for merging)
+     * @param boundingBoxes Optional bounding boxes for vision IoU mapping
+     * @param pageWidth Optional page width for vision mapping
+     * @param pageHeight Optional page height for vision mapping
      * @return List of TableIdentification
      */
     fun parseBatchResponse(
         responseText: String,
         htmlWithIds: String,
-        metadata: Map<String, String>? = null
+        metadata: Map<String, String>? = null,
+        boundingBoxes: Map<String, IBrowserPage.BoundingBox>? = null,
+        pageWidth: Double? = null,
+        pageHeight: Double? = null
     ): List<TableIdentification>
     
     /**
@@ -105,10 +114,19 @@ class TableIdentificationService(
                 continue
             }
 
-            // Prepare batch request using agent
+            // Calculate page dimensions from bounding boxes for vision mapping
+            val pageWidth = pageData.boundingBoxes.values.maxOfOrNull { it.right }
+            val pageHeight = pageData.boundingBoxes.values.maxOfOrNull { it.bottom }
+            
+            // Prepare batch request using agent (with vision if screenshot available)
             val batchRequest = tableIdentificationAgent.prepareBatchRequest(
                 requestId = "$jobId-table-${urlStateId.value}",
-                html = pageData.html
+                html = pageData.html,
+                screenshotBase64 = pageData.screenshotBase64,
+                screenshotMimeType = pageData.screenshotMimeType,
+                boundingBoxes = pageData.boundingBoxes,
+                pageWidth = pageWidth,
+                pageHeight = pageHeight
             )
             
             pendingRequests.add(
@@ -131,9 +149,12 @@ class TableIdentificationService(
     override fun parseBatchResponse(
         responseText: String,
         htmlWithIds: String,
-        metadata: Map<String, String>?
+        metadata: Map<String, String>?,
+        boundingBoxes: Map<String, IBrowserPage.BoundingBox>?,
+        pageWidth: Double?,
+        pageHeight: Double?
     ): List<TableIdentification> {
-        return tableIdentificationAgent.parseBatchResponse(responseText, htmlWithIds, metadata)
+        return tableIdentificationAgent.parseBatchResponse(responseText, htmlWithIds, metadata, boundingBoxes, pageWidth, pageHeight)
     }
 
     @OptIn(ExperimentalTime::class)
@@ -149,15 +170,19 @@ class TableIdentificationService(
     // ========== Interactive Mode Methods ==========
 
     /**
-     * Identifies tables in webpage HTML using an LLM agent.
+     * Identifies tables using hybrid detection:
+     * - Vision-based detection for visible tables (from screenshot)
+     * - HTML-based detection for hidden containers
+     * 
      * Results are cached in the repository to avoid repeated calls with the same HTML.
      */
     @OptIn(ExperimentalTime::class)
     override suspend fun identifyTables(
         sessionId: SessionId,
-        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
+        screenshot: IBrowserPage.Screenshot
     ): List<TableIdentification> {
-        // Use HTML hash for caching
+        // Use HTML hash for caching (screenshot not included in hash - same HTML should give same tables)
         val htmlHash = MessageDigest.getInstance("SHA-256").digest(pageSnapshot.html.toByteArray())
 
         val existing = webpageTableRepository.findByHash(htmlHash)
@@ -167,7 +192,8 @@ class TableIdentificationService(
 
         val agentOutput = tableIdentificationAgent.generate(
             TableIdentificationInput(
-                pageSnapshot = pageSnapshot
+                pageSnapshot = pageSnapshot,
+                screenshot = screenshot
             )
         )
 

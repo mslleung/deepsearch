@@ -32,6 +32,7 @@ jbcrypt-version = "0.4"
 jwt-version = "4.5.0"
 stripe-version = "31.0.0"
 icu4j-version = "74.2"
+twelvemonkeys-imageio-version = "3.12.0"
 jib-version = "3.5.1"
 shadow-version = "9.1.0"
 
@@ -95,6 +96,7 @@ ktor-server-rate-limit = { module = "io.ktor:ktor-server-rate-limit", version.re
 ktor-server-compression = { module = "io.ktor:ktor-server-compression", version.ref = "ktor-version" }
 stripe = { module = "com.stripe:stripe-java", version.ref = "stripe-version" }
 icu4j = { module = "com.ibm.icu:icu4j", version.ref = "icu4j-version" }
+twelvemonkeys-imageio-webp = { module = "com.twelvemonkeys.imageio:imageio-webp", version.ref = "twelvemonkeys-imageio-version" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin-version" }

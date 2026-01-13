@@ -35,6 +35,15 @@ interface ICssSelectorConstructionService {
         identifiers: List<String>,
         htmlWithIdentifiers: String
     ): Map<String, String?>
+    
+    /**
+     * Constructs a CSS selector directly from a Jsoup Element.
+     * Used when the element is already available (e.g., from vision-based detection).
+     *
+     * @param element The Jsoup element to construct a selector for
+     * @return A CSS selector that can locate the element
+     */
+    fun constructCssSelector(element: Element): String
 }
 
 /**
@@ -428,6 +437,58 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
         } catch (e: Exception) {
             logger.error("Failed to parse HTML for batch CSS selector construction", e)
             identifiers.associateWith { null }
+        }
+    }
+    
+    /**
+     * Constructs a CSS selector directly from a Jsoup Element.
+     * Used when the element is already available (e.g., from vision-based detection).
+     *
+     * @param element The Jsoup element to construct a selector for
+     * @return A CSS selector that can locate the element
+     */
+    override fun constructCssSelector(element: Element): String {
+        // Get the document from the element
+        val doc = element.ownerDocument() ?: return buildHierarchicalSelector(element, Jsoup.parse(element.outerHtml()))
+        
+        // Build selector using the same logic as identifier-based construction
+        val tagName = element.tagName()
+        val id = element.attr("id")
+        val classes = element.classNames()
+
+        return when {
+            // If element has an ID, use it (should be unique)
+            id.isNotBlank() -> {
+                val idSelector = "#${escapeCssIdentifier(id)}"
+                try {
+                    if (doc.select(idSelector).size == 1) {
+                        idSelector
+                    } else {
+                        buildHierarchicalSelector(element, doc)
+                    }
+                } catch (e: org.jsoup.select.Selector.SelectorParseException) {
+                    buildHierarchicalSelector(element, doc)
+                }
+            }
+            // If element has classes, try class-based selector
+            classes.isNotEmpty() -> {
+                val filteredClasses = filterJsoupCompatibleClasses(classes)
+                if (filteredClasses.isEmpty()) {
+                    buildHierarchicalSelector(element, doc)
+                } else {
+                    val classSelector = "$tagName.${filteredClasses.map { escapeCssIdentifier(it) }.joinToString(".")}"
+                    try {
+                        if (doc.select(classSelector).size == 1) {
+                            classSelector
+                        } else {
+                            buildHierarchicalSelector(element, doc)
+                        }
+                    } catch (e: org.jsoup.select.Selector.SelectorParseException) {
+                        buildHierarchicalSelector(element, doc)
+                    }
+                }
+            }
+            else -> buildHierarchicalSelector(element, doc)
         }
     }
 }

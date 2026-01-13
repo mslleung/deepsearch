@@ -69,15 +69,16 @@ class MarkdownFormattingAgentGenAiImpl(
 
         Input:
         - Raw text extracted from a webpage, they may lack structure
-            - Icons are already converted to text
-            - Images are converted to text already in markdown format: ![description](#img-N) where N is the image number
-            - Tables are already converted to markdown format
+        - Icons are already converted to text
+        - Images are converted to text already in markdown format: ![description](#img-N) where N is the image number
+        - Tables are already converted to markdown format
 
         Instructions:
         - Stick as close to the raw text as possible in terms of content, focus on enriching format
         - Structure the content with appropriate heading hierarchy (# for main title, ## for sections, etc.)
         - Icons should be interpreted and included as necessary
         - Preserve image/tables references at a reasonable position in the markdown
+        - Omit useless webpage extraction noise such as cookie declaration table etc.
 
         Expected output format:
         {

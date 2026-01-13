@@ -39,6 +39,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.io.encoding.Base64
 
 /**
  * Stage 1: Browser-based crawl + extract handler.
@@ -273,13 +274,26 @@ class CrawlAndExtractHandler(
         withResolvedPage(url, proxyConfig) { page ->
             val html = page.getFullHtml()
             
-            // Parallel browser captures
-            val (snapshot, icons, images) = coroutineScope {
+            // Parallel browser captures (including screenshot for vision-based identification)
+            data class BrowserCaptures(
+                val snapshot: IBrowserPage.PageSnapshotWithMetadata,
+                val icons: List<IBrowserPage.Icon>,
+                val images: List<IBrowserPage.WebImage>,
+                val screenshot: IBrowserPage.Screenshot
+            )
+            val captures = coroutineScope {
                 val snapshotDeferred = async { page.capturePageSnapshot() }
                 val iconsDeferred = async { page.extractIcons() }
                 val imagesDeferred = async { page.extractImages() }
-                Triple(snapshotDeferred.await(), iconsDeferred.await(), imagesDeferred.await())
+                val screenshotDeferred = async { page.takeFullPageScreenshot() }
+                BrowserCaptures(
+                    snapshotDeferred.await(),
+                    iconsDeferred.await(),
+                    imagesDeferred.await(),
+                    screenshotDeferred.await()
+                )
             }
+            val (snapshot, icons, images, screenshot) = captures
 
             // Convert icons/images to serializable format
             val batchIcons = icons.map { icon ->
@@ -288,24 +302,26 @@ class CrawlAndExtractHandler(
                     bytesBase64 = kotlin.io.encoding.Base64.encode(icon.bytes),
                     mimeType = icon.mimeType.value,
                     cssSelectors = icon.cssSelectors,
-                    hashBase64 = kotlin.io.encoding.Base64.encode(hashBytes)
+                    hashBase64 = Base64.encode(hashBytes)
                 )
             }
             
             val batchImages = images.map { image ->
                 val hashBytes = MessageDigest.getInstance("SHA-256").digest(image.bytes)
                 BatchImageData(
-                    bytesBase64 = kotlin.io.encoding.Base64.encode(image.bytes),
+                    bytesBase64 = Base64.encode(image.bytes),
                     mimeType = image.mimeType.value,
                     cssSelectors = image.cssSelectors,
-                    hashBase64 = kotlin.io.encoding.Base64.encode(hashBytes)
+                    hashBase64 = Base64.encode(hashBytes)
                 )
             }
 
-            // Store HTML, bounding boxes, icons, and images for later stages
+            // Store HTML, bounding boxes, screenshot, icons, and images for later stages
             val snapshotData = BatchUrlSnapshotData(
                 html = html,
                 boundingBoxes = snapshot.boundingBoxes,
+                screenshotBase64 = Base64.encode(screenshot.bytes),
+                screenshotMimeType = screenshot.mimeType.value,
                 icons = batchIcons.takeIf { it.isNotEmpty() },
                 images = batchImages.takeIf { it.isNotEmpty() }
             )

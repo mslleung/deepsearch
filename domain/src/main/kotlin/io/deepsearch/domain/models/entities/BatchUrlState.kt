@@ -326,6 +326,17 @@ data class BatchUrlSnapshotData(
     val boundingBoxes: Map<String, IBrowserPage.BoundingBox>? = null,
     
     /**
+     * Full-page screenshot from browser extraction (Stage 1).
+     * Base64 encoded. Used in Stage 2 for vision-based table/semantic identification.
+     */
+    val screenshotBase64: String? = null,
+    
+    /**
+     * Screenshot MIME type (e.g., "image/png").
+     */
+    val screenshotMimeType: String? = null,
+    
+    /**
      * Icons extracted from the page (Stage 1).
      * Used in Stage 2 for icon interpretation.
      */

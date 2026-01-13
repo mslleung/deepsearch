@@ -199,12 +199,20 @@ data class FullPageSnapshotResponse(
 )
 
 @Serializable
+data class HiddenContainerResponse(
+    val id: String,
+    val xpath: String,
+    val html: String
+)
+
+@Serializable
 data class PageSnapshotWithMetadataResponse(
     val title: String,
     val description: String?,
     val url: String,
     val html: String,
-    val boundingBoxes: Map<String, BoundingBoxResponse>
+    val boundingBoxes: Map<String, BoundingBoxResponse>,
+    val hiddenContainers: List<HiddenContainerResponse> = emptyList()
 )
 
 @Serializable

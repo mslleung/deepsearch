@@ -39,6 +39,8 @@ import io.deepsearch.domain.proxy.FreeProxyProvider
 import io.deepsearch.domain.proxy.ProxyTestService
 import io.deepsearch.domain.services.GeminiFileSearchService
 import io.deepsearch.domain.services.IGeminiFileSearchService
+import io.deepsearch.domain.services.IImageDimensionService
+import io.deepsearch.domain.services.ImageDimensionService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.singleOf
@@ -134,6 +136,7 @@ private val domainCommonTestModule = module {
     singleOf(::NormalizeUrlService) bind INormalizeUrlService::class
     singleOf(::GeminiBatchServiceImpl) bind IGeminiBatchService::class
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
+    singleOf(::ImageDimensionService) bind IImageDimensionService::class
     singleOf(::ProxyAwareHttpClientFactory) bind IProxyAwareHttpClientFactory::class
     singleOf(::ProxyTestService) bind IProxyTestService::class
     singleOf(::FreeProxySyncService)

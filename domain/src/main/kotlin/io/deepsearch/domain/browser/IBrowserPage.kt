@@ -245,6 +245,16 @@ interface IBrowserPage {
     )
 
     /**
+     * Hidden container detected in the page (accordion content, tab panels, etc.)
+     * These are not visible in screenshots but may contain table structures.
+     */
+    data class HiddenContainer(
+        val id: String,
+        val xpath: String,
+        val html: String
+    )
+
+    /**
      * Page snapshot with metadata but without media extraction.
      * Used for semantic/table identification which only needs DOM structure.
      */
@@ -253,7 +263,8 @@ interface IBrowserPage {
         val description: String?,
         val url: String,
         val html: String,
-        val boundingBoxes: Map<String, BoundingBox>
+        val boundingBoxes: Map<String, BoundingBox>,
+        val hiddenContainers: List<HiddenContainer> = emptyList()
     )
 
     /**
