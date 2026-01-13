@@ -79,6 +79,9 @@ sealed class PageCommand {
     @Serializable @SerialName("extractImages")
     data object ExtractImages : PageCommand()
     
+    @Serializable @SerialName("extractImagesWithScreenshot")
+    data class ExtractImagesWithScreenshot(val screenshotBase64: String, val mimeType: String) : PageCommand()
+    
     @Serializable @SerialName("captureSnapshot")
     data object CaptureSnapshot : PageCommand()
     

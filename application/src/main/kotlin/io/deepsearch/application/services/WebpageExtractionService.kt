@@ -107,10 +107,18 @@ class WebpageExtractionService(
         val result: WebpageExtractionResult
         val totalDuration = measureTimeMillis {
             // ===== Browser Captures (all parallel) =====
+            // Screenshot is captured once and shared between:
+            // - Semantic identification (vision-based)
+            // - Table identification (vision-based)
+            // - Image extraction (fallback cropping for CORS-blocked images)
             val snapshotDeferred = async { webpage.capturePageSnapshot() }
             val screenshotDeferred = async { webpage.takeFullPageScreenshot() }
             val iconsDeferred = async { webpage.extractIcons() }
-            val imagesDeferred = async { webpage.extractImages() }
+            // Image extraction uses the shared screenshot for fallback (avoids duplicate screenshot capture)
+            val imagesDeferred = async { 
+                val screenshot = screenshotDeferred.await()
+                webpage.extractImagesWithScreenshot(screenshot)
+            }
 
             // ===== LLM Operations (pipelined from captures) =====
             // Both semantic and table identification use vision-based detection (share screenshot)
@@ -331,14 +339,25 @@ class WebpageExtractionService(
         val extractedText = jsoupDomService.extractTextContent(jsoupDoc)
 
         // ===== Step 7: Format markdown using LLM =====
-        val markdown = markdownFormattingService.formatMarkdown(
-            rawText = extractedText,
-            url = snapshot.url,
-            title = snapshot.title,
-            description = snapshot.description,
-            popupText = popupText,
-            sessionId = sessionId
-        )
+//        val markdown = markdownFormattingService.formatMarkdown(
+//            rawText = extractedText,
+//            url = snapshot.url,
+//            title = snapshot.title,
+//            description = snapshot.description,
+//            popupText = popupText,
+//            sessionId = sessionId
+//        )
+        val markdown = buildString {
+            appendLine("URL: ${snapshot.url}")
+            if (snapshot.title.isNotBlank()) {
+                appendLine("Title: ${snapshot.title}")
+            }
+            if (!snapshot.description.isNullOrBlank()) {
+                appendLine("Description: ${snapshot.description}")
+            }
+            appendLine()
+            append(extractedText)
+        }
 
         return WebpageExtractionResult(
             markdown = markdown,

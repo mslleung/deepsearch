@@ -158,6 +158,20 @@ class RemoteBrowserPage(
             )
         }
     }
+    
+    override suspend fun extractImagesWithScreenshot(screenshot: IBrowserPage.Screenshot): List<IBrowserPage.WebImage> {
+        val screenshotBase64 = Base64.encode(screenshot.bytes)
+        val r = pageCmdParse<ImagesResponse>(
+            PageCommand.ExtractImagesWithScreenshot(screenshotBase64, screenshot.mimeType.value)
+        )
+        return r.images.map { image ->
+            IBrowserPage.WebImage(
+                bytes = Base64.decode(image.base64),
+                mimeType = ImageMimeType.fromValue(image.mimeType),
+                cssSelectors = image.cssSelectors
+            )
+        }
+    }
 
     override suspend fun captureSnapshot(): IBrowserPage.PageSnapshot {
         val r = pageCmdParse<PageSnapshotResponse>(PageCommand.CaptureSnapshot)

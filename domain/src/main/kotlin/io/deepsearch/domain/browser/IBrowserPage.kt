@@ -191,6 +191,17 @@ interface IBrowserPage {
      * @return List of WebImage containing bytes, mimeType, and CSS selectors.
      */
     suspend fun extractImages(): List<WebImage>
+    
+    /**
+     * Extract images from the current page using a pre-captured screenshot for fallback.
+     * 
+     * This is more efficient when the caller already has a screenshot (e.g., for vision-based agents)
+     * as it avoids capturing a duplicate screenshot for fallback cropping.
+     *
+     * @param screenshot A pre-captured full-page screenshot to use for fallback
+     * @return List of WebImage containing bytes, mimeType, and CSS selectors.
+     */
+    suspend fun extractImagesWithScreenshot(screenshot: Screenshot): List<WebImage>
 
     /**
      * Result of combined media extraction containing both icons and images.
