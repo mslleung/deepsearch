@@ -254,9 +254,12 @@ class CssSelectorConstructionService : ICssSelectorConstructionService {
                                 sibling.tagName() == tagName && siblingFilteredClasses == filteredClasses
                             }
                             if (siblingsMatching.size > 1) {
-                                // Need positional selector
-                                val position = siblingsMatching.indexOf(currentElement) + 1
-                                "$classSelector:nth-of-type($position)"
+                                // Need positional selector - use :nth-child() with actual child position
+                                // because :nth-of-type() counts ALL elements of the same tag type,
+                                // not just those with matching classes
+                                val allChildren = parent.children()
+                                val childPosition = allChildren.indexOf(currentElement) + 1
+                                "$classSelector:nth-child($childPosition)"
                             } else {
                                 classSelector
                             }
