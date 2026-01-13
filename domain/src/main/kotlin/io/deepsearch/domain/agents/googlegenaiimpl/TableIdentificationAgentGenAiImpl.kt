@@ -105,13 +105,15 @@ class TableIdentificationAgentGenAiImpl(
         - Identify the column headers if applicable
         
         Expexted output format:
-        [
-            {
-                "box_2d": [ymin, xmin, ymax, xmax]
-                "label" : "brief description of the table's content"
-                "columnHeaders" "column headers, comma-separated (optional)"
-            }
-        ]
+        {
+            "tables": [
+                {
+                    "box_2d": [ymin, xmin, ymax, xmax]
+                    "label" : "brief description of the table's content"
+                    "columnHeaders" "column headers, comma-separated (optional)"
+                }
+            ]
+        }
     """.trimIndent()
 
     // ========== HTML-Based Detection Schema ==========
@@ -234,10 +236,32 @@ class TableIdentificationAgentGenAiImpl(
         // 1. Vision detection for visible content
         // 2. HTML detection for each hidden container (in parallel)
 
+        // Pre-compute image bounding boxes for filtering graphical tables
+        val imageBoundingBoxes = extractImageBoundingBoxes(boundingBoxes)
+        val (screenshotWidth, screenshotHeight) = imageDimensionService.getImageDimensions(screenshot.bytes)
+        val pageWidth = screenshotWidth.toDouble()
+        val pageHeight = screenshotHeight.toDouble()
+        
+        logger.debug("Found {} image bounding boxes for filtering", imageBoundingBoxes.size)
+
         val visionDeferred = async {
             val (tables, usage) = detectTablesWithVision(screenshot, modelId)
-            val mapped = mapVisionTablesToDomElements(tables, boundingBoxes, htmlWithIds, screenshot.bytes)
-            logger.debug("Vision detection: {} tables found, {} mapped to DOM", tables.size, mapped.size)
+            
+            // Filter out vision-detected tables that overlap with image elements
+            // (tables rendered as images can't be extracted from DOM)
+            val filteredTables = filterVisionTablesOverlappingImages(
+                tables, imageBoundingBoxes, pageWidth, pageHeight
+            )
+            
+            if (filteredTables.size < tables.size) {
+                logger.debug(
+                    "Vision detection: {} tables found, {} after image filtering",
+                    tables.size, filteredTables.size
+                )
+            }
+            
+            val mapped = mapVisionTablesToDomElements(filteredTables, boundingBoxes, htmlWithIds, screenshot.bytes)
+            logger.debug("Vision detection: {} mapped to DOM", mapped.size)
             mapped to usage
         }
 
@@ -1007,9 +1031,13 @@ class TableIdentificationAgentGenAiImpl(
                     // Containment: what % of element is covered by vision box
                     val elementCoverage = interArea / elemArea
 
-                    // Combined score: prefer elements that cover most of the vision box
-                    // This handles cases where the element is larger than the vision box (padding/margins)
-                    val score = maxOf(iou, visionCoverage * 0.8)
+                    // Combined score: prefer elements that match the vision box size
+                    // - IoU is the best metric (1.0 for perfect match)
+                    // - For elements larger than vision box: use geometric mean of coverages
+                    //   This penalizes oversized containers (elementCoverage will be low)
+                    // - Allow some padding (elements up to ~3x larger still get reasonable scores)
+                    val coverageScore = kotlin.math.sqrt(visionCoverage * elementCoverage)
+                    val score = maxOf(iou, coverageScore)
 
                     // Find the data-ds-id for this element
                     val element = findElementByXPath(doc, xpath)
@@ -1190,6 +1218,88 @@ class TableIdentificationAgentGenAiImpl(
         }
 
         return result
+    }
+
+    // ========== Image Overlap Filtering ==========
+
+    /**
+     * Extract bounding boxes for image elements from page bounding boxes.
+     * Image elements are identified by XPath containing "img[" or "picture[".
+     */
+    private fun extractImageBoundingBoxes(
+        pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>
+    ): List<IBrowserPage.BoundingBox> {
+        return pageBoundingBoxes
+            .filter { (xpath, _) -> 
+                xpath.contains("img[", ignoreCase = true) || 
+                xpath.contains("picture[", ignoreCase = true) 
+            }
+            .map { it.value }
+    }
+
+    /**
+     * Filter out vision-detected tables that significantly overlap with image elements.
+     * Tables rendered as images (graphical tables) can't be extracted from DOM.
+     * 
+     * @param visionTables Raw vision detection results
+     * @param imageBoundingBoxes Bounding boxes of image elements on the page
+     * @param pageWidth Page width in pixels
+     * @param pageHeight Page height in pixels
+     * @return Filtered list of vision tables that don't overlap with images
+     */
+    private fun filterVisionTablesOverlappingImages(
+        visionTables: List<VisionTableResult>,
+        imageBoundingBoxes: List<IBrowserPage.BoundingBox>,
+        pageWidth: Double,
+        pageHeight: Double
+    ): List<VisionTableResult> {
+        if (imageBoundingBoxes.isEmpty()) {
+            return visionTables
+        }
+
+        return visionTables.filter { visionTable ->
+            // Convert vision coordinates (scaled 0-1000) to absolute pixels
+            val visionTop = visionTable.ymin * pageHeight / 1000
+            val visionLeft = visionTable.xmin * pageWidth / 1000
+            val visionBottom = visionTable.ymax * pageHeight / 1000
+            val visionRight = visionTable.xmax * pageWidth / 1000
+            val visionArea = (visionRight - visionLeft) * (visionBottom - visionTop)
+
+            if (visionArea <= 0) return@filter true // Keep if zero area (edge case)
+
+            val overlapsImage = imageBoundingBoxes.any { imgBbox ->
+                // Calculate intersection
+                val interLeft = maxOf(visionLeft, imgBbox.left)
+                val interTop = maxOf(visionTop, imgBbox.top)
+                val interRight = minOf(visionRight, imgBbox.right)
+                val interBottom = minOf(visionBottom, imgBbox.bottom)
+
+                if (interLeft >= interRight || interTop >= interBottom) {
+                    return@any false // No intersection
+                }
+
+                val interArea = (interRight - interLeft) * (interBottom - interTop)
+                val imgArea = (imgBbox.right - imgBbox.left) * (imgBbox.bottom - imgBbox.top)
+
+                // Check if vision table is mostly inside an image (>70% overlap)
+                val visionCoverage = interArea / visionArea
+
+                // Also check IoU for tables that might be the same size as the image
+                val unionArea = visionArea + imgArea - interArea
+                val iou = if (unionArea > 0) interArea / unionArea else 0.0
+
+                visionCoverage > 0.7 || iou > 0.5
+            }
+
+            if (overlapsImage) {
+                logger.debug(
+                    "Filtering out vision table '{}' - overlaps with image element",
+                    visionTable.label.take(40)
+                )
+            }
+
+            !overlapsImage
+        }
     }
 
 }

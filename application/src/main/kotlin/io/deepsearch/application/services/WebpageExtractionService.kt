@@ -104,68 +104,73 @@ class WebpageExtractionService(
         ocrLanguage: OcrLanguage
     ): WebpageExtractionResult = coroutineScope {
         logger.debug("Starting pipelined extraction...")
-
-        // ===== Browser Captures (all parallel) =====
-        val snapshotDeferred = async { webpage.capturePageSnapshot() }
-        val screenshotDeferred = async { webpage.takeFullPageScreenshot() }
-        val iconsDeferred = async { webpage.extractIcons() }
-        val imagesDeferred = async { webpage.extractImages() }
-
-        // ===== LLM Operations (pipelined from captures) =====
-        // Both semantic and table identification use vision-based detection (share screenshot)
-        val semantic = async {
-            val snapshot = snapshotDeferred.await()
-            val screenshot = screenshotDeferred.await()
-            doIdentifySemanticElements(sessionId, snapshot, screenshot)
-        }
-        val tableId = async {
-            val snapshot = snapshotDeferred.await()
-            val screenshot = screenshotDeferred.await()
-            doIdentifyTables(sessionId, snapshot, screenshot)
-        }
-        val iconRepl = pipeFrom(iconsDeferred) { doInterpretIcons(it, sessionId) }
-        val imageRepl = pipeFrom(imagesDeferred) { doInterpretImages(it, sessionId, ocrLanguage) }
-
-        // ===== Wait for Browser Release Point =====
-        val snapshot: IBrowserPage.PageSnapshotWithMetadata
-        val icons: List<IBrowserPage.Icon>
-        val images: List<IBrowserPage.WebImage>
-        val browserDuration = measureTimeMillis {
-            snapshot = snapshotDeferred.await()
-            screenshotDeferred.await() // Wait for screenshot before releasing browser
-            icons = iconsDeferred.await()
-            images = imagesDeferred.await()
-        }
-        logger.debug("Browser captures complete in {} ms - releasing browser", browserDuration)
-        webpage.close()
-
-        // ===== Await LLM Results =====
-        val llmDuration = measureTimeMillis { awaitAll(semantic, tableId, iconRepl, imageRepl) }
-        val imageResult = imageRepl.await()
-        val llmResults = LlmResults(
-            semanticElements = semantic.await(),
-            tableIdentifications = tableId.await(),
-            iconReplacements = iconRepl.await().replacements,
-            imageReplacements = imageResult.replacements,
-            imageHashes = imageResult.hashes,
-            imageMapping = imageResult.imageMapping
-        )
-        logger.debug(
-            "LLM operations complete in {} ms: {} semantic, {} tables, {} icons, {} images",
-            llmDuration,
-            countSemanticElements(llmResults.semanticElements),
-            llmResults.tableIdentifications.size,
-            llmResults.iconReplacements.size,
-            llmResults.imageReplacements.size
-        )
-
-        // ===== DOM Processing (Jsoup) + table interpretation =====
         val result: WebpageExtractionResult
-        val jsoupDuration = measureTimeMillis {
-            result = processDom(snapshot, llmResults, sessionId)
-        }
-        logger.debug("Table interpretation complete in {} ms", jsoupDuration)
+        val totalDuration = measureTimeMillis {
+            // ===== Browser Captures (all parallel) =====
+            val snapshotDeferred = async { webpage.capturePageSnapshot() }
+            val screenshotDeferred = async { webpage.takeFullPageScreenshot() }
+            val iconsDeferred = async { webpage.extractIcons() }
+            val imagesDeferred = async { webpage.extractImages() }
 
+            // ===== LLM Operations (pipelined from captures) =====
+            // Both semantic and table identification use vision-based detection (share screenshot)
+            val semantic = async {
+                val snapshot = snapshotDeferred.await()
+                val screenshot = screenshotDeferred.await()
+                doIdentifySemanticElements(sessionId, snapshot, screenshot)
+            }
+            val tableId = async {
+                val snapshot = snapshotDeferred.await()
+                val screenshot = screenshotDeferred.await()
+                doIdentifyTables(sessionId, snapshot, screenshot)
+            }
+            val iconRepl = pipeFrom(iconsDeferred) { doInterpretIcons(it, sessionId) }
+            val imageRepl = pipeFrom(imagesDeferred) { doInterpretImages(it, sessionId, ocrLanguage) }
+
+            // ===== Wait for Browser Release Point =====
+            val snapshot: IBrowserPage.PageSnapshotWithMetadata
+            val icons: List<IBrowserPage.Icon>
+            val images: List<IBrowserPage.WebImage>
+            val browserDuration = measureTimeMillis {
+                snapshot = snapshotDeferred.await()
+                screenshotDeferred.await() // Wait for screenshot before releasing browser
+                icons = iconsDeferred.await()
+                images = imagesDeferred.await()
+            }
+            logger.debug("Browser captures complete in {} ms - releasing browser", browserDuration)
+            webpage.close()
+
+            // ===== Await LLM Results =====
+            val llmDuration = measureTimeMillis { awaitAll(semantic, tableId, iconRepl, imageRepl) }
+            val imageResult = imageRepl.await()
+            val llmResults = LlmResults(
+                semanticElements = semantic.await(),
+                tableIdentifications = tableId.await(),
+                iconReplacements = iconRepl.await().replacements,
+                imageReplacements = imageResult.replacements,
+                imageHashes = imageResult.hashes,
+                imageMapping = imageResult.imageMapping
+            )
+            logger.debug(
+                "LLM operations complete in {} ms: {} semantic, {} tables, {} icons, {} images",
+                llmDuration,
+                countSemanticElements(llmResults.semanticElements),
+                llmResults.tableIdentifications.size,
+                llmResults.iconReplacements.size,
+                llmResults.imageReplacements.size
+            )
+
+            // ===== DOM Processing (Jsoup) + table interpretation =====
+            val domResult: WebpageExtractionResult
+            val jsoupDuration = measureTimeMillis {
+                domResult = processDom(snapshot, llmResults, sessionId)
+            }
+            logger.debug("Table interpretation complete in {} ms", jsoupDuration)
+
+            result = domResult
+        }
+
+        logger.info("Webpage extraction completed in {} ms total", totalDuration)
         result
     }
 
@@ -193,8 +198,10 @@ class WebpageExtractionService(
         val duration = measureTimeMillis {
             result = tableIdentificationService.identifyTables(sessionId, snapshot, screenshot)
         }
-        logger.debug("Table identification took {} ms, found {} tables ({} hidden containers)", 
-            duration, result.size, snapshot.hiddenContainers.size)
+        logger.debug(
+            "Table identification took {} ms, found {} tables ({} hidden containers)",
+            duration, result.size, snapshot.hiddenContainers.size
+        )
         return result
     }
 
@@ -235,11 +242,11 @@ class WebpageExtractionService(
             val extractionResults = webpageImageTextExtractionService.extractTextFromImagesWithHashes(
                 images, sessionId, ocrLanguage
             )
-            
+
             // Track image number assignments for the number-to-hash mapping
             var imageCounter = 0
             val imageMapping = mutableMapOf<String, String>()
-            
+
             val replacements = images.zip(extractionResults).flatMap { (image, extraction) ->
                 // Only assign a number if there's extracted text (image is relevant)
                 val wrappedText = if (extraction.extractedText != null) {
@@ -259,8 +266,10 @@ class WebpageExtractionService(
                 imageMapping = imageMapping
             )
         }
-        logger.debug("Image interpretation took {} ms, {} replacements, {} mapped images", 
-            duration, result.replacements.size, result.imageMapping.size)
+        logger.debug(
+            "Image interpretation took {} ms, {} replacements, {} mapped images",
+            duration, result.replacements.size, result.imageMapping.size
+        )
         return result
     }
 
@@ -277,18 +286,18 @@ class WebpageExtractionService(
         // ===== Step 1: Inject all identifiers into Jsoup document =====
         // This restores the original behavior where data-ds-id attributes were
         // injected into the browser DOM for stable subsequent operations.
-        
+
         // Inject media identifiers (icons + images)
         jsoupDomService.injectMediaIdentifiers(jsoupDoc)
-        
+
         // Inject semantic element identifiers using CSS selectors from agents
         val semanticInjections = collectSemanticInjections(llmResults.semanticElements)
         jsoupDomService.injectIdentifiers(jsoupDoc, semanticInjections)
-        
+
         // Inject table identifiers using CSS selectors from agents
         val tableInjections = llmResults.tableIdentifications.map { it.cssSelector to it.dataId }
         jsoupDomService.injectIdentifiers(jsoupDoc, tableInjections)
-        
+
         // ===== Step 2: Apply media replacements (icons + images) =====
         val mediaReplacements = llmResults.iconReplacements + llmResults.imageReplacements
         jsoupDomService.replaceElementsWithText(jsoupDoc, mediaReplacements)
@@ -426,7 +435,7 @@ class WebpageExtractionService(
             addAll(semanticElements.popups.map { it.cssSelector to it.dataId })
         }
     }
-    
+
     /**
      * Collects stable data-ds-id selectors for removing semantic elements.
      * These selectors remain valid regardless of DOM structure changes.

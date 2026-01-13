@@ -455,9 +455,13 @@ class SemanticIdentificationAgentGenAiImpl(
 
                     // Vision coverage: what % of vision box is covered by element
                     val visionCoverage = interArea / targetArea
+                    // Element coverage: what % of element is covered by vision box
+                    val elementCoverage = interArea / elemArea
 
-                    // Combined score: prefer elements that cover most of the vision box
-                    val score = maxOf(iou, visionCoverage * 0.8)
+                    // Combined score: prefer elements that match the vision box size
+                    // Uses geometric mean of coverages to penalize oversized containers
+                    val coverageScore = kotlin.math.sqrt(visionCoverage * elementCoverage)
+                    val score = maxOf(iou, coverageScore)
 
                     // No threshold - always take best match to avoid false negatives
                     if (bestMatch == null || score > bestMatch.second) {
@@ -796,9 +800,13 @@ class SemanticIdentificationAgentGenAiImpl(
 
                 // Vision coverage: what % of vision box is covered by element
                 val visionCoverage = intersectArea / targetArea
+                // Element coverage: what % of element is covered by vision box
+                val elementCoverage = intersectArea / elementArea
 
-                // Combined score: prefer elements that cover most of the vision box
-                val score = maxOf(iou, visionCoverage * 0.8)
+                // Combined score: prefer elements that match the vision box size
+                // Uses geometric mean of coverages to penalize oversized containers
+                val coverageScore = kotlin.math.sqrt(visionCoverage * elementCoverage)
+                val score = maxOf(iou, coverageScore)
 
                 // No threshold - always pick best match to avoid false negatives
                 if (bestMatch == null || score > bestMatch.second) {
