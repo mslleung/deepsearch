@@ -320,17 +320,10 @@ class WebpageImageTextExtractionService(
                 recordTokenUsage(sessionId, "ImageDescriptionAgent", descriptionOutput.tokenUsage)
                 
                 // Store description results - combine type, purpose, and description into searchable text
+                // Note: Avoid using square brackets here as this text will be used in markdown alt text
+                // where brackets would create invalid syntax: ![text with [brackets]](#img-N)
                 imagesWithoutText.zip(descriptionOutput.descriptions).forEach { (image, description) ->
-                    val combinedDescription = buildString {
-                        append("[${description.imageType}]")
-                        if (description.purpose.isNotBlank() && description.purpose != "unknown") {
-                            append(" [${description.purpose}]")
-                        }
-                        if (description.description.isNotBlank()) {
-                            append(" ${description.description}")
-                        }
-                    }.trim().takeIf { it.isNotBlank() }
-                    cachedResults[Base64.encode(image.bytesHash)] = combinedDescription
+                    cachedResults[Base64.encode(image.bytesHash)] = description.description
                 }
                 
                 // Log description results for debugging
