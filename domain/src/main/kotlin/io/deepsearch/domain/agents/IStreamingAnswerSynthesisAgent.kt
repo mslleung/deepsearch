@@ -3,24 +3,10 @@ package io.deepsearch.domain.agents
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
-
-/**
- * Context from a prior session for query session continuation.
- * When provided, the agent will build upon the prior findings instead of starting fresh,
- * avoiding repetition of already-discovered information.
- * 
- * @property sessionId The ID of the prior session being continued
- * @property query The query that was asked in the prior session
- * @property answer The answer that was generated in the prior session
- */
-data class PriorSessionContext(
-    val sessionId: String,
-    val query: String,
-    val answer: String
-)
 
 /**
  * Input for streaming answer synthesis agent.
@@ -34,8 +20,9 @@ data class PriorSessionContext(
  *           Used to prevent the agent from suggesting duplicate follow-up queries.
  * @property fulfillmentRequirements List of requirements that must ALL be satisfied
  *           for the answer to be considered complete. Used for COVERAGE evaluation.
- * @property priorSessionContext Context from a prior session for continuation searches.
- *           When provided, the agent will expand on prior findings without repeating them.
+ * @property sessionHistory Full history of prior sessions in the continuation chain.
+ *           When provided, the agent will build upon prior findings without repeating them.
+ *           Contains all prior queries and answers in chronological order.
  */
 data class StreamingAnswerSynthesisInput(
     val query: String,
@@ -43,7 +30,7 @@ data class StreamingAnswerSynthesisInput(
     val imageDescriptions: Map<String, String> = emptyMap(),
     val previouslySearchedQueries: List<String> = emptyList(),
     val fulfillmentRequirements: List<String> = emptyList(),
-    val priorSessionContext: PriorSessionContext? = null
+    val sessionHistory: SessionHistory = SessionHistory.empty()
 ) : IAgent.IAgentInput
 
 /**

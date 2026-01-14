@@ -3,12 +3,12 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 import io.deepsearch.application.services.ILlmTokenUsageService
 import io.deepsearch.domain.agents.AnswerAssessment
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
-import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import kotlinx.coroutines.flow.collect
 
 /**
@@ -52,9 +52,9 @@ interface IAnswerSynthesisFacadeService {
      * @param evaluatedSources List of evaluated sources to synthesize from
      * @param previouslySearchedQueries Queries already searched (for deduplication)
      * @param fulfillmentRequirements Requirements for answer fulfillment
-     * @param priorSessionContext Optional context from a previous session for continuation.
-     *                            When provided, the answer synthesis will avoid repeating
-     *                            information already provided in the prior session.
+     * @param sessionHistory Full history of prior sessions in the continuation chain.
+     *                       When provided, the answer synthesis will avoid repeating
+     *                       information already provided and will build upon prior context.
      * @return SynthesisResult containing the answer and metadata
      */
     suspend fun synthesizeAnswer(
@@ -63,7 +63,7 @@ interface IAnswerSynthesisFacadeService {
         evaluatedSources: List<EvaluatedSource>,
         previouslySearchedQueries: List<String> = emptyList(),
         fulfillmentRequirements: List<String> = emptyList(),
-        priorSessionContext: PriorSessionContext? = null
+        sessionHistory: SessionHistory = SessionHistory.empty()
     ): SynthesisResult
 }
 
@@ -78,7 +78,7 @@ class AnswerSynthesisFacadeService(
         evaluatedSources: List<EvaluatedSource>,
         previouslySearchedQueries: List<String>,
         fulfillmentRequirements: List<String>,
-        priorSessionContext: PriorSessionContext?
+        sessionHistory: SessionHistory
     ): SynthesisResult {
         val answerBuilder = StringBuilder()
         lateinit var status: AnswerStatus
@@ -93,7 +93,7 @@ class AnswerSynthesisFacadeService(
                 evaluatedSources = evaluatedSources,
                 previouslySearchedQueries = previouslySearchedQueries,
                 fulfillmentRequirements = fulfillmentRequirements,
-                priorSessionContext = priorSessionContext
+                sessionHistory = sessionHistory
             )
         ).collect { item ->
             when (item) {

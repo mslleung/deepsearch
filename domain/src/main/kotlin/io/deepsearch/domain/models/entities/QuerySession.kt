@@ -15,6 +15,13 @@ import kotlin.time.Instant
  *
  * This is a rich domain model that encapsulates business logic for state transitions
  * and state management, following DDD principles.
+ * 
+ * Session Continuation:
+ * @property previousSessionId Optional reference to the immediate prior session this continues from.
+ * @property rootSessionId Optional reference to the first session in the continuation chain.
+ *           - null if this IS the root session (first in chain)
+ *           - set to the original session's ID for all continuations
+ *           - enables O(1) loading of full session history via single query
  */
 @OptIn(ExperimentalTime::class)
 class QuerySession(
@@ -31,7 +38,9 @@ class QuerySession(
     var durationMs: Long?,
     val createdAt: Instant,
     var updatedAt: Instant,
-    var version: Long = 0
+    var version: Long = 0,
+    val previousSessionId: QuerySessionId? = null, // Link to immediate prior session
+    val rootSessionId: QuerySessionId? = null // Link to first session in chain (null if this IS root)
 ) {
 
     constructor(
@@ -40,7 +49,9 @@ class QuerySession(
         url: String,
         apiKeyId: ApiKeyId,
         searchMode: SearchMode,
-        searchBudget: SearchBudget = SearchBudget()
+        searchBudget: SearchBudget = SearchBudget(),
+        previousSessionId: QuerySessionId? = null,
+        rootSessionId: QuerySessionId? = null
     ) : this(
         id = id,
         query = query,
@@ -55,6 +66,8 @@ class QuerySession(
         durationMs = null,
         createdAt = Clock.System.now(),
         updatedAt = Clock.System.now(),
+        previousSessionId = previousSessionId,
+        rootSessionId = rootSessionId
     )
 
     /**

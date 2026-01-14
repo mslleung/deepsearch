@@ -22,6 +22,8 @@ class QuerySessionTable(
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)
+    val previousSessionId = varchar("previous_session_id", 255).nullable() // Link to immediate prior session
+    val rootSessionId = varchar("root_session_id", 255).nullable() // Link to first session in chain (null if this IS root)
 
     override val primaryKey = PrimaryKey(id)
 }

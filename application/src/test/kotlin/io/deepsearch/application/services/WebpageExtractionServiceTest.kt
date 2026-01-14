@@ -1,20 +1,19 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationBenchmarkTestModule
-import io.deepsearch.application.config.applicationTestModule
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import java.io.File
 
 class WebpageExtractionServiceTest : KoinTest {
 
@@ -48,4 +47,18 @@ class WebpageExtractionServiceTest : KoinTest {
             println(text)
         }
     }
+
+    @Test
+    fun `extract beame webpage and write to file`() = runTest(testCoroutineDispatcher) {
+        browserPool.withPage { page ->
+            page.navigate("https://mybeame.com/beame-student-discount")
+            val text = webpageExtractionService.extractWebpage(page, QuerySessionId("test-session-id"))
+
+            // Write to file for inspection
+            File("/tmp/beame-extraction.txt").writeText(text.markdown)
+            println("Wrote ${text.markdown.length} chars to /tmp/beame-extraction.txt")
+            assertTrue(text.markdown.length > 200)
+        }
+    }
+
 }

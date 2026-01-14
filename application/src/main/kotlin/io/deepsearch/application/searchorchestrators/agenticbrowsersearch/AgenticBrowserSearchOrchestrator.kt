@@ -6,7 +6,6 @@ import io.deepsearch.application.services.ISearchFlowEventService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.SearchEvent
-import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.entities.SearchFlowEventType
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
@@ -25,6 +24,7 @@ import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchBudget
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.ext.chunkedWithTimeout
@@ -127,7 +127,7 @@ class AgenticBrowserSearchOrchestrator(
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId,
         proxyConfig: ProxyConfiguration,
-        priorSessionContext: PriorSessionContext?
+        sessionHistory: SessionHistory
     ): Flow<SearchEvent> = channelFlow {
         val budget = SearchBudget(timeLimitMs = 300 * 1000L, maxLinks = 200)
         val session = querySessionService.createSession(
@@ -135,7 +135,9 @@ class AgenticBrowserSearchOrchestrator(
             searchQuery.url,
             apiKeyId,
             SearchMode.LIVE_CRAWLING,
-            budget
+            budget,
+            sessionHistory.previousSessionId,
+            sessionHistory.rootSessionId
         )
         val sessionId = session.id
 
@@ -147,7 +149,8 @@ class AgenticBrowserSearchOrchestrator(
             // Query processing flow - runs in parallel with discovery (no latency penalty)
             // Uses Gemini URL Context tool to extract website context and generate expanded query + requirements
             // Shared as a hot flow so multiple collectors get the same cached result
-            val queryProcessingFlow = queryProcessingService.processQueryFlow(searchQuery, maxCacheAge, sessionId)
+            // When sessionHistory is provided, query processing is context-aware of prior queries/answers
+            val queryProcessingFlow = queryProcessingService.processQueryFlow(searchQuery, maxCacheAge, sessionId, sessionHistory)
                 .shareIn(this, SharingStarted.Eagerly, replay = 1)
 
             // Tracks URLs that have been fully processed (content fetched, markdown emitted)
@@ -371,7 +374,7 @@ class AgenticBrowserSearchOrchestrator(
                     aggregateBatchIntoAccumulator(
                         sessionId, state, batch, channel,
                         expandedQuery, fulfillmentRequirements,
-                        priorSessionContext
+                        sessionHistory
                     )
                 }
                 .onEach { accumulator ->
@@ -898,7 +901,7 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>,
         expandedQuery: String,
         fulfillmentRequirements: List<String> = emptyList(),
-        priorSessionContext: PriorSessionContext? = null
+        sessionHistory: SessionHistory = SessionHistory.empty()
     ): SourceAccumulator {
         if (batch.isEmpty()) {
             return state
@@ -951,7 +954,7 @@ class AgenticBrowserSearchOrchestrator(
             evaluatedSources = updatedSourcesByUrl.values.toList(),
             previouslySearchedQueries = state.searchedQueries,
             fulfillmentRequirements = fulfillmentRequirements,
-            priorSessionContext = priorSessionContext
+            sessionHistory = sessionHistory
         )
 
         val newIterationNumber = state.iterationNumber + 1

@@ -8,6 +8,7 @@ import io.deepsearch.domain.models.valueobjects.CachedWebsiteContext
 import io.deepsearch.domain.models.valueobjects.QueryProcessingResult
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.models.valueobjects.WebsiteContext
 import io.deepsearch.domain.repositories.IWebsiteContextRepository
 import io.deepsearch.domain.services.INormalizeUrlService
@@ -32,15 +33,23 @@ interface IQueryProcessingService {
      * 2. If cache hit (and not expired): use QueryBreakdownAgent directly
      * 3. If cache miss: use UrlContextExtractionAgent first, then QueryBreakdownAgent → cache context
      * 
+     * When sessionHistory is provided (session continuation):
+     * - The QueryBreakdownAgent receives prior query/answer context
+     * - It generates a context-aware expanded query that targets NEW information
+     * - Fulfillment requirements focus on the DELTA (what's not yet covered)
+     * - Follow-up queries avoid re-exploring already-searched areas
+     * 
      * @param searchQuery The original user query
      * @param maxCacheAge Maximum cache age in milliseconds (null means no expiry)
      * @param sessionId Session ID for token usage tracking
+     * @param sessionHistory History of prior sessions for context-aware processing (optional)
      * @return Flow that emits QueryProcessingResult
      */
     fun processQueryFlow(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
-        sessionId: QuerySessionId
+        sessionId: QuerySessionId,
+        sessionHistory: SessionHistory = SessionHistory.empty()
     ): Flow<QueryProcessingResult>
 }
 
@@ -58,11 +67,15 @@ class QueryProcessingService(
     override fun processQueryFlow(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
-        sessionId: QuerySessionId
+        sessionId: QuerySessionId,
+        sessionHistory: SessionHistory
     ): Flow<QueryProcessingResult> = flow {
         val normalizedUrl = normalizeUrlService.normalize(searchQuery.url) ?: searchQuery.url
 
-        logger.debug("[{}] Processing query with context for URL: {}", sessionId.value, normalizedUrl)
+        logger.debug(
+            "[{}] Processing query with context for URL: {}, sessionHistory: {} prior sessions",
+            sessionId.value, normalizedUrl, sessionHistory.sessions.size
+        )
 
         // Check cache for website context
         val cachedContext = websiteContextRepository.findByUrl(normalizedUrl)
@@ -70,11 +83,11 @@ class QueryProcessingService(
         val result = if (cachedContext != null && !isExpired(cachedContext, maxCacheAge)) {
             // Cache hit - use query breakdown agent directly
             logger.debug("[{}] Website context cache HIT for {}", sessionId.value, normalizedUrl)
-            processWithCachedContext(searchQuery, cachedContext.toWebsiteContext(), sessionId)
+            processWithCachedContext(searchQuery, cachedContext.toWebsiteContext(), sessionId, sessionHistory)
         } else {
             // Cache miss - extract context first, then break down query
             logger.debug("[{}] Website context cache MISS for {}", sessionId.value, normalizedUrl)
-            processWithUrlContextExtraction(searchQuery, normalizedUrl, sessionId)
+            processWithUrlContextExtraction(searchQuery, normalizedUrl, sessionId, sessionHistory)
         }
 
         emit(result)
@@ -89,12 +102,14 @@ class QueryProcessingService(
     private suspend fun processWithCachedContext(
         searchQuery: SearchQuery,
         context: WebsiteContext,
-        sessionId: QuerySessionId
+        sessionId: QuerySessionId,
+        sessionHistory: SessionHistory
     ): QueryProcessingResult {
         val output = queryBreakdownAgent.generate(
             QueryBreakdownInput(
                 searchQuery = searchQuery,
-                websiteContext = context
+                websiteContext = context,
+                sessionHistory = sessionHistory
             )
         )
 
@@ -108,11 +123,12 @@ class QueryProcessingService(
         )
 
         logger.info(
-            "[{}] Query processed with cached context: '{}' → '{}', followUpQueries={}",
+            "[{}] Query processed with cached context: '{}' → '{}', followUpQueries={}, sessionHistorySize={}",
             sessionId.value,
             searchQuery.query,
             output.expandedQuery,
-            output.followUpQueries
+            output.followUpQueries,
+            sessionHistory.sessions.size
         )
 
         return QueryProcessingResult(
@@ -131,7 +147,8 @@ class QueryProcessingService(
     private suspend fun processWithUrlContextExtraction(
         searchQuery: SearchQuery,
         normalizedUrl: String,
-        sessionId: QuerySessionId
+        sessionId: QuerySessionId,
+        sessionHistory: SessionHistory
     ): QueryProcessingResult {
         // Step 1: Extract website context using URL Context tool
         val extractionOutput = urlContextExtractionAgent.generate(
@@ -158,11 +175,12 @@ class QueryProcessingService(
             )
         )
 
-        // Step 2: Break down query with extracted context
+        // Step 2: Break down query with extracted context and session history
         val breakdownOutput = queryBreakdownAgent.generate(
             QueryBreakdownInput(
                 searchQuery = searchQuery,
-                websiteContext = websiteContext
+                websiteContext = websiteContext,
+                sessionHistory = sessionHistory
             )
         )
 
@@ -176,11 +194,12 @@ class QueryProcessingService(
         )
 
         logger.info(
-            "[{}] Query processed with URL context extraction: '{}' → '{}', followUpQueries={} (context cached)",
+            "[{}] Query processed with URL context extraction: '{}' → '{}', followUpQueries={}, sessionHistorySize={} (context cached)",
             sessionId.value,
             searchQuery.query,
             breakdownOutput.expandedQuery,
-            breakdownOutput.followUpQueries
+            breakdownOutput.followUpQueries,
+            sessionHistory.sessions.size
         )
 
         return QueryProcessingResult(

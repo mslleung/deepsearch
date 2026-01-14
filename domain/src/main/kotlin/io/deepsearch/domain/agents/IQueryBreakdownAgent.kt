@@ -2,6 +2,7 @@ package io.deepsearch.domain.agents
 
 import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.models.valueobjects.WebsiteContext
 
@@ -9,12 +10,20 @@ import io.deepsearch.domain.models.valueobjects.WebsiteContext
  * Input for query breakdown agent.
  * Uses website context to understand query scope.
  * 
+ * When sessionHistory is provided (session continuation), the agent:
+ * - Understands what topics have been explored in prior sessions
+ * - Transforms the query to target NEW information (the delta)
+ * - Generates requirements for information not yet covered
+ * - Generates follow-up queries that explore unexplored areas
+ * 
  * @property searchQuery The original user query
  * @property websiteContext Context about the target website/page
+ * @property sessionHistory History of prior sessions for context-aware processing (optional)
  */
 data class QueryBreakdownInput(
     val searchQuery: SearchQuery,
-    val websiteContext: WebsiteContext
+    val websiteContext: WebsiteContext,
+    val sessionHistory: SessionHistory = SessionHistory.empty()
 ) : IAgent.IAgentInput
 
 /**

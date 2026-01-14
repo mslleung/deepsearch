@@ -100,5 +100,15 @@ interface IQuerySessionRepository {
      * @return List of all query sessions for the user
      */
     suspend fun findAllByUserId(userId: UserId): List<QuerySession>
+    
+    /**
+     * Find all sessions in a continuation chain by root session ID.
+     * Returns sessions ordered by creation time (oldest first).
+     * Includes the root session itself.
+     * 
+     * @param rootSessionId The ID of the first session in the chain
+     * @return All sessions in the chain, ordered chronologically
+     */
+    suspend fun findSessionChain(rootSessionId: QuerySessionId): List<QuerySession>
 }
 

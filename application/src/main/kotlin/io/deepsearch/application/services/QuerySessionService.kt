@@ -56,13 +56,19 @@ data class DomainStat(
  * Business rules live inside the `QuerySession` entity.
  */
 interface IQuerySessionService {
-    /** Create a new query session with the specified search mode and budget. */
+    /** 
+     * Create a new query session with the specified search mode and budget.
+     * @param previousSessionId Optional ID of the immediate prior session being continued (for session continuation).
+     * @param rootSessionId Optional ID of the first session in the continuation chain (for O(1) history loading).
+     */
     suspend fun createSession(
         query: String,
         url: String,
         apiKeyId: ApiKeyId,
         searchMode: SearchMode,
-        searchBudget: SearchBudget = SearchBudget()
+        searchBudget: SearchBudget = SearchBudget(),
+        previousSessionId: QuerySessionId? = null,
+        rootSessionId: QuerySessionId? = null
     ): QuerySession
 
     /**
@@ -201,19 +207,23 @@ class QuerySessionService(
         url: String,
         apiKeyId: ApiKeyId,
         searchMode: SearchMode,
-        searchBudget: SearchBudget
+        searchBudget: SearchBudget,
+        previousSessionId: QuerySessionId?,
+        rootSessionId: QuerySessionId?
     ): QuerySession {
         val sessionId = QuerySessionId(UUID.randomUUID().toString())
-        val session = QuerySession(sessionId, query, url, apiKeyId, searchMode, searchBudget)
+        val session = QuerySession(sessionId, query, url, apiKeyId, searchMode, searchBudget, previousSessionId, rootSessionId)
         val saved = querySessionRepository.save(session)
         logger.info(
-            "[{}] Session created: query='{}', url='{}', apiKeyId={}, mode={}, budget={}",
+            "[{}] Session created: query='{}', url='{}', apiKeyId={}, mode={}, budget={}, previousSession={}, rootSession={}",
             sessionId.value,
             query,
             url,
             apiKeyId.value,
             searchMode.name,
-            searchBudget
+            searchBudget,
+            previousSessionId?.value,
+            rootSessionId?.value
         )
         return saved
     }

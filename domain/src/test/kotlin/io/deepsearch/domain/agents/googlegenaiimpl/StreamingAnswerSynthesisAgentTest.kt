@@ -3,12 +3,12 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import io.deepsearch.domain.agents.HtmlSourceEvalInput
 import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
-import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
@@ -759,30 +759,32 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     @Test
     fun `should expand on prior findings without repeating when continuation query is different topic`() = runTest(testCoroutineDispatcher) {
         // Prior session covered pricing
-        val priorContext = PriorSessionContext(
-            sessionId = "session-123",
-            query = "What are the pricing plans?",
-            answer = """
-                ## SleekFlow Pricing Plans
-                
-                SleekFlow offers three pricing tiers:
-                
-                1. **Pro Plan** - $79/month
-                   - Includes omnichannel inbox
-                   - Up to 3 active flows
-                   - 5,000 API calls monthly
-                
-                2. **Premium Plan** - $299/month
-                   - Advanced Flow Builder features
-                   - HubSpot integration
-                   - Analytics dashboard
-                
-                3. **Enterprise Plan** - Custom pricing
-                   - Unlimited features
-                   - Salesforce integration
-                   - Custom SLAs
-            """.trimIndent()
-        )
+        val sessionHistory = SessionHistory(listOf(
+            SessionHistory.SessionSummary(
+                sessionId = "session-123",
+                query = "What are the pricing plans?",
+                answer = """
+                    ## SleekFlow Pricing Plans
+                    
+                    SleekFlow offers three pricing tiers:
+                    
+                    1. **Pro Plan** - $79/month
+                       - Includes omnichannel inbox
+                       - Up to 3 active flows
+                       - 5,000 API calls monthly
+                    
+                    2. **Premium Plan** - $299/month
+                       - Advanced Flow Builder features
+                       - HubSpot integration
+                       - Analytics dashboard
+                    
+                    3. **Enterprise Plan** - Custom pricing
+                       - Unlimited features
+                       - Salesforce integration
+                       - Custom SLAs
+                """.trimIndent()
+            )
+        ))
 
         // New sources provide system requirements information
         val systemReqSource = EvaluatedSource(
@@ -802,7 +804,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         val input = StreamingAnswerSynthesisInput(
             query = "What are the system requirements for SleekFlow?",
             evaluatedSources = listOf(systemReqSource),
-            priorSessionContext = priorContext
+            sessionHistory = sessionHistory
         )
 
         val output = agent.generate(input)
@@ -837,20 +839,22 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     @Test
     fun `should add new details when continuation query digs deeper into same topic`() = runTest(testCoroutineDispatcher) {
         // Prior session covered general pricing overview
-        val priorContext = PriorSessionContext(
-            sessionId = "session-456",
-            query = "What are the pricing plans?",
-            answer = """
-                ## Pricing Overview
-                
-                The platform offers three tiers:
-                - **Starter**: $9/month - Basic features for individuals
-                - **Professional**: $49/month - Advanced features for teams
-                - **Enterprise**: Custom pricing - Full features for large organizations
-                
-                All plans include 24/7 email support and a 14-day free trial.
-            """.trimIndent()
-        )
+        val sessionHistory = SessionHistory(listOf(
+            SessionHistory.SessionSummary(
+                sessionId = "session-456",
+                query = "What are the pricing plans?",
+                answer = """
+                    ## Pricing Overview
+                    
+                    The platform offers three tiers:
+                    - **Starter**: $9/month - Basic features for individuals
+                    - **Professional**: $49/month - Advanced features for teams
+                    - **Enterprise**: Custom pricing - Full features for large organizations
+                    
+                    All plans include 24/7 email support and a 14-day free trial.
+                """.trimIndent()
+            )
+        ))
 
         // New sources provide detailed enterprise information
         val enterpriseSource = EvaluatedSource(
@@ -871,7 +875,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         val input = StreamingAnswerSynthesisInput(
             query = "What are the specific enterprise pricing details and discounts?",
             evaluatedSources = listOf(enterpriseSource),
-            priorSessionContext = priorContext
+            sessionHistory = sessionHistory
         )
 
         val output = agent.generate(input)
@@ -906,18 +910,20 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     @Test
     fun `should handle updated information that supersedes prior findings`() = runTest(testCoroutineDispatcher) {
         // Prior session had pricing from 2024
-        val priorContext = PriorSessionContext(
-            sessionId = "session-789",
-            query = "What is the Pro plan pricing?",
-            answer = """
-                ## Pro Plan Pricing (as of 2024)
-                
-                The Pro plan costs **$49/month** and includes:
-                - 10,000 API calls
-                - 5 team members
-                - Priority email support
-            """.trimIndent()
-        )
+        val sessionHistory = SessionHistory(listOf(
+            SessionHistory.SessionSummary(
+                sessionId = "session-789",
+                query = "What is the Pro plan pricing?",
+                answer = """
+                    ## Pro Plan Pricing (as of 2024)
+                    
+                    The Pro plan costs **$49/month** and includes:
+                    - 10,000 API calls
+                    - 5 team members
+                    - Priority email support
+                """.trimIndent()
+            )
+        ))
 
         // New sources show 2025 pricing update
         val updatedPricingSource = EvaluatedSource(
@@ -937,7 +943,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         val input = StreamingAnswerSynthesisInput(
             query = "Has the Pro plan pricing changed recently?",
             evaluatedSources = listOf(updatedPricingSource),
-            priorSessionContext = priorContext
+            sessionHistory = sessionHistory
         )
 
         val output = agent.generate(input)
@@ -970,22 +976,24 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     @Test
     fun `should fill gaps from prior incomplete answer`() = runTest(testCoroutineDispatcher) {
         // Prior session couldn't find specific pricing
-        val priorContext = PriorSessionContext(
-            sessionId = "session-incomplete",
-            query = "What is the pricing for the API?",
-            answer = """
-                ## API Pricing
-                
-                The platform offers API access through its subscription plans. However, I couldn't find 
-                specific API pricing details. The documentation mentions:
-                
-                - API access is included in all paid plans
-                - Rate limits vary by plan tier
-                - Contact sales for high-volume API pricing
-                
-                For specific pricing information, please check the official pricing page or contact support.
-            """.trimIndent()
-        )
+        val sessionHistory = SessionHistory(listOf(
+            SessionHistory.SessionSummary(
+                sessionId = "session-incomplete",
+                query = "What is the pricing for the API?",
+                answer = """
+                    ## API Pricing
+                    
+                    The platform offers API access through its subscription plans. However, I couldn't find 
+                    specific API pricing details. The documentation mentions:
+                    
+                    - API access is included in all paid plans
+                    - Rate limits vary by plan tier
+                    - Contact sales for high-volume API pricing
+                    
+                    For specific pricing information, please check the official pricing page or contact support.
+                """.trimIndent()
+            )
+        ))
 
         // New sources provide the missing specific pricing
         val apiPricingSource = EvaluatedSource(
@@ -1006,7 +1014,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         val input = StreamingAnswerSynthesisInput(
             query = "What are the specific API pricing details?",
             evaluatedSources = listOf(apiPricingSource),
-            priorSessionContext = priorContext
+            sessionHistory = sessionHistory
         )
 
         val output = agent.generate(input)
@@ -1040,19 +1048,21 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     @Test
     fun `should handle continuation with no new relevant information gracefully`() = runTest(testCoroutineDispatcher) {
         // Prior session had comprehensive answer
-        val priorContext = PriorSessionContext(
-            sessionId = "session-complete",
-            query = "What are the main features?",
-            answer = """
-                ## Main Features
-                
-                The platform offers:
-                1. **Real-time Analytics** - Track metrics in real-time
-                2. **Team Collaboration** - Work together seamlessly
-                3. **API Integration** - Connect with other tools
-                4. **Custom Reports** - Generate detailed reports
-            """.trimIndent()
-        )
+        val sessionHistory = SessionHistory(listOf(
+            SessionHistory.SessionSummary(
+                sessionId = "session-complete",
+                query = "What are the main features?",
+                answer = """
+                    ## Main Features
+                    
+                    The platform offers:
+                    1. **Real-time Analytics** - Track metrics in real-time
+                    2. **Team Collaboration** - Work together seamlessly
+                    3. **API Integration** - Connect with other tools
+                    4. **Custom Reports** - Generate detailed reports
+                """.trimIndent()
+            )
+        ))
 
         // New sources have irrelevant information
         val irrelevantSource = EvaluatedSource(
@@ -1070,7 +1080,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         val input = StreamingAnswerSynthesisInput(
             query = "Are there any additional features I should know about?",
             evaluatedSources = listOf(irrelevantSource),
-            priorSessionContext = priorContext
+            sessionHistory = sessionHistory
         )
 
         val output = agent.generate(input)
@@ -1097,35 +1107,37 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
     @Test
     fun `real world - should expand SleekFlow pricing with Flow Builder details`() = runTest(testCoroutineDispatcher) {
         // Prior session covered general SleekFlow pricing
-        val priorContext = PriorSessionContext(
-            sessionId = "sleekflow-session-1",
-            query = "What are SleekFlow pricing plans?",
-            answer = """
-                ## SleekFlow Pricing Plans
-                
-                SleekFlow offers three main pricing tiers:
-                
-                1. **Pro Plan** - For small teams
-                   - Omnichannel inbox
-                   - Native Shopify integration
-                   - WhatsApp Broadcast
-                   - Up to 5,000 API calls monthly
-                
-                2. **Premium Plan** - For scaling businesses
-                   - Everything in Pro
-                   - HubSpot integration
-                   - Advanced analytics dashboard
-                   - Team access management
-                
-                3. **Enterprise Plan** - For large businesses
-                   - Everything in Premium
-                   - Salesforce integration
-                   - Custom SLAs
-                   - Unlimited features
-                
-                All plans include SleekFlow AI and mobile app access.
-            """.trimIndent()
-        )
+        val sessionHistory = SessionHistory(listOf(
+            SessionHistory.SessionSummary(
+                sessionId = "sleekflow-session-1",
+                query = "What are SleekFlow pricing plans?",
+                answer = """
+                    ## SleekFlow Pricing Plans
+                    
+                    SleekFlow offers three main pricing tiers:
+                    
+                    1. **Pro Plan** - For small teams
+                       - Omnichannel inbox
+                       - Native Shopify integration
+                       - WhatsApp Broadcast
+                       - Up to 5,000 API calls monthly
+                    
+                    2. **Premium Plan** - For scaling businesses
+                       - Everything in Pro
+                       - HubSpot integration
+                       - Advanced analytics dashboard
+                       - Team access management
+                    
+                    3. **Enterprise Plan** - For large businesses
+                       - Everything in Premium
+                       - Salesforce integration
+                       - Custom SLAs
+                       - Unlimited features
+                    
+                    All plans include SleekFlow AI and mobile app access.
+                """.trimIndent()
+            )
+        ))
 
         // New sources provide Flow Builder specific details
         val flowBuilderSource = EvaluatedSource(
@@ -1146,7 +1158,7 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         val input = StreamingAnswerSynthesisInput(
             query = "What are the Flow Builder limits for each SleekFlow plan?",
             evaluatedSources = listOf(flowBuilderSource),
-            priorSessionContext = priorContext
+            sessionHistory = sessionHistory
         )
 
         val output = agent.generate(input)

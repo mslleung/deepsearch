@@ -1,9 +1,9 @@
 package io.deepsearch.application.searchorchestrators
 
 import io.deepsearch.application.services.SearchEvent
-import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import kotlinx.coroutines.flow.Flow
 
@@ -23,15 +23,16 @@ interface ISearchOrchestrator {
      * 
      * @param proxyConfig User's proxy configuration. None (default) uses adaptive bypass strategy.
      *                    Custom/Premium proxies are used directly without bypass logic.
-     * @param priorSessionContext Optional context from a previous session for continuation.
-     *                            When provided, the answer synthesis will avoid repeating
-     *                            information already provided in the prior session.
+     * @param sessionHistory Full history of prior sessions for context-aware query processing
+     *                       and answer synthesis. Contains the complete chain of prior queries
+     *                       and answers. Also provides previousSessionId and rootSessionId
+     *                       for linking new sessions to the chain.
      */
     fun execute(
         searchQuery: SearchQuery, 
         maxCacheAge: Long? = null, 
         apiKeyId: ApiKeyId,
         proxyConfig: ProxyConfiguration = ProxyConfiguration.None,
-        priorSessionContext: PriorSessionContext? = null
+        sessionHistory: SessionHistory = SessionHistory.empty()
     ): Flow<SearchEvent>
 }

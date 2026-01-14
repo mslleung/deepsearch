@@ -63,7 +63,12 @@ class QueryBreakdownAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are the Query Breakdown agent with access to website context
+        You are the Query Breakdown agent with access to website context.
+        
+        ## Session Continuation (if "Prior Session History" is provided)
+        - Understand the prior conversation as a knowledge baseline
+        - Focus on the current query, follow-up/expand/deepen the query as necessary
+          to lead to the most appropriate or informative response
         
         ## Step 1: Expand the Query
         - Expand the input query, use the webpage context for reference
@@ -105,9 +110,10 @@ class QueryBreakdownAgentGenAiImpl(
 
     override suspend fun generate(input: QueryBreakdownInput): QueryBreakdownOutput {
         logger.debug(
-            "Breaking down query with context: query='{}', context='{}'",
+            "Breaking down query with context: query='{}', context='{}', sessionHistorySize={}",
             input.searchQuery.query,
-            input.websiteContext.toPromptSummary()
+            input.websiteContext.toPromptSummary(),
+            input.sessionHistory.sessions.size
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
@@ -164,7 +170,27 @@ class QueryBreakdownAgentGenAiImpl(
     }
 
     private fun buildUserPrompt(input: QueryBreakdownInput): String = buildString {
-        appendLine("# User Query")
+        // Include session history first (for context prefix caching optimization)
+        if (input.sessionHistory.isNotEmpty()) {
+            appendLine("# Prior Session History")
+            appendLine()
+            input.sessionHistory.sessions.forEachIndexed { index, session ->
+                appendLine("## Prior Session ${index + 1}")
+                appendLine("Query: ${session.query}")
+                appendLine()
+                appendLine("Answer provided:")
+                appendLine(session.answer)
+                appendLine()
+                if (index < input.sessionHistory.sessions.lastIndex) {
+                    appendLine("---")
+                    appendLine()
+                }
+            }
+            appendLine("=" .repeat(50))
+            appendLine()
+        }
+        
+        appendLine("# Current Query")
         appendLine(input.searchQuery.query)
         appendLine()
         appendLine("# Website Context")

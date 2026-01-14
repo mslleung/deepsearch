@@ -6,10 +6,10 @@ import io.deepsearch.domain.agents.GoogleTextSearchInput
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
-import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -23,7 +23,7 @@ interface IGoogleSearchOrchestrator : ISearchOrchestrator
  * Returns a Flow<SearchEvent> that emits session start and completion events.
  * 
  * Note: This orchestrator does not currently support session continuation
- * (priorSessionContext is ignored) as it uses Google's URL Context tool directly.
+ * (sessionHistory is ignored) as it uses Google's URL Context tool directly.
  */
 class GoogleSearchOrchestrator(
     private val googleTextSearchAgent: IGoogleTextSearchAgent,
@@ -40,16 +40,18 @@ class GoogleSearchOrchestrator(
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId,
         proxyConfig: ProxyConfiguration,
-        priorSessionContext: PriorSessionContext?
+        sessionHistory: SessionHistory
     ): Flow<SearchEvent> = flow {
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
 
-        // Create query session
+        // Create query session (Google search doesn't use continuation, but we still link for tracking)
         val session = querySessionService.createSession(
             searchQuery.query,
             searchQuery.url,
             apiKeyId,
-            SearchMode.LIVE_CRAWLING
+            SearchMode.LIVE_CRAWLING,
+            previousSessionId = sessionHistory.previousSessionId,
+            rootSessionId = sessionHistory.rootSessionId
         )
         val sessionId = session.id
 

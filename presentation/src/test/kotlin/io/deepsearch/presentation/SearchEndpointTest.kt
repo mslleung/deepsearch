@@ -281,4 +281,133 @@ class SearchEndpointTest {
             }
         }
     }
+
+    @org.junit.jupiter.api.Test
+    @Timeout(value = 10, unit = TimeUnit.MINUTES)
+    fun `test session continuation - second search should link to first`() {
+        val testApp = TestApplication {
+            environment {
+                config = ApplicationConfig("application.yaml")
+            }
+        }
+
+        runBlocking {
+            testApp.start()
+            try {
+                val client = testApp.createClient {
+                    install(ContentNegotiation) {
+                        json(
+                            Json {
+                                ignoreUnknownKeys = true
+                                prettyPrint = true
+                                isLenient = true
+                            }
+                        )
+                    }
+                }
+
+                // Setup: Register, login, get API key
+                val testEmail = "continuation-test-${System.currentTimeMillis()}@example.com"
+                val registerResponse = client.post("/api/auth/register") {
+                    contentType(ContentType.Application.Json)
+                    setBody(RegisterRequest(email = testEmail, password = "testpassword123"))
+                }
+                assertEquals(HttpStatusCode.Created, registerResponse.status)
+
+                val loginResponse = client.post("/api/auth/login") {
+                    contentType(ContentType.Application.Json)
+                    setBody(LoginRequest(email = testEmail, password = "testpassword123"))
+                }
+                val jwtToken = loginResponse.body<LoginResponse>().token
+
+                val createKeyResponse = client.post("/api/keys") {
+                    bearerAuth(jwtToken)
+                    contentType(ContentType.Application.Json)
+                    setBody(CreateApiKeyRequest(name = "Continuation Test Key"))
+                }
+                val apiKey = createKeyResponse.body<CreateApiKeyResponse>().rawKey
+
+                // === FIRST SEARCH ===
+                println("\n=== FIRST SEARCH: Initial query ===")
+                val firstSearchRequest = SearchRequest(
+                    query = "What is OT&P?",
+                    url = "https://www.otandp.com/"
+                )
+
+                val firstSearchResponse = client.post("/api/search") {
+                    bearerAuth(apiKey)
+                    contentType(ContentType.Application.Json)
+                    setBody(firstSearchRequest)
+                }
+
+                assertEquals(HttpStatusCode.OK, firstSearchResponse.status, "First search should succeed")
+                val firstResult = firstSearchResponse.body<QuerySessionDetailDto>()
+                val firstSessionId = firstResult.id
+                
+                println("First session ID: $firstSessionId")
+                println("First query: ${firstResult.query}")
+                println("First answer preview: ${firstResult.answer?.take(200)}...")
+
+                assertTrue(firstSessionId.isNotBlank(), "First session should have an ID")
+                assertTrue(firstResult.answer?.isNotBlank() == true, "First search should have an answer")
+
+                // === SECOND SEARCH (CONTINUATION) ===
+                println("\n=== SECOND SEARCH: Continuation with context ===")
+                val secondSearchRequest = SearchRequest(
+                    query = "Who are the doctors there?",
+                    url = "https://www.otandp.com/",
+                    continueSessionId = firstSessionId  // Link to first session!
+                )
+
+                val secondSearchResponse = client.post("/api/search") {
+                    bearerAuth(apiKey)
+                    contentType(ContentType.Application.Json)
+                    setBody(secondSearchRequest)
+                }
+
+                assertEquals(HttpStatusCode.OK, secondSearchResponse.status, "Second search should succeed")
+                val secondResult = secondSearchResponse.body<QuerySessionDetailDto>()
+                val secondSessionId = secondResult.id
+
+                println("Second session ID: $secondSessionId")
+                println("Second query: ${secondResult.query}")
+                println("Second answer preview: ${secondResult.answer?.take(200)}...")
+
+                assertTrue(secondSessionId.isNotBlank(), "Second session should have an ID")
+                assertTrue(secondSessionId != firstSessionId, "Second session should have different ID")
+                assertTrue(secondResult.answer?.isNotBlank() == true, "Second search should have an answer")
+
+                // === THIRD SEARCH (DEEPER CONTINUATION) ===
+                println("\n=== THIRD SEARCH: Even deeper continuation ===")
+                val thirdSearchRequest = SearchRequest(
+                    query = "What are their specialties?",
+                    url = "https://www.otandp.com/",
+                    continueSessionId = secondSessionId  // Link to second session!
+                )
+
+                val thirdSearchResponse = client.post("/api/search") {
+                    bearerAuth(apiKey)
+                    contentType(ContentType.Application.Json)
+                    setBody(thirdSearchRequest)
+                }
+
+                assertEquals(HttpStatusCode.OK, thirdSearchResponse.status, "Third search should succeed")
+                val thirdResult = thirdSearchResponse.body<QuerySessionDetailDto>()
+                val thirdSessionId = thirdResult.id
+
+                println("Third session ID: $thirdSessionId")
+                println("Third query: ${thirdResult.query}")
+                println("Third answer preview: ${thirdResult.answer?.take(200)}...")
+
+                assertTrue(thirdSessionId.isNotBlank(), "Third session should have an ID")
+                assertTrue(thirdSessionId != secondSessionId, "Third session should have different ID")
+                
+                println("\n=== SESSION CONTINUATION TEST COMPLETE ===")
+                println("Chain: $firstSessionId -> $secondSessionId -> $thirdSessionId")
+
+            } finally {
+                testApp.stop()
+            }
+        }
+    }
 }

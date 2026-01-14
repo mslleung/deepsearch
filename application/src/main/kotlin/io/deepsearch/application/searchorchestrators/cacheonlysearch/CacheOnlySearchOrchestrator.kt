@@ -12,7 +12,6 @@ import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.agents.IMarkdownSourceEvalAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
 import io.deepsearch.domain.agents.MarkdownSourceEvalInput
-import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
@@ -27,6 +26,7 @@ import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchMode
+import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.knowledgegraph.KgHybridRetrievalResult
@@ -73,13 +73,15 @@ class CacheOnlySearchOrchestrator(
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId,
         proxyConfig: ProxyConfiguration,
-        priorSessionContext: PriorSessionContext?
+        sessionHistory: SessionHistory
     ): Flow<SearchEvent> = flow {
         val session = querySessionService.createSession(
             searchQuery.query,
             searchQuery.url,
             apiKeyId,
-            SearchMode.CACHE_ONLY
+            SearchMode.CACHE_ONLY,
+            previousSessionId = sessionHistory.previousSessionId,
+            rootSessionId = sessionHistory.rootSessionId
         )
         val sessionId = session.id
 
@@ -238,7 +240,7 @@ class CacheOnlySearchOrchestrator(
                     query = searchQuery.query,
                     evaluatedSources = evaluatedSources,
                     previouslySearchedQueries = emptyList(),
-                    priorSessionContext = priorSessionContext
+                    sessionHistory = sessionHistory
                 )
             ).collect { item ->
                 when (item) {

@@ -58,6 +58,8 @@ class ExposedQuerySessionRepository(
             it[createdAtEpochMs] = session.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
             it[version] = session.version
+            it[previousSessionId] = session.previousSessionId?.value
+            it[rootSessionId] = session.rootSessionId?.value
         }
         
         session
@@ -87,6 +89,8 @@ class ExposedQuerySessionRepository(
             it[durationMs] = session.durationMs
             it[updatedAtEpochMs] = session.updatedAt.toEpochMilliseconds()
             it[version] = session.version + 1
+            it[previousSessionId] = session.previousSessionId?.value
+            it[rootSessionId] = session.rootSessionId?.value
         }
         
         if (affectedRows == 0) {
@@ -290,7 +294,25 @@ class ExposedQuerySessionRepository(
             durationMs = row[querySessionTable.durationMs],
             createdAt = Instant.fromEpochMilliseconds(row[querySessionTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[querySessionTable.updatedAtEpochMs]),
-            version = row[querySessionTable.version]
+            version = row[querySessionTable.version],
+            previousSessionId = row[querySessionTable.previousSessionId]?.let { QuerySessionId(it) },
+            rootSessionId = row[querySessionTable.rootSessionId]?.let { QuerySessionId(it) }
         )
+    }
+    
+    /**
+     * Find all sessions in a continuation chain by root session ID.
+     * Returns sessions ordered by creation time (oldest first).
+     * Includes the root session itself.
+     */
+    override suspend fun findSessionChain(rootSessionId: QuerySessionId): List<QuerySession> = transactionService.withTransaction {
+        querySessionTable.selectAll()
+            .where { 
+                (querySessionTable.id eq rootSessionId.value) or 
+                (querySessionTable.rootSessionId eq rootSessionId.value) 
+            }
+            .orderBy(querySessionTable.createdAtEpochMs to SortOrder.ASC)
+            .map { mapRowToQuerySession(it) }
+            .toList()
     }
 }
