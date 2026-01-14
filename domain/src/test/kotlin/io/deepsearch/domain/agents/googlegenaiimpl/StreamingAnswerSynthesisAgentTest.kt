@@ -3,6 +3,7 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import io.deepsearch.domain.agents.HtmlSourceEvalInput
 import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
+import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
@@ -745,5 +746,436 @@ class StreamingAnswerSynthesisAgentTest : KoinTest {
         assertTrue(output.answer.isNotBlank(), "Should generate an answer about integrations")
         // This test just verifies the agent can still suggest follow-ups when previous queries are unrelated
         // The programmatic dedup shouldn't filter out novel integration-related queries
+    }
+
+    // ==================== Session Continuation Tests ====================
+
+    /**
+     * Test case: Session continuation with different query should expand on prior findings.
+     * 
+     * Scenario: User first asked about pricing, now asking about system requirements.
+     * The agent should NOT repeat pricing information and should focus on the new topic.
+     */
+    @Test
+    fun `should expand on prior findings without repeating when continuation query is different topic`() = runTest(testCoroutineDispatcher) {
+        // Prior session covered pricing
+        val priorContext = PriorSessionContext(
+            sessionId = "session-123",
+            query = "What are the pricing plans?",
+            answer = """
+                ## SleekFlow Pricing Plans
+                
+                SleekFlow offers three pricing tiers:
+                
+                1. **Pro Plan** - $79/month
+                   - Includes omnichannel inbox
+                   - Up to 3 active flows
+                   - 5,000 API calls monthly
+                
+                2. **Premium Plan** - $299/month
+                   - Advanced Flow Builder features
+                   - HubSpot integration
+                   - Analytics dashboard
+                
+                3. **Enterprise Plan** - Custom pricing
+                   - Unlimited features
+                   - Salesforce integration
+                   - Custom SLAs
+            """.trimIndent()
+        )
+
+        // New sources provide system requirements information
+        val systemReqSource = EvaluatedSource(
+            url = "https://sleekflow.io/docs/requirements",
+            title = "System Requirements",
+            description = "Technical requirements for SleekFlow",
+            relevantFacts = listOf(
+                RelevantFact(fact = "SleekFlow requires a modern web browser: Chrome 90+, Firefox 88+, Safari 14+, or Edge 90+."),
+                RelevantFact(fact = "Mobile apps are available for iOS 14+ and Android 8.0+."),
+                RelevantFact(fact = "WhatsApp Business API integration requires a verified Facebook Business account."),
+                RelevantFact(fact = "Minimum internet speed of 5 Mbps recommended for optimal performance.")
+            ),
+            contentDate = "2024-01-15",
+            intention = "Official documentation page listing technical requirements"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What are the system requirements for SleekFlow?",
+            evaluatedSources = listOf(systemReqSource),
+            priorSessionContext = priorContext
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        
+        // The answer should focus on system requirements, not pricing
+        assertTrue(
+            output.answer.contains("browser", ignoreCase = true) || 
+            output.answer.contains("Chrome", ignoreCase = true) ||
+            output.answer.contains("iOS", ignoreCase = true) ||
+            output.answer.contains("Android", ignoreCase = true),
+            "Answer should mention system requirements (browser/mobile), got: ${output.answer.take(500)}"
+        )
+        
+        // The answer should NOT repeat the pricing information from prior session
+        assertFalse(
+            output.answer.contains("$79") || output.answer.contains("$299"),
+            "Answer should NOT repeat pricing amounts from prior session"
+        )
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    /**
+     * Test case: Session continuation with follow-up query on same topic should add new details.
+     * 
+     * Scenario: User first asked about pricing overview, now asking about enterprise pricing details.
+     * The agent should provide additional enterprise details without repeating the overview.
+     */
+    @Test
+    fun `should add new details when continuation query digs deeper into same topic`() = runTest(testCoroutineDispatcher) {
+        // Prior session covered general pricing overview
+        val priorContext = PriorSessionContext(
+            sessionId = "session-456",
+            query = "What are the pricing plans?",
+            answer = """
+                ## Pricing Overview
+                
+                The platform offers three tiers:
+                - **Starter**: $9/month - Basic features for individuals
+                - **Professional**: $49/month - Advanced features for teams
+                - **Enterprise**: Custom pricing - Full features for large organizations
+                
+                All plans include 24/7 email support and a 14-day free trial.
+            """.trimIndent()
+        )
+
+        // New sources provide detailed enterprise information
+        val enterpriseSource = EvaluatedSource(
+            url = "https://example.com/enterprise",
+            title = "Enterprise Solutions",
+            description = "Enterprise pricing and features",
+            relevantFacts = listOf(
+                RelevantFact(fact = "Enterprise pricing starts at $500/month for up to 50 users."),
+                RelevantFact(fact = "Volume discounts available: 10% off for 100+ users, 20% off for 500+ users."),
+                RelevantFact(fact = "Enterprise includes dedicated account manager and 99.9% SLA guarantee."),
+                RelevantFact(fact = "Custom integrations and white-labeling available for Enterprise customers."),
+                RelevantFact(fact = "Annual contracts receive 2 months free.")
+            ),
+            contentDate = "2024-06-01",
+            intention = "Official enterprise pricing page with detailed information"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What are the specific enterprise pricing details and discounts?",
+            evaluatedSources = listOf(enterpriseSource),
+            priorSessionContext = priorContext
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        
+        // The answer should include new enterprise-specific details
+        assertTrue(
+            output.answer.contains("500") || output.answer.contains("discount", ignoreCase = true) ||
+            output.answer.contains("SLA", ignoreCase = true) || output.answer.contains("account manager", ignoreCase = true),
+            "Answer should include new enterprise details not in prior answer, got: ${output.answer.take(500)}"
+        )
+        
+        // Should NOT just repeat "$9/month" and "$49/month" from prior context
+        // (It's okay to briefly reference them, but the focus should be on new info)
+        val starterMentions = output.answer.split("$9").size - 1
+        assertTrue(
+            starterMentions <= 1,
+            "Answer should not heavily repeat Starter pricing from prior session (found $starterMentions mentions)"
+        )
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    /**
+     * Test case: Session continuation where new sources provide conflicting/updated information.
+     * 
+     * Scenario: Prior session had old pricing, new sources show updated pricing.
+     * The agent should present the new information and note the update.
+     */
+    @Test
+    fun `should handle updated information that supersedes prior findings`() = runTest(testCoroutineDispatcher) {
+        // Prior session had pricing from 2024
+        val priorContext = PriorSessionContext(
+            sessionId = "session-789",
+            query = "What is the Pro plan pricing?",
+            answer = """
+                ## Pro Plan Pricing (as of 2024)
+                
+                The Pro plan costs **$49/month** and includes:
+                - 10,000 API calls
+                - 5 team members
+                - Priority email support
+            """.trimIndent()
+        )
+
+        // New sources show 2025 pricing update
+        val updatedPricingSource = EvaluatedSource(
+            url = "https://example.com/pricing-2025",
+            title = "2025 Pricing Update",
+            description = "Updated pricing for 2025",
+            relevantFacts = listOf(
+                RelevantFact(fact = "Starting January 2025, Pro plan pricing increased to $59/month."),
+                RelevantFact(fact = "The 2025 Pro plan now includes 15,000 API calls (up from 10,000)."),
+                RelevantFact(fact = "Team member limit increased to 10 members for Pro plan."),
+                RelevantFact(fact = "Existing customers on annual plans keep 2024 pricing until renewal.")
+            ),
+            contentDate = "2025-01-01",
+            intention = "Official pricing announcement page for 2025 updates"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "Has the Pro plan pricing changed recently?",
+            evaluatedSources = listOf(updatedPricingSource),
+            priorSessionContext = priorContext
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        
+        // The answer should mention the new pricing
+        assertTrue(
+            output.answer.contains("59") || output.answer.contains("2025") || 
+            output.answer.contains("increased", ignoreCase = true) || output.answer.contains("updated", ignoreCase = true),
+            "Answer should mention the updated 2025 pricing, got: ${output.answer.take(500)}"
+        )
+        
+        // The answer should mention the improvements (more API calls, more team members)
+        assertTrue(
+            output.answer.contains("15,000") || output.answer.contains("15000") ||
+            output.answer.contains("10 member", ignoreCase = true) || output.answer.contains("10 team", ignoreCase = true),
+            "Answer should mention the improved features in 2025 plan"
+        )
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    /**
+     * Test case: Session continuation where prior answer was incomplete.
+     * 
+     * Scenario: Prior session couldn't find specific information, continuation provides it.
+     */
+    @Test
+    fun `should fill gaps from prior incomplete answer`() = runTest(testCoroutineDispatcher) {
+        // Prior session couldn't find specific pricing
+        val priorContext = PriorSessionContext(
+            sessionId = "session-incomplete",
+            query = "What is the pricing for the API?",
+            answer = """
+                ## API Pricing
+                
+                The platform offers API access through its subscription plans. However, I couldn't find 
+                specific API pricing details. The documentation mentions:
+                
+                - API access is included in all paid plans
+                - Rate limits vary by plan tier
+                - Contact sales for high-volume API pricing
+                
+                For specific pricing information, please check the official pricing page or contact support.
+            """.trimIndent()
+        )
+
+        // New sources provide the missing specific pricing
+        val apiPricingSource = EvaluatedSource(
+            url = "https://example.com/api-pricing",
+            title = "API Pricing Details",
+            description = "Detailed API pricing information",
+            relevantFacts = listOf(
+                RelevantFact(fact = "API calls are priced at $0.001 per call after the included quota."),
+                RelevantFact(fact = "Starter plan includes 5,000 free API calls per month."),
+                RelevantFact(fact = "Professional plan includes 50,000 free API calls per month."),
+                RelevantFact(fact = "Enterprise plan includes unlimited API calls."),
+                RelevantFact(fact = "Bulk API packages available: 1M calls for $500, 10M calls for $3,000.")
+            ),
+            contentDate = "2024-09-15",
+            intention = "Official API pricing page with detailed cost breakdown"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What are the specific API pricing details?",
+            evaluatedSources = listOf(apiPricingSource),
+            priorSessionContext = priorContext
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        
+        // The answer should now include specific pricing that was missing before
+        assertTrue(
+            output.answer.contains("0.001") || output.answer.contains("$500") || output.answer.contains("$3,000") ||
+            output.answer.contains("5,000") || output.answer.contains("50,000"),
+            "Answer should include specific API pricing details that were missing in prior answer, got: ${output.answer.take(500)}"
+        )
+        
+        // Should NOT repeat the "contact sales" or "couldn't find" language from prior answer
+        assertFalse(
+            output.answer.contains("couldn't find", ignoreCase = true) || 
+            output.answer.contains("could not find", ignoreCase = true),
+            "Answer should not repeat the 'couldn't find' language from prior incomplete answer"
+        )
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    /**
+     * Test case: Session continuation with empty new sources.
+     * 
+     * Scenario: Continuation search found no new relevant information.
+     * The agent should acknowledge this gracefully.
+     */
+    @Test
+    fun `should handle continuation with no new relevant information gracefully`() = runTest(testCoroutineDispatcher) {
+        // Prior session had comprehensive answer
+        val priorContext = PriorSessionContext(
+            sessionId = "session-complete",
+            query = "What are the main features?",
+            answer = """
+                ## Main Features
+                
+                The platform offers:
+                1. **Real-time Analytics** - Track metrics in real-time
+                2. **Team Collaboration** - Work together seamlessly
+                3. **API Integration** - Connect with other tools
+                4. **Custom Reports** - Generate detailed reports
+            """.trimIndent()
+        )
+
+        // New sources have irrelevant information
+        val irrelevantSource = EvaluatedSource(
+            url = "https://example.com/blog/company-news",
+            title = "Company News",
+            description = "Latest company updates",
+            relevantFacts = listOf(
+                RelevantFact(fact = "The company was founded in 2020."),
+                RelevantFact(fact = "Headquarters are located in San Francisco.")
+            ),
+            contentDate = "2024-03-01",
+            intention = "Company blog post about company history"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "Are there any additional features I should know about?",
+            evaluatedSources = listOf(irrelevantSource),
+            priorSessionContext = priorContext
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        
+        // Should indicate that no additional relevant features were found
+        // or acknowledge the prior answer covered the main features
+        assertEquals(
+            AnswerStatus.CONTINUE_SEARCH,
+            output.status,
+            "Should request more information when new sources don't add relevant info"
+        )
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
+    }
+
+    /**
+     * Test case: Real-world scenario - SleekFlow pricing continuation.
+     * 
+     * Scenario: User first asked about general pricing, now asking about Flow Builder specifics.
+     */
+    @Test
+    fun `real world - should expand SleekFlow pricing with Flow Builder details`() = runTest(testCoroutineDispatcher) {
+        // Prior session covered general SleekFlow pricing
+        val priorContext = PriorSessionContext(
+            sessionId = "sleekflow-session-1",
+            query = "What are SleekFlow pricing plans?",
+            answer = """
+                ## SleekFlow Pricing Plans
+                
+                SleekFlow offers three main pricing tiers:
+                
+                1. **Pro Plan** - For small teams
+                   - Omnichannel inbox
+                   - Native Shopify integration
+                   - WhatsApp Broadcast
+                   - Up to 5,000 API calls monthly
+                
+                2. **Premium Plan** - For scaling businesses
+                   - Everything in Pro
+                   - HubSpot integration
+                   - Advanced analytics dashboard
+                   - Team access management
+                
+                3. **Enterprise Plan** - For large businesses
+                   - Everything in Premium
+                   - Salesforce integration
+                   - Custom SLAs
+                   - Unlimited features
+                
+                All plans include SleekFlow AI and mobile app access.
+            """.trimIndent()
+        )
+
+        // New sources provide Flow Builder specific details
+        val flowBuilderSource = EvaluatedSource(
+            url = "https://sleekflow.io/flow-builder",
+            title = "Flow Builder Pricing",
+            description = "Flow Builder usage limits and pricing",
+            relevantFacts = listOf(
+                RelevantFact(fact = "Flow Builder is included in all subscription plans starting August 28, 2024."),
+                RelevantFact(fact = "Pro Plan Flow Builder limits: 3 active flows, 25 nodes per flow, 500 monthly flow enrollments."),
+                RelevantFact(fact = "Premium Plan Flow Builder limits: 25 active flows, 100 nodes per flow, 3,000 monthly flow enrollments."),
+                RelevantFact(fact = "Enterprise Plan Flow Builder limits: 50 active flows, 200 nodes per flow, 10,000 monthly flow enrollments."),
+                RelevantFact(fact = "Additional flow enrollments can be purchased as add-ons.")
+            ),
+            contentDate = "2024-07-29",
+            intention = "Official Flow Builder feature page with usage limits per plan"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What are the Flow Builder limits for each SleekFlow plan?",
+            evaluatedSources = listOf(flowBuilderSource),
+            priorSessionContext = priorContext
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        
+        // The answer should focus on Flow Builder specifics
+        assertTrue(
+            output.answer.contains("flow", ignoreCase = true) &&
+            (output.answer.contains("3 active") || output.answer.contains("25 active") || 
+             output.answer.contains("50 active") || output.answer.contains("nodes", ignoreCase = true)),
+            "Answer should include Flow Builder specific limits, got: ${output.answer.take(500)}"
+        )
+        
+        // Should mention enrollment limits
+        assertTrue(
+            output.answer.contains("500") || output.answer.contains("3,000") || output.answer.contains("10,000") ||
+            output.answer.contains("enrollment", ignoreCase = true),
+            "Answer should mention flow enrollment limits"
+        )
+        
+        // Should NOT extensively repeat the general plan descriptions from prior context
+        val shopifyMentions = output.answer.split("Shopify", ignoreCase = true).size - 1
+        assertTrue(
+            shopifyMentions <= 1,
+            "Answer should not repeat general features like Shopify integration (found $shopifyMentions mentions)"
+        )
+        
+        assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 }

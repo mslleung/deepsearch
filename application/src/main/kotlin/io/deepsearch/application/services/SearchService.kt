@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.application.searchorchestrators.agenticbrowsersearch.IAgenticBrowserSearchOrchestrator
 import io.deepsearch.application.searchorchestrators.cacheonlysearch.ICacheOnlySearchOrchestrator
+import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
@@ -23,6 +24,10 @@ interface ISearchService {
     /**
      * Execute a search and return the query session detail with all related data.
      * Blocks until the search is complete.
+     * 
+     * @param continueSessionId Optional session ID to continue from (for session continuation).
+     *                          When provided, the previous session's query and answer are passed
+     *                          to the answer synthesis agent to avoid repeating information.
      */
     suspend fun searchWebsite(
         query: String, 
@@ -33,7 +38,8 @@ interface ISearchService {
         userId: UserId,
         languagePattern: String? = null,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
-        includeImages: Boolean = false
+        includeImages: Boolean = false,
+        continueSessionId: String? = null
     ): QuerySessionDetail
 
     /**
@@ -42,6 +48,8 @@ interface ISearchService {
      * 
      * For streaming clients: subscribe and forward events to the client
      * For blocking clients: use searchWebsite() instead
+     * 
+     * @param continueSessionId Optional session ID to continue from (for session continuation).
      */
     suspend fun executeStreaming(
         query: String,
@@ -52,7 +60,8 @@ interface ISearchService {
         userId: UserId,
         languagePattern: String? = null,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
-        includeImages: Boolean = false
+        includeImages: Boolean = false,
+        continueSessionId: String? = null
     ): Flow<SearchEvent>
 }
 
@@ -74,7 +83,8 @@ class SearchService(
         userId: UserId,
         languagePattern: String?,
         ocrLanguage: OcrLanguage,
-        includeImages: Boolean
+        includeImages: Boolean,
+        continueSessionId: String?
     ): QuerySessionDetail {
         val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage, includeImages)
         
@@ -82,9 +92,12 @@ class SearchService(
         // Custom/Premium proxies are used directly; None triggers adaptive bypass strategy
         val proxyConfig = proxySettingsService.resolveProxyForUrl(userId, url)
         
+        // Load prior session context if continueSessionId is provided
+        val priorSessionContext = loadPriorSessionContext(continueSessionId)
+        
         logger.debug(
-            "Executing {} search for query: {} with proxy: {} language pattern: {} OCR language: {} includeImages: {}", 
-            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage, includeImages
+            "Executing {} search for query: {} with proxy: {} language pattern: {} OCR language: {} includeImages: {} continueSessionId: {}", 
+            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage, includeImages, continueSessionId
         )
         
         val orchestrator = when (mode) {
@@ -96,7 +109,7 @@ class SearchService(
         val completionDeferred = CompletableDeferred<SearchEvent>()
 
         val job = applicationScope.scope.launch {
-            orchestrator.execute(searchQuery, maxCacheAge, apiKeyId, proxyConfig)
+            orchestrator.execute(searchQuery, maxCacheAge, apiKeyId, proxyConfig, priorSessionContext)
                 .onEach { event ->
                     // Complete on any terminal event
                     when (event) {
@@ -133,16 +146,20 @@ class SearchService(
         userId: UserId,
         languagePattern: String?,
         ocrLanguage: OcrLanguage,
-        includeImages: Boolean
+        includeImages: Boolean,
+        continueSessionId: String?
     ): Flow<SearchEvent> {
         val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage, includeImages)
         
         // Resolve user's proxy configuration for this URL
         val proxyConfig = proxySettingsService.resolveProxyForUrl(userId, url)
         
+        // Load prior session context if continueSessionId is provided
+        val priorSessionContext = loadPriorSessionContext(continueSessionId)
+        
         logger.debug(
-            "Starting streaming {} search for query: {} with proxy: {} language pattern: {} OCR language: {} includeImages: {}", 
-            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage, includeImages
+            "Starting streaming {} search for query: {} with proxy: {} language pattern: {} OCR language: {} includeImages: {} continueSessionId: {}", 
+            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage, includeImages, continueSessionId
         )
         
         val orchestrator = when (mode) {
@@ -150,6 +167,35 @@ class SearchService(
             SearchMode.CACHE_ONLY -> cacheOnlySearchOrchestrator
         }
         
-        return orchestrator.execute(searchQuery, maxCacheAge, apiKeyId, proxyConfig)
+        return orchestrator.execute(searchQuery, maxCacheAge, apiKeyId, proxyConfig, priorSessionContext)
+    }
+    
+    /**
+     * Load prior session context from a previous session ID.
+     * Returns null if the session doesn't exist or has no answer.
+     */
+    private suspend fun loadPriorSessionContext(continueSessionId: String?): PriorSessionContext? {
+        if (continueSessionId == null) return null
+        
+        return try {
+            val priorSession = querySessionService.getSession(QuerySessionId(continueSessionId))
+            if (priorSession.answer.isNullOrBlank()) {
+                logger.warn("Prior session {} has no answer, skipping context injection", continueSessionId)
+                null
+            } else {
+                logger.info(
+                    "Loading prior session context: sessionId={}, query='{}', answerLength={}",
+                    continueSessionId, priorSession.query, priorSession.answer!!.length
+                )
+                PriorSessionContext(
+                    sessionId = continueSessionId,
+                    query = priorSession.query,
+                    answer = priorSession.answer!!
+                )
+            }
+        } catch (e: Exception) {
+            logger.warn("Failed to load prior session {}: {}", continueSessionId, e.message)
+            null
+        }
     }
 }

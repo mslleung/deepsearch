@@ -63,7 +63,7 @@ class ImageDescriptionAgentGenAiImpl(
                     .build(),
                 "description" to Schema.builder()
                     .type("STRING")
-                    .description("Description of the image that captures its visual content and meaning, with detail proportional to image complexity")
+                    .description("The textual description of the image")
                     .build()
             )
         )
@@ -71,38 +71,38 @@ class ImageDescriptionAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are given an image found in a webpage that contains text.
-        Your task is to classify the image and interpret all content (visual and textual) into standalone paragraphs.
+        Classify the image and provide a description for search indexing.
+        
+        CRITICAL: Description length should match INFORMATION DENSITY of the image.
+        - Simple UI elements → very brief (2-5 words)
+        - Informative content → comprehensive (describe all meaningful content)
 
-        # Image Type Classification
-        - icon
-        - logo
-        - photograph
-        - portrait
-        - product image
-        - banner
-        - promotional
-        - chart
-        - graph
-        - infographic
-        - diagram
-        - flowchart
-        - screenshot
-        - UI mockup
-        - background
+        # Image Types
+        icon, logo, photograph, portrait, product image, banner, promotional, chart, graph, infographic, diagram, screenshot, UI mockup, background, loading indicator, decorative
 
-        # Description guidelines
-        - Image description should be a standalone paragraph that can replace the image in the webpage without losing meaning
-        - Capture important information only. Focus on capturing the core message of the image instead of providing graphical description.
-        - The description can be brief or very comprehensive depending on how much useful information it contains.
-        - For purely illustrative elements, briefly mention it, focus on the core message that the image conveys.
+        # Description Rules by Type
+        
+        ## SIMPLE (be VERY brief, 2-5 words):
+        - Icons/logos/buttons: "phone icon", "WhatsApp logo", "checkmark", "clock icon"
+        - Loading indicators: "loading spinner"
+        - Decorative/Background: "decorative background", "gradient pattern"
+        - NEVER describe colors/pixels for simple images
+        
+        ## MEDIUM (1-2 sentences):
+        - Photographs: "Two people smiling in dental office"
+        - Product images: "Clear dental aligners in carrying case"
+        - Portraits: "Professional headshot of a woman"
+        
+        ## COMPREHENSIVE (describe all meaningful content):
+        - Charts/Graphs: Describe what the chart shows, axis labels, visible trends
+          Example: "Line graph showing website traffic growth from 2020-2024"
+        - Diagrams: Describe the process or relationships shown
+        - Infographics: Describe the topic and key visual elements
+        - Screenshots: Describe the UI and any visible data
+        
+        Avoid color descriptions for non-informative images
 
-        Expected output shape:
-        {
-            "imageType": "specific classification",
-            "purpose": "role in the webpage (navigation, promotional, decorative, etc.)",
-            "description": "standalone paragraph replacing the image"
-        }
+        Output: { "imageType": string, "purpose": string (2-5 words), "description": string }
     """.trimIndent()
 
     @Serializable

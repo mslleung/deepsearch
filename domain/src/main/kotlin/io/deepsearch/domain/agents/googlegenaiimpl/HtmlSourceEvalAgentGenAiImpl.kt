@@ -20,16 +20,17 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * HTML Source Evaluation agent that evaluates a single HTML preview source and extracts facts.
+ * Source Evaluation agent that evaluates preview content and extracts facts.
+ * 
+ * The input is now extracted sentences (plain text) instead of HTML, which:
+ * - Is token-efficient (plain text vs verbose HTML)
+ * - Naturally filters out tabular data (table cells are fragments, not sentences)
+ * - Works across languages via ICU4J sentence detection
  * 
  * For the source, the agent:
  * - Determines the intention (purpose) of the webpage
  * - Assesses relevance to the query
  * - Extracts facts relevant to the query
- * - Marks whether each fact is from a table/grid (isInTable)
- * 
- * Facts where isInTable=true are filtered out before returning, since table
- * data in HTML previews may be inaccurate.
  * 
  * This is a stateless agent that processes one source at a time, enabling parallel processing.
  * Used in the preview path for early exit with conservative fact extraction.
@@ -40,24 +41,6 @@ class HtmlSourceEvalAgentGenAiImpl(
 ) : IHtmlSourceEvalAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-
-    private val relevantFactSchema: Schema = Schema.builder()
-        .type("OBJECT")
-        .description("A fact extracted from the source with metadata")
-        .properties(
-            mapOf(
-                "fact" to Schema.builder()
-                    .type("STRING")
-                    .description("The extracted fact as a complete, standalone statement")
-                    .build(),
-                "isInTable" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("True if the fact is extracted from a table, grid, or tabular structure")
-                    .build()
-            )
-        )
-        .required(listOf("fact", "isInTable"))
-        .build()
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
@@ -73,21 +56,22 @@ class HtmlSourceEvalAgentGenAiImpl(
                     .build(),
                 "relevantFacts" to Schema.builder()
                     .type("ARRAY")
-                    .items(relevantFactSchema)
-                    .description("List of facts extracted from the source that are relevant to the query. Empty if page is not relevant.")
+                    .items(Schema.builder().type("STRING").build())
+                    .description("List of facts extracted from the source that are relevant to the query. Each fact should be a complete, standalone statement. Empty if page is not relevant.")
                     .build()
             )
         )
         .required(listOf("intention", "relevantFacts"))
         .build()
 
-    private val systemInstruction = """
-        You are a source evaluation and fact extraction agent. Your job is to understand the purpose of a webpage and extract relevant facts from HTML preview content.
+    private val systemInstruction = $$"""
+        You are a source evaluation and fact extraction agent. Your job is to understand the purpose of a webpage and extract relevant facts from its content.
         
         Input: 
         - Current date
         - User query (with site: context)
-        - Single HTML source (preview content with cleaned HTML structure)
+        - Source metadata (URL, title, description)
+        - Extracted text content (sentences extracted from the page)     
         
         For the source, you must output (in this order):
         
@@ -104,7 +88,7 @@ class HtmlSourceEvalAgentGenAiImpl(
         
         2. **Content Date** (contentDate):
            - Extract the publication or update date if available
-           - Look for dates in headers, metadata, or content
+           - Look for dates mentioned in the text
            - If no date is found, leave it null/empty
         
         3. **Extract Relevant Facts** (relevantFacts):
@@ -113,40 +97,33 @@ class HtmlSourceEvalAgentGenAiImpl(
            - All relevant facts must be extracted with no omission
            - Each fact should be a complete, standalone statement
            - If the page is not relevant, return an empty array
-           - For each fact, mark `isInTable` as true if from table/grid structure (table data may be inaccurate in previews)
         
         Output Format:
         {
           "intention": "Official pricing page showing current subscription tiers",
           "contentDate": "2024-07-25",
           "relevantFacts": [
-            {"fact": "The Pro plan costs ${'$'}99/month", "isInTable": true},
-            {"fact": "Enterprise pricing requires contacting sales", "isInTable": false}
+            "The Pro plan costs $99/month and includes up to 10 team members",
+            "Enterprise pricing requires contacting sales for a custom quote"
           ]
         }
     """.trimIndent()
 
     @Serializable
-    private data class LlmRelevantFact(
-        val fact: String,
-        val isInTable: Boolean
-    )
-
-    @Serializable
     private data class EvalResponse(
         val intention: String,
         val contentDate: String? = null,
-        val relevantFacts: List<LlmRelevantFact> = emptyList()
+        val relevantFacts: List<String> = emptyList()
     )
 
     override suspend fun generate(input: HtmlSourceEvalInput): HtmlSourceEvalOutput {
-        val htmlSource = input.htmlSource
-        val queryWithSite = "${input.expandedQuery} site:${extractDomain(htmlSource.url)}"
+        val source = input.htmlSource
+        val queryWithSite = "${input.expandedQuery} site:${extractDomain(source.url)}"
         
         logger.debug(
-            "Evaluating HTML source for query: '{}', url: {}",
+            "Evaluating source for query: '{}', url: {}",
             queryWithSite,
-            htmlSource.url
+            source.url
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
@@ -191,21 +168,17 @@ class HtmlSourceEvalAgentGenAiImpl(
         logger.debug(
             "[{}] response for {}: intention='{}', facts={}",
             HtmlSourceEvalAgentGenAiImpl::class.simpleName,
-            htmlSource.url,
+            source.url,
             response.intention,
             response.relevantFacts.size
         )
 
-        // Filter out facts where isInTable=true (tables in preview HTML are inaccurate)
-        val filteredFacts = response.relevantFacts
-            .filter { !it.isInTable }
-            .map { llmFact ->
-                RelevantFact(fact = llmFact.fact)
-            }
+        // Convert string facts to RelevantFact objects
+        val facts = response.relevantFacts.map { RelevantFact(fact = it) }
 
-        // If no facts remain after filtering, return null
-        if (filteredFacts.isEmpty()) {
-            logger.debug("Source {} has no facts after filtering out table data, returning null", htmlSource.url)
+        // If no facts found, return null
+        if (facts.isEmpty()) {
+            logger.debug("Source {} has no relevant facts, returning null", source.url)
             return HtmlSourceEvalOutput(
                 evaluatedSource = null,
                 tokenUsage = tokenUsage
@@ -213,10 +186,10 @@ class HtmlSourceEvalAgentGenAiImpl(
         }
 
         val evaluatedSource = EvaluatedSource(
-            url = htmlSource.url,
-            title = htmlSource.title,
-            description = htmlSource.description,
-            relevantFacts = filteredFacts,
+            url = source.url,
+            title = source.title,
+            description = source.description,
+            relevantFacts = facts,
             contentDate = response.contentDate,
             intention = response.intention,
             relevantImageIds = emptyList(), // Preview path doesn't handle images
@@ -224,9 +197,9 @@ class HtmlSourceEvalAgentGenAiImpl(
         )
 
         logger.debug(
-            "HTML source evaluation complete for {}: {} facts (after filtering table data)",
-            htmlSource.url,
-            filteredFacts.size
+            "Source evaluation complete for {}: {} facts",
+            source.url,
+            facts.size
         )
 
         return HtmlSourceEvalOutput(
@@ -268,7 +241,7 @@ class HtmlSourceEvalAgentGenAiImpl(
                 appendLine()
             }
 
-            appendLine("# HTML Source to Evaluate")
+            appendLine("# Source to Evaluate")
             appendLine("URL: ${source.url}")
             if (source.title != null) {
                 appendLine("Title: ${source.title}")
@@ -277,10 +250,8 @@ class HtmlSourceEvalAgentGenAiImpl(
                 appendLine("Description: ${source.description}")
             }
             appendLine()
-            appendLine("## HTML Content")
-            appendLine("```html")
-            appendLine(source.cleanedHtml)
-            appendLine("```")
+            appendLine("## Content")
+            appendLine(source.cleanedHtml)  // This now contains extracted sentences, not HTML
         }
     }
 }

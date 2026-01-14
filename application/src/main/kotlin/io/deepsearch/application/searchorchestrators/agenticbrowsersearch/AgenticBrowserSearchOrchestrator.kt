@@ -6,6 +6,7 @@ import io.deepsearch.application.services.ISearchFlowEventService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.SearchEvent
+import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.entities.SearchFlowEventType
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
@@ -125,7 +126,8 @@ class AgenticBrowserSearchOrchestrator(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId,
-        proxyConfig: ProxyConfiguration
+        proxyConfig: ProxyConfiguration,
+        priorSessionContext: PriorSessionContext?
     ): Flow<SearchEvent> = channelFlow {
         val budget = SearchBudget(timeLimitMs = 300 * 1000L, maxLinks = 200)
         val session = querySessionService.createSession(
@@ -368,7 +370,8 @@ class AgenticBrowserSearchOrchestrator(
                 .runningFold(accumulatorRef.get()) { state, batch ->
                     aggregateBatchIntoAccumulator(
                         sessionId, state, batch, channel,
-                        expandedQuery, fulfillmentRequirements
+                        expandedQuery, fulfillmentRequirements,
+                        priorSessionContext
                     )
                 }
                 .onEach { accumulator ->
@@ -894,7 +897,8 @@ class AgenticBrowserSearchOrchestrator(
         batch: List<EvaluatedSource>,
         eventChannel: SendChannel<SearchEvent>,
         expandedQuery: String,
-        fulfillmentRequirements: List<String> = emptyList()
+        fulfillmentRequirements: List<String> = emptyList(),
+        priorSessionContext: PriorSessionContext? = null
     ): SourceAccumulator {
         if (batch.isEmpty()) {
             return state
@@ -946,7 +950,8 @@ class AgenticBrowserSearchOrchestrator(
             expandedQuery = expandedQuery,
             evaluatedSources = updatedSourcesByUrl.values.toList(),
             previouslySearchedQueries = state.searchedQueries,
-            fulfillmentRequirements = fulfillmentRequirements
+            fulfillmentRequirements = fulfillmentRequirements,
+            priorSessionContext = priorSessionContext
         )
 
         val newIterationNumber = state.iterationNumber + 1

@@ -61,7 +61,7 @@ class ImageClassificationAgentGenAiImpl(
                     .build(),
                 "imageDescription" to Schema.builder()
                     .type("STRING")
-                    .description("Comprehensive description interpreting the image and its text content as coherent prose - convert all visible information into a readable paragraph")
+                    .description("The textual description of the image")
                     .build(),
                 "needsTableInterpretation" to Schema.builder()
                     .type("BOOLEAN")
@@ -73,42 +73,49 @@ class ImageClassificationAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are given an image found in a webpage that contains text.
-        Your task is to classify the image and interpret all content (visual and textual) into standalone paragraphs.
+        Classify the image and extract text/meaning for search indexing.
+        
+        CRITICAL: Description length should match INFORMATION DENSITY of the image.
+        - Simple UI elements → very brief (2-5 words)
+        - Informative content → comprehensive (extract all data)
 
-        # Image Type Classification
-        - icon
-        - logo
-        - photograph
-        - portrait
-        - product image
-        - banner
-        - promotional
-        - chart
-        - graph
-        - infographic
-        - diagram
-        - flowchart
-        - screenshot
-        - UI mockup
-        - background
+        # Image Types
+        icon, logo, photograph, portrait, product image, banner, promotional, chart, graph, infographic, diagram, screenshot, UI mockup, background, loading indicator, decorative
 
-        # Description guidelines
-        - Image description should be a standalone paragraph that can replace the image in the webpage without losing meaning
-        - Capture important information only. Focus on capturing the core message of the image instead of providing graphical description.
-        - The description can be brief or very comprehensive depending on how much useful information it contains.
-        - For purely illustrative elements, briefly mention it, focus on the core message that the image conveys.
+        # Description Rules by Type
+        
+        ## SIMPLE (be VERY brief, 2-5 words):
+        - Icons/logos/buttons: "phone icon", "WhatsApp logo", "checkmark"
+        - Loading indicators: "loading spinner"
+        - Decorative: "decorative background"
+        - NEVER describe colors/pixels for simple images
+        
+        ## MEDIUM (1-2 sentences):
+        - Photographs: "Two people consulting in dental office"
+        - Product images: "Clear dental aligners in carrying case"
+        - Banners: "Student discount promotion - $500 off with valid ID"
+        
+        ## COMPREHENSIVE (extract ALL data):
+        - Charts/Graphs: Extract axis labels, data points, trends, legend
+          Example: "Bar chart showing monthly sales: Jan $10K, Feb $15K, Mar $22K, Apr $18K. Y-axis: Revenue in USD. Trend: Q1 growth 120%."
+        - Infographics: Extract all text, statistics, key points
+        - Data visualizations: Capture numbers, labels, relationships
+        - Comparison tables: List all items being compared with their values
+        
+        ## TEXT IN IMAGE: Always extract verbatim
+        - Include all readable text that conveys meaning
+        
+        # Table Flag
+        needsTableInterpretation = TRUE for:
+        - Images containing tabular data (pricing tables, spec sheets, schedules)
+        - Comparison charts with structured rows/columns
+        needsTableInterpretation = FALSE for:
+        - Line/bar/pie charts (these are described in imageDescription)
+        - Decorative or illustrative tables
 
-        # Table Interpretation Decision
-        needsTableInterpretation = TRUE: Tables with actionable data (pricing, specifications, schedules, comparisons)
-        needsTableInterpretation = FALSE: Illustrative tables, placeholder content, examples in tutorials, tables in illustrations
+        Avoid color/graphical descriptions for non-informative images
 
-        Expected output shape:
-        {
-            "imageType": "specific classification",
-            "imageDescription": "standalone paragraph replacing the image",
-            "needsTableInterpretation": boolean
-        }
+        Output: { "imageType": string, "imageDescription": string, "needsTableInterpretation": boolean }
     """.trimIndent()
 
     @Serializable

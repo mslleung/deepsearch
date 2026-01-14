@@ -2,7 +2,7 @@ package io.deepsearch.domain.models.valueobjects
 
 /**
  * Sealed class representing content extracted from a URL.
- * Used to unify the preview path (HTML) and main path (Markdown) in the orchestrator.
+ * Used to unify the preview path (sentences) and main path (Markdown) in the orchestrator.
  */
 sealed class UrlContentResult {
     abstract val url: String
@@ -10,13 +10,21 @@ sealed class UrlContentResult {
     abstract val description: String?
 
     /**
-     * Fast HTML preview for early evaluation.
-     * Contains cleaned HTML, NOT markdown.
+     * Fast preview for early evaluation.
+     * 
+     * Contains extracted sentences (plain text), NOT raw HTML.
+     * Sentences are extracted using ICU4J for multilingual support.
+     * This naturally filters out tabular data since table cells are 
+     * short fragments, not complete sentences.
+     * 
+     * Note: The field is named `cleanedHtml` for backward compatibility,
+     * but it actually contains extracted sentences (plain text).
      */
     data class HtmlPreview(
         override val url: String,
         override val title: String?,
         override val description: String?,
+        /** Extracted sentences from the page. Named for backward compatibility but contains plain text. */
         val cleanedHtml: String
     ) : UrlContentResult()
 

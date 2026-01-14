@@ -52,6 +52,9 @@ dependencies {
     
     // Stripe payment processing
     implementation(libs.stripe)
+    
+    // ICU4J for multilingual sentence detection
+    implementation(libs.icu4j)
 
     testImplementation(libs.koin.test.junit5)
     testImplementation(libs.kotlin.test.junit5)

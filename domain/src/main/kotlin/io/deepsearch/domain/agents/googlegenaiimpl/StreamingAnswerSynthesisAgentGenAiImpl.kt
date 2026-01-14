@@ -116,6 +116,16 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     private val systemInstruction = $$"""
         You synthesize answers from extracted facts. First assess if the source batch is sufficient, then generate the answer.
 
+        ## Session Continuation (if "Prior Session Findings" is provided)
+        
+        When "Prior Session Findings" is present, this is a CONTINUATION search where the user is expanding on a previous query:
+        - The user already received an answer to a previous query (shown in "Prior Session Findings")
+        - Your job is to EXPAND on that knowledge with NEW information from the current sources
+        - Focus on what's NEW, DIFFERENT, or provides ADDITIONAL DETAIL beyond the prior findings
+        - If the new query asks about something already fully answered in prior findings, briefly acknowledge it and focus on any additional details from current sources
+        - The prior answer should be treated as established context - build upon it, don't contradict it unless new sources provide more authoritative/recent information
+        - When assessing COVERAGE, consider what the prior answer already covered - only assess coverage of NEW information gaps
+
         ## Step 1: Assess Source Batch (5 Dimensions)
         
         Evaluate the collected facts. For each dimension, set satisfied=true/false.
@@ -734,6 +744,18 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             // Use expanded query if available, otherwise use original query
             appendLine(input.query)
             appendLine()
+            
+            // Prior session context for continuation searches
+            if (input.priorSessionContext != null) {
+                appendLine("# Prior Session Findings (DO NOT REPEAT THIS INFORMATION)")
+                appendLine("Previous Query: ${input.priorSessionContext.query}")
+                appendLine()
+                appendLine("Previous Answer:")
+                appendLine(input.priorSessionContext.answer)
+                appendLine()
+                appendLine("---")
+                appendLine()
+            }
             
             // Include fulfillment requirements if available (critical for COVERAGE evaluation)
             if (input.fulfillmentRequirements.isNotEmpty()) {

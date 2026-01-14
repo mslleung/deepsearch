@@ -6,13 +6,16 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
 
 /**
- * Input for HTML source evaluation agent.
- * Provides a single HTML preview source to evaluate and extract facts from.
+ * Input for source evaluation agent (preview path).
+ * 
+ * The source contains extracted sentences (plain text), not raw HTML.
+ * This is token-efficient and naturally filters out tabular data
+ * since table cells are fragments, not complete sentences.
  * 
  * The agent internally appends `site:<domain>` to the query for better context.
  * Domain is extracted from the source URL.
  * 
- * @property htmlSource The HTML preview source to evaluate
+ * @property htmlSource The preview source with extracted sentences (despite the name, contains plain text)
  * @property expandedQuery Context-aware expanded query to evaluate against
  * @property fulfillmentRequirements List of requirements that must be satisfied
  */
@@ -23,11 +26,8 @@ data class HtmlSourceEvalInput(
 ) : IAgent.IAgentInput
 
 /**
- * Output from HTML source evaluation agent.
+ * Output from source evaluation agent.
  * Contains the evaluated source with extracted facts, or null if no relevant facts found.
- * 
- * Facts where isInTable=true are filtered out before returning, since table
- * data in HTML previews may be inaccurate.
  * 
  * @property evaluatedSource The evaluated source with extracted facts, or null if not relevant
  * @property tokenUsage Token usage metrics for this evaluation
@@ -38,16 +38,17 @@ data class HtmlSourceEvalOutput(
 ) : IAgent.IAgentOutput
 
 /**
- * Agent that evaluates a single HTML preview source and extracts facts.
+ * Agent that evaluates a preview source and extracts facts.
+ * 
+ * Input is extracted sentences (plain text) which:
+ * - Is token-efficient compared to HTML
+ * - Naturally filters out tabular data (table cells are fragments, not sentences)
+ * - Works across languages via ICU4J sentence detection
  * 
  * For the source, the agent:
  * - Determines the intention (purpose) of the webpage
  * - Assesses relevance to the query
  * - Extracts facts relevant to the query
- * - Marks whether each fact comes from a table/grid (isInTable)
- * 
- * Facts from tables (isInTable=true) are filtered out before returning,
- * as table data in HTML previews may be inaccurate.
  * 
  * This is a stateless agent that processes one source at a time, enabling parallel processing.
  * Used in the preview path for early exit with conservative fact extraction.

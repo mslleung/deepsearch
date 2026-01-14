@@ -117,7 +117,8 @@ class SearchController(
             apiKey.userId,
             request.languagePattern,
             request.toOcrLanguage(),
-            request.includeImages ?: false
+            request.includeImages ?: false,
+            request.continueSessionId
         )
 
         // Consume usage after successful search
@@ -212,6 +213,7 @@ class SearchController(
             val languagePattern = call.request.queryParameters["languagePattern"]
             val ocrLanguageParam = call.request.queryParameters["ocrLanguage"]
             val includeImages = call.request.queryParameters["includeImages"]?.toBoolean() ?: false
+            val continueSessionId = call.request.queryParameters["continueSessionId"]
 
             if (query.isNullOrBlank() || url.isNullOrBlank()) {
                 sse.send(
@@ -322,7 +324,8 @@ class SearchController(
                 apiKey.userId,
                 languagePattern,
                 searchRequest.toOcrLanguage(),
-                includeImages
+                includeImages,
+                continueSessionId
             )
 
             // Use onEach to send SSE events, then first to stop at terminal event

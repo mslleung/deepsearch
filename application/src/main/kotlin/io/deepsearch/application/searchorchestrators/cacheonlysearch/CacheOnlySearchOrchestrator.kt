@@ -12,6 +12,7 @@ import io.deepsearch.application.services.WebpageCacheService
 import io.deepsearch.domain.agents.IMarkdownSourceEvalAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
 import io.deepsearch.domain.agents.MarkdownSourceEvalInput
+import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
@@ -71,7 +72,8 @@ class CacheOnlySearchOrchestrator(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId,
-        proxyConfig: ProxyConfiguration
+        proxyConfig: ProxyConfiguration,
+        priorSessionContext: PriorSessionContext?
     ): Flow<SearchEvent> = flow {
         val session = querySessionService.createSession(
             searchQuery.query,
@@ -235,7 +237,8 @@ class CacheOnlySearchOrchestrator(
                 StreamingAnswerSynthesisInput(
                     query = searchQuery.query,
                     evaluatedSources = evaluatedSources,
-                    previouslySearchedQueries = emptyList()
+                    previouslySearchedQueries = emptyList(),
+                    priorSessionContext = priorSessionContext
                 )
             ).collect { item ->
                 when (item) {

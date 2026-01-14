@@ -1,6 +1,7 @@
 package io.deepsearch.application.searchorchestrators
 
 import io.deepsearch.application.services.SearchEvent
+import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.proxy.ProxyConfiguration
@@ -22,11 +23,15 @@ interface ISearchOrchestrator {
      * 
      * @param proxyConfig User's proxy configuration. None (default) uses adaptive bypass strategy.
      *                    Custom/Premium proxies are used directly without bypass logic.
+     * @param priorSessionContext Optional context from a previous session for continuation.
+     *                            When provided, the answer synthesis will avoid repeating
+     *                            information already provided in the prior session.
      */
     fun execute(
         searchQuery: SearchQuery, 
         maxCacheAge: Long? = null, 
         apiKeyId: ApiKeyId,
-        proxyConfig: ProxyConfiguration = ProxyConfiguration.None
+        proxyConfig: ProxyConfiguration = ProxyConfiguration.None,
+        priorSessionContext: PriorSessionContext? = null
     ): Flow<SearchEvent>
 }

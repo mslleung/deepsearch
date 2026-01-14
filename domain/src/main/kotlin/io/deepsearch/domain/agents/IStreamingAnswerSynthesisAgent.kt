@@ -8,6 +8,21 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
 
 /**
+ * Context from a prior session for query session continuation.
+ * When provided, the agent will build upon the prior findings instead of starting fresh,
+ * avoiding repetition of already-discovered information.
+ * 
+ * @property sessionId The ID of the prior session being continued
+ * @property query The query that was asked in the prior session
+ * @property answer The answer that was generated in the prior session
+ */
+data class PriorSessionContext(
+    val sessionId: String,
+    val query: String,
+    val answer: String
+)
+
+/**
  * Input for streaming answer synthesis agent.
  * Provides query and evaluated sources (with extracted facts) to generate an answer from.
  * 
@@ -19,13 +34,16 @@ import kotlinx.serialization.Serializable
  *           Used to prevent the agent from suggesting duplicate follow-up queries.
  * @property fulfillmentRequirements List of requirements that must ALL be satisfied
  *           for the answer to be considered complete. Used for COVERAGE evaluation.
+ * @property priorSessionContext Context from a prior session for continuation searches.
+ *           When provided, the agent will expand on prior findings without repeating them.
  */
 data class StreamingAnswerSynthesisInput(
     val query: String,
     val evaluatedSources: List<EvaluatedSource>,
     val imageDescriptions: Map<String, String> = emptyMap(),
     val previouslySearchedQueries: List<String> = emptyList(),
-    val fulfillmentRequirements: List<String> = emptyList()
+    val fulfillmentRequirements: List<String> = emptyList(),
+    val priorSessionContext: PriorSessionContext? = null
 ) : IAgent.IAgentInput
 
 /**

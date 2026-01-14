@@ -6,6 +6,7 @@ import io.deepsearch.domain.agents.GoogleTextSearchInput
 import io.deepsearch.domain.agents.GoogleUrlContextSearchInput
 import io.deepsearch.domain.agents.IGoogleTextSearchAgent
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
+import io.deepsearch.domain.agents.PriorSessionContext
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
@@ -20,6 +21,9 @@ interface IGoogleSearchOrchestrator : ISearchOrchestrator
 /**
  * Orchestrates Google search + URL Context, powered by Google Gemini.
  * Returns a Flow<SearchEvent> that emits session start and completion events.
+ * 
+ * Note: This orchestrator does not currently support session continuation
+ * (priorSessionContext is ignored) as it uses Google's URL Context tool directly.
  */
 class GoogleSearchOrchestrator(
     private val googleTextSearchAgent: IGoogleTextSearchAgent,
@@ -30,11 +34,13 @@ class GoogleSearchOrchestrator(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
+    @Suppress("UNUSED_PARAMETER")
     override fun execute(
         searchQuery: SearchQuery,
         maxCacheAge: Long?,
         apiKeyId: ApiKeyId,
-        proxyConfig: ProxyConfiguration
+        proxyConfig: ProxyConfiguration,
+        priorSessionContext: PriorSessionContext?
     ): Flow<SearchEvent> = flow {
         logger.debug("GoogleSearchOrchestrator.execute start: '{}' on {}", searchQuery.query, searchQuery.url)
 

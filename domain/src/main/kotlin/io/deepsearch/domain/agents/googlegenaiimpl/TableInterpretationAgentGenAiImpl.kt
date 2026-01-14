@@ -49,41 +49,25 @@ class TableInterpretationAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are given the HTML markup for a table-like region from a webpage and an auxiliary info describing 
-        the table. Convert this table into clean, faithful GitHub-flavored Markdown with additional information.
+        Convert the HTML table into GitHub-flavored Markdown.
         
-        Each element in the HTML has been augmented with a ds-bounding-box attribute containing spatial coordinates
-        in the format ds-bounding-box="left top right bottom". These coordinates are relative to the table element's top-left corner
-        and can help you understand the spatial layout and relationships between elements.
-    
-        Note that HTML tables may not be in perfect row/column format due to styling etc. Bounding box is crucial
-        for mapping elements that are out of place.
+        Use ds-bounding-box="left top right bottom" attributes to understand spatial layout when HTML structure is ambiguous.
     
         Rules:
-        - Preserve the table's row and column structure and order accurately.
-        - Include a header row if one exists; otherwise infer a sensible header from the first row if appropriate.
-        - The HTML table may not translate well into a 2-dimensional markdown table. 
-          In that case please adjust the rows and columns while preserving the semantic meaning of the table.
-        - Use the bounding box coordinates to better understand the spatial layout when the HTML structure is ambiguous.
-        - Do not invent data. Only use what is present in the supplied HTML.
-        - Make sure all table data is captured with no information loss. All text must be represented in the markdown output.
-        - Make sure the markdown is valid. The resulting markdown should not contain HTML or HTML entities.
-        - Prefer to use emojis such as ✅ over HTML entities like &#10004; or &#10008;.
-        - If there is any ambiguity or information conflict, note them in the additionalInfo field.
-        - Normalize whitespace; remove decorative or layout-only characters.
-        - For merged cells, please duplicate the cell value to all corresponding cells in the markdown table.
-        - If the HTML do not look like a table, interpret and coerce the data into tabular markdown format while preserving semantic meaning.
-        - Provide the answer once
+        - Preserve row/column structure accurately
+        - Include header row if exists
+        - Adjust rows/columns if needed to fit markdown format while preserving meaning
+        - Do not invent data - only use what's in the HTML
+        - Capture ALL text with no information loss
+        - Use emojis (✅ ❌) instead of HTML entities
+        - For merged cells, duplicate values to corresponding cells
+        - Coerce non-table HTML into tabular format if needed
 
-        The output must strictly conform to JSON structured output with 2 fields:
-        - "additionalInfo": Any additional context that cannot fit in the table structure (badges, labels, footnotes, ambiguities, out-of-place elements).
-        - "markdown": The table as a GitHub-flavored Markdown table.
-
-        Example output:
-        {
-          "additionalInfo": "*   **Pro AI** includes \"Free Onboarding Support\".\n*   **Premium AI** includes \"Free Onboarding Support\" and is marked as \"Most Popular\".\n*   **Enterprise AI** includes \"🌟 AI Solution Engineer Support\"."
-          "markdown": "| Feature | Free | Pro AI | Premium AI | Enterprise AI |\n|---|---|---|---|---|\n| **Description** | For individuals to discover the power of AI in transforming customer engagement | For small teams to centralize conversations and automate the basics with AI agents | For scaling businesses to grow with advanced automation, integration and analytics | For large organizations to access tailored solutions, top-tier security, and strategic support |\n| **Price** | Free | Starting from US$ 99/month | Starting from US$ 299/month | Let's talk |\n| **Call to Action** | Try Free Forever | Start for Free | Start for Free | Book a Demo |\n| **Key features** | 50 monthly active contacts | Up to 2,000 monthly active contacts | Up to 12,000 monthly active contacts | Custom number of monthly active contacts |\n| | Includes 3 user accounts | Includes 3 user accounts | Includes 10 user accounts | Custom number of user accounts |\n| | Test all core features without affecting your live business using the | Unlimited Broadcast | Analytics dashboards | Salesforce & custom integrations |\n| | | Unlimited Flow Builder usage | Webhook & API calls | Dedicated Customer success manager |\n| | | Unlimited contact storage | Role-based access control | PII masking |\n| | | Team Inbox | Advanced AI Agents with integrations | |\n| | | AI Agent | | |",
-        }
+        Output JSON with 2 fields:
+        - "additionalInfo": ONLY for critical clarifications that CANNOT fit in the table. 
+          Format: "Note: [fact]"
+          Don't explain what the table shows or repeat table data.
+        - "markdown": The markdown table.
 
         Output structure:
         {
@@ -271,10 +255,10 @@ class TableInterpretationAgentGenAiImpl(
         return if (additionalInfo.isNullOrBlank()) {
             markdown
         } else {
-            // Format additional info as blockquote for better readability and easier chunking
-            val formattedInfo = additionalInfo.lines()
-                .joinToString("\n") { "> $it" }
-            "$markdown\n\n$formattedInfo\n"
+            // Append additional info as a simple note below the table (no blockquote formatting)
+            // The additionalInfo should already be brief and start with "Note:" per the prompt
+            val trimmedInfo = additionalInfo.trim()
+            "$markdown\n\n*$trimmedInfo*"
         }
     }
 
