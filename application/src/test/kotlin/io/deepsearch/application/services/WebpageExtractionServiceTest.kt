@@ -48,17 +48,4 @@ class WebpageExtractionServiceTest : KoinTest {
         }
     }
 
-    @Test
-    fun `extract beame webpage and write to file`() = runTest(testCoroutineDispatcher) {
-        browserPool.withPage { page ->
-            page.navigate("https://mybeame.com/beame-student-discount")
-            val text = webpageExtractionService.extractWebpage(page, QuerySessionId("test-session-id"))
-
-            // Write to file for inspection
-            File("/tmp/beame-extraction.txt").writeText(text.markdown)
-            println("Wrote ${text.markdown.length} chars to /tmp/beame-extraction.txt")
-            assertTrue(text.markdown.length > 200)
-        }
-    }
-
 }
