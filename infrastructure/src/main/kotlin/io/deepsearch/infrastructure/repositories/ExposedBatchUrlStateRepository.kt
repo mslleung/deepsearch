@@ -39,7 +39,7 @@ class ExposedBatchUrlStateRepository(
             it[version] = urlState.version
             it[stage] = urlState.stage.name
             it[errorMessage] = urlState.errorMessage
-            it[snapshotData] = urlState.snapshotData
+            it[snapshotBasePath] = urlState.snapshotBasePath
             it[title] = urlState.title
             it[description] = urlState.description
             // File-specific fields
@@ -67,7 +67,7 @@ class ExposedBatchUrlStateRepository(
                 it[version] = urlState.version
                 it[stage] = urlState.stage.name
                 it[errorMessage] = urlState.errorMessage
-                it[snapshotData] = urlState.snapshotData
+                it[snapshotBasePath] = urlState.snapshotBasePath
                 it[title] = urlState.title
                 it[description] = urlState.description
                 // File-specific fields
@@ -89,7 +89,7 @@ class ExposedBatchUrlStateRepository(
             it[version] = urlState.version + 1
             it[stage] = urlState.stage.name
             it[errorMessage] = urlState.errorMessage
-            it[snapshotData] = urlState.snapshotData
+            it[snapshotBasePath] = urlState.snapshotBasePath
             it[title] = urlState.title
             it[description] = urlState.description
             // File-specific fields
@@ -246,7 +246,7 @@ class ExposedBatchUrlStateRepository(
         version = row[table.version],
         stage = BatchUrlProcessingStage.valueOf(row[table.stage]),
         errorMessage = row[table.errorMessage],
-        snapshotData = row[table.snapshotData],
+        snapshotBasePath = row[table.snapshotBasePath],
         title = row[table.title],
         description = row[table.description],
         // File-specific fields

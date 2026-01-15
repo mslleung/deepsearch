@@ -1,9 +1,5 @@
 package io.deepsearch.domain.models.entities
 
-import io.deepsearch.domain.agents.TableIdentification
-import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.knowledgegraph.KgExtractionResult
-import io.deepsearch.domain.models.valueobjects.SemanticElements
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -83,11 +79,13 @@ class BatchUrlState(
     var errorMessage: String? = null,
     
     /**
-     * JSON blob storing intermediate data between stages.
-     * Contains HTML, snapshots, LLM results, etc.
-     * Cleared after successful caching to save space.
+     * GCS base path for snapshot data stored in cloud storage.
+     * Format: "batch-snapshots/{jobId}/{urlHash}"
+     * All intermediate data (HTML, screenshots, icons, images, LLM results)
+     * is stored in GCS under this path instead of in the database.
+     * Cleared after successful caching when GCS files are deleted.
      */
-    var snapshotData: String? = null,
+    var snapshotBasePath: String? = null,
     
     /**
      * Page title extracted during browser extraction.
@@ -133,11 +131,15 @@ class BatchUrlState(
     /**
      * Mark URL as extracted (crawled + browser extracted in single visit).
      * For HTML type URLs only.
+     * 
+     * @param basePath GCS base path where snapshot data is stored (e.g., "batch-snapshots/123/abc456")
+     * @param pageTitle Page title extracted from the page
+     * @param pageDescription Page description extracted from the page
      */
-    fun markExtracted(snapshot: String, pageTitle: String?, pageDescription: String?) {
+    fun markExtracted(basePath: String, pageTitle: String?, pageDescription: String?) {
         urlType = BatchUrlType.HTML
         stage = BatchUrlProcessingStage.EXTRACTED
-        snapshotData = snapshot
+        snapshotBasePath = basePath
         title = pageTitle
         description = pageDescription
         updatedAt = Clock.System.now()
@@ -177,29 +179,30 @@ class BatchUrlState(
     }
 
     /**
-     * Mark URL as content LLM processed with updated snapshot data.
+     * Mark URL as content LLM processed.
+     * Snapshot data remains in GCS at the same base path.
      */
-    fun markContentLlmDone(updatedSnapshot: String) {
+    fun markContentLlmDone() {
         stage = BatchUrlProcessingStage.CONTENT_LLM_DONE
-        snapshotData = updatedSnapshot
         updatedAt = Clock.System.now()
     }
 
     /**
-     * Mark URL as final LLM processed with updated snapshot data.
+     * Mark URL as final LLM processed.
+     * Snapshot data remains in GCS at the same base path.
      */
-    fun markFinalLlmDone(updatedSnapshot: String) {
+    fun markFinalLlmDone() {
         stage = BatchUrlProcessingStage.FINAL_LLM_DONE
-        snapshotData = updatedSnapshot
         updatedAt = Clock.System.now()
     }
 
     /**
-     * Mark URL as cached and clear snapshot data.
+     * Mark URL as cached and clear snapshot base path.
+     * Caller should delete GCS files before calling this.
      */
     fun markCached() {
         stage = BatchUrlProcessingStage.CACHED
-        snapshotData = null // Clear to save space
+        snapshotBasePath = null // GCS files should be deleted by caller
         updatedAt = Clock.System.now()
     }
 
@@ -271,132 +274,3 @@ class BatchUrlState(
         BatchUrlProcessingStage.CACHED -> 4
     }
 }
-
-/**
- * Intermediate data stored in snapshotData JSON.
- * Contains all information needed for subsequent stages.
- * 
- * Data flows through stages:
- * - Stage 1 (Extract): Populates html, cleanedHtml
- * - Stage 2 (Content LLM): Populates semanticElements, tableIdentifications
- * - Stage 3 (Final LLM): Populates tableMarkdowns
- * - Stage 4 (Cache): Uses all data to build final markdown
- */
-/**
- * Serializable icon data for batch storage.
- * Icons are deduplicated by hash across the batch job.
- */
-@kotlinx.serialization.Serializable
-data class BatchIconData(
-    /** Base64-encoded icon bytes */
-    val bytesBase64: String,
-    /** MIME type of the icon */
-    val mimeType: String,
-    /** CSS selectors for this icon in the DOM */
-    val cssSelectors: List<String>,
-    /** SHA-256 hash of the bytes (base64 encoded) for deduplication */
-    val hashBase64: String
-)
-
-/**
- * Serializable image data for batch storage.
- * Images are deduplicated by hash across the batch job.
- */
-@kotlinx.serialization.Serializable
-data class BatchImageData(
-    /** Base64-encoded image bytes */
-    val bytesBase64: String,
-    /** MIME type of the image */
-    val mimeType: String,
-    /** CSS selectors for this image in the DOM */
-    val cssSelectors: List<String>,
-    /** SHA-256 hash of the bytes (base64 encoded) for deduplication */
-    val hashBase64: String
-)
-
-@kotlinx.serialization.Serializable
-data class BatchUrlSnapshotData(
-    /** Raw HTML from browser extraction (Stage 1) */
-    val html: String,
-    
-    /**
-     * Bounding boxes for all elements from browser extraction (Stage 1).
-     * Maps XPath -> BoundingBox. Used in Stage 3 for table interpretation.
-     */
-    val boundingBoxes: Map<String, IBrowserPage.BoundingBox>? = null,
-    
-    /**
-     * Full-page screenshot from browser extraction (Stage 1).
-     * Base64 encoded. Used in Stage 2 for vision-based table/semantic identification.
-     */
-    val screenshotBase64: String? = null,
-    
-    /**
-     * Screenshot MIME type (e.g., "image/png").
-     */
-    val screenshotMimeType: String? = null,
-    
-    /**
-     * Icons extracted from the page (Stage 1).
-     * Used in Stage 2 for icon interpretation.
-     */
-    val icons: List<BatchIconData>? = null,
-    
-    /**
-     * Images extracted from the page (Stage 1).
-     * Used in Stage 2 for image text extraction.
-     */
-    val images: List<BatchImageData>? = null,
-    
-    /** Cleaned HTML with stable identifiers injected for LLM processing (Stage 2) */
-    val cleanedHtml: String? = null,
-    
-    /** 
-     * Stage 2 result: Identified semantic elements (header, footer, nav, etc.)
-     * Used to remove non-content elements before text extraction.
-     */
-    val semanticElements: SemanticElements? = null,
-    
-    /**
-     * Stage 2 result: Identified tables with their stable data-ds-id values.
-     * Used in Stage 3 for table interpretation.
-     */
-    val tableIdentifications: List<TableIdentification>? = null,
-    
-    /**
-     * Stage 2 result: Interpreted icon labels.
-     * Maps icon hash (base64) -> interpreted label (or null if not interpretable).
-     */
-    val iconInterpretations: Map<String, String?>? = null,
-    
-    /**
-     * Stage 2 result: Extracted image text.
-     * Maps image hash (base64) -> extracted text (or null if no text).
-     */
-    val imageTexts: Map<String, String?>? = null,
-    
-    /**
-     * Stage 3 result: Markdown interpretation for each table.
-     * Maps table dataId -> markdown representation.
-     */
-    val tableMarkdowns: Map<String, String>? = null,
-    
-    /** 
-     * Final markdown content assembled from all processing stages.
-     * Generated during cache write stage (Stage 4).
-     */
-    val markdown: String? = null,
-    
-    /**
-     * Batch request index for tracking responses.
-     * Used to match batch results back to this URL.
-     */
-    val batchRequestIndex: Int? = null,
-    
-    /**
-     * Stage 4 result: Knowledge graph extraction result.
-     * Contains entities and relationships extracted from the markdown.
-     * Used in Stage 5 for entity embedding generation.
-     */
-    val kgExtractionResult: KgExtractionResult? = null
-)

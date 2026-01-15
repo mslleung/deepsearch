@@ -1,8 +1,11 @@
 package io.deepsearch.infrastructure.config
 
+import io.deepsearch.domain.config.GcsConfig
 import io.deepsearch.domain.proxy.IProxyRuleRepository
 import io.deepsearch.domain.repositories.*
 import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
+import io.deepsearch.domain.services.IBatchSnapshotStorageService
+import io.deepsearch.domain.services.IImageStorageService
 import io.deepsearch.domain.services.ITemporaryFileStorageService
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
@@ -12,6 +15,8 @@ import io.deepsearch.infrastructure.services.IDatabaseConfigurationService
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
+import io.deepsearch.infrastructure.storage.GcsBatchSnapshotStorageService
+import io.deepsearch.infrastructure.storage.GcsImageStorageService
 import io.deepsearch.infrastructure.storage.GcsTemporaryFileStorageService
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -28,11 +33,17 @@ val infrastructureModule = module {
     
     // Google Cloud Storage for temporary file storage during batch processing
     // Uses GCS Free Tier: 5GB regional storage (US regions)
-    single<ITemporaryFileStorageService> {
-        val bucketName = System.getenv("GCS_TEMP_BUCKET_NAME")
-            ?: throw IllegalStateException("GCS_TEMP_BUCKET_NAME environment variable not set")
-        GcsTemporaryFileStorageService(bucketName, get())
-    }
+    singleOf(::GcsTemporaryFileStorageService) bind ITemporaryFileStorageService::class
+    
+    // Google Cloud Storage for permanent image storage
+    // Images are stored with content-based hashes for deduplication
+    // Clients fetch images via signed URLs (no base64 overhead)
+    singleOf(::GcsImageStorageService) bind IImageStorageService::class
+    
+    // Google Cloud Storage for batch snapshot data
+    // Stores intermediate batch processing data (HTML, screenshots, icons, images)
+    // Uses temp bucket with lifecycle policy for automatic cleanup
+    singleOf(::GcsBatchSnapshotStorageService) bind IBatchSnapshotStorageService::class
     
     // DatabaseTables container (lazily resolves all tables via Koin instance, not GlobalContext)
     single { DatabaseTables(getKoin()) }

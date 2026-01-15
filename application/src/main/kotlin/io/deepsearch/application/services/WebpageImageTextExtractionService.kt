@@ -13,6 +13,8 @@ import io.deepsearch.domain.models.valueobjects.MediaHash
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.services.IImageStorageService
+import io.deepsearch.domain.services.ImageToStore
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
 import io.deepsearch.domain.repositories.IWebpageImageRepository
 import kotlinx.coroutines.async
@@ -114,6 +116,7 @@ class WebpageImageTextExtractionService(
     private val imageDescriptionAgent: IImageDescriptionAgent,
     private val tableExtractionAgent: ITableExtractionAgent,
     private val webpageImageRepository: IWebpageImageRepository,
+    private val imageStorageService: IImageStorageService,
     private val ocrService: IOcrImageTextExtractionService,
     private val tokenUsageService: ILlmTokenUsageService
 ) : IWebpageImageTextExtractionService {
@@ -208,13 +211,29 @@ class WebpageImageTextExtractionService(
     ) {
         if (results.isEmpty()) return
 
-        // Store results in cache
+        // Prepare images for GCS storage
+        val imagesToStore = results.mapNotNull { (hash, _) ->
+            val data = imageData[hash] ?: return@mapNotNull null
+            val hashBytes = Base64.decode(hash.value)
+            ImageToStore(
+                hash = hashBytes,
+                bytes = data.bytes,
+                mimeType = data.mimeType
+            )
+        }
+
+        // Store image bytes in GCS (returns hash -> gcsPath mapping)
+        val gcsPaths = imageStorageService.storeBatch(imagesToStore)
+        logger.debug("Stored {} images in GCS", gcsPaths.size)
+
+        // Create WebpageImage entities with GCS paths for DB cache
         val imagesToCache = results.mapNotNull { (hash, text) ->
             val data = imageData[hash] ?: return@mapNotNull null
             val hashBytes = kotlin.io.encoding.Base64.decode(hash.value)
+            val gcsPath = gcsPaths[hash.value] ?: return@mapNotNull null
             WebpageImage(
                 imageBytesHash = hashBytes,
-                imageBytes = data.bytes,
+                gcsPath = gcsPath,
                 mimeType = data.mimeType,
                 extractedText = text?.takeIf { it.isNotBlank() }
             )
@@ -408,17 +427,30 @@ class WebpageImageTextExtractionService(
                 }
             }
 
-                // Cache all results with raw bytes
-            val imagesToCache = uncachedImages.map { image ->
-                    val extractedText = cachedResults[Base64.encode(image.bytesHash)]
-                    WebpageImage(
-                        imageBytesHash = image.bytesHash,
-                        imageBytes = image.bytes,
-                        mimeType = image.mimeType.value,
-                        extractedText = extractedText
-                    )
-                }
-                webpageImageRepository.batchUpsert(imagesToCache)
+            // Store image bytes in GCS
+            val imagesToStore = uncachedImages.map { image ->
+                ImageToStore(
+                    hash = image.bytesHash,
+                    bytes = image.bytes,
+                    mimeType = image.mimeType.value
+                )
+            }
+            val gcsPaths = imageStorageService.storeBatch(imagesToStore)
+            logger.debug("Stored {} images in GCS", gcsPaths.size)
+
+            // Cache results with GCS paths
+            val imagesToCache = uncachedImages.mapNotNull { image ->
+                val hashBase64 = Base64.encode(image.bytesHash)
+                val gcsPath = gcsPaths[Base64.UrlSafe.encode(image.bytesHash)] ?: return@mapNotNull null
+                val extractedText = cachedResults[hashBase64]
+                WebpageImage(
+                    imageBytesHash = image.bytesHash,
+                    gcsPath = gcsPath,
+                    mimeType = image.mimeType.value,
+                    extractedText = extractedText
+                )
+            }
+            webpageImageRepository.batchUpsert(imagesToCache)
         }
 
         // Return results in original order with hashes

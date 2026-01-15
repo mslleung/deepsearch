@@ -30,7 +30,7 @@ class ExposedWebpageImageRepository(
             keys = arrayOf(webpageImageTable.imageBytesHash)
         ) {
             it[imageBytesHash] = hashBase64
-            it[imageBytes] = Base64.encode(image.imageBytes)
+            it[gcsPath] = image.gcsPath
             it[mimeType] = image.mimeType
             it[extractedText] = image.extractedText
             it[createdAtEpochMs] = image.createdAt.toEpochMilliseconds()
@@ -52,7 +52,7 @@ class ExposedWebpageImageRepository(
         ) { image ->
             val hashBase64 = Base64.encode(image.imageBytesHash)
             this[webpageImageTable.imageBytesHash] = hashBase64
-            this[webpageImageTable.imageBytes] = Base64.encode(image.imageBytes)
+            this[webpageImageTable.gcsPath] = image.gcsPath
             this[webpageImageTable.mimeType] = image.mimeType
             this[webpageImageTable.extractedText] = image.extractedText
             this[webpageImageTable.createdAtEpochMs] = image.createdAt.toEpochMilliseconds()
@@ -82,7 +82,7 @@ class ExposedWebpageImageRepository(
     private fun mapRowToWebpageImage(row: ResultRow): WebpageImage {
         return WebpageImage(
             imageBytesHash = Base64.decode(row[webpageImageTable.imageBytesHash]),
-            imageBytes = Base64.decode(row[webpageImageTable.imageBytes]),
+            gcsPath = row[webpageImageTable.gcsPath],
             mimeType = row[webpageImageTable.mimeType],
             extractedText = row[webpageImageTable.extractedText],
             createdAt = Instant.fromEpochMilliseconds(row[webpageImageTable.createdAtEpochMs]),

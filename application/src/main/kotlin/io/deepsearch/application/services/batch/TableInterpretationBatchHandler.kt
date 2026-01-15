@@ -4,18 +4,13 @@ import io.deepsearch.application.services.ITableInterpretationService
 import io.deepsearch.application.services.TableInterpretationBatchInput
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
-import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.models.valueobjects.BatchJobId
 import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
 import io.deepsearch.domain.models.valueobjects.TableDataId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
-import io.deepsearch.domain.services.BatchJobState
-import io.deepsearch.domain.services.CssSelectorReplacement
-import io.deepsearch.domain.services.IBoundingBoxDerivationService
-import io.deepsearch.domain.services.IGeminiBatchService
-import io.deepsearch.domain.services.IJsoupDomService
+import io.deepsearch.domain.services.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.serialization.json.Json
@@ -38,6 +33,7 @@ class TableInterpretationBatchHandler(
     private val jsoupDomService: IJsoupDomService,
     private val boundingBoxDerivationService: IBoundingBoxDerivationService,
     private val tableInterpretationService: ITableInterpretationService,
+    private val snapshotStorage: IBatchSnapshotStorageService,
     private val eventEmitter: BatchEventEmitter,
     private val batchTokenUsageRecorder: BatchTokenUsageRecorder
 ) : IBatchStageHandler {
@@ -151,6 +147,21 @@ class TableInterpretationBatchHandler(
         }
     }
 
+    /**
+     * Collected data for a URL from GCS.
+     */
+    private data class UrlSnapshotFromGcs(
+        val basePath: String,
+        val html: String,
+        val cleanedHtml: String?,
+        val boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>,
+        val tableIdentifications: List<io.deepsearch.domain.agents.TableIdentification>,
+        val iconInterpretations: Map<String, String?>?,
+        val imageTexts: Map<String, String?>?,
+        val icons: List<MediaFileData>,
+        val images: List<MediaFileData>
+    )
+
     private suspend fun collectTableInputs(
         urlStates: List<BatchUrlState>,
         jobId: Long
@@ -159,19 +170,35 @@ class TableInterpretationBatchHandler(
 
         urlStates.forEach { urlState ->
             try {
-                val snapshotData = urlState.snapshotData?.let {
-                    json.decodeFromString<BatchUrlSnapshotData>(it)
-                } ?: return@forEach
+                val basePath = urlState.snapshotBasePath ?: return@forEach
+                
+                // Read data from GCS
+                val html = snapshotStorage.readHtml(basePath) ?: return@forEach
+                val cachingData = snapshotStorage.readForCaching(basePath) ?: return@forEach
+                val icons = snapshotStorage.readIcons(basePath)
+                val images = snapshotStorage.readImages(basePath)
+                
+                val snapshotFromGcs = UrlSnapshotFromGcs(
+                    basePath = basePath,
+                    html = html,
+                    cleanedHtml = cachingData.cleanedHtml,
+                    boundingBoxes = cachingData.boundingBoxes ?: emptyMap(),
+                    tableIdentifications = cachingData.tableIdentifications ?: emptyList(),
+                    iconInterpretations = cachingData.iconInterpretations,
+                    imageTexts = cachingData.imageTexts,
+                    icons = icons,
+                    images = images
+                )
 
                 // Start with cleaned HTML that has semantic IDs injected
-                val cleanedHtml = snapshotData.cleanedHtml ?: snapshotData.html
+                val cleanedHtml = snapshotFromGcs.cleanedHtml ?: snapshotFromGcs.html
                 val doc = Jsoup.parse(cleanedHtml)
 
                 // Inject media identifiers
                 jsoupDomService.injectMediaIdentifiers(doc)
 
                 // Build and apply icon/image replacements
-                val mediaReplacements = buildMediaReplacements(snapshotData)
+                val mediaReplacements = buildMediaReplacements(snapshotFromGcs)
                 if (mediaReplacements.isNotEmpty()) {
                     jsoupDomService.replaceElementsWithText(doc, mediaReplacements)
                     logger.debug(
@@ -181,21 +208,21 @@ class TableInterpretationBatchHandler(
                 }
 
                 // Get tables for interpretation
-                val tables = snapshotData.tableIdentifications ?: emptyList()
+                val tables = snapshotFromGcs.tableIdentifications
 
                 if (tables.isEmpty()) {
-                    // Update snapshot with processed HTML (media replaced)
-                    val updatedSnapshot = snapshotData.copy(tableMarkdowns = emptyMap())
-                    urlState.markFinalLlmDone(json.encodeToString(updatedSnapshot))
+                    // No tables - store empty table markdowns and mark done
+                    snapshotStorage.storeTableMarkdowns(basePath, emptyMap())
+                    urlState.markFinalLlmDone()
                     batchUrlStateRepository.update(urlState)
                     return@forEach
                 }
 
                 // Derive bounding boxes for all tables
-                val pageBoundingBoxes = snapshotData.boundingBoxes ?: emptyMap()
+                val pageBoundingBoxes = snapshotFromGcs.boundingBoxes
                 val derivedDataMap = boundingBoxDerivationService.deriveElementsBoundingBoxes(
                     cssSelectors = tables.map { it.cssSelector },
-                    html = snapshotData.html,
+                    html = snapshotFromGcs.html,
                     pageBoundingBoxes = pageBoundingBoxes
                 )
 
@@ -224,12 +251,12 @@ class TableInterpretationBatchHandler(
         return tableInputs
     }
 
-    private fun buildMediaReplacements(snapshotData: BatchUrlSnapshotData): List<CssSelectorReplacement> {
+    private fun buildMediaReplacements(snapshot: UrlSnapshotFromGcs): List<CssSelectorReplacement> {
         val replacements = mutableListOf<CssSelectorReplacement>()
 
         // Icon replacements
-        snapshotData.icons?.forEach { iconData ->
-            val label = snapshotData.iconInterpretations?.get(iconData.hashBase64)
+        snapshot.icons.forEach { iconData ->
+            val label = snapshot.iconInterpretations?.get(iconData.hash)
             if (label != null) {
                 iconData.cssSelectors.forEach { selector ->
                     replacements.add(CssSelectorReplacement(selector, label))
@@ -238,10 +265,10 @@ class TableInterpretationBatchHandler(
         }
 
         // Image replacements with XML wrapper
-        snapshotData.images?.forEach { imageData ->
-            val text = snapshotData.imageTexts?.get(imageData.hashBase64)
+        snapshot.images.forEach { imageData ->
+            val text = snapshot.imageTexts?.get(imageData.hash)
             if (text != null) {
-                val imageId = generateImageId(imageData.hashBase64)
+                val imageId = generateImageId(imageData.hash)
                 val wrappedText = if (text.contains('\n')) {
                     "<image id=\"$imageId\">\n$text\n</image>"
                 } else {
@@ -272,15 +299,16 @@ class TableInterpretationBatchHandler(
 
         for ((urlStateId, tableMarkdowns) in urlTableMarkdowns) {
             val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
-            val snapshotData =
-                urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: continue
-
-            val allTables = snapshotData.tableIdentifications ?: emptyList()
-            val allTablesCached = allTables.all { tableMarkdowns.containsKey(it.dataId) }
+            val basePath = urlState.snapshotBasePath ?: continue
+            
+            // Read table identifications from GCS
+            val tables = snapshotStorage.readTableIdentifications(basePath) ?: emptyList()
+            val allTablesCached = tables.all { tableMarkdowns.containsKey(it.dataId) }
 
             if (allTablesCached) {
-                val updatedSnapshot = snapshotData.copy(tableMarkdowns = tableMarkdowns)
-                urlState.markFinalLlmDone(json.encodeToString(updatedSnapshot))
+                // Store table markdowns to GCS
+                snapshotStorage.storeTableMarkdowns(basePath, tableMarkdowns)
+                urlState.markFinalLlmDone()
                 batchUrlStateRepository.update(urlState)
             }
         }
@@ -289,9 +317,19 @@ class TableInterpretationBatchHandler(
     private suspend fun markAllUrlsAsDone(urlStates: List<BatchUrlState>) {
         urlStates.forEach { urlState ->
             if (urlState.stage != BatchUrlProcessingStage.FINAL_LLM_DONE) {
-                val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) }
-                if (snapshotData != null) {
-                    urlState.markFinalLlmDone(json.encodeToString(snapshotData.copy(tableMarkdowns = emptyMap())))
+                val basePath = urlState.snapshotBasePath
+                if (basePath != null) {
+                    // Store empty table markdowns to GCS
+                    snapshotStorage.storeTableMarkdowns(basePath, emptyMap())
+                    
+                    // Delete images from GCS (no longer needed after Stage 3)
+                    try {
+                        snapshotStorage.deleteImages(basePath)
+                    } catch (e: Exception) {
+                        logger.warn("Failed to delete images for {}: {}", urlState.url, e.message)
+                    }
+                    
+                    urlState.markFinalLlmDone()
                     batchUrlStateRepository.update(urlState)
                 }
             }
@@ -334,14 +372,22 @@ class TableInterpretationBatchHandler(
         val urlsToUpdate = batchUrlStateRepository.findNeedingFinalLlmProcessing(jobId)
         urlsToUpdate.forEach { urlState ->
             try {
-                val snapshotData = urlState.snapshotData?.let {
-                    json.decodeFromString<BatchUrlSnapshotData>(it)
-                } ?: return@forEach
+                val basePath = urlState.snapshotBasePath ?: return@forEach
 
                 val urlStateId = BatchUrlStateId(urlState.id!!)
                 val tableMarkdowns = resultsByUrlState[urlStateId] ?: emptyMap()
-                val updatedSnapshot = snapshotData.copy(tableMarkdowns = tableMarkdowns)
-                urlState.markFinalLlmDone(json.encodeToString(updatedSnapshot))
+                
+                // Store table markdowns to GCS
+                snapshotStorage.storeTableMarkdowns(basePath, tableMarkdowns)
+                
+                // Delete images from GCS (no longer needed after Stage 3)
+                try {
+                    snapshotStorage.deleteImages(basePath)
+                } catch (e: Exception) {
+                    logger.warn("Failed to delete images for {}: {}", urlState.url, e.message)
+                }
+                
+                urlState.markFinalLlmDone()
                 batchUrlStateRepository.update(urlState)
 
                 logger.debug(
@@ -357,10 +403,12 @@ class TableInterpretationBatchHandler(
     }
 
     private suspend fun cacheTableResult(urlState: BatchUrlState, tableDataId: TableDataId, markdown: String) {
-        val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return
-        val table = snapshotData.tableIdentifications?.find { it.dataId == tableDataId.value } ?: return
-
-        val cleanedHtml = snapshotData.cleanedHtml ?: snapshotData.html
+        val basePath = urlState.snapshotBasePath ?: return
+        val tables = snapshotStorage.readTableIdentifications(basePath) ?: return
+        val table = tables.find { it.dataId == tableDataId.value } ?: return
+        
+        val cachingData = snapshotStorage.readForCaching(basePath) ?: return
+        val cleanedHtml = cachingData.cleanedHtml ?: cachingData.html
         val doc = Jsoup.parse(cleanedHtml)
         val tableElement = doc.select("[data-ds-id=\"${table.dataId}\"]").firstOrNull()
         val tableHtml = tableElement?.outerHtml() ?: return

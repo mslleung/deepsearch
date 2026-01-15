@@ -7,7 +7,7 @@ class WebpageImageCacheTable(
     private val databaseCryptoService: IDatabaseCryptoService
 ) : Table("webpage_images") {
     val imageBytesHash = varchar("image_bytes_hash", length = 128)
-    val imageBytes = text("image_bytes") // Base64 encoded raw image bytes
+    val gcsPath = varchar("gcs_path", length = 256) // GCS storage path (e.g., "images/abc123")
     val mimeType = varchar("mime_type", length = 128)
     val extractedText = text("extracted_text").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")

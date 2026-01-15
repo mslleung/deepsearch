@@ -4,14 +4,13 @@ import io.deepsearch.application.services.IKnowledgeGraphIndexingService
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
-import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.BatchJobState
+import io.deepsearch.domain.services.IBatchSnapshotStorageService
 import io.deepsearch.domain.services.IGeminiBatchService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -27,15 +26,12 @@ class KgEntityEmbeddingsHandler(
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val geminiBatchService: IGeminiBatchService,
     private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService,
+    private val snapshotStorage: IBatchSnapshotStorageService,
     private val eventEmitter: BatchEventEmitter,
     private val batchTokenUsageRecorder: BatchTokenUsageRecorder
 ) : IBatchStageHandler {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
 
     companion object {
         private const val BATCH_POLL_INTERVAL_MS = 60_000L
@@ -54,16 +50,16 @@ class KgEntityEmbeddingsHandler(
         val urlStates = batchUrlStateRepository.findByJobIdAndStage(jobId, BatchUrlProcessingStage.CACHED)
         logger.info("[{}] {} cached URLs available for entity embedding", jobId, urlStates.size)
 
-        // Collect all KG extraction results from URL states
+        // Collect all KG extraction results from GCS
         val extractionsByUrl = mutableMapOf<String, KgExtractionResult>()
+        val urlBasePaths = mutableMapOf<String, String>() // url -> basePath for cleanup
         
         urlStates.forEach { urlState ->
             try {
-                val snapshotData = urlState.snapshotData?.let {
-                    json.decodeFromString<BatchUrlSnapshotData>(it)
-                }
+                val basePath = urlState.snapshotBasePath ?: return@forEach
+                urlBasePaths[urlState.url] = basePath
                 
-                val kgResult = snapshotData?.kgExtractionResult
+                val kgResult = snapshotStorage.readKgExtractionResult(basePath)
                 if (kgResult != null && !kgResult.isEmpty()) {
                     extractionsByUrl[urlState.url] = kgResult
                 }
@@ -74,6 +70,8 @@ class KgEntityEmbeddingsHandler(
 
         if (extractionsByUrl.isEmpty()) {
             logger.info("[{}] No KG extractions to embed", jobId)
+            // Clean up GCS data even if no KG extractions
+            cleanupGcsSnapshotData(jobId, urlBasePaths, urlStates)
             job.advanceToNextStage()
             batchJobRepository.update(job)
             eventEmitter.emit(job, eventFlow, "Stage 5 complete: No entities to embed")
@@ -91,6 +89,8 @@ class KgEntityEmbeddingsHandler(
 
         if (allEntityNames.isEmpty()) {
             logger.info("[{}] No entity names to embed", jobId)
+            // Clean up GCS data even if no entity names
+            cleanupGcsSnapshotData(jobId, urlBasePaths, urlStates)
             job.advanceToNextStage()
             batchJobRepository.update(job)
             eventEmitter.emit(job, eventFlow, "Stage 5 complete: No entity names to embed")
@@ -105,6 +105,8 @@ class KgEntityEmbeddingsHandler(
 
         if (embeddingRequests.isEmpty()) {
             logger.warn("[{}] Failed to prepare entity embedding requests", jobId)
+            // Clean up GCS data even if embedding request preparation failed
+            cleanupGcsSnapshotData(jobId, urlBasePaths, urlStates)
             job.advanceToNextStage()
             batchJobRepository.update(job)
             eventEmitter.emit(job, eventFlow, "Stage 5 complete: Could not prepare embedding requests")
@@ -177,9 +179,46 @@ class KgEntityEmbeddingsHandler(
             // Continue to completion - entity embeddings are not critical
             eventEmitter.emit(job, eventFlow, "Stage 5 complete (with errors): ${e.message}")
         }
+        
+        // Clean up GCS snapshot data after Stage 5 completes
+        cleanupGcsSnapshotData(jobId, urlBasePaths, urlStates)
 
         job.advanceToNextStage()
         batchJobRepository.update(job)
+    }
+    
+    /**
+     * Delete GCS snapshot data for all processed URLs.
+     * Also clears the snapshotBasePath from URL states.
+     */
+    private suspend fun cleanupGcsSnapshotData(
+        jobId: Long,
+        urlBasePaths: Map<String, String>,
+        urlStates: List<io.deepsearch.domain.models.entities.BatchUrlState>
+    ) {
+        var deletedCount = 0
+        urlBasePaths.forEach { (url, basePath) ->
+            try {
+                snapshotStorage.deleteUrl(basePath)
+                deletedCount++
+            } catch (e: Exception) {
+                logger.warn("[{}] Failed to delete GCS snapshot for {}: {}", jobId, url, e.message)
+            }
+        }
+        
+        // Clear snapshotBasePath from URL states
+        urlStates.forEach { urlState ->
+            if (urlState.snapshotBasePath != null) {
+                urlState.snapshotBasePath = null
+                try {
+                    batchUrlStateRepository.update(urlState)
+                } catch (e: Exception) {
+                    logger.warn("[{}] Failed to clear snapshotBasePath for {}: {}", jobId, urlState.url, e.message)
+                }
+            }
+        }
+        
+        logger.info("[{}] Cleaned up {} GCS snapshot directories", jobId, deletedCount)
     }
 
     private suspend fun pollBatchUntilComplete(

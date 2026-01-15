@@ -112,6 +112,7 @@ private val domainCommonTestModule = module {
     singleOf(::MarkdownSourceEvalAgentGenAiImpl) bind IMarkdownSourceEvalAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
+    singleOf(::VisualIdentificationAgentGenAiImpl) bind IVisualIdentificationAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class
     singleOf(::UrlContextExtractionAgentGenAiImpl) bind IUrlContextExtractionAgent::class

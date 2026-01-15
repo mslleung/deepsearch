@@ -58,9 +58,8 @@ private val applicationCommonTestModule = module {
     singleOf(::WebpageIconInterpretationService) bind IWebpageIconInterpretationService::class
     singleOf(::WebpageImageTextExtractionService) bind IWebpageImageTextExtractionService::class
     singleOf(::PopupContainerIdentificationService) bind IPopupContainerIdentificationService::class
-    singleOf(::TableIdentificationService) bind ITableIdentificationService::class
+    singleOf(::VisualIdentificationService) bind IVisualIdentificationService::class
     singleOf(::TableInterpretationService) bind ITableInterpretationService::class
-    singleOf(::SemanticIdentificationService) bind ISemanticIdentificationService::class
     singleOf(::MarkdownFormattingService) bind IMarkdownFormattingService::class
     singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class

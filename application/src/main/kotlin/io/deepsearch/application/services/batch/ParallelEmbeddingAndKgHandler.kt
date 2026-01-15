@@ -5,22 +5,23 @@ import io.deepsearch.application.services.IKnowledgeGraphIndexingService
 import io.deepsearch.application.services.IWebpageCacheService
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
-import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.BatchContentRequest
 import io.deepsearch.domain.services.BatchJobState
+import io.deepsearch.domain.services.CachingData
 import io.deepsearch.domain.services.CssSelectorReplacement
+import io.deepsearch.domain.services.IBatchSnapshotStorageService
 import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.domain.services.IJsoupDomService
+import io.deepsearch.domain.services.MediaFileData
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.slf4j.Logger
@@ -48,6 +49,7 @@ class ParallelEmbeddingAndKgHandler(
     private val webpageCacheService: IWebpageCacheService,
     private val hybridSearchIndexingService: IHybridSearchIndexingService,
     private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService,
+    private val snapshotStorage: IBatchSnapshotStorageService,
     private val eventEmitter: BatchEventEmitter,
     private val batchTokenUsageRecorder: BatchTokenUsageRecorder
 ) : IBatchStageHandler {
@@ -86,20 +88,26 @@ class ParallelEmbeddingAndKgHandler(
 
         val sessionId = PeriodicIndexSessionId(jobId)
 
-        // Step 1: Prepare markdown for each HTML URL
+        // Step 1: Prepare markdown for each HTML URL (reading from GCS)
         val urlDataMap = mutableMapOf<Long, UrlCacheData>()
 
         htmlUrlsNeedingCaching.forEach { urlState ->
             try {
-                val snapshotData = urlState.snapshotData?.let {
-                    json.decodeFromString<BatchUrlSnapshotData>(it)
-                }
+                val basePath = urlState.snapshotBasePath ?: return@forEach
+                
+                // Read caching data from GCS
+                val cachingData = snapshotStorage.readForCaching(basePath)
+                val icons = snapshotStorage.readIcons(basePath)
+                val images = snapshotStorage.readImages(basePath)
 
-                val markdown = buildFinalMarkdown(urlState, snapshotData)
+                val markdown = buildFinalMarkdown(urlState, cachingData, icons, images)
                 urlDataMap[urlState.id!!] = UrlCacheData(
                     urlState = urlState,
+                    basePath = basePath,
                     markdown = markdown,
-                    snapshotData = snapshotData
+                    cachingData = cachingData,
+                    icons = icons,
+                    images = images
                 )
             } catch (e: Exception) {
                 logger.warn("[{}] Failed to prepare markdown for HTML {}: {}", jobId, urlState.url, e.message)
@@ -261,18 +269,13 @@ class ParallelEmbeddingAndKgHandler(
             }
         }
 
-        // Step 5: Cache all HTML pages and store KG results in snapshot data for Stage 5
+        // Step 5: Cache all HTML pages and store KG results for Stage 5
         urlDataMap.values.forEach { data ->
             try {
-                // Update snapshot data with KG extraction result for Stage 5
+                // Store KG extraction result in GCS for Stage 5
                 val kgResult = kgResults[data.urlState.id!!]
-                val updatedSnapshotData = if (kgResult != null && data.snapshotData != null) {
-                    data.snapshotData.copy(
-                        markdown = data.markdown,
-                        kgExtractionResult = kgResult
-                    )
-                } else {
-                    data.snapshotData?.copy(markdown = data.markdown)
+                if (kgResult != null) {
+                    snapshotStorage.storeKgExtractionResult(data.basePath, kgResult)
                 }
 
                 webpageCacheService.cacheWebpageBatch(
@@ -280,18 +283,13 @@ class ParallelEmbeddingAndKgHandler(
                     title = data.urlState.title,
                     description = data.urlState.description,
                     markdown = data.markdown,
-                    html = data.snapshotData?.html,
+                    html = data.cachingData?.html,
                     httpStatus = 200,
                     httpReason = "OK",
                     mimeType = "text/html",
                     sessionId = sessionId
                 )
 
-                // Update URL state with KG result for Stage 5
-                if (updatedSnapshotData != null) {
-                    data.urlState.snapshotData = json.encodeToString(updatedSnapshotData)
-                }
-                
                 data.urlState.markCached()
                 batchUrlStateRepository.update(data.urlState)
                 job.urlsCached++
@@ -316,8 +314,11 @@ class ParallelEmbeddingAndKgHandler(
 
     private data class UrlCacheData(
         val urlState: BatchUrlState,
+        val basePath: String,
         val markdown: String,
-        val snapshotData: BatchUrlSnapshotData?
+        val cachingData: CachingData?,
+        val icons: List<MediaFileData>,
+        val images: List<MediaFileData>
     )
 
     private data class KgBatchRequest(
@@ -326,8 +327,13 @@ class ParallelEmbeddingAndKgHandler(
         val request: BatchContentRequest
     )
 
-    private fun buildFinalMarkdown(urlState: BatchUrlState, snapshotData: BatchUrlSnapshotData?): String {
-        if (snapshotData == null) {
+    private fun buildFinalMarkdown(
+        urlState: BatchUrlState, 
+        cachingData: CachingData?,
+        icons: List<MediaFileData>,
+        images: List<MediaFileData>
+    ): String {
+        if (cachingData == null) {
             return buildString {
                 appendLine("URL: ${urlState.url}")
                 appendLine("Title: ${urlState.title ?: "Unknown"}")
@@ -336,25 +342,20 @@ class ParallelEmbeddingAndKgHandler(
             }
         }
 
-        val existingMarkdown = snapshotData.markdown
-        if (existingMarkdown != null) {
-            return existingMarkdown
-        }
-
-        val html = snapshotData.cleanedHtml ?: snapshotData.html
+        val html = cachingData.cleanedHtml ?: cachingData.html
         val doc = Jsoup.parse(html)
 
         // Step 1: Inject media identifiers
         jsoupDomService.injectMediaIdentifiers(doc)
 
         // Step 2: Apply icon/image replacements
-        val mediaReplacements = buildMediaReplacements(snapshotData)
+        val mediaReplacements = buildMediaReplacements(cachingData, icons, images)
         if (mediaReplacements.isNotEmpty()) {
             jsoupDomService.replaceElementsWithText(doc, mediaReplacements)
         }
 
         // Step 3: Extract popup text before removal (matches WebpageExtractionService behavior)
-        val popupText = snapshotData.semanticElements?.popups
+        val popupText = cachingData.semanticElements?.popups
             ?.map { "[data-ds-id=\"${it.dataId}\"]" }
             ?.takeIf { it.isNotEmpty() }
             ?.let { selectors ->
@@ -366,7 +367,7 @@ class ParallelEmbeddingAndKgHandler(
             }
 
         // Step 4: Remove semantic elements
-        snapshotData.semanticElements?.let { semantic ->
+        cachingData.semanticElements?.let { semantic ->
             listOfNotNull(
                 semantic.header?.dataId,
                 semantic.footer?.dataId,
@@ -381,7 +382,7 @@ class ParallelEmbeddingAndKgHandler(
         }
 
         // Step 5: Replace tables with markdown (using replaceElementsWithText for consistency)
-        val tableReplacements = snapshotData.tableMarkdowns?.map { (dataId, markdown) ->
+        val tableReplacements = cachingData.tableMarkdowns?.map { (dataId, markdown) ->
             CssSelectorReplacement("[data-ds-id=\"$dataId\"]", markdown)
         } ?: emptyList()
         if (tableReplacements.isNotEmpty()) {
@@ -405,11 +406,15 @@ class ParallelEmbeddingAndKgHandler(
         }.trim()
     }
 
-    private fun buildMediaReplacements(snapshotData: BatchUrlSnapshotData): List<CssSelectorReplacement> {
+    private fun buildMediaReplacements(
+        cachingData: CachingData, 
+        icons: List<MediaFileData>,
+        images: List<MediaFileData>
+    ): List<CssSelectorReplacement> {
         val replacements = mutableListOf<CssSelectorReplacement>()
 
-        snapshotData.icons?.forEach { iconData ->
-            val label = snapshotData.iconInterpretations?.get(iconData.hashBase64)
+        icons.forEach { iconData ->
+            val label = cachingData.iconInterpretations?.get(iconData.hash)
             if (label != null) {
                 iconData.cssSelectors.forEach { selector ->
                     replacements.add(CssSelectorReplacement(selector, label))
@@ -417,10 +422,10 @@ class ParallelEmbeddingAndKgHandler(
             }
         }
 
-        snapshotData.images?.forEach { imageData ->
-            val text = snapshotData.imageTexts?.get(imageData.hashBase64)
+        images.forEach { imageData ->
+            val text = cachingData.imageTexts?.get(imageData.hash)
             if (text != null) {
-                val imageId = generateImageId(imageData.hashBase64)
+                val imageId = generateImageId(imageData.hash)
                 val wrappedText = if (text.contains('\n')) {
                     "<image id=\"$imageId\">\n$text\n</image>"
                 } else {
@@ -435,8 +440,8 @@ class ParallelEmbeddingAndKgHandler(
         return replacements
     }
 
-    private fun generateImageId(hashBase64: String): String {
-        val urlSafeHash = hashBase64.replace("+", "-").replace("/", "_").trimEnd('=')
+    private fun generateImageId(hash: String): String {
+        val urlSafeHash = hash.replace("+", "-").replace("/", "_").trimEnd('=')
         return "img-$urlSafeHash"
     }
 

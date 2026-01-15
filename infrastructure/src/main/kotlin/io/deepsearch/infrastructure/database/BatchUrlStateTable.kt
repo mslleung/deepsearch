@@ -28,8 +28,9 @@ class BatchUrlStateTable(
     // Error tracking
     val errorMessage = text("error_message").nullable()
     
-    // Intermediate data (JSON blob)
-    val snapshotData = text("snapshot_data").nullable()
+    // GCS base path for snapshot data
+    // Format: "batch-snapshots/{jobId}/{urlHash}"
+    val snapshotBasePath = varchar("snapshot_base_path", length = 256).nullable()
     
     // Page metadata
     val title = varchar("title", length = 512).nullable()

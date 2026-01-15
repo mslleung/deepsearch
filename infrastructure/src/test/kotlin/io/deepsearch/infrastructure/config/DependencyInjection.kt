@@ -6,10 +6,14 @@ import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.proxy.IProxyRuleRepository
 import io.deepsearch.domain.repositories.*
+import io.deepsearch.domain.services.IBatchSnapshotStorageService
+import io.deepsearch.domain.services.IImageStorageService
 import io.deepsearch.domain.services.ITemporaryFileStorageService
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
 import io.deepsearch.infrastructure.services.*
+import io.deepsearch.infrastructure.storage.InMemoryBatchSnapshotStorageService
+import io.deepsearch.infrastructure.storage.InMemoryImageStorageService
 import io.deepsearch.infrastructure.storage.InMemoryTemporaryFileStorageService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -135,6 +139,12 @@ private val infrastructureCommonTestModule = module {
     
     // In-memory temporary file storage for testing (replaces GCS in production)
     singleOf(::InMemoryTemporaryFileStorageService) bind ITemporaryFileStorageService::class
+    
+    // In-memory image storage for testing (replaces GCS in production)
+    singleOf(::InMemoryImageStorageService) bind IImageStorageService::class
+    
+    // In-memory batch snapshot storage for testing (replaces GCS in production)
+    singleOf(::InMemoryBatchSnapshotStorageService) bind IBatchSnapshotStorageService::class
 }
 
 val infrastructureTestModule = module {

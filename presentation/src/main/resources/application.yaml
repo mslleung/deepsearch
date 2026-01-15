@@ -44,3 +44,6 @@ proxyrack:
     endpoint: ${PROXYRACK_ENDPOINT}
     username: ${PROXYRACK_USERNAME}
     apiKey: ${PROXYRACK_API_KEY}
+gcs:
+    tempBucketName: ${GCS_TEMP_BUCKET_NAME}
+    imageBucketName: ${GCS_IMAGE_BUCKET_NAME}

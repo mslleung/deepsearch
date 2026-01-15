@@ -142,7 +142,7 @@ class TableIdentificationAgentGenAiImpl(
                                         .build()
                                 )
                             )
-                            .required(listOf("id", "description", "columnHeaders"))
+                            .required(listOf("id", "description"))
                             .build()
                     )
                     .build()
@@ -164,7 +164,7 @@ class TableIdentificationAgentGenAiImpl(
         - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
         - Additionally, provide:
           - description: A brief description of the table's purpose or content based on the webpage context
-          - columnHeaders: The column headers of the table, comma-separated (e.g. "The columns of the table are Basic plan, Premium plan and Enterprise plan.")
+          - columnHeaders: The column headers of the table, comma-separated (e.g. "The columns of the table are Basic plan, Premium plan and Enterprise plan."). Null if the table has no header row.
 
         Expected output shape:
         {
@@ -172,7 +172,7 @@ class TableIdentificationAgentGenAiImpl(
                 {
                     "id": "string",
                     "description": "string",
-                    "columnHeaders": "string"
+                    "columnHeaders": "string" | null
                 }
             ]
         }
@@ -187,7 +187,7 @@ class TableIdentificationAgentGenAiImpl(
     private data class LlmTableResult(
         val id: String,
         val description: String,
-        val columnHeaders: String
+        val columnHeaders: String? = null
     )
 
     @Serializable
@@ -204,7 +204,7 @@ class TableIdentificationAgentGenAiImpl(
         @kotlinx.serialization.SerialName("box_2d")
         val box2d: List<Int>,
         val label: String,
-        val columnHeaders: String = ""
+        val columnHeaders: String? = null
     ) {
         // Helper properties to extract coordinates
         val ymin: Int get() = box2d.getOrElse(0) { 0 }
@@ -380,14 +380,14 @@ class TableIdentificationAgentGenAiImpl(
     /**
      * Combines description and column headers into a single auxiliaryInfo string.
      * The format is "Description: {description} | Columns: {columnHeaders}" with handling
-     * for cases where one or both fields might be empty.
+     * for cases where one or both fields might be empty or null.
      */
-    private fun combineAuxiliaryInfo(description: String, columnHeaders: String): String {
+    private fun combineAuxiliaryInfo(description: String, columnHeaders: String?): String {
         val parts = mutableListOf<String>()
         if (description.isNotBlank()) {
             parts.add("Description: $description")
         }
-        if (columnHeaders.isNotBlank()) {
+        if (!columnHeaders.isNullOrBlank()) {
             parts.add("Columns: $columnHeaders")
         }
         return parts.joinToString(" | ")

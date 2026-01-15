@@ -4,6 +4,7 @@ import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.BlobInfo
 import com.google.cloud.storage.Storage
 import com.google.cloud.storage.StorageOptions
+import io.deepsearch.domain.config.GcsConfig
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.services.ITemporaryFileStorageService
 import kotlinx.coroutines.withContext
@@ -22,13 +23,15 @@ import org.slf4j.LoggerFactory
  * Set GOOGLE_APPLICATION_CREDENTIALS environment variable to service account JSON path,
  * or run on GCE/Cloud Run where credentials are automatic.
  * 
- * @param bucketName GCS bucket name (from GCS_TEMP_BUCKET_NAME env var)
+ * @param gcsConfig GCS configuration containing bucket names
  * @param dispatchers Dispatcher provider for IO operations
  */
 class GcsTemporaryFileStorageService(
-    private val bucketName: String,
+    gcsConfig: GcsConfig,
     private val dispatchers: IDispatcherProvider
 ) : ITemporaryFileStorageService {
+    
+    private val bucketName = gcsConfig.tempBucketName
     
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     

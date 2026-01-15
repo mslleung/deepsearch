@@ -25,3 +25,11 @@ fun loadEnvFile(file: File): Map<String, String> {
 
 val envFile = file(".env")
 val envVars: Map<String, String> by extra(loadEnvFile(envFile))
+
+// Disable configuration cache for all test tasks across all modules
+// This ensures test annotation changes (like @ValueSource parameters) are always detected
+subprojects {
+    tasks.withType<Test>().configureEach {
+        notCompatibleWithConfigurationCache("Test annotations may change independently of compiled classes")
+    }
+}

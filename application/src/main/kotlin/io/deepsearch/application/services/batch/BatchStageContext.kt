@@ -1,8 +1,6 @@
 package io.deepsearch.application.services.batch
 
 import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.models.entities.BatchIconData
-import io.deepsearch.domain.models.entities.BatchImageData
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
 import io.deepsearch.domain.models.valueobjects.MediaHash
@@ -43,39 +41,59 @@ data class BatchPeriodicIndexEvent(
 // ==================== Content LLM Batch Data Classes ====================
 
 /**
- * Per-URL page data collected from snapshots for content LLM processing.
+ * Per-URL page data collected from GCS for content LLM processing.
  */
 data class UrlPageData(
     val urlStateId: BatchUrlStateId,
+    /** GCS base path for this URL's snapshot data */
+    val basePath: String,
     val html: String,
     val boundingBoxes: Map<String, IBrowserPage.BoundingBox>,
     val iconHashes: List<MediaHash>,
     val imageHashes: List<MediaHash>,
-    /** Base64-encoded screenshot for vision-based identification */
-    val screenshotBase64: String? = null,
+    /** Raw screenshot bytes loaded from GCS */
+    val screenshotBytes: ByteArray? = null,
     /** Screenshot MIME type */
     val screenshotMimeType: String? = null
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as UrlPageData
+        return urlStateId == other.urlStateId && basePath == other.basePath
+    }
+    
+    override fun hashCode(): Int = urlStateId.hashCode()
+}
+
+/** Icon data loaded from GCS (used in ContentCollectionResult) */
+data class GcsIconData(val bytes: ByteArray, val mimeType: String, val cssSelectors: List<String>)
+
+/** Image data loaded from GCS (used in ContentCollectionResult) */
+data class GcsImageData(val bytes: ByteArray, val mimeType: String, val cssSelectors: List<String>)
 
 /**
  * Aggregated collection result with per-URL data and deduplicated media.
  * Icons and images are deduplicated globally by hash.
+ * All data is loaded from GCS (not database).
  */
 data class ContentCollectionResult(
     val urlPages: Map<BatchUrlStateId, UrlPageData>,
-    val uniqueIcons: Map<MediaHash, BatchIconData>,
-    val uniqueImages: Map<MediaHash, BatchImageData>
+    val uniqueIcons: Map<MediaHash, GcsIconData>,
+    val uniqueImages: Map<MediaHash, GcsImageData>
 ) {
     /**
      * Get the pages map in the format expected by batch services.
      * Includes screenshot data for vision-based identification.
      */
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     fun pagesForBatchServices(): Map<BatchUrlStateId, PageHtmlWithBoundingBoxes> {
         return urlPages.mapValues { (_, data) -> 
             PageHtmlWithBoundingBoxes(
                 html = data.html, 
                 boundingBoxes = data.boundingBoxes,
-                screenshotBase64 = data.screenshotBase64,
+                // Convert raw bytes to Base64 for services that expect it
+                screenshotBase64 = data.screenshotBytes?.let { kotlin.io.encoding.Base64.encode(it) },
                 screenshotMimeType = data.screenshotMimeType
             ) 
         }
@@ -88,12 +106,11 @@ data class ContentCollectionResult(
  * Holds all submitted batch IDs for parallel batch processing.
  */
 data class SubmittedBatches(
-    val semanticId: String?,
-    val tableId: String?,
+    val visualId: String?,
     val iconId: String?,
     val imageClassId: String?
 ) {
-    fun allIds(): List<String> = listOfNotNull(semanticId, tableId, iconId, imageClassId)
+    fun allIds(): List<String> = listOfNotNull(visualId, iconId, imageClassId)
     fun count(): Int = allIds().size
 }
 

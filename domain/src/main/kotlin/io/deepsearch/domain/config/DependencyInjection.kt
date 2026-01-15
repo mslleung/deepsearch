@@ -100,6 +100,7 @@ val domainModule = module {
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
     singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
+    singleOf(::VisualIdentificationAgentGenAiImpl) bind IVisualIdentificationAgent::class
     
     // Markdown formatting agent (singleton for MarkdownFormattingService)
     singleOf(::MarkdownFormattingAgentGenAiImpl) bind IMarkdownFormattingAgent::class

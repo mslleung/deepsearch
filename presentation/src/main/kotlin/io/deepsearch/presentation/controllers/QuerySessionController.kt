@@ -6,6 +6,7 @@ import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IWebpageImageRepository
+import io.deepsearch.domain.services.IImageStorageService
 import io.deepsearch.presentation.dto.DomainStatDto
 import io.deepsearch.presentation.dto.ImageDto
 import io.deepsearch.presentation.dto.QuerySessionAnalyticsDto
@@ -24,7 +25,8 @@ import org.slf4j.LoggerFactory
 class QuerySessionController(
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
-    private val webpageImageRepository: IWebpageImageRepository
+    private val webpageImageRepository: IWebpageImageRepository,
+    private val imageStorageService: IImageStorageService
 ) {
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
     suspend fun getQuerySessions(call: ApplicationCall) {
@@ -143,6 +145,7 @@ class QuerySessionController(
 
     /**
      * Fetch images by their IDs (format: "img-{urlSafeBase64Hash}") and convert to ImageDto map.
+     * Returns signed GCS URLs that clients can use to fetch images directly.
      */
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     private suspend fun fetchImagesByIds(imageIds: List<String>): Map<String, ImageDto> {
@@ -172,19 +175,28 @@ class QuerySessionController(
 
         if (idToHash.isEmpty()) return emptyMap()
 
-        // Fetch all images by their hashes
+        // Fetch all images by their hashes (metadata only, bytes are in GCS)
         val hashes = idToHash.values.toList()
         val images = webpageImageRepository.findByHashes(hashes)
 
-        // Build result map
+        // Get signed URLs for all GCS paths in batch
+        val gcsPaths = images.map { it.gcsPath }
+        val signedUrls = imageStorageService.getSignedUrls(gcsPaths)
+
+        // Build result map with signed URLs
         val result = mutableMapOf<String, ImageDto>()
         images.forEach { image ->
             // Find the image ID for this hash
             idToHash.entries.find { it.value.contentEquals(image.imageBytesHash) }?.let { (imageId, _) ->
-                result[imageId] = ImageDto(
-                    base64 = Base64.encode(image.imageBytes),
-                    mimeType = image.mimeType
-                )
+                val signedUrl = signedUrls[image.gcsPath]
+                if (signedUrl != null) {
+                    result[imageId] = ImageDto(
+                        url = signedUrl,
+                        mimeType = image.mimeType
+                    )
+                } else {
+                    logger.warn("Failed to get signed URL for image {}", imageId)
+                }
             }
         }
 

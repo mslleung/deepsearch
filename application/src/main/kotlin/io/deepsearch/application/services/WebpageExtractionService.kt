@@ -44,11 +44,10 @@ interface IWebpageExtractionService {
 }
 
 class WebpageExtractionService(
-    private val tableIdentificationService: ITableIdentificationService,
+    private val visualIdentificationService: IVisualIdentificationService,
     private val tableInterpretationService: ITableInterpretationService,
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
-    private val semanticIdentificationService: ISemanticIdentificationService,
     private val boundingBoxDerivationService: IBoundingBoxDerivationService,
     private val jsoupDomService: IJsoupDomService,
     private val markdownFormattingService: IMarkdownFormattingService
@@ -84,8 +83,8 @@ class WebpageExtractionService(
      * 
      * Pipelined flow with early browser release:
      * 
-     *   capturePageSnapshot() ──┬──> identifySemanticElements()
-     *                           └──> identifyTables()
+     *   capturePageSnapshot() ──┬──> identifyVisualElements() (semantic + tables in 1 call)
+     *   takeFullPageScreenshot()┘
      *   extractIcons() ────────────> interpretIcons()
      *   extractImages() ───────────> interpretImages()
      *   
@@ -108,8 +107,7 @@ class WebpageExtractionService(
         val totalDuration = measureTimeMillis {
             // ===== Browser Captures (all parallel) =====
             // Screenshot is captured once and shared between:
-            // - Semantic identification (vision-based)
-            // - Table identification (vision-based)
+            // - Visual identification (semantic + tables in single vision call)
             // - Image extraction (fallback cropping for CORS-blocked images)
             val snapshotDeferred = async { webpage.capturePageSnapshot() }
             val screenshotDeferred = async { webpage.takeFullPageScreenshot() }
@@ -121,39 +119,33 @@ class WebpageExtractionService(
             }
 
             // ===== LLM Operations (pipelined from captures) =====
-            // Both semantic and table identification use vision-based detection (share screenshot)
-            val semantic = async {
+            // Combined visual identification: semantic elements + tables in single LLM call
+            val visualId = async {
                 val snapshot = snapshotDeferred.await()
                 val screenshot = screenshotDeferred.await()
-                doIdentifySemanticElements(sessionId, snapshot, screenshot)
-            }
-            val tableId = async {
-                val snapshot = snapshotDeferred.await()
-                val screenshot = screenshotDeferred.await()
-                doIdentifyTables(sessionId, snapshot, screenshot)
+                doIdentifyVisualElements(sessionId, snapshot, screenshot)
             }
             val iconRepl = pipeFrom(iconsDeferred) { doInterpretIcons(it, sessionId) }
             val imageRepl = pipeFrom(imagesDeferred) { doInterpretImages(it, sessionId, ocrLanguage) }
 
             // ===== Wait for Browser Release Point =====
             val snapshot: IBrowserPage.PageSnapshotWithMetadata
-            val icons: List<IBrowserPage.Icon>
-            val images: List<IBrowserPage.WebImage>
             val browserDuration = measureTimeMillis {
                 snapshot = snapshotDeferred.await()
                 screenshotDeferred.await() // Wait for screenshot before releasing browser
-                icons = iconsDeferred.await()
-                images = imagesDeferred.await()
+                iconsDeferred.await()
+                imagesDeferred.await()
             }
             logger.debug("Browser captures complete in {} ms - releasing browser", browserDuration)
             webpage.close()
 
             // ===== Await LLM Results =====
-            val llmDuration = measureTimeMillis { awaitAll(semantic, tableId, iconRepl, imageRepl) }
+            val llmDuration = measureTimeMillis { awaitAll(visualId, iconRepl, imageRepl) }
+            val visualResult = visualId.await()
             val imageResult = imageRepl.await()
             val llmResults = LlmResults(
-                semanticElements = semantic.await(),
-                tableIdentifications = tableId.await(),
+                semanticElements = visualResult.semanticElements,
+                tableIdentifications = visualResult.tables,
                 iconReplacements = iconRepl.await().replacements,
                 imageReplacements = imageResult.replacements,
                 imageHashes = imageResult.hashes,
@@ -184,31 +176,21 @@ class WebpageExtractionService(
 
     // ========== Browser Capture Operations ==========
 
-    private suspend fun doIdentifySemanticElements(
+    private suspend fun doIdentifyVisualElements(
         sessionId: SessionId,
         snapshot: IBrowserPage.PageSnapshotWithMetadata,
         screenshot: IBrowserPage.Screenshot
-    ): SemanticElements {
-        val result: SemanticElements
+    ): VisualIdentificationResult {
+        val result: VisualIdentificationResult
         val duration = measureTimeMillis {
-            result = semanticIdentificationService.identifySemanticElements(sessionId, snapshot, screenshot)
-        }
-        logger.debug("Semantic identification took {} ms", duration)
-        return result
-    }
-
-    private suspend fun doIdentifyTables(
-        sessionId: SessionId,
-        snapshot: IBrowserPage.PageSnapshotWithMetadata,
-        screenshot: IBrowserPage.Screenshot
-    ): List<TableIdentification> {
-        val result: List<TableIdentification>
-        val duration = measureTimeMillis {
-            result = tableIdentificationService.identifyTables(sessionId, snapshot, screenshot)
+            result = visualIdentificationService.identifyVisualElements(sessionId, snapshot, screenshot)
         }
         logger.debug(
-            "Table identification took {} ms, found {} tables ({} hidden containers)",
-            duration, result.size, snapshot.hiddenContainers.size
+            "Visual identification took {} ms: {} semantic, {} tables ({} hidden containers)",
+            duration,
+            countSemanticElements(result.semanticElements),
+            result.tables.size,
+            snapshot.hiddenContainers.size
         )
         return result
     }

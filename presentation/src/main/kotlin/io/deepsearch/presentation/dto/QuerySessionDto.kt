@@ -42,10 +42,11 @@ data class ContentSourceDto(
 
 /**
  * DTO for image data returned in search results.
+ * Images are now served via signed GCS URLs instead of inline base64.
  */
 @Serializable
 data class ImageDto(
-    val base64: String,  // Base64 encoded image bytes
+    val url: String,     // Signed URL to fetch the image from GCS
     val mimeType: String // Image MIME type (e.g., "image/webp", "image/png")
 )
 

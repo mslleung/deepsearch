@@ -1,11 +1,9 @@
 package io.deepsearch.application.services.batch
 
-import io.deepsearch.application.services.ISemanticIdentificationService
-import io.deepsearch.application.services.ITableIdentificationService
+import io.deepsearch.application.services.IVisualIdentificationService
 import io.deepsearch.application.services.IWebpageIconInterpretationService
 import io.deepsearch.application.services.IWebpageImageTextExtractionService
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
-import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
 import io.deepsearch.domain.models.valueobjects.MediaHash
@@ -14,20 +12,20 @@ import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.BatchJobState
 import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.domain.services.IJsoupDomService
+import io.deepsearch.domain.services.IBatchSnapshotStorageService
+import io.deepsearch.domain.services.ContentLlmResults
 import org.jsoup.Jsoup
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.security.MessageDigest
 
 /**
  * Stage 2: Content LLM batch handler.
  * 
  * Submits parallel batch jobs for:
- * - Semantic identification
- * - Table identification  
+ * - Visual identification (semantic elements + tables in single call)
  * - Icon interpretation
  * - Image classification (with follow-up table extraction for images containing tables)
  * 
@@ -39,10 +37,10 @@ class ContentLlmBatchHandler(
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val geminiBatchService: IGeminiBatchService,
     private val jsoupDomService: IJsoupDomService,
-    private val semanticIdentificationService: ISemanticIdentificationService,
-    private val tableIdentificationService: ITableIdentificationService,
+    private val visualIdentificationService: IVisualIdentificationService,
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
+    private val snapshotStorage: IBatchSnapshotStorageService,
     private val eventEmitter: BatchEventEmitter,
     private val batchTokenUsageRecorder: BatchTokenUsageRecorder
 ) : IBatchStageHandler {
@@ -88,7 +86,7 @@ class ContentLlmBatchHandler(
         val preparations = prepareBatches(collected, jobId)
 
         // 3. Apply cached results immediately
-        applyCachedResults(preparations, urlStates)
+        applyCachedResults(preparations, urlStates, collected)
 
         // 4. Submit and poll batches
         val batches = submitBatches(preparations, jobId)
@@ -99,7 +97,7 @@ class ContentLlmBatchHandler(
         val mediaResults = processMediaResults(batches, preparations, job, eventFlow, jobId)
 
         // 6. Process page results (semantic + tables)
-        processPageResults(batches, preparations, urlStates, jobId)
+        processPageResults(batches, preparations, urlStates, collected, jobId)
 
         // 7. Store media interpretations back to URLs
         storeMediaResultsToUrls(urlStates, collected, mediaResults)
@@ -110,43 +108,56 @@ class ContentLlmBatchHandler(
 
     // ==================== Phase 1: Collect Data ====================
 
-    private fun collectContentData(urlStates: List<BatchUrlState>): ContentCollectionResult {
+    /**
+     * Collect content data from GCS storage for all URL states.
+     * Reads HTML, icons, images, and screenshots from GCS instead of database.
+     */
+    private suspend fun collectContentData(urlStates: List<BatchUrlState>): ContentCollectionResult {
         val urlPages = mutableMapOf<BatchUrlStateId, UrlPageData>()
-        val uniqueIcons = mutableMapOf<MediaHash, io.deepsearch.domain.models.entities.BatchIconData>()
-        val uniqueImages = mutableMapOf<MediaHash, io.deepsearch.domain.models.entities.BatchImageData>()
+        val uniqueIcons = mutableMapOf<MediaHash, GcsIconData>()
+        val uniqueImages = mutableMapOf<MediaHash, GcsImageData>()
 
         urlStates.forEach { urlState ->
             try {
-                val snapshotData = urlState.snapshotData?.let { 
-                    json.decodeFromString<BatchUrlSnapshotData>(it) 
-                } ?: return@forEach
-
+                val basePath = urlState.snapshotBasePath ?: return@forEach
                 val urlStateId = BatchUrlStateId(urlState.id!!)
 
-                // Collect icon hashes
+                // Read HTML from GCS
+                val html = snapshotStorage.readHtml(basePath) ?: return@forEach
+                
+                // Read bounding boxes from GCS
+                val boundingBoxes = snapshotStorage.readBoundingBoxes(basePath) ?: emptyMap()
+                
+                // Read screenshot from GCS
+                val screenshot = snapshotStorage.readScreenshot(basePath)
+                
+                // Read icons from GCS
+                val icons = snapshotStorage.readIcons(basePath)
                 val iconHashes = mutableListOf<MediaHash>()
-                snapshotData.icons?.forEach { icon ->
-                    val hash = MediaHash(icon.hashBase64)
-                    uniqueIcons.putIfAbsent(hash, icon)
+                icons.forEach { icon ->
+                    val hash = MediaHash(icon.hash)
+                    uniqueIcons.putIfAbsent(hash, GcsIconData(icon.bytes, icon.mimeType, icon.cssSelectors))
                     iconHashes.add(hash)
                 }
 
-                // Collect image hashes
+                // Read images from GCS
+                val images = snapshotStorage.readImages(basePath)
                 val imageHashes = mutableListOf<MediaHash>()
-                snapshotData.images?.forEach { image ->
-                    val hash = MediaHash(image.hashBase64)
-                    uniqueImages.putIfAbsent(hash, image)
+                images.forEach { image ->
+                    val hash = MediaHash(image.hash)
+                    uniqueImages.putIfAbsent(hash, GcsImageData(image.bytes, image.mimeType, image.cssSelectors))
                     imageHashes.add(hash)
                 }
 
                 urlPages[urlStateId] = UrlPageData(
                     urlStateId = urlStateId,
-                    html = snapshotData.html,
-                    boundingBoxes = snapshotData.boundingBoxes ?: emptyMap(),
+                    basePath = basePath,
+                    html = html,
+                    boundingBoxes = boundingBoxes,
                     iconHashes = iconHashes,
                     imageHashes = imageHashes,
-                    screenshotBase64 = snapshotData.screenshotBase64,
-                    screenshotMimeType = snapshotData.screenshotMimeType
+                    screenshotBytes = screenshot?.bytes,
+                    screenshotMimeType = screenshot?.mimeType
                 )
             } catch (e: Exception) {
                 logger.warn("Failed to collect data for {}: {}", urlState.url, e.message)
@@ -159,8 +170,7 @@ class ContentLlmBatchHandler(
     // ==================== Phase 2: Prepare Batches ====================
 
     private data class BatchPreparations(
-        val semanticPrep: io.deepsearch.application.services.SemanticBatchPreparation,
-        val tablePrep: io.deepsearch.application.services.TableIdentificationBatchPreparation,
+        val visualPrep: io.deepsearch.application.services.VisualIdentificationBatchPreparation,
         val iconPrep: io.deepsearch.application.services.IconBatchPreparation,
         val imagePrep: io.deepsearch.application.services.ImageBatchPreparation,
         val iconDataMap: Map<MediaHash, MediaData>,
@@ -170,81 +180,80 @@ class ContentLlmBatchHandler(
     private suspend fun prepareBatches(collected: ContentCollectionResult, jobId: Long): BatchPreparations {
         val pagesForServices = collected.pagesForBatchServices()
 
-        // Prepare semantic identification batch
-        val semanticPrep = semanticIdentificationService.prepareBatchRequests(pagesForServices, jobId)
+        // Prepare combined visual identification batch (semantic + tables in single call)
+        val visualPrep = visualIdentificationService.prepareBatchRequests(pagesForServices, jobId)
 
-        // Prepare table identification batch
-        val tablePrep = tableIdentificationService.prepareBatchRequests(pagesForServices, jobId)
-
-        // Prepare icon interpretation batch
+        // Prepare icon interpretation batch (bytes already loaded from GCS)
         val iconDataMap = collected.uniqueIcons.mapValues { (_, iconData) ->
-            val iconBytes = kotlin.io.encoding.Base64.decode(iconData.bytesBase64)
-            MediaData(iconBytes, iconData.mimeType)
+            MediaData(iconData.bytes, iconData.mimeType)
         }
         val iconPrep = webpageIconInterpretationService.prepareBatchRequests(iconDataMap, jobId)
 
-        // Prepare image classification batch
+        // Prepare image classification batch (bytes already loaded from GCS)
         val imageDataMap = collected.uniqueImages.mapValues { (_, imageData) ->
-            val imageBytes = kotlin.io.encoding.Base64.decode(imageData.bytesBase64)
-            MediaData(imageBytes, imageData.mimeType)
+            MediaData(imageData.bytes, imageData.mimeType)
         }
         val imagePrep = webpageImageTextExtractionService.prepareBatchRequests(imageDataMap, jobId)
 
-        logger.info("[{}] Prepared batches: {} semantic, {} table, {} icons, {} images",
-            jobId, semanticPrep.pendingRequests.size, tablePrep.pendingRequests.size,
+        logger.info("[{}] Prepared batches: {} visual (semantic+tables), {} icons, {} images",
+            jobId, visualPrep.pendingRequests.size,
             iconPrep.pendingRequests.size, imagePrep.pendingRequests.size)
 
-        return BatchPreparations(semanticPrep, tablePrep, iconPrep, imagePrep, iconDataMap, imageDataMap)
+        return BatchPreparations(visualPrep, iconPrep, imagePrep, iconDataMap, imageDataMap)
     }
 
     // ==================== Phase 3: Apply Cached Results ====================
 
-    private suspend fun applyCachedResults(preparations: BatchPreparations, urlStates: List<BatchUrlState>) {
-        // Apply cached semantic results
-        // Note: For cached results, we use the existing HTML since we didn't call prepareBatchRequest
-        for ((urlStateId, semanticElements) in preparations.semanticPrep.cachedResults) {
+    private suspend fun applyCachedResults(
+        preparations: BatchPreparations, 
+        urlStates: List<BatchUrlState>,
+        collected: ContentCollectionResult
+    ) {
+        // Apply cached visual identification results (semantic + tables combined)
+        for ((urlStateId, visualResult) in preparations.visualPrep.cachedResults) {
             val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
-            val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: continue
-            val updatedSnapshot = snapshotData.copy(
-                cleanedHtml = snapshotData.html,
-                semanticElements = semanticElements
-            )
-            urlState.snapshotData = json.encodeToString(updatedSnapshot)
-            batchUrlStateRepository.update(urlState)
-        }
-
-        // Apply cached table results
-        for ((urlStateId, tableIdentifications) in preparations.tablePrep.cachedResults) {
-            val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
-            val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: continue
+            val basePath = urlState.snapshotBasePath ?: continue
+            val pageData = collected.urlPages[urlStateId] ?: continue
             
-            // Inject table IDs into cleanedHtml (which currently only has semantic IDs)
-            val existingCleanedHtml = snapshotData.cleanedHtml ?: snapshotData.html
-            val docWithTableIds = Jsoup.parse(existingCleanedHtml)
-            val tableInjections = tableIdentifications.map { it.cssSelector to it.dataId }
-            jsoupDomService.injectIdentifiers(docWithTableIds, tableInjections)
+            // Inject both semantic and table IDs into HTML
+            val doc = Jsoup.parse(pageData.html)
             
-            val updatedSnapshot = snapshotData.copy(
-                tableIdentifications = tableIdentifications,
-                cleanedHtml = docWithTableIds.html()
+            // Inject semantic element IDs
+            val semanticInjections = buildList {
+                visualResult.semanticElements.header?.let { add(it.cssSelector to it.dataId) }
+                visualResult.semanticElements.footer?.let { add(it.cssSelector to it.dataId) }
+                visualResult.semanticElements.navSidebar?.let { add(it.cssSelector to it.dataId) }
+                visualResult.semanticElements.breadcrumb?.let { add(it.cssSelector to it.dataId) }
+                visualResult.semanticElements.cookieBanner?.let { add(it.cssSelector to it.dataId) }
+                addAll(visualResult.semanticElements.adBanners.map { it.cssSelector to it.dataId })
+                addAll(visualResult.semanticElements.popups.map { it.cssSelector to it.dataId })
+            }
+            jsoupDomService.injectIdentifiers(doc, semanticInjections)
+            
+            // Inject table IDs
+            val tableInjections = visualResult.tables.map { it.cssSelector to it.dataId }
+            jsoupDomService.injectIdentifiers(doc, tableInjections)
+            
+            // Store results to GCS
+            snapshotStorage.storeContentLlmResults(
+                basePath,
+                ContentLlmResults(
+                    cleanedHtml = doc.html(),
+                    semanticElements = visualResult.semanticElements,
+                    tableIdentifications = visualResult.tables,
+                    iconInterpretations = null,
+                    imageTexts = null
+                )
             )
-            urlState.snapshotData = json.encodeToString(updatedSnapshot)
-            batchUrlStateRepository.update(urlState)
         }
     }
 
     // ==================== Phase 4: Submit Batches ====================
 
     private suspend fun submitBatches(preparations: BatchPreparations, jobId: Long): SubmittedBatches {
-        val semanticId = if (preparations.semanticPrep.pendingRequests.isNotEmpty()) {
-            geminiBatchService.createContentBatch(preparations.semanticPrep.pendingRequests.map { it.request }).also {
-                logger.info("[{}] Submitted semantic batch: {}", jobId, it)
-            }
-        } else null
-
-        val tableId = if (preparations.tablePrep.pendingRequests.isNotEmpty()) {
-            geminiBatchService.createContentBatch(preparations.tablePrep.pendingRequests.map { it.request }).also {
-                logger.info("[{}] Submitted table ID batch: {}", jobId, it)
+        val visualId = if (preparations.visualPrep.pendingRequests.isNotEmpty()) {
+            geminiBatchService.createContentBatch(preparations.visualPrep.pendingRequests.map { it.request }).also {
+                logger.info("[{}] Submitted visual identification batch: {}", jobId, it)
             }
         } else null
 
@@ -260,7 +269,7 @@ class ContentLlmBatchHandler(
             }
         } else null
 
-        return SubmittedBatches(semanticId, tableId, iconId, imageClassId)
+        return SubmittedBatches(visualId, iconId, imageClassId)
     }
 
     // ==================== Phase 5: Process Media Results ====================
@@ -379,33 +388,35 @@ class ContentLlmBatchHandler(
         batches: SubmittedBatches,
         preparations: BatchPreparations,
         urlStates: List<BatchUrlState>,
+        collected: ContentCollectionResult,
         jobId: Long
     ) {
-        // Process semantic results
-        if (batches.semanticId != null) {
-            val semanticResults = geminiBatchService.fetchBatchResults(batches.semanticId)
+        // Process combined visual identification results (semantic + tables)
+        if (batches.visualId != null) {
+            val visualResults = geminiBatchService.fetchBatchResults(batches.visualId)
             
-            // Record token usage for semantic batch
-            val semanticModelId = preparations.semanticPrep.pendingRequests.firstOrNull()?.request?.modelId ?: "unknown"
-            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "SemanticIdentificationBatch", semanticModelId, semanticResults)
+            // Record token usage for visual identification batch
+            val visualModelId = preparations.visualPrep.pendingRequests.firstOrNull()?.request?.modelId ?: "unknown"
+            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "VisualIdentificationBatch", visualModelId, visualResults)
             
-            semanticResults.forEachIndexed { index, result ->
-                val pending = preparations.semanticPrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
+            visualResults.forEachIndexed { index, result ->
+                val pending = preparations.visualPrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
                 val urlState = urlStates.find { it.id == pending.urlStateId.value } ?: return@forEachIndexed
+                val basePath = urlState.snapshotBasePath ?: return@forEachIndexed
+                val pageData = collected.urlPages[pending.urlStateId] ?: return@forEachIndexed
                 
                 try {
                     if (!result.success || result.generatedText == null) {
-                        logger.warn("[{}] Semantic batch failed for {}: {}", jobId, urlState.url, result.errorMessage)
+                        logger.warn("[{}] Visual ID batch failed for {}: {}", jobId, urlState.url, result.errorMessage)
                         return@forEachIndexed
                     }
 
-                    // Get snapshot data for bounding boxes and page dimensions
-                    val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed
-                    val boundingBoxes = snapshotData.boundingBoxes
-                    val pageWidth = boundingBoxes?.values?.maxOfOrNull { it.right }
-                    val pageHeight = boundingBoxes?.values?.maxOfOrNull { it.bottom }
+                    // Get bounding boxes from collected data (already loaded from GCS)
+                    val boundingBoxes = pageData.boundingBoxes
+                    val pageWidth = boundingBoxes.values.maxOfOrNull { it.right } ?: 1920.0
+                    val pageHeight = boundingBoxes.values.maxOfOrNull { it.bottom } ?: 1080.0
                     
-                    val semanticElements = semanticIdentificationService.parseBatchResponse(
+                    val visualResult = visualIdentificationService.parseBatchResponse(
                         result.generatedText!!,
                         pending.htmlWithIds,
                         boundingBoxes,
@@ -413,74 +424,58 @@ class ContentLlmBatchHandler(
                         pageHeight
                     )
 
-                    // Cache the result
-                    val htmlHash = MessageDigest.getInstance("SHA-256").digest(snapshotData.html.toByteArray())
-                    semanticIdentificationService.cacheResult(htmlHash, semanticElements)
-
-                    val updatedSnapshot = snapshotData.copy(cleanedHtml = pending.htmlWithIds, semanticElements = semanticElements)
-                    urlState.snapshotData = json.encodeToString(updatedSnapshot)
-                    batchUrlStateRepository.update(urlState)
-                } catch (e: Exception) {
-                    logger.warn("[{}] Failed to process semantic result for {}: {}", jobId, urlState.url, e.message)
-                }
-            }
-        }
-
-        // Process table identification results
-        if (batches.tableId != null) {
-            val tableResults = geminiBatchService.fetchBatchResults(batches.tableId)
-            
-            // Record token usage for table identification batch
-            val tableModelId = preparations.tablePrep.pendingRequests.firstOrNull()?.request?.modelId ?: "unknown"
-            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "TableIdentificationBatch", tableModelId, tableResults)
-            
-            tableResults.forEachIndexed { index, result ->
-                val pending = preparations.tablePrep.pendingRequests.getOrNull(index) ?: return@forEachIndexed
-                val urlState = urlStates.find { it.id == pending.urlStateId.value } ?: return@forEachIndexed
-                
-                try {
-                    if (!result.success || result.generatedText == null) {
-                        logger.warn("[{}] Table ID batch failed for {}: {}", jobId, urlState.url, result.errorMessage)
-                        return@forEachIndexed
-                    }
-
-                    // Get snapshot data for bounding boxes and page dimensions
-                    val snapshotData = urlState.snapshotData?.let { json.decodeFromString<BatchUrlSnapshotData>(it) } ?: return@forEachIndexed
-                    val boundingBoxes = snapshotData.boundingBoxes
-                    val pageWidth = boundingBoxes?.values?.maxOfOrNull { it.right }
-                    val pageHeight = boundingBoxes?.values?.maxOfOrNull { it.bottom }
+                    // Inject both semantic and table IDs into HTML
+                    val doc = Jsoup.parse(pending.htmlWithIds)
                     
-                    val tableIdentifications = tableIdentificationService.parseBatchResponse(
-                        result.generatedText!!,
-                        pending.htmlWithIds,
-                        pending.request.metadata,
-                        boundingBoxes,
-                        pageWidth,
-                        pageHeight
+                    // Inject semantic element IDs
+                    val semanticInjections = buildList {
+                        visualResult.semanticElements.header?.let { add(it.cssSelector to it.dataId) }
+                        visualResult.semanticElements.footer?.let { add(it.cssSelector to it.dataId) }
+                        visualResult.semanticElements.navSidebar?.let { add(it.cssSelector to it.dataId) }
+                        visualResult.semanticElements.breadcrumb?.let { add(it.cssSelector to it.dataId) }
+                        visualResult.semanticElements.cookieBanner?.let { add(it.cssSelector to it.dataId) }
+                        addAll(visualResult.semanticElements.adBanners.map { it.cssSelector to it.dataId })
+                        addAll(visualResult.semanticElements.popups.map { it.cssSelector to it.dataId })
+                    }
+                    jsoupDomService.injectIdentifiers(doc, semanticInjections)
+                    
+                    // Inject table IDs
+                    val tableInjections = visualResult.tables.map { it.cssSelector to it.dataId }
+                    jsoupDomService.injectIdentifiers(doc, tableInjections)
+
+                    // Store results to GCS
+                    snapshotStorage.storeContentLlmResults(
+                        basePath,
+                        ContentLlmResults(
+                            cleanedHtml = doc.html(),
+                            semanticElements = visualResult.semanticElements,
+                            tableIdentifications = visualResult.tables,
+                            iconInterpretations = null,
+                            imageTexts = null
+                        )
                     )
-
-                    // Cache the result
-                    val htmlHash = MessageDigest.getInstance("SHA-256").digest(snapshotData.html.toByteArray())
-                    tableIdentificationService.cacheResult(htmlHash, tableIdentifications)
-
-                    // Inject table IDs into cleanedHtml (which currently only has semantic IDs)
-                    // This ensures table elements can be found using [data-ds-id="..."] selectors in Stage 3 and Stage 4
-                    val existingCleanedHtml = snapshotData.cleanedHtml ?: snapshotData.html
-                    val docWithTableIds = Jsoup.parse(existingCleanedHtml)
-                    val tableInjections = tableIdentifications.map { it.cssSelector to it.dataId }
-                    jsoupDomService.injectIdentifiers(docWithTableIds, tableInjections)
-
-                    val updatedSnapshot = snapshotData.copy(
-                        tableIdentifications = tableIdentifications,
-                        cleanedHtml = docWithTableIds.html()
-                    )
-                    urlState.snapshotData = json.encodeToString(updatedSnapshot)
-                    batchUrlStateRepository.update(urlState)
+                    
+                    logger.debug("[{}] Processed visual ID for {}: {} semantic, {} tables",
+                        jobId, urlState.url, 
+                        countSemanticElements(visualResult.semanticElements),
+                        visualResult.tables.size)
                 } catch (e: Exception) {
-                    logger.warn("[{}] Failed to process table ID result for {}: {}", jobId, urlState.url, e.message)
+                    logger.warn("[{}] Failed to process visual ID result for {}: {}", jobId, urlState.url, e.message)
                 }
             }
         }
+    }
+    
+    private fun countSemanticElements(elements: io.deepsearch.domain.models.valueobjects.SemanticElements): Int {
+        var count = 0
+        if (elements.header != null) count++
+        if (elements.footer != null) count++
+        if (elements.navSidebar != null) count++
+        if (elements.breadcrumb != null) count++
+        if (elements.cookieBanner != null) count++
+        count += elements.adBanners.size
+        count += elements.popups.size
+        return count
     }
 
     // ==================== Phase 7: Store Media Results ====================
@@ -492,10 +487,7 @@ class ContentLlmBatchHandler(
     ) {
         urlStates.forEach { urlState ->
             try {
-                val snapshotData = urlState.snapshotData?.let {
-                    json.decodeFromString<BatchUrlSnapshotData>(it)
-                } ?: return@forEach
-
+                val basePath = urlState.snapshotBasePath ?: return@forEach
                 val urlStateId = BatchUrlStateId(urlState.id!!)
                 val pageData = collected.urlPages[urlStateId] ?: return@forEach
 
@@ -510,12 +502,17 @@ class ContentLlmBatchHandler(
                 }.toMap()
 
                 if (urlIconInterpretations.isNotEmpty() || urlImageTexts.isNotEmpty()) {
-                    val updatedSnapshot = snapshotData.copy(
-                        iconInterpretations = urlIconInterpretations.takeIf { it.isNotEmpty() },
-                        imageTexts = urlImageTexts.takeIf { it.isNotEmpty() }
+                    // Store media results to GCS (update existing content LLM results)
+                    snapshotStorage.storeContentLlmResults(
+                        basePath,
+                        ContentLlmResults(
+                            cleanedHtml = null,  // Don't overwrite existing
+                            semanticElements = null,
+                            tableIdentifications = null,
+                            iconInterpretations = urlIconInterpretations.takeIf { it.isNotEmpty() },
+                            imageTexts = urlImageTexts.takeIf { it.isNotEmpty() }
+                        )
                     )
-                    urlState.snapshotData = json.encodeToString(updatedSnapshot)
-                    batchUrlStateRepository.update(urlState)
                 }
             } catch (e: Exception) {
                 logger.warn("Failed to store media results for {}: {}", urlState.url, e.message)
@@ -533,7 +530,16 @@ class ContentLlmBatchHandler(
         val urlsToMark = batchUrlStateRepository.findNeedingContentLlmProcessing(jobId)
         urlsToMark.forEach { urlState ->
             if (!urlState.isFailed()) {
-                urlState.markContentLlmDone(urlState.snapshotData ?: "")
+                // Delete icons from GCS (no longer needed after Stage 2)
+                urlState.snapshotBasePath?.let { basePath ->
+                    try {
+                        snapshotStorage.deleteIcons(basePath)
+                    } catch (e: Exception) {
+                        logger.warn("Failed to delete icons for {}: {}", urlState.url, e.message)
+                    }
+                }
+                
+                urlState.markContentLlmDone()
                 batchUrlStateRepository.update(urlState)
             }
         }

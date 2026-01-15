@@ -35,7 +35,27 @@ class WebpageExtractionServiceTest : KoinTest {
             "https://www.otandp.com/about/history",
             "https://sleekflow.io/pricing",
             "https://sleekflow.io/fair-use-policy",
-            "https://sleekflow.io/ticketing"
+            "https://sleekflow.io/ticketing",
+            // 1. GitHub project page (open source)
+            "https://github.com/microsoft/vscode",
+            // 2. MDN Web Docs (technical documentation)
+            "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Introduction",
+            // 3. W3Schools (educational site - good extraction)
+            "https://www.w3schools.com/python/python_intro.asp",
+            // 4. freeCodeCamp (programming education)
+            "https://www.freecodecamp.org/news/",
+            // 5. DEV.to (developer community)
+            "https://dev.to/",
+            // 6. TechCrunch (tech blog)
+            "https://techcrunch.com/",
+            // 7. Smashing Magazine (web design)
+            "https://www.smashingmagazine.com/",
+            // 8. Notion help docs (SaaS documentation)
+            "https://www.notion.so/help/guides/category/get-started",
+            // 9. Stripe documentation (API docs)
+            "https://stripe.com/docs/payments",
+            // 10. Vercel homepage (developer platform)
+            "https://vercel.com/"
         ]
     )
     fun `extract webpage text`(url: String) = runTest(testCoroutineDispatcher) {

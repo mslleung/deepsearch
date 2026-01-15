@@ -6,12 +6,9 @@ import io.deepsearch.application.services.IProxyResolutionService
 import io.deepsearch.application.services.IProxySettingsService
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
-import io.deepsearch.domain.models.entities.BatchIconData
 import io.deepsearch.domain.proxy.ProxyConfiguration
-import io.deepsearch.domain.models.entities.BatchImageData
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
-import io.deepsearch.domain.models.entities.BatchUrlSnapshotData
 import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.models.valueobjects.LanguagePattern
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
@@ -19,6 +16,11 @@ import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ITemporaryFileStorageService
+import io.deepsearch.domain.services.IBatchSnapshotStorageService
+import io.deepsearch.domain.services.ExtractionData
+import io.deepsearch.domain.services.ScreenshotData
+import io.deepsearch.domain.services.IconData
+import io.deepsearch.domain.services.ImageData
 import io.deepsearch.application.services.IWebpageLinkDiscoveryService
 import io.deepsearch.domain.exceptions.AllProxiesFailedException
 import kotlinx.coroutines.CancellationException
@@ -34,7 +36,6 @@ import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
-import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
@@ -63,14 +64,11 @@ class CrawlAndExtractHandler(
     private val normalizeUrlService: INormalizeUrlService,
     private val adaptiveRateLimiter: IAdaptiveRateLimiter,
     private val temporaryFileStorage: ITemporaryFileStorageService,
+    private val snapshotStorage: IBatchSnapshotStorageService,
     private val eventEmitter: BatchEventEmitter
 ) : IBatchStageHandler {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    private val json = Json { 
-        ignoreUnknownKeys = true 
-        encodeDefaults = true
-    }
 
     companion object {
         private const val BROWSER_EXTRACTION_CONCURRENCY = 5
@@ -259,6 +257,7 @@ class CrawlAndExtractHandler(
     
     /**
      * Process an HTML URL using browser extraction.
+     * Stores all extraction data in GCS instead of database.
      */
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     private suspend fun processHtmlUrl(
@@ -295,45 +294,56 @@ class CrawlAndExtractHandler(
             }
             val (snapshot, icons, images, screenshot) = captures
 
-            // Convert icons/images to serializable format
-            val batchIcons = icons.map { icon ->
+            // Convert icons to storage format (binary, not Base64)
+            val iconDataList = icons.map { icon ->
                 val hashBytes = MessageDigest.getInstance("SHA-256").digest(icon.bytes)
-                BatchIconData(
-                    bytesBase64 = kotlin.io.encoding.Base64.encode(icon.bytes),
+                val urlSafeHash = Base64.UrlSafe.encode(hashBytes).trimEnd('=')
+                IconData(
+                    hash = urlSafeHash,
+                    bytes = icon.bytes,
                     mimeType = icon.mimeType.value,
-                    cssSelectors = icon.cssSelectors,
-                    hashBase64 = Base64.encode(hashBytes)
+                    cssSelectors = icon.cssSelectors
                 )
             }
             
-            val batchImages = images.map { image ->
+            // Convert images to storage format (binary, not Base64)
+            val imageDataList = images.map { image ->
                 val hashBytes = MessageDigest.getInstance("SHA-256").digest(image.bytes)
-                BatchImageData(
-                    bytesBase64 = Base64.encode(image.bytes),
+                val urlSafeHash = Base64.UrlSafe.encode(hashBytes).trimEnd('=')
+                ImageData(
+                    hash = urlSafeHash,
+                    bytes = image.bytes,
                     mimeType = image.mimeType.value,
-                    cssSelectors = image.cssSelectors,
-                    hashBase64 = Base64.encode(hashBytes)
+                    cssSelectors = image.cssSelectors
                 )
             }
 
-            // Store HTML, bounding boxes, screenshot, icons, and images for later stages
-            val snapshotData = BatchUrlSnapshotData(
+            // Generate URL hash for directory naming
+            val urlHashBytes = MessageDigest.getInstance("SHA-256").digest(url.toByteArray())
+            val urlHash = Base64.UrlSafe.encode(urlHashBytes).trimEnd('=')
+
+            // Store all extraction data in GCS (not database)
+            val extractionData = ExtractionData(
                 html = html,
+                title = snapshot.title,
+                description = snapshot.description,
                 boundingBoxes = snapshot.boundingBoxes,
-                screenshotBase64 = Base64.encode(screenshot.bytes),
-                screenshotMimeType = screenshot.mimeType.value,
-                icons = batchIcons.takeIf { it.isNotEmpty() },
-                images = batchImages.takeIf { it.isNotEmpty() }
+                screenshot = ScreenshotData(screenshot.bytes, screenshot.mimeType.value),
+                icons = iconDataList,
+                images = imageDataList
             )
-            urlState.markExtracted(
-                json.encodeToString(snapshotData),
-                snapshot.title,
-                snapshot.description
-            )
+            
+            val basePath = snapshotStorage.storeExtraction(jobId, urlHash, extractionData)
+            
+            // Update URL state with GCS path (not JSON blob)
+            urlState.markExtracted(basePath, snapshot.title, snapshot.description)
             batchUrlStateRepository.update(urlState)
             
             discoveredLinks = webpageLinkDiscoveryService.discoverAllLinks(html, url)
                 .map { it.url }
+            
+            logger.debug("[{}] HTML extracted to GCS: {} ({} icons, {} images)", 
+                jobId, url, iconDataList.size, imageDataList.size)
         }
         
         logger.debug("[{}] HTML extracted: {} ({} links discovered)", jobId, url, discoveredLinks.size)

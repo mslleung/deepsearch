@@ -7,6 +7,7 @@ import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.DeepSearchBrowserConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.EnvironmentConfig
+import io.deepsearch.domain.config.GcsConfig
 import io.deepsearch.domain.config.JwtConfig
 import io.deepsearch.domain.config.OAuthConfig
 import io.deepsearch.domain.config.PostgresConfig
@@ -229,6 +230,12 @@ private fun Application.configureDependencyInjection() {
                         endpoint = environment.config.property("proxyrack.endpoint").getString(),
                         username = environment.config.property("proxyrack.username").getString(),
                         apiKey = environment.config.property("proxyrack.apiKey").getString()
+                    )
+                }
+                single {
+                    GcsConfig(
+                        tempBucketName = environment.config.property("gcs.tempBucketName").getString(),
+                        imageBucketName = environment.config.property("gcs.imageBucketName").getString()
                     )
                 }
                 single {
