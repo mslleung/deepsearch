@@ -78,6 +78,7 @@ interface IWebpageCacheService {
      * @param httpReason HTTP reason phrase
      * @param mimeType Content MIME type
      * @param sessionId Session ID for token tracking
+     * @param imageMapping Mapping of image numbers to original hash IDs: {"1": "img-abc123"}
      * @param fileSearchDocumentName For FILE type URLs: Gemini File Search document name for deletion
      */
     suspend fun cacheWebpageBatch(
@@ -90,6 +91,7 @@ interface IWebpageCacheService {
         httpReason: String,
         mimeType: String?,
         sessionId: SessionId,
+        imageMapping: Map<String, String>? = null,
         fileSearchDocumentName: String? = null
     )
 
@@ -245,10 +247,11 @@ class WebpageCacheService(
         httpReason: String,
         mimeType: String?,
         sessionId: SessionId,
+        imageMapping: Map<String, String>?,
         fileSearchDocumentName: String?
     ) {
         // Batch mode: only cache, no async indexing (handled by batch stages)
-        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview = false, fileSearchDocumentName = fileSearchDocumentName)
+        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview = false, fileSearchDocumentName = fileSearchDocumentName, imageMapping = imageMapping)
     }
 
     private suspend fun cacheWebpageInternal(

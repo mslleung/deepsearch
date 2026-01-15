@@ -97,8 +97,18 @@ private val applicationCommonTestModule = module {
     singleOf(::MarkdownIndexingWorker) bind IMarkdownIndexingWorker::class
     
     // Batch periodic index services
+    // Shared utilities
     singleOf(::BatchEventEmitter)
     singleOf(::BatchTokenUsageRecorder) // Records token usage for batch operations
+    singleOf(::BatchPollingService) // Shared polling logic for all handlers
+    
+    // ContentLlmBatchHandler phase processors
+    singleOf(::ContentDataCollector) // Phase 1: Collect data from GCS
+    singleOf(::ContentBatchPreparer) // Phase 2: Prepare batch requests
+    singleOf(::MediaResultProcessor) // Phase 5: Process media results
+    singleOf(::PageResultProcessor) // Phase 6: Process page results
+    
+    // Stage handlers
     singleOf(::CrawlAndExtractHandler)
     singleOf(::ContentLlmBatchHandler)
     singleOf(::TableInterpretationBatchHandler)

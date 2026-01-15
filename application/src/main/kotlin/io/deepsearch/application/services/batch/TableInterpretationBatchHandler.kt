@@ -11,9 +11,7 @@ import io.deepsearch.domain.models.valueobjects.TableDataId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.*
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -22,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Stage 3: LLM Table Interpretation batch handler.
- * 
+ *
  * Applies icon/image replacements, then submits batch job for table interpretation.
  * Tables are interpreted with context from the surrounding HTML (with media replacements applied).
  */
@@ -35,19 +33,11 @@ class TableInterpretationBatchHandler(
     private val tableInterpretationService: ITableInterpretationService,
     private val snapshotStorage: IBatchSnapshotStorageService,
     private val eventEmitter: BatchEventEmitter,
-    private val batchTokenUsageRecorder: BatchTokenUsageRecorder
+    private val batchTokenUsageRecorder: BatchTokenUsageRecorder,
+    private val pollingService: BatchPollingService
 ) : IBatchStageHandler {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
-
-    companion object {
-        private const val BATCH_POLL_INTERVAL_MS = 60_000L
-        private const val MAX_BATCH_POLL_ATTEMPTS = 1440
-    }
 
     // Mapping storage for batch result processing
     private val tableInterpretationMappings = ConcurrentHashMap<BatchJobId, List<TableRequestMapping>>()
@@ -61,30 +51,10 @@ class TableInterpretationBatchHandler(
         eventEmitter.emit(job, eventFlow, "Stage 3: Applying media replacements and preparing table interpretation...")
 
         val batchJobIdTyped = BatchJobId(jobId)
-        
+
         // Check if we already have a batch job running (resume case)
         if (job.batchJobIds.isNotEmpty()) {
-            // Rebuild mapping from database state for resumability
-            // This works because:
-            // 1. findNeedingFinalLlmProcessing() returns URLs in deterministic order (by id)
-            // 2. collectTableInputs() processes them in the same order
-            // 3. prepareBatchRequests() filters out cached results consistently
-            // 4. The resulting mapping matches the original batch submission order
-            val urlsNeedingProcessing = batchUrlStateRepository.findNeedingFinalLlmProcessing(jobId)
-            val tableInputs = collectTableInputs(urlsNeedingProcessing, jobId)
-            val tableBatchPrep = tableInterpretationService.prepareBatchRequests(tableInputs, jobId)
-            val requestMappings = tableBatchPrep.pendingRequests.mapIndexed { index, pending ->
-                TableRequestMapping(pending.key.urlStateId, pending.key.tableDataId, index)
-            }
-            tableInterpretationMappings[batchJobIdTyped] = requestMappings
-            logger.info("[{}] Rebuilt table interpretation mapping with {} entries for resume", jobId, requestMappings.size)
-
-            val batchJobId = job.batchJobIds.first()
-            pollBatchUntilComplete(job, eventFlow, batchJobId)
-            processTableBatchResults(jobId, batchJobId)
-            job.clearBatchJobs()
-            job.advanceToNextStage()
-            batchJobRepository.update(job)
+            handleResume(job, eventFlow, jobId, batchJobIdTyped)
             return
         }
 
@@ -135,7 +105,7 @@ class TableInterpretationBatchHandler(
             logger.info("[{}] Submitted table batch job: {}", jobId, batchJobId)
             eventEmitter.emit(job, eventFlow, "Table batch submitted: $batchJobId (${pendingRequests.size} tables)")
 
-            pollBatchUntilComplete(job, eventFlow, batchJobId)
+            pollingService.pollUntilComplete(job, eventFlow, batchJobId, "table interpretation")
             processTableBatchResults(jobId, batchJobId)
 
             job.clearBatchJobs()
@@ -145,6 +115,30 @@ class TableInterpretationBatchHandler(
             logger.error("[{}] Failed to submit table batch: {}", jobId, e.message, e)
             throw e
         }
+    }
+
+    private suspend fun handleResume(
+        job: BatchPeriodicIndexJob,
+        eventFlow: MutableSharedFlow<BatchPeriodicIndexEvent>,
+        jobId: Long,
+        batchJobIdTyped: BatchJobId
+    ) {
+        // Rebuild mapping from database state for resumability
+        val urlsNeedingProcessing = batchUrlStateRepository.findNeedingFinalLlmProcessing(jobId)
+        val tableInputs = collectTableInputs(urlsNeedingProcessing, jobId)
+        val tableBatchPrep = tableInterpretationService.prepareBatchRequests(tableInputs, jobId)
+        val requestMappings = tableBatchPrep.pendingRequests.mapIndexed { index, pending ->
+            TableRequestMapping(pending.key.urlStateId, pending.key.tableDataId, index)
+        }
+        tableInterpretationMappings[batchJobIdTyped] = requestMappings
+        logger.info("[{}] Rebuilt table interpretation mapping with {} entries for resume", jobId, requestMappings.size)
+
+        val batchJobId = job.batchJobIds.first()
+        pollingService.pollUntilComplete(job, eventFlow, batchJobId, "table interpretation")
+        processTableBatchResults(jobId, batchJobId)
+        job.clearBatchJobs()
+        job.advanceToNextStage()
+        batchJobRepository.update(job)
     }
 
     /**
@@ -171,13 +165,13 @@ class TableInterpretationBatchHandler(
         urlStates.forEach { urlState ->
             try {
                 val basePath = urlState.snapshotBasePath ?: return@forEach
-                
+
                 // Read data from GCS
                 val html = snapshotStorage.readHtml(basePath) ?: return@forEach
                 val cachingData = snapshotStorage.readForCaching(basePath) ?: return@forEach
                 val icons = snapshotStorage.readIcons(basePath)
                 val images = snapshotStorage.readImages(basePath)
-                
+
                 val snapshotFromGcs = UrlSnapshotFromGcs(
                     basePath = basePath,
                     html = html,
@@ -197,13 +191,18 @@ class TableInterpretationBatchHandler(
                 // Inject media identifiers
                 jsoupDomService.injectMediaIdentifiers(doc)
 
-                // Build and apply icon/image replacements
-                val mediaReplacements = buildMediaReplacements(snapshotFromGcs)
-                if (mediaReplacements.isNotEmpty()) {
-                    jsoupDomService.replaceElementsWithText(doc, mediaReplacements)
+                // Build and apply media replacements using shared utility
+                val mediaResult = MediaReplacementBuilder.buildFromIconsAndImages(
+                    snapshotFromGcs.icons,
+                    snapshotFromGcs.images,
+                    snapshotFromGcs.iconInterpretations,
+                    snapshotFromGcs.imageTexts
+                )
+                if (mediaResult.replacements.isNotEmpty()) {
+                    jsoupDomService.replaceElementsWithText(doc, mediaResult.replacements)
                     logger.debug(
                         "[{}] Applied {} media replacements for {}",
-                        jobId, mediaReplacements.size, urlState.url
+                        jobId, mediaResult.replacements.size, urlState.url
                     )
                 }
 
@@ -251,43 +250,6 @@ class TableInterpretationBatchHandler(
         return tableInputs
     }
 
-    private fun buildMediaReplacements(snapshot: UrlSnapshotFromGcs): List<CssSelectorReplacement> {
-        val replacements = mutableListOf<CssSelectorReplacement>()
-
-        // Icon replacements
-        snapshot.icons.forEach { iconData ->
-            val label = snapshot.iconInterpretations?.get(iconData.hash)
-            if (label != null) {
-                iconData.cssSelectors.forEach { selector ->
-                    replacements.add(CssSelectorReplacement(selector, label))
-                }
-            }
-        }
-
-        // Image replacements with XML wrapper
-        snapshot.images.forEach { imageData ->
-            val text = snapshot.imageTexts?.get(imageData.hash)
-            if (text != null) {
-                val imageId = generateImageId(imageData.hash)
-                val wrappedText = if (text.contains('\n')) {
-                    "<image id=\"$imageId\">\n$text\n</image>"
-                } else {
-                    "<image id=\"$imageId\">$text</image>"
-                }
-                imageData.cssSelectors.forEach { selector ->
-                    replacements.add(CssSelectorReplacement(selector, wrappedText))
-                }
-            }
-        }
-
-        return replacements
-    }
-
-    private fun generateImageId(hashBase64: String): String {
-        val urlSafeHash = hashBase64.replace("+", "-").replace("/", "_").trimEnd('=')
-        return "img-$urlSafeHash"
-    }
-
     private suspend fun applyCachedResults(
         cachedResults: Map<TableKey, String>,
         urlStates: List<BatchUrlState>
@@ -300,7 +262,7 @@ class TableInterpretationBatchHandler(
         for ((urlStateId, tableMarkdowns) in urlTableMarkdowns) {
             val urlState = urlStates.find { it.id == urlStateId.value } ?: continue
             val basePath = urlState.snapshotBasePath ?: continue
-            
+
             // Read table identifications from GCS
             val tables = snapshotStorage.readTableIdentifications(basePath) ?: emptyList()
             val allTablesCached = tables.all { tableMarkdowns.containsKey(it.dataId) }
@@ -321,14 +283,14 @@ class TableInterpretationBatchHandler(
                 if (basePath != null) {
                     // Store empty table markdowns to GCS
                     snapshotStorage.storeTableMarkdowns(basePath, emptyMap())
-                    
+
                     // Delete images from GCS (no longer needed after Stage 3)
                     try {
                         snapshotStorage.deleteImages(basePath)
                     } catch (e: Exception) {
                         logger.warn("Failed to delete images for {}: {}", urlState.url, e.message)
                     }
-                    
+
                     urlState.markFinalLlmDone()
                     batchUrlStateRepository.update(urlState)
                 }
@@ -340,11 +302,11 @@ class TableInterpretationBatchHandler(
         logger.info("[{}] Processing table batch results from: {}", jobId, batchJobId)
 
         val results = geminiBatchService.fetchBatchResults(batchJobId)
-        
+
         // Record token usage for table interpretation batch
         val modelId = "gemini-2.5-flash-lite-preview-09-2025" // Table interpretation uses Flash Lite
         batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "TableInterpretationBatch", modelId, results)
-        
+
         val batchJobIdTyped = BatchJobId(jobId)
         val mappings = tableInterpretationMappings.remove(batchJobIdTyped) ?: emptyList()
 
@@ -376,17 +338,17 @@ class TableInterpretationBatchHandler(
 
                 val urlStateId = BatchUrlStateId(urlState.id!!)
                 val tableMarkdowns = resultsByUrlState[urlStateId] ?: emptyMap()
-                
+
                 // Store table markdowns to GCS
                 snapshotStorage.storeTableMarkdowns(basePath, tableMarkdowns)
-                
+
                 // Delete images from GCS (no longer needed after Stage 3)
                 try {
                     snapshotStorage.deleteImages(basePath)
                 } catch (e: Exception) {
                     logger.warn("Failed to delete images for {}: {}", urlState.url, e.message)
                 }
-                
+
                 urlState.markFinalLlmDone()
                 batchUrlStateRepository.update(urlState)
 
@@ -406,7 +368,7 @@ class TableInterpretationBatchHandler(
         val basePath = urlState.snapshotBasePath ?: return
         val tables = snapshotStorage.readTableIdentifications(basePath) ?: return
         val table = tables.find { it.dataId == tableDataId.value } ?: return
-        
+
         val cachingData = snapshotStorage.readForCaching(basePath) ?: return
         val cleanedHtml = cachingData.cleanedHtml ?: cachingData.html
         val doc = Jsoup.parse(cleanedHtml)
@@ -416,47 +378,4 @@ class TableInterpretationBatchHandler(
         val tableHash = MessageDigest.getInstance("SHA-256").digest(tableHtml.toByteArray())
         tableInterpretationService.cacheResult(tableHash, markdown)
     }
-
-    private suspend fun pollBatchUntilComplete(
-        job: BatchPeriodicIndexJob,
-        eventFlow: MutableSharedFlow<BatchPeriodicIndexEvent>,
-        batchJobId: String
-    ) {
-        var attempts = 0
-
-        while (attempts < MAX_BATCH_POLL_ATTEMPTS) {
-            try {
-                val status = geminiBatchService.pollBatchStatus(batchJobId)
-
-                when (status.state) {
-                    BatchJobState.SUCCEEDED -> {
-                        logger.info("Batch job {} completed successfully", batchJobId)
-                        return
-                    }
-
-                    BatchJobState.FAILED -> throw RuntimeException("Batch job failed: ${status.errorMessage}")
-                    BatchJobState.CANCELLED -> throw RuntimeException("Batch job was cancelled")
-                    else -> {
-                        eventEmitter.emit(
-                            job,
-                            eventFlow,
-                            "Waiting for batch (${status.completedRequests}/${status.totalRequests})"
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                if (e.message?.contains("429") == true) {
-                    logger.warn("Rate limited while polling, will retry")
-                } else {
-                    throw e
-                }
-            }
-
-            delay(BATCH_POLL_INTERVAL_MS)
-            attempts++
-        }
-
-        throw RuntimeException("Batch job polling timed out after $MAX_BATCH_POLL_ATTEMPTS attempts")
-    }
 }
-

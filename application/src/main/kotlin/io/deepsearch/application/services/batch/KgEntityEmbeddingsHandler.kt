@@ -4,19 +4,18 @@ import io.deepsearch.application.services.IKnowledgeGraphIndexingService
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchUrlProcessingStage
+import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
-import io.deepsearch.domain.services.BatchJobState
 import io.deepsearch.domain.services.IBatchSnapshotStorageService
 import io.deepsearch.domain.services.IGeminiBatchService
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
  * Stage 5: Knowledge graph entity embeddings handler.
- * 
+ *
  * Generates embeddings for KG entities extracted in Stage 4 using the Gemini Batch API.
  * After embeddings are generated, stores the complete KG data (entities + relationships + embeddings)
  * in the knowledge graph repository.
@@ -28,15 +27,11 @@ class KgEntityEmbeddingsHandler(
     private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService,
     private val snapshotStorage: IBatchSnapshotStorageService,
     private val eventEmitter: BatchEventEmitter,
-    private val batchTokenUsageRecorder: BatchTokenUsageRecorder
+    private val batchTokenUsageRecorder: BatchTokenUsageRecorder,
+    private val pollingService: BatchPollingService
 ) : IBatchStageHandler {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-
-    companion object {
-        private const val BATCH_POLL_INTERVAL_MS = 60_000L
-        private const val MAX_BATCH_POLL_ATTEMPTS = 1440
-    }
 
     override suspend fun execute(
         job: BatchPeriodicIndexJob,
@@ -51,26 +46,10 @@ class KgEntityEmbeddingsHandler(
         logger.info("[{}] {} cached URLs available for entity embedding", jobId, urlStates.size)
 
         // Collect all KG extraction results from GCS
-        val extractionsByUrl = mutableMapOf<String, KgExtractionResult>()
-        val urlBasePaths = mutableMapOf<String, String>() // url -> basePath for cleanup
-        
-        urlStates.forEach { urlState ->
-            try {
-                val basePath = urlState.snapshotBasePath ?: return@forEach
-                urlBasePaths[urlState.url] = basePath
-                
-                val kgResult = snapshotStorage.readKgExtractionResult(basePath)
-                if (kgResult != null && !kgResult.isEmpty()) {
-                    extractionsByUrl[urlState.url] = kgResult
-                }
-            } catch (e: Exception) {
-                logger.warn("[{}] Failed to read KG result for {}: {}", jobId, urlState.url, e.message)
-            }
-        }
+        val (extractionsByUrl, urlBasePaths) = collectKgExtractions(urlStates, jobId)
 
         if (extractionsByUrl.isEmpty()) {
             logger.info("[{}] No KG extractions to embed", jobId)
-            // Clean up GCS data even if no KG extractions
             cleanupGcsSnapshotData(jobId, urlBasePaths, urlStates)
             job.advanceToNextStage()
             batchJobRepository.update(job)
@@ -84,12 +63,13 @@ class KgEntityEmbeddingsHandler(
             .map { it.name }
             .distinct()
 
-        logger.info("[{}] {} unique entities to embed from {} pages", 
-            jobId, allEntityNames.size, extractionsByUrl.size)
+        logger.info(
+            "[{}] {} unique entities to embed from {} pages",
+            jobId, allEntityNames.size, extractionsByUrl.size
+        )
 
         if (allEntityNames.isEmpty()) {
             logger.info("[{}] No entity names to embed", jobId)
-            // Clean up GCS data even if no entity names
             cleanupGcsSnapshotData(jobId, urlBasePaths, urlStates)
             job.advanceToNextStage()
             batchJobRepository.update(job)
@@ -105,7 +85,6 @@ class KgEntityEmbeddingsHandler(
 
         if (embeddingRequests.isEmpty()) {
             logger.warn("[{}] Failed to prepare entity embedding requests", jobId)
-            // Clean up GCS data even if embedding request preparation failed
             cleanupGcsSnapshotData(jobId, urlBasePaths, urlStates)
             job.advanceToNextStage()
             batchJobRepository.update(job)
@@ -115,8 +94,10 @@ class KgEntityEmbeddingsHandler(
 
         // Submit batch and poll until complete
         try {
-            eventEmitter.emit(job, eventFlow, 
-                "Submitting entity embedding batch (${embeddingRequests.size} entities)...")
+            eventEmitter.emit(
+                job, eventFlow,
+                "Submitting entity embedding batch (${embeddingRequests.size} entities)..."
+            )
 
             val batchJobId = geminiBatchService.createEmbeddingBatch(embeddingRequests)
             job.addBatchJob(batchJobId)
@@ -124,26 +105,33 @@ class KgEntityEmbeddingsHandler(
 
             logger.info("[{}] Submitted entity embedding batch: {}", jobId, batchJobId)
 
-            // Poll until complete
-            pollBatchUntilComplete(job, eventFlow, batchJobId)
+            // Poll until complete using shared polling service
+            pollingService.pollUntilComplete(job, eventFlow, batchJobId, "entity embedding")
 
             // Fetch results
             val batchResults = geminiBatchService.fetchBatchResults(batchJobId)
             logger.info("[{}] Retrieved {} entity embedding results", jobId, batchResults.size)
-            
-            // Record token usage for entity embedding batch (embeddings are free but we track for completeness)
-            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "KgEntityEmbeddingBatch", "gemini-embedding-001", batchResults)
+
+            // Record token usage
+            batchTokenUsageRecorder.recordBatchTokenUsage(
+                jobId,
+                "KgEntityEmbeddingBatch",
+                "gemini-embedding-001",
+                batchResults
+            )
 
             // Build entity embeddings map
             val entityEmbeddings = mutableMapOf<String, List<Float>>()
             batchResults.forEachIndexed { index, result ->
                 val entityName = allEntityNames.getOrNull(index) ?: return@forEachIndexed
-                
+
                 if (result.success && result.embedding != null) {
                     entityEmbeddings[entityName] = result.embedding!!
                 } else {
-                    logger.warn("[{}] Entity embedding failed for '{}': {}", 
-                        jobId, entityName, result.errorMessage)
+                    logger.warn(
+                        "[{}] Entity embedding failed for '{}': {}",
+                        jobId, entityName, result.errorMessage
+                    )
                 }
             }
 
@@ -168,9 +156,11 @@ class KgEntityEmbeddingsHandler(
             job.clearBatchJobs()
             batchJobRepository.update(job)
 
-            eventEmitter.emit(job, eventFlow, 
+            eventEmitter.emit(
+                job, eventFlow,
                 "Stage 5 complete: $totalEntities entities, $totalRelationships relationships, " +
-                "${entityEmbeddings.size} embeddings")
+                    "${entityEmbeddings.size} embeddings"
+            )
 
         } catch (e: Exception) {
             logger.error("[{}] Entity embedding batch failed: {}", jobId, e.message, e)
@@ -179,14 +169,43 @@ class KgEntityEmbeddingsHandler(
             // Continue to completion - entity embeddings are not critical
             eventEmitter.emit(job, eventFlow, "Stage 5 complete (with errors): ${e.message}")
         }
-        
+
         // Clean up GCS snapshot data after Stage 5 completes
         cleanupGcsSnapshotData(jobId, urlBasePaths, urlStates)
 
         job.advanceToNextStage()
         batchJobRepository.update(job)
     }
-    
+
+    /**
+     * Collect KG extraction results from GCS for all cached URLs.
+     *
+     * @return Pair of (extractionsByUrl, urlBasePaths) for cleanup
+     */
+    private suspend fun collectKgExtractions(
+        urlStates: List<BatchUrlState>,
+        jobId: Long
+    ): Pair<Map<String, KgExtractionResult>, Map<String, String>> {
+        val extractionsByUrl = mutableMapOf<String, KgExtractionResult>()
+        val urlBasePaths = mutableMapOf<String, String>() // url -> basePath for cleanup
+
+        urlStates.forEach { urlState ->
+            try {
+                val basePath = urlState.snapshotBasePath ?: return@forEach
+                urlBasePaths[urlState.url] = basePath
+
+                val kgResult = snapshotStorage.readKgExtractionResult(basePath)
+                if (kgResult != null && !kgResult.isEmpty()) {
+                    extractionsByUrl[urlState.url] = kgResult
+                }
+            } catch (e: Exception) {
+                logger.warn("[{}] Failed to read KG result for {}: {}", jobId, urlState.url, e.message)
+            }
+        }
+
+        return Pair(extractionsByUrl, urlBasePaths)
+    }
+
     /**
      * Delete GCS snapshot data for all processed URLs.
      * Also clears the snapshotBasePath from URL states.
@@ -194,7 +213,7 @@ class KgEntityEmbeddingsHandler(
     private suspend fun cleanupGcsSnapshotData(
         jobId: Long,
         urlBasePaths: Map<String, String>,
-        urlStates: List<io.deepsearch.domain.models.entities.BatchUrlState>
+        urlStates: List<BatchUrlState>
     ) {
         var deletedCount = 0
         urlBasePaths.forEach { (url, basePath) ->
@@ -205,7 +224,7 @@ class KgEntityEmbeddingsHandler(
                 logger.warn("[{}] Failed to delete GCS snapshot for {}: {}", jobId, url, e.message)
             }
         }
-        
+
         // Clear snapshotBasePath from URL states
         urlStates.forEach { urlState ->
             if (urlState.snapshotBasePath != null) {
@@ -217,50 +236,7 @@ class KgEntityEmbeddingsHandler(
                 }
             }
         }
-        
+
         logger.info("[{}] Cleaned up {} GCS snapshot directories", jobId, deletedCount)
     }
-
-    private suspend fun pollBatchUntilComplete(
-        job: BatchPeriodicIndexJob,
-        eventFlow: MutableSharedFlow<BatchPeriodicIndexEvent>,
-        batchJobId: String
-    ) {
-        var attempts = 0
-
-        while (attempts < MAX_BATCH_POLL_ATTEMPTS) {
-            try {
-                val status = geminiBatchService.pollBatchStatus(batchJobId)
-
-                when (status.state) {
-                    BatchJobState.SUCCEEDED -> {
-                        logger.info("Entity embedding batch {} completed successfully", batchJobId)
-                        return
-                    }
-
-                    BatchJobState.FAILED -> throw RuntimeException("Batch job failed: ${status.errorMessage}")
-                    BatchJobState.CANCELLED -> throw RuntimeException("Batch job was cancelled")
-                    else -> {
-                        eventEmitter.emit(
-                            job,
-                            eventFlow,
-                            "Waiting for entity embedding batch (${status.completedRequests}/${status.totalRequests})"
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                if (e.message?.contains("429") == true) {
-                    logger.warn("Rate limited while polling, will retry")
-                } else {
-                    throw e
-                }
-            }
-
-            delay(BATCH_POLL_INTERVAL_MS)
-            attempts++
-        }
-
-        throw RuntimeException("Batch job polling timed out after $MAX_BATCH_POLL_ATTEMPTS attempts")
-    }
 }
-

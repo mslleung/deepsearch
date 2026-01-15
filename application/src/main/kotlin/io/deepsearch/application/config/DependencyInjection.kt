@@ -77,8 +77,18 @@ val applicationModule = module {
     singleOf(::KgHybridRetrievalService) bind IKgHybridRetrievalService::class
     
     // Batch periodic index services (uses Gemini Batch API for cost-effective processing)
+    // Shared utilities
     singleOf(::BatchEventEmitter)
     singleOf(::BatchTokenUsageRecorder) // Records token usage for batch operations
+    singleOf(::BatchPollingService) // Shared polling logic for all handlers
+    
+    // ContentLlmBatchHandler phase processors
+    singleOf(::ContentDataCollector) // Phase 1: Collect data from GCS
+    singleOf(::ContentBatchPreparer) // Phase 2: Prepare batch requests
+    singleOf(::MediaResultProcessor) // Phase 5: Process media results
+    singleOf(::PageResultProcessor) // Phase 6: Process page results
+    
+    // Stage handlers
     singleOf(::CrawlAndExtractHandler)
     singleOf(::ContentLlmBatchHandler)
     singleOf(::TableInterpretationBatchHandler)
