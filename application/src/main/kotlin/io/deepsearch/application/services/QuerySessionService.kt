@@ -120,6 +120,15 @@ interface IQuerySessionService {
         imageIds: List<String> = emptyList()
     )
 
+    /**
+     * Complete the session due to an unrecoverable error.
+     * This records the error message and sets the finish reason to ERROR.
+     */
+    suspend fun completeSessionWithError(
+        sessionId: QuerySessionId,
+        errorMessage: String
+    )
+
     suspend fun hardTimeout(sessionId: QuerySessionId, error: String)
 
     /** Get complete session. */
@@ -327,6 +336,16 @@ class QuerySessionService(
             imageIds.size,
             answerFound
         )
+    }
+
+    override suspend fun completeSessionWithError(
+        sessionId: QuerySessionId,
+        errorMessage: String
+    ) {
+        val session = getSessionOrThrow(sessionId)
+        session.finish(FinishReason.ERROR)
+        querySessionRepository.update(session)
+        logger.error("[{}] Session completed with error: {}", sessionId.value, errorMessage)
     }
 
     override suspend fun hardTimeout(sessionId: QuerySessionId, error: String) {

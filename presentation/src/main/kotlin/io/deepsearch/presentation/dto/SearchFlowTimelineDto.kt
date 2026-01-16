@@ -121,13 +121,92 @@ data class ApiCostDto(
 
 // Extension functions to convert domain objects to DTOs
 
+/**
+ * Convert a SearchFlowEvent sealed class instance to its DTO representation.
+ * Extracts type-specific fields into the generic DTO format for JSON serialization.
+ */
 fun SearchFlowEvent.toDto(): SearchFlowEventDto {
-    // Convert metadata Map<String, Any> to Map<String, String> for JSON serialization
-    val stringMetadata = metadata.mapValues { (_, value) ->
-        when (value) {
-            is List<*> -> value.joinToString(", ")
-            else -> value.toString()
+    val metadata = mutableMapOf<String, String>()
+    var url: String? = null
+    var query: String? = null
+    var title: String? = null
+    var description: String? = null
+    var durationMs: Long? = null
+    
+    // Extract type-specific fields
+    when (this) {
+        is SearchFlowEvent.SessionStarted -> {
+            url = this.url
+            query = this.query
+            metadata["mode"] = this.mode
         }
+        is SearchFlowEvent.SessionError -> {
+            metadata["errorType"] = this.errorType
+            metadata["errorMessage"] = this.errorMessage
+            this.errorCategory?.let { metadata["errorCategory"] = it }
+            this.affectedUrl?.let { url = it; metadata["affectedUrl"] = it }
+            this.technicalDetails?.let { metadata["technicalDetails"] = it }
+        }
+        is SearchFlowEvent.DiscoverySerpComplete -> {
+            query = this.query
+            durationMs = this.durationMs
+            metadata["linksFound"] = this.linksFound.toString()
+        }
+        is SearchFlowEvent.UrlProcessingStarted -> {
+            url = this.url
+        }
+        is SearchFlowEvent.UrlHtmlPreviewReady -> {
+            url = this.url
+            title = this.title
+            description = this.description
+            metadata["accessType"] = this.accessType
+            this.markdownLength?.let { metadata["markdownLength"] = it.toString() }
+        }
+        is SearchFlowEvent.UrlLinkDiscoveryComplete -> {
+            url = this.url
+        }
+        is SearchFlowEvent.UrlMarkdownComplete -> {
+            url = this.url
+            title = this.title
+            description = this.description
+            metadata["markdownLength"] = this.markdownLength.toString()
+            metadata["accessType"] = this.accessType
+            metadata["wasCached"] = this.wasCached.toString()
+        }
+        is SearchFlowEvent.UrlProcessingFailed -> {
+            url = this.url
+            metadata["errorMessage"] = this.errorMessage
+        }
+        is SearchFlowEvent.SourcesEvaluated -> {
+            metadata["processedUrlCount"] = this.processedUrlCount.toString()
+            metadata["relevantCount"] = this.relevantCount.toString()
+            metadata["isGoodEnough"] = this.isGoodEnough.toString()
+            this.reason?.let { metadata["reason"] = it }
+        }
+        is SearchFlowEvent.SynthesisComplete -> {
+            metadata["iterationNumber"] = this.iterationNumber.toString()
+            metadata["sourceCount"] = this.sourceCount.toString()
+            metadata["status"] = this.status
+            metadata["followUpQueries"] = this.followUpQueries.joinToString(", ")
+        }
+        is SearchFlowEvent.AnswerChunk -> {
+            metadata["chunk"] = this.chunk
+        }
+        is SearchFlowEvent.FollowUpQueryGenerated -> {
+            metadata["followUpQueries"] = this.followUpQueries.joinToString(", ")
+            this.whatsMissing?.let { metadata["whatsMissing"] = it }
+            metadata["iterationNumber"] = this.iterationNumber.toString()
+        }
+        // Events with no additional data
+        is SearchFlowEvent.SessionCompleted,
+        is SearchFlowEvent.SessionTimeout,
+        is SearchFlowEvent.QueryProcessingStarted,
+        is SearchFlowEvent.QueryProcessingComplete,
+        is SearchFlowEvent.DiscoveryStarted,
+        is SearchFlowEvent.DiscoveryHybridComplete,
+        is SearchFlowEvent.DiscoveryKgComplete,
+        is SearchFlowEvent.DiscoveryFileSearchComplete,
+        is SearchFlowEvent.SynthesisStarted -> { /* No additional metadata */ }
     }
     
     return SearchFlowEventDto(
@@ -139,7 +218,7 @@ fun SearchFlowEvent.toDto(): SearchFlowEventDto {
         query = query,
         title = title,
         description = description,
-        metadata = stringMetadata
+        metadata = metadata
     )
 }
 

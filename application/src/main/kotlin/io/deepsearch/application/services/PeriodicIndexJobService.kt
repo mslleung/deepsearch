@@ -26,7 +26,11 @@ interface IPeriodicIndexJobService {
     data class FailedUrlInfo(
         val url: String,
         val errorMessage: String,
-        val failedAtMs: Long
+        val failedAtMs: Long,
+        /** Error category for user-friendly display */
+        val errorCategory: String? = null,
+        /** Whether this error indicates site-wide blocking */
+        val isSiteWideBlocking: Boolean = false
     )
 
     @Serializable
@@ -44,7 +48,9 @@ interface IPeriodicIndexJobService {
         // Enhanced URL tracking
         val processedUrls: List<ProcessedUrlInfo> = emptyList(),
         val processingUrls: List<String> = emptyList(),
-        val failedUrls: List<FailedUrlInfo> = emptyList()
+        val failedUrls: List<FailedUrlInfo> = emptyList(),
+        /** Reason for job abortion (only set when state is ABORTED) */
+        val abortReason: String? = null
     )
 
     suspend fun start(baseUrl: String, maxUrlCount: Int, sitemapUrl: String? = null, languagePattern: String? = null, ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT, userId: UserId): PeriodicIndexJob

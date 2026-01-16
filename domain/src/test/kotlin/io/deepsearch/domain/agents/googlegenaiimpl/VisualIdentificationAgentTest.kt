@@ -263,4 +263,48 @@ class VisualIdentificationAgentTest : KoinTest {
             assert(result.tokenUsage.totalTokens > 0) { "Should have token usage" }
         }
     }
+
+    /**
+     * Test that the closest match algorithm correctly identifies header elements
+     * on pages with sidebars where the header doesn't span the full width.
+     * 
+     * Rust Docs scenario: The LLM identifies a full-width header strip, but the actual
+     * #menu-bar element only covers the right portion (after the sidebar). The closest
+     * match algorithm should prefer #menu-bar over larger containers like #body-container.
+     */
+    @Test
+    fun `header mapping prefers closest match over larger containers - Rust Docs scenario`() = runTest(testCoroutineDispatcher) {
+        browserPool.withPage { page ->
+            // Rust docs has a sidebar layout where header doesn't span full width
+            page.navigate("https://doc.rust-lang.org/book/")
+            page.waitForLoad()
+
+            val pageSnapshot = page.capturePageSnapshot()
+            val screenshot = page.takeFullPageScreenshot()
+
+            val result = visualAgent.generate(
+                VisualIdentificationInput(pageSnapshot, screenshot)
+            )
+
+            println("Rust Docs visual identification:")
+            println("  Header: ${result.semanticElements.header?.dataId} - ${result.semanticElements.header?.cssSelector}")
+            println("  NavSidebar: ${result.semanticElements.navSidebar?.dataId} - ${result.semanticElements.navSidebar?.cssSelector}")
+
+            // The header should NOT be mapped to body-container or other large containers
+            // It should be mapped to a more specific header element
+            val headerDataId = result.semanticElements.header?.dataId
+            val headerCssSelector = result.semanticElements.header?.cssSelector ?: ""
+            
+            if (headerDataId != null) {
+                // Verify header is not mapped to overly generic containers
+                assert(!headerCssSelector.contains("body-container")) {
+                    "Header should not be mapped to #body-container, got: $headerCssSelector"
+                }
+                assert(!headerCssSelector.contains("#content")) {
+                    "Header should not be mapped to #content container, got: $headerCssSelector"
+                }
+                println("  ✓ Header correctly mapped to specific element: $headerCssSelector")
+            }
+        }
+    }
 }

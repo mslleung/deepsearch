@@ -2,6 +2,8 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
+import io.deepsearch.domain.exceptions.BotBlockingException
+import io.deepsearch.domain.exceptions.ErrorCategory
 import io.deepsearch.domain.exceptions.UrlProcessingException
 import io.deepsearch.domain.models.entities.PeriodicIndexJob
 import io.deepsearch.domain.models.entities.PeriodicIndexJobState
@@ -20,6 +22,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
+
+/**
+ * Exception thrown when a job should be aborted due to site-wide blocking.
+ */
+class SiteWideBlockingAbortException(
+    val reason: String,
+    val consecutiveBlockingCount: Int
+) : Exception("Job aborted: $reason (after $consecutiveBlockingCount consecutive blocking errors)")
 
 interface IPeriodicIndexJobRegistry {
     fun events(jobId: Long): SharedFlow<IPeriodicIndexJobService.PeriodicIndexEvent>
@@ -148,6 +158,26 @@ class PeriodicIndexJobRegistry(
                     message = "Done"
                 )
             )
+        } catch (abortException: SiteWideBlockingAbortException) {
+            // Site-wide blocking detected - abort the job (different from user-initiated stop)
+            logger.warn("Periodic index aborted for {} due to site-wide blocking: {}", 
+                job.baseUrl, abortException.reason)
+            job.markAborted(abortException.reason)
+            periodicIndexJobRepository.update(job)
+            flow.emit(
+                IPeriodicIndexJobService.PeriodicIndexEvent(
+                    jobId = jobId,
+                    baseUrl = job.baseUrl,
+                    url = null,
+                    processedCount = job.processedCount,
+                    maxUrlCount = job.maxUrlCount,
+                    cachedHit = null,
+                    totalQueued = 0,
+                    state = job.state,
+                    message = "Aborted: ${abortException.reason}",
+                    abortReason = abortException.reason
+                )
+            )
         } catch (t: Throwable) {
             logger.warn("Periodic index failed for {}: {}", job.baseUrl, t.message)
             job.markStopped()
@@ -172,11 +202,21 @@ class PeriodicIndexJobRegistry(
 
     /**
      * Tracks URL processing state for SSE events.
+     * Also tracks consecutive blocking errors for early job abortion.
      */
     private class UrlTracker {
         private val processedUrls = java.util.concurrent.ConcurrentLinkedDeque<IPeriodicIndexJobService.ProcessedUrlInfo>()
         private val processingUrls = ConcurrentHashMap.newKeySet<String>()
         private val failedUrls = java.util.concurrent.ConcurrentLinkedDeque<IPeriodicIndexJobService.FailedUrlInfo>()
+        
+        // Blocking detection tracking
+        private val consecutiveBlockingErrors = AtomicInteger(0)
+        private var lastBlockingReason: String? = null
+        
+        companion object {
+            /** Number of consecutive blocking errors before aborting the job */
+            const val BLOCKING_ABORT_THRESHOLD = 3
+        }
 
         fun startProcessing(url: String) {
             processingUrls.add(url)
@@ -184,6 +224,8 @@ class PeriodicIndexJobRegistry(
 
         fun finishProcessing(url: String, title: String?, cachedHit: Boolean) {
             processingUrls.remove(url)
+            // Reset consecutive blocking count on success
+            consecutiveBlockingErrors.set(0)
             processedUrls.addFirst(IPeriodicIndexJobService.ProcessedUrlInfo(
                 url = url,
                 title = title,
@@ -196,18 +238,48 @@ class PeriodicIndexJobRegistry(
             }
         }
 
-        fun failProcessing(url: String, errorMessage: String) {
+        fun failProcessing(url: String, errorMessage: String, errorCategory: String? = null, isSiteWideBlocking: Boolean = false) {
             processingUrls.remove(url)
+            
+            // Track consecutive blocking errors
+            if (isSiteWideBlocking) {
+                val count = consecutiveBlockingErrors.incrementAndGet()
+                lastBlockingReason = errorMessage
+                // Note: We don't throw here because we're in a concurrent context
+                // The caller should check shouldAbort() after calling this
+            } else {
+                // Non-blocking errors reset the counter
+                consecutiveBlockingErrors.set(0)
+            }
+            
             failedUrls.addFirst(IPeriodicIndexJobService.FailedUrlInfo(
                 url = url,
                 errorMessage = errorMessage,
-                failedAtMs = System.currentTimeMillis()
+                failedAtMs = System.currentTimeMillis(),
+                errorCategory = errorCategory,
+                isSiteWideBlocking = isSiteWideBlocking
             ))
             // Keep only last 50 failed URLs
             while (failedUrls.size > 50) {
                 failedUrls.removeLast()
             }
         }
+        
+        /**
+         * Check if the job should be aborted due to consecutive blocking errors.
+         * Returns an exception to throw if abortion is needed, null otherwise.
+         */
+        fun shouldAbort(): SiteWideBlockingAbortException? {
+            val count = consecutiveBlockingErrors.get()
+            return if (count >= BLOCKING_ABORT_THRESHOLD) {
+                SiteWideBlockingAbortException(
+                    reason = lastBlockingReason ?: "Site-wide blocking detected",
+                    consecutiveBlockingCount = count
+                )
+            } else null
+        }
+        
+        fun getConsecutiveBlockingCount(): Int = consecutiveBlockingErrors.get()
 
         fun getProcessedUrls(): List<IPeriodicIndexJobService.ProcessedUrlInfo> = processedUrls.toList()
         fun getProcessingUrls(): List<String> = processingUrls.toList()
@@ -523,7 +595,32 @@ class PeriodicIndexJobRegistry(
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: BotBlockingException) {
+            // Site-wide blocking detected - track for potential job abortion
+            logger.warn("[{}] Bot blocking detected for URL {}: {} ({})", 
+                jobId, normalizedUrl, e.errorCode, e.detectionMethod)
+            val failedAccess = FailedUrlAccess(
+                url = normalizedUrl,
+                timestamp = Clock.System.now(),
+                exceptionType = e::class.simpleName!!,
+                message = e.message ?: "Bot blocking detected"
+            )
+            urlAccessService.recordUrlAccess(sessionId, failedAccess)
+            urlTracker.failProcessing(
+                url = normalizedUrl, 
+                errorMessage = e.message ?: "Bot blocking detected",
+                errorCategory = ErrorCategory.ACCESS_BLOCKED.name,
+                isSiteWideBlocking = true  // This will trigger abort detection
+            )
+            
+            // Check if we should abort the entire job
+            urlTracker.shouldAbort()?.let { abortException ->
+                logger.error("[{}] Aborting job due to {} consecutive blocking errors: {}", 
+                    jobId, abortException.consecutiveBlockingCount, abortException.reason)
+                throw abortException
+            }
         } catch (e: UrlProcessingException) {
+            // Regular URL processing error - does not indicate site-wide blocking
             logger.warn("[{}] Failed to process URL {}: {}", jobId, normalizedUrl, e.message)
             val failedAccess = FailedUrlAccess(
                 url = normalizedUrl,
@@ -532,10 +629,40 @@ class PeriodicIndexJobRegistry(
                 message = e.message ?: "Unknown error"
             )
             urlAccessService.recordUrlAccess(sessionId, failedAccess)
-            urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+            
+            // Determine error category from exception type
+            val errorCategory = when (e) {
+                is io.deepsearch.domain.exceptions.HttpClientErrorException -> when (e.statusCode) {
+                    404, 410 -> ErrorCategory.NOT_FOUND.name
+                    401, 403 -> ErrorCategory.ACCESS_RESTRICTED.name
+                    429 -> ErrorCategory.RATE_LIMITED.name  // AIMD handles this via retry, but categorize for display
+                    else -> ErrorCategory.ACCESS_RESTRICTED.name
+                }
+                is io.deepsearch.domain.exceptions.HttpServerErrorException -> ErrorCategory.WEBSITE_UNAVAILABLE.name
+                is io.deepsearch.domain.exceptions.NetworkTimeoutException -> ErrorCategory.CONNECTION_FAILED.name
+                is io.deepsearch.domain.exceptions.ConnectionRefusedException -> ErrorCategory.CONNECTION_FAILED.name
+                is io.deepsearch.domain.exceptions.DnsResolutionException -> ErrorCategory.CONNECTION_FAILED.name
+                is io.deepsearch.domain.exceptions.SslHandshakeException -> ErrorCategory.CONNECTION_FAILED.name
+                is io.deepsearch.domain.exceptions.UnsupportedContentTypeException -> ErrorCategory.CONTENT_UNSUPPORTED.name
+                is io.deepsearch.domain.exceptions.ContentTooLargeException -> ErrorCategory.CONTENT_UNSUPPORTED.name
+                is io.deepsearch.domain.exceptions.FileTooLargeException -> ErrorCategory.CONTENT_UNSUPPORTED.name
+                is io.deepsearch.domain.exceptions.RateLimitExceededException -> ErrorCategory.RATE_LIMITED.name
+                else -> ErrorCategory.PROCESSING_ERROR.name
+            }
+            urlTracker.failProcessing(
+                url = normalizedUrl, 
+                errorMessage = e.message ?: "Unknown error",
+                errorCategory = errorCategory,
+                isSiteWideBlocking = false  // Individual URL failures don't trigger abort
+            )
         } catch (e: Exception) {
             logger.error("[{}] Unexpected error processing URL {}: {}", jobId, normalizedUrl, e.message, e)
-            urlTracker.failProcessing(normalizedUrl, e.message ?: "Unknown error")
+            urlTracker.failProcessing(
+                url = normalizedUrl, 
+                errorMessage = e.message ?: "Unknown error",
+                errorCategory = ErrorCategory.UNKNOWN.name,
+                isSiteWideBlocking = false
+            )
         }
         
         return result

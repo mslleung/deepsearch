@@ -121,7 +121,7 @@ class GoogleSearchOrchestrator(
 
         } catch (e: Exception) {
             logger.error("[{}] Error in Google search: {}", sessionId.value, e.message, e)
-            querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
+            querySessionService.completeSessionWithError(sessionId, e.message ?: "Unknown error")
             emit(
                 SearchEvent.SessionError(
                     sessionId = sessionId,

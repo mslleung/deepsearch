@@ -133,12 +133,24 @@ sealed class SearchEventDto {
         override val timestampMs: Long
     ) : SearchEventDto()
 
+    /**
+     * Session error event with structured error information.
+     * 
+     * @param errorType Technical error code (e.g., CLOUDFLARE_BLOCKED, HTTP_404)
+     * @param errorMessage Human-readable error message
+     * @param errorCategory User-friendly category (e.g., ACCESS_BLOCKED, CONNECTION_FAILED)
+     * @param affectedUrl The URL that caused the error
+     * @param technicalDetails Additional details for debugging
+     */
     @Serializable
     @SerialName("session_error")
     data class SessionErrorDto(
         override val sessionId: String,
         val errorType: String,
         val errorMessage: String,
+        val errorCategory: String? = null,
+        val affectedUrl: String? = null,
+        val technicalDetails: String? = null,
         override val timestampMs: Long
     ) : SearchEventDto()
 }
@@ -290,6 +302,9 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
             sessionId = sessionId.value,
             errorType = errorType,
             errorMessage = errorMessage,
+            errorCategory = errorCategory,
+            affectedUrl = affectedUrl,
+            technicalDetails = technicalDetails,
             timestampMs = timestampMs
         )
     }

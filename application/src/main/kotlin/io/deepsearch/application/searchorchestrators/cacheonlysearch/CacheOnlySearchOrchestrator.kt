@@ -284,7 +284,7 @@ class CacheOnlySearchOrchestrator(
 
         } catch (e: Exception) {
             logger.error("[{}] Error in cache-only search: {}", sessionId.value, e.message, e)
-            querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
+            querySessionService.completeSessionWithError(sessionId, e.message ?: "Unknown error")
             emit(
                 SearchEvent.SessionError(
                     sessionId = sessionId,

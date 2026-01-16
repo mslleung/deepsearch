@@ -4,7 +4,7 @@ import io.deepsearch.application.services.ICostCalculationService
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.ISearchFlowEventService
 import io.deepsearch.application.services.IUrlAccessService
-import io.deepsearch.domain.models.entities.SearchFlowEventType
+import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.presentation.admin.dto.toAdminDetailDto
 import io.deepsearch.presentation.dto.SearchFlowTimelineDto
@@ -60,24 +60,20 @@ class AdminQuerySessionController(
         val eventCountsByType = events.groupBy { it.eventType }.mapValues { it.value.size }
             .mapKeys { it.key.name }
         
-        // Extract follow-up queries from FOLLOW_UP_QUERY_GENERATED events
+        // Extract follow-up queries from FOLLOW_UP_QUERY_GENERATED events (type-safe)
         val followUpQueries = events
-            .filter { it.eventType == SearchFlowEventType.FOLLOW_UP_QUERY_GENERATED }
-            .flatMap { event ->
-                @Suppress("UNCHECKED_CAST")
-                (event.metadata["followUpQueries"] as? List<String>) ?: emptyList()
-            }
+            .filterIsInstance<SearchFlowEvent.FollowUpQueryGenerated>()
+            .flatMap { it.followUpQueries }
             .distinct()
 
-        // Count URL processing events
+        // Count URL processing events (type-safe)
         val urlsProcessed = events.count { 
-            it.eventType == SearchFlowEventType.URL_MARKDOWN_COMPLETE ||
-            it.eventType == SearchFlowEventType.URL_PROCESSING_FAILED
+            it is SearchFlowEvent.UrlMarkdownComplete || it is SearchFlowEvent.UrlProcessingFailed
         }
 
-        // Count synthesis iterations
+        // Count synthesis iterations (type-safe)
         val synthesisIterations = events.count { 
-            it.eventType == SearchFlowEventType.SYNTHESIS_COMPLETE 
+            it is SearchFlowEvent.SynthesisComplete 
         }
 
         val summary = TimelineSummaryDto(

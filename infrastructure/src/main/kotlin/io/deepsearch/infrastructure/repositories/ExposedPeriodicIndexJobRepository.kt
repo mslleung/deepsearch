@@ -55,6 +55,7 @@ class ExposedPeriodicIndexJobRepository(
             it[state] = job.state.name
             it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
             it[version] = job.version + 1
+            it[abortReason] = job.abortReason
         }
         
         if (affectedRows == 0) {
@@ -186,7 +187,8 @@ class ExposedPeriodicIndexJobRepository(
         state = PeriodicIndexJobState.valueOf(row[periodicIndexJobTable.state]),
         version = row[periodicIndexJobTable.version],
         languagePattern = row[periodicIndexJobTable.languagePattern],
-        ocrLanguage = OcrLanguage.fromCodeOrDefault(row[periodicIndexJobTable.ocrLanguage])
+        ocrLanguage = OcrLanguage.fromCodeOrDefault(row[periodicIndexJobTable.ocrLanguage]),
+        abortReason = row[periodicIndexJobTable.abortReason]
     )
 }
 

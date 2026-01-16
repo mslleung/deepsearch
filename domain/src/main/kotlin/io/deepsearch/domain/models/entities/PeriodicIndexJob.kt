@@ -35,7 +35,13 @@ class PeriodicIndexJob(
      * OCR language for Tesseract text extraction from images.
      * Defaults to English.
      */
-    val ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
+    val ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
+    /**
+     * Reason for job abortion (only set when state is ABORTED).
+     * This is different from STOPPED (user-initiated) - ABORTED means the crawler
+     * detected that the site is blocking it and continuing would be futile.
+     */
+    var abortReason: String? = null
 ) {
 
     fun incrementProcessed() {
@@ -61,11 +67,26 @@ class PeriodicIndexJob(
         state = PeriodicIndexJobState.COMPLETED
         updatedAt = Clock.System.now()
     }
+
+    /**
+     * Mark job as aborted due to site-wide blocking detection.
+     * 
+     * @param reason The reason for abortion (e.g., "Cloudflare protection detected")
+     */
+    fun markAborted(reason: String) {
+        if (state == PeriodicIndexJobState.IN_PROGRESS) {
+            state = PeriodicIndexJobState.ABORTED
+            abortReason = reason
+            updatedAt = Clock.System.now()
+        }
+    }
 }
 
 enum class PeriodicIndexJobState {
     IN_PROGRESS,
     COMPLETED,
-    STOPPED
+    STOPPED,
+    /** Job was aborted due to site-wide blocking detection (Cloudflare, CAPTCHA, etc.) */
+    ABORTED
 }
 

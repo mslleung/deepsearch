@@ -135,11 +135,11 @@ class SearchTimelineTest {
                 // Assertions
                 assertTrue(events.isNotEmpty(), "Should have captured timeline events")
                 assertTrue(
-                    events.any { it.eventType == SearchFlowEventType.SESSION_STARTED },
+                    events.any { it is SearchFlowEvent.SessionStarted },
                     "Should have SESSION_STARTED event"
                 )
                 assertTrue(
-                    events.any { it.eventType == SearchFlowEventType.SESSION_COMPLETED || it.eventType == SearchFlowEventType.SESSION_ERROR },
+                    events.any { it is SearchFlowEvent.SessionCompleted || it is SearchFlowEvent.SessionError },
                     "Should have SESSION_COMPLETED or SESSION_ERROR event"
                 )
 
@@ -182,14 +182,14 @@ class SearchTimelineTest {
 
         sortedEvents.forEachIndexed { index, event ->
             val relativeTime = event.timestampMs - baseTimestamp
-            val durationStr = event.durationMs?.let { " (duration: ${it}ms)" } ?: ""
+            val durationStr = extractDurationMs(event)?.let { " (duration: ${it}ms)" } ?: ""
             
             println("\n[${index + 1}] +${relativeTime}ms - ${event.eventType.name}$durationStr")
             
-            event.url?.let { println("    URL: $it") }
-            event.query?.let { println("    Query: $it") }
-            event.title?.let { println("    Title: $it") }
-            event.description?.let { desc -> 
+            extractUrl(event)?.let { println("    URL: $it") }
+            extractQuery(event)?.let { println("    Query: $it") }
+            extractTitle(event)?.let { println("    Title: $it") }
+            extractDescription(event)?.let { desc -> 
                 if (desc.length > 100) {
                     println("    Description: ${desc.take(100)}...")
                 } else {
@@ -197,9 +197,10 @@ class SearchTimelineTest {
                 }
             }
             
-            if (event.metadata.isNotEmpty()) {
+            val metadata = extractMetadata(event)
+            if (metadata.isNotEmpty()) {
                 println("    Metadata:")
-                event.metadata.forEach { (key, value) ->
+                metadata.forEach { (key, value) ->
                     val valueStr = when (value) {
                         is List<*> -> value.take(3).joinToString(", ") + if (value.size > 3) "..." else ""
                         is String -> if (value.length > 80) value.take(80) + "..." else value
@@ -216,11 +217,11 @@ class SearchTimelineTest {
         println("${"─".repeat(80)}")
         
         val urlEvents = events.filter { it.eventType.name.startsWith("URL_") }
-        val uniqueUrls = urlEvents.mapNotNull { it.url }.distinct()
+        val uniqueUrls = urlEvents.mapNotNull { extractUrl(it) }.distinct()
         println("URLs processed: ${uniqueUrls.size}")
         
         uniqueUrls.forEach { url ->
-            val urlSpecificEvents = urlEvents.filter { it.url == url }
+            val urlSpecificEvents = urlEvents.filter { extractUrl(it) == url }
             val eventTypes = urlSpecificEvents.map { it.eventType.name.removePrefix("URL_") }
             println("  $url")
             println("    Events: ${eventTypes.joinToString(" → ")}")
@@ -232,27 +233,24 @@ class SearchTimelineTest {
         println("${"─".repeat(80)}")
         
         val synthesisEvents = events.filter { 
-            it.eventType == SearchFlowEventType.SYNTHESIS_STARTED || 
-            it.eventType == SearchFlowEventType.SYNTHESIS_COMPLETE 
+            it is SearchFlowEvent.SynthesisStarted || it is SearchFlowEvent.SynthesisComplete 
         }
-        println("Synthesis iterations: ${synthesisEvents.count { it.eventType == SearchFlowEventType.SYNTHESIS_COMPLETE }}")
+        println("Synthesis iterations: ${synthesisEvents.count { it is SearchFlowEvent.SynthesisComplete }}")
         
         synthesisEvents.forEach { event ->
             val relativeTime = event.timestampMs - baseTimestamp
             println("  +${relativeTime}ms - ${event.eventType.name}")
-            event.durationMs?.let { println("    Duration: ${it}ms") }
+            extractDurationMs(event)?.let { println("    Duration: ${it}ms") }
         }
 
         // Print follow-up queries if any
-        val followUpEvents = events.filter { it.eventType == SearchFlowEventType.FOLLOW_UP_QUERY_GENERATED }
+        val followUpEvents = events.filterIsInstance<SearchFlowEvent.FollowUpQueryGenerated>()
         if (followUpEvents.isNotEmpty()) {
             println("\n${"─".repeat(80)}")
             println("FOLLOW-UP QUERIES")
             println("${"─".repeat(80)}")
             followUpEvents.forEach { event ->
-                @Suppress("UNCHECKED_CAST")
-                val queries = event.metadata["followUpQueries"] as? List<String> ?: emptyList()
-                queries.forEach { query ->
+                event.followUpQueries.forEach { query ->
                     println("  - $query")
                 }
             }
@@ -261,5 +259,81 @@ class SearchTimelineTest {
         println("\n${"=".repeat(80)}")
         println("END OF TIMELINE ANALYSIS")
         println("${"=".repeat(80)}\n")
+    }
+
+    // Helper functions to extract data from sealed class instances
+    
+    private fun extractUrl(event: SearchFlowEvent): String? = when (event) {
+        is SearchFlowEvent.SessionStarted -> event.url
+        is SearchFlowEvent.UrlProcessingStarted -> event.url
+        is SearchFlowEvent.UrlHtmlPreviewReady -> event.url
+        is SearchFlowEvent.UrlLinkDiscoveryComplete -> event.url
+        is SearchFlowEvent.UrlMarkdownComplete -> event.url
+        is SearchFlowEvent.UrlProcessingFailed -> event.url
+        is SearchFlowEvent.SessionError -> event.affectedUrl
+        else -> null
+    }
+
+    private fun extractQuery(event: SearchFlowEvent): String? = when (event) {
+        is SearchFlowEvent.SessionStarted -> event.query
+        is SearchFlowEvent.DiscoverySerpComplete -> event.query
+        else -> null
+    }
+
+    private fun extractTitle(event: SearchFlowEvent): String? = when (event) {
+        is SearchFlowEvent.UrlHtmlPreviewReady -> event.title
+        is SearchFlowEvent.UrlMarkdownComplete -> event.title
+        else -> null
+    }
+
+    private fun extractDescription(event: SearchFlowEvent): String? = when (event) {
+        is SearchFlowEvent.UrlHtmlPreviewReady -> event.description
+        is SearchFlowEvent.UrlMarkdownComplete -> event.description
+        else -> null
+    }
+
+    private fun extractDurationMs(event: SearchFlowEvent): Long? = when (event) {
+        is SearchFlowEvent.DiscoverySerpComplete -> event.durationMs
+        else -> null
+    }
+
+    private fun extractMetadata(event: SearchFlowEvent): Map<String, Any> = when (event) {
+        is SearchFlowEvent.SessionStarted -> mapOf("mode" to event.mode)
+        is SearchFlowEvent.SessionError -> buildMap {
+            put("errorType", event.errorType)
+            put("errorMessage", event.errorMessage)
+            event.errorCategory?.let { put("errorCategory", it) }
+            event.technicalDetails?.let { put("technicalDetails", it) }
+        }
+        is SearchFlowEvent.DiscoverySerpComplete -> mapOf("linksFound" to event.linksFound)
+        is SearchFlowEvent.UrlHtmlPreviewReady -> buildMap {
+            put("accessType", event.accessType)
+            event.markdownLength?.let { put("markdownLength", it) }
+        }
+        is SearchFlowEvent.UrlMarkdownComplete -> mapOf(
+            "markdownLength" to event.markdownLength,
+            "accessType" to event.accessType,
+            "wasCached" to event.wasCached
+        )
+        is SearchFlowEvent.UrlProcessingFailed -> mapOf("errorMessage" to event.errorMessage)
+        is SearchFlowEvent.SourcesEvaluated -> buildMap {
+            put("processedUrlCount", event.processedUrlCount)
+            put("relevantCount", event.relevantCount)
+            put("isGoodEnough", event.isGoodEnough)
+            event.reason?.let { put("reason", it) }
+        }
+        is SearchFlowEvent.SynthesisComplete -> mapOf(
+            "iterationNumber" to event.iterationNumber,
+            "sourceCount" to event.sourceCount,
+            "status" to event.status,
+            "followUpQueries" to event.followUpQueries
+        )
+        is SearchFlowEvent.AnswerChunk -> mapOf("chunk" to event.chunk)
+        is SearchFlowEvent.FollowUpQueryGenerated -> buildMap {
+            put("followUpQueries", event.followUpQueries)
+            event.whatsMissing?.let { put("whatsMissing", it) }
+            put("iterationNumber", event.iterationNumber)
+        }
+        else -> emptyMap()
     }
 }

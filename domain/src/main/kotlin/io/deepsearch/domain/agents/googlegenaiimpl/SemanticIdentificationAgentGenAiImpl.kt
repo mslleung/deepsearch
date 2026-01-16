@@ -232,6 +232,19 @@ class SemanticIdentificationAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
+        // ========== Scale image for Gemini API if needed ==========
+        // Very tall full-page screenshots can cause "Unable to process input image" errors
+        val scaledResult = withContext(dispatcherProvider.io) {
+            imageDimensionService.scaleImageForGemini(screenshot.bytes, maxDimension = 4096)
+        }
+        
+        if (scaledResult.wasScaled) {
+            logger.info(
+                "Scaled screenshot from {}x{} to fit within 4096px (scale factor: {:.3f})",
+                scaledResult.originalWidth, scaledResult.originalHeight, scaledResult.scaleFactor
+            )
+        }
+
         // ========== Vision-based detection ==========
         val visionResponse = withContext(dispatcherProvider.io) {
             retryLlmCall<VisionSemanticResponse>(this@SemanticIdentificationAgentGenAiImpl::class.simpleName!! + "_vision") {
@@ -239,7 +252,8 @@ class SemanticIdentificationAgentGenAiImpl(
                     modelId,
                     listOf(
                         Content.fromParts(
-                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
+                            // Use scaled image for Gemini API
+                            Part.fromBytes(scaledResult.scaledBytes, scaledResult.scaledMimeType),
                             Part.fromText("Analyze this screenshot")
                         )
                     ),
@@ -272,7 +286,14 @@ class SemanticIdentificationAgentGenAiImpl(
         }
 
         // ========== Map vision bounding boxes to DOM elements ==========
-        var response = mapVisionToDomElements(visionResponse, boundingBoxes, htmlWithIds, screenshot.bytes)
+        // Use original dimensions for coordinate mapping (Gemini uses normalized [0, 1000] coords)
+        var response = mapVisionToDomElements(
+            visionResponse, 
+            boundingBoxes, 
+            htmlWithIds, 
+            scaledResult.originalWidth.toDouble(),
+            scaledResult.originalHeight.toDouble()
+        )
 
         // ========== Programmatic fallback for semantic HTML elements ==========
         val doc = Jsoup.parse(htmlWithIds)
@@ -390,12 +411,16 @@ class SemanticIdentificationAgentGenAiImpl(
     /**
      * Map vision-detected bounding boxes to DOM elements using IoU matching.
      * Uses actual screenshot dimensions for accurate coordinate mapping.
+     * 
+     * @param pageWidth Original screenshot width (before any Gemini scaling)
+     * @param pageHeight Original screenshot height (before any Gemini scaling)
      */
     private fun mapVisionToDomElements(
         visionResponse: VisionSemanticResponse,
         pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
         htmlWithIds: String,
-        screenshotBytes: ByteArray? = null
+        pageWidth: Double,
+        pageHeight: Double
     ): SemanticIdentificationResponse {
         if (pageBoundingBoxes.isEmpty()) {
             logger.warn("No bounding boxes available for vision-to-DOM mapping")
@@ -403,16 +428,6 @@ class SemanticIdentificationAgentGenAiImpl(
         }
 
         val doc = Jsoup.parse(htmlWithIds)
-
-        // Get actual screenshot dimensions (required for vision-based mapping)
-        val (screenshotWidth, screenshotHeight) = if (screenshotBytes != null) {
-            imageDimensionService.getImageDimensions(screenshotBytes)
-        } else {
-            throw IllegalStateException("Screenshot is required for semantic identification mapping")
-        }
-
-        val pageWidth = screenshotWidth.toDouble()
-        val pageHeight = screenshotHeight.toDouble()
 
         logger.debug("Semantic mapping dimensions: {}x{}", pageWidth.toInt(), pageHeight.toInt())
 

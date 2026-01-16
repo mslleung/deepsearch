@@ -7,7 +7,6 @@ import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.domain.models.entities.SearchFlowEvent
-import io.deepsearch.domain.models.entities.SearchFlowEventType
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.exceptions.MarkdownConversionException
@@ -58,6 +57,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.FeedbackLoopReport
 import io.deepsearch.application.services.IQueryProcessingService
+import io.deepsearch.domain.exceptions.UrlProcessingException
 import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import kotlinx.coroutines.FlowPreview
 import java.util.concurrent.ConcurrentHashMap
@@ -447,9 +447,18 @@ class AgenticBrowserSearchOrchestrator(
                 .collect()
         } catch (e: CancellationException) {
             logger.debug("[{}] Flow cancelled", sessionId.value)
+        } catch (e: UrlProcessingException) {
+            // Use categorized error for URL processing failures
+            logger.error("[{}] URL processing error: {}", sessionId.value, e.message, e)
+            querySessionService.completeSessionWithError(sessionId, e.message ?: "Unknown error")
+            emitSessionErrorFromException(
+                sessionId = sessionId,
+                exception = e,
+                eventChannel = channel
+            )
         } catch (e: Exception) {
             logger.error("[{}] Error in execute: {}", sessionId.value, e.message, e)
-            querySessionService.hardTimeout(sessionId, e.message ?: "Unknown error")
+            querySessionService.completeSessionWithError(sessionId, e.message ?: "Unknown error")
             emitSessionError(
                 sessionId = sessionId,
                 errorType = e::class.simpleName ?: "Unknown",
@@ -1149,7 +1158,11 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ) {
         emitFlowEvent(
-            SearchFlowEvent.sessionStarted(sessionId, query, url),
+            SearchFlowEvent.SessionStarted(
+                sessionId = sessionId,
+                query = query,
+                url = url
+            ),
             eventChannel
         )
     }
@@ -1163,7 +1176,10 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ) {
         emitFlowEvent(
-            SearchFlowEvent.urlProcessingStarted(sessionId, url),
+            SearchFlowEvent.UrlProcessingStarted(
+                sessionId = sessionId,
+                url = url
+            ),
             eventChannel
         )
     }
@@ -1181,7 +1197,7 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ) {
         emitFlowEvent(
-            SearchFlowEvent.urlMarkdownComplete(
+            SearchFlowEvent.UrlMarkdownComplete(
                 sessionId = sessionId,
                 url = url,
                 title = title,
@@ -1204,11 +1220,10 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ) {
         emitFlowEvent(
-            SearchFlowEvent(
+            SearchFlowEvent.UrlProcessingFailed(
                 sessionId = sessionId,
-                eventType = SearchFlowEventType.URL_PROCESSING_FAILED,
                 url = url,
-                metadata = mapOf("errorMessage" to (errorMessage ?: "Unknown error"))
+                errorMessage = errorMessage ?: "Unknown error"
             ),
             eventChannel
         )
@@ -1226,15 +1241,12 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ) {
         emitFlowEvent(
-            SearchFlowEvent(
+            SearchFlowEvent.SourcesEvaluated(
                 sessionId = sessionId,
-                eventType = SearchFlowEventType.SOURCES_EVALUATED,
-                metadata = mapOf(
-                    "processedUrlCount" to processedUrlCount,
-                    "relevantCount" to relevantCount,
-                    "isGoodEnough" to isGoodEnough,
-                    "reason" to (reason ?: "")
-                )
+                processedUrlCount = processedUrlCount,
+                relevantCount = relevantCount,
+                isGoodEnough = isGoodEnough,
+                reason = reason
             ),
             eventChannel
         )
@@ -1252,7 +1264,7 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ) {
         emitFlowEvent(
-            SearchFlowEvent.synthesisComplete(
+            SearchFlowEvent.SynthesisComplete(
                 sessionId = sessionId,
                 iterationNumber = iterationNumber,
                 sourceCount = sourceCount,
@@ -1274,14 +1286,11 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ) {
         emitFlowEvent(
-            SearchFlowEvent(
+            SearchFlowEvent.FollowUpQueryGenerated(
                 sessionId = sessionId,
-                eventType = SearchFlowEventType.FOLLOW_UP_QUERY_GENERATED,
-                metadata = mapOf(
-                    "followUpQueries" to followUpQueries,
-                    "whatsMissing" to (whatsMissing ?: ""),
-                    "iterationNumber" to iterationNumber
-                )
+                followUpQueries = followUpQueries,
+                whatsMissing = whatsMissing,
+                iterationNumber = iterationNumber
             ),
             eventChannel
         )
@@ -1296,34 +1305,56 @@ class AgenticBrowserSearchOrchestrator(
         eventChannel: SendChannel<SearchEvent>
     ) {
         emitFlowEvent(
-            SearchFlowEvent(
+            SearchFlowEvent.AnswerChunk(
                 sessionId = sessionId,
-                eventType = SearchFlowEventType.ANSWER_CHUNK,
-                metadata = mapOf("chunk" to chunk)
+                chunk = chunk
             ),
             eventChannel
         )
     }
 
     /**
-     * Emit SESSION_ERROR event.
+     * Emit SESSION_ERROR event with optional categorization.
      */
     private suspend fun emitSessionError(
         sessionId: QuerySessionId,
         errorType: String,
         errorMessage: String,
-        eventChannel: SendChannel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>,
+        errorCategory: String? = null,
+        affectedUrl: String? = null,
+        technicalDetails: String? = null
     ) {
         emitFlowEvent(
-            SearchFlowEvent(
+            SearchFlowEvent.SessionError(
                 sessionId = sessionId,
-                eventType = SearchFlowEventType.SESSION_ERROR,
-                metadata = mapOf(
-                    "errorType" to errorType,
-                    "errorMessage" to errorMessage
-                )
+                errorType = errorType,
+                errorMessage = errorMessage,
+                errorCategory = errorCategory,
+                affectedUrl = affectedUrl,
+                technicalDetails = technicalDetails
             ),
             eventChannel
+        )
+    }
+
+    /**
+     * Emit SESSION_ERROR event from a categorized UrlProcessingException.
+     */
+    private suspend fun emitSessionErrorFromException(
+        sessionId: QuerySessionId,
+        exception: io.deepsearch.domain.exceptions.UrlProcessingException,
+        eventChannel: SendChannel<SearchEvent>
+    ) {
+        val categorized = io.deepsearch.domain.exceptions.CategorizedError.from(exception)
+        emitSessionError(
+            sessionId = sessionId,
+            errorType = categorized.errorCode,
+            errorMessage = categorized.userMessage,
+            eventChannel = eventChannel,
+            errorCategory = categorized.category.name,
+            affectedUrl = categorized.url,
+            technicalDetails = categorized.technicalDetails
         )
     }
 
@@ -1338,7 +1369,12 @@ class AgenticBrowserSearchOrchestrator(
     ) {
         // This event is for timeline only - no channel needed
         searchFlowEventService.emit(
-            SearchFlowEvent.discoverySerperComplete(sessionId, query, linksFound, durationMs)
+            SearchFlowEvent.DiscoverySerpComplete(
+                sessionId = sessionId,
+                query = query,
+                linksFound = linksFound,
+                durationMs = durationMs
+            )
         )
     }
 

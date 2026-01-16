@@ -144,11 +144,21 @@ sealed class SearchEvent {
     /**
      * Emitted when an error occurs during search execution.
      * Note: For pre-session errors, use QuerySessionId.empty()
+     * 
+     * @param sessionId The query session ID
+     * @param errorType The technical error code (e.g., CLOUDFLARE_BLOCKED, HTTP_404)
+     * @param errorMessage Human-readable error message
+     * @param errorCategory User-friendly error category (e.g., ACCESS_BLOCKED, NOT_FOUND)
+     * @param affectedUrl The URL that caused the error, if applicable
+     * @param technicalDetails Additional technical details for debugging
      */
     data class SessionError(
         override val sessionId: QuerySessionId,
         val errorType: String,
         val errorMessage: String,
+        val errorCategory: String? = null,
+        val affectedUrl: String? = null,
+        val technicalDetails: String? = null,
         override val timestampMs: Long = System.currentTimeMillis()
     ) : SearchEvent()
 }

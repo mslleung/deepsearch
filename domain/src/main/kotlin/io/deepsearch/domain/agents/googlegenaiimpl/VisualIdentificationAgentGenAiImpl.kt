@@ -304,6 +304,21 @@ class VisualIdentificationAgentGenAiImpl(
         val htmlWithIds = injectStableIdentifiers(originalHtml)
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
 
+        // ========== Scale image for Gemini API if needed ==========
+        // Very tall full-page screenshots (e.g., Wikipedia at 20,000+ px) can cause
+        // "Unable to process input image" errors. We scale down for Gemini while
+        // keeping the original for accurate element cropping.
+        val scaledResult = withContext(dispatcherProvider.io) {
+            imageDimensionService.scaleImageForGemini(screenshot.bytes, maxDimension = 4096)
+        }
+        
+        if (scaledResult.wasScaled) {
+            logger.info(
+                "Scaled screenshot from {}x{} to fit within 4096px (scale factor: {:.3f})",
+                scaledResult.originalWidth, scaledResult.originalHeight, scaledResult.scaleFactor
+            )
+        }
+
         // ========== Parallel Detection ==========
         // 1. Vision detection for visible semantic elements and tables (single call)
         // 2. HTML detection for each hidden container (in parallel)
@@ -316,7 +331,8 @@ class VisualIdentificationAgentGenAiImpl(
                         modelId,
                         listOf(
                             Content.fromParts(
-                                Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
+                                // Use scaled image for Gemini API
+                                Part.fromBytes(scaledResult.scaledBytes, scaledResult.scaledMimeType),
                                 Part.fromText("Analyze this webpage screenshot for semantic elements and tables.")
                             )
                         ),
@@ -373,12 +389,12 @@ class VisualIdentificationAgentGenAiImpl(
 
         val tokenUsage = visionUsage + hiddenUsage
 
-        // Get screenshot dimensions for coordinate mapping
-        val (screenshotWidth, screenshotHeight) = imageDimensionService.getImageDimensions(screenshot.bytes)
-        val pageWidth = screenshotWidth.toDouble()
-        val pageHeight = screenshotHeight.toDouble()
+        // Use ORIGINAL screenshot dimensions for coordinate mapping
+        // The Gemini response uses normalized [0, 1000] coordinates, so we map to original dimensions
+        val pageWidth = scaledResult.originalWidth.toDouble()
+        val pageHeight = scaledResult.originalHeight.toDouble()
 
-        logger.debug("Visual identification dimensions: {}x{}", pageWidth.toInt(), pageHeight.toInt())
+        logger.debug("Visual identification dimensions: {}x{} (original)", pageWidth.toInt(), pageHeight.toInt())
 
         // ========== Map vision results to DOM elements ==========
         val doc = Jsoup.parse(htmlWithIds)
@@ -535,7 +551,36 @@ class VisualIdentificationAgentGenAiImpl(
         }.distinctBy { it.dataId }
     }
 
+    /**
+     * Dispatch to the appropriate mapping algorithm based on element type.
+     * - Semantic elements (header, footer, nav, etc.) use closest match algorithm
+     * - Tables use IoU/coverage algorithm optimized for containment
+     */
     private fun mapVisionToDomElement(
+        box2d: List<Int>,
+        label: String,
+        pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
+        pageWidth: Double,
+        pageHeight: Double,
+        doc: Document,
+        elementType: String
+    ): MappedElement? {
+        // Semantic elements use closest match (minimizes edge differences)
+        val semanticElementTypes = setOf("header", "footer", "navSidebar", "breadcrumb", "cookieBanner", "popups")
+        if (elementType in semanticElementTypes) {
+            return mapSemanticElementClosestMatch(box2d, label, pageBoundingBoxes, pageWidth, pageHeight, doc, elementType)
+        }
+
+        // Tables use IoU/coverage algorithm (optimized for containment)
+        return mapTableElementIoU(box2d, label, pageBoundingBoxes, pageWidth, pageHeight, doc, elementType)
+    }
+
+    /**
+     * Map a vision bounding box to a DOM element using IoU + coverage scoring.
+     * This is optimized for tables which may be partially visible/collapsed,
+     * so we want the container that best contains the visible portion.
+     */
+    private fun mapTableElementIoU(
         box2d: List<Int>,
         label: String,
         pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
@@ -612,6 +657,85 @@ class VisualIdentificationAgentGenAiImpl(
             MappedElement(dataId = bestMatch.first, cssSelector = cssSelector, label = label)
         } else {
             logger.debug("Could not map visual {} (no overlapping elements)", elementType)
+            null
+        }
+    }
+
+    /**
+     * Map a vision bounding box to a DOM element using closest match algorithm.
+     * This minimizes edge differences rather than maximizing containment,
+     * which is more appropriate for semantic elements like headers that should
+     * match what the LLM visually identified rather than a parent container.
+     */
+    private fun mapSemanticElementClosestMatch(
+        box2d: List<Int>,
+        label: String,
+        pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
+        pageWidth: Double,
+        pageHeight: Double,
+        doc: Document,
+        elementType: String
+    ): MappedElement? {
+        if (pageBoundingBoxes.isEmpty()) return null
+
+        // Convert [0, 1000] scaled coordinates to absolute pixel coordinates
+        val ymin = box2d.getOrElse(0) { 0 }
+        val xmin = box2d.getOrElse(1) { 0 }
+        val ymax = box2d.getOrElse(2) { 1000 }
+        val xmax = box2d.getOrElse(3) { 1000 }
+
+        val targetTop = ymin * pageHeight / 1000
+        val targetLeft = xmin * pageWidth / 1000
+        val targetBottom = ymax * pageHeight / 1000
+        val targetRight = xmax * pageWidth / 1000
+
+        // Use page diagonal for normalization
+        val pageDiagonal = kotlin.math.sqrt(pageWidth * pageWidth + pageHeight * pageHeight)
+        if (pageDiagonal <= 0) return null
+
+        var bestMatch: Triple<String, Double, String>? = null // dataId, score, xpath
+
+        for ((xpath, bbox) in pageBoundingBoxes) {
+            val elemLeft = bbox.left
+            val elemTop = bbox.top
+            val elemRight = bbox.right
+            val elemBottom = bbox.bottom
+
+            // Calculate edge differences
+            val topDiff = kotlin.math.abs(elemTop - targetTop)
+            val leftDiff = kotlin.math.abs(elemLeft - targetLeft)
+            val rightDiff = kotlin.math.abs(elemRight - targetRight)
+            val bottomDiff = kotlin.math.abs(elemBottom - targetBottom)
+
+            val totalDiff = topDiff + leftDiff + rightDiff + bottomDiff
+            val normalizedDiff = totalDiff / pageDiagonal
+
+            // Convert to score: higher is better (lower difference = higher score)
+            val score = 1.0 / (1.0 + normalizedDiff)
+
+            val element = findElementByXPath(doc, xpath)
+            val dataId = element?.attr("data-ds-id")
+            if (dataId?.isNotEmpty() == true && (bestMatch == null || score > bestMatch.second)) {
+                bestMatch = Triple(dataId, score, xpath)
+            }
+        }
+
+        return if (bestMatch != null) {
+            val element = findElementByXPath(doc, bestMatch.third)!!
+            val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
+            val scoreLabel = when {
+                bestMatch.second >= 0.8 -> "excellent"
+                bestMatch.second >= 0.6 -> "good"
+                bestMatch.second >= 0.4 -> "moderate"
+                else -> "low"
+            }
+            logger.debug(
+                "Visual {} closest-match to {} with {} score {}",
+                elementType, bestMatch.first, scoreLabel, "%.3f".format(bestMatch.second)
+            )
+            MappedElement(dataId = bestMatch.first, cssSelector = cssSelector, label = label)
+        } else {
+            logger.debug("Could not map visual {} (no elements found)", elementType)
             null
         }
     }

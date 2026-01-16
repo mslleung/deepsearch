@@ -157,10 +157,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                "Unauthorized",
-                                "Missing apiKey parameter",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = "Unauthorized",
+                                errorMessage = "Missing apiKey parameter",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
@@ -175,10 +175,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                "Unauthorized",
-                                "Invalid API key",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = "Unauthorized",
+                                errorMessage = "Invalid API key",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
@@ -196,10 +196,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                "UsageLimitExceeded",
-                                "You have reached your plan's search limit. Please upgrade your plan.",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = "UsageLimitExceeded",
+                                errorMessage = "You have reached your plan's search limit. Please upgrade your plan.",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
@@ -223,10 +223,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                "BadRequest",
-                                "Missing query or url parameter",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = "BadRequest",
+                                errorMessage = "Missing query or url parameter",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
@@ -241,10 +241,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                "BadRequest",
-                                "maxCacheAge must be positive",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = "BadRequest",
+                                errorMessage = "maxCacheAge must be positive",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
@@ -262,10 +262,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                "BadRequest",
-                                e.message ?: "Invalid mode",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = "BadRequest",
+                                errorMessage = e.message ?: "Invalid mode",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
@@ -282,10 +282,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                "BadRequest",
-                                e.message ?: "Invalid language pattern",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = "BadRequest",
+                                errorMessage = e.message ?: "Invalid language pattern",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
@@ -302,10 +302,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                "BadRequest",
-                                e.message ?: "Invalid OCR language",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = "BadRequest",
+                                errorMessage = e.message ?: "Invalid OCR language",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
@@ -363,10 +363,10 @@ class SearchController(
                         Json.encodeToString(
                             SearchEventDto.serializer(),
                             SearchEventDto.SessionErrorDto(
-                                "",
-                                e::class.simpleName ?: "Unknown",
-                                e.message ?: "Unknown error",
-                                System.currentTimeMillis()
+                                sessionId = "",
+                                errorType = e::class.simpleName ?: "Unknown",
+                                errorMessage = e.message ?: "Unknown error",
+                                timestampMs = System.currentTimeMillis()
                             )
                         )
                     )
