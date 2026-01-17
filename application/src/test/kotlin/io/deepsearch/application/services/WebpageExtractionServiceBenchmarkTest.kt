@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
@@ -14,6 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import kotlin.system.measureTimeMillis
 
 class WebpageExtractionServiceBenchmarkTest : KoinTest {
@@ -27,6 +29,13 @@ class WebpageExtractionServiceBenchmarkTest : KoinTest {
     private val browserPool by inject<IBrowserPool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val webpageExtractionService by inject<IWebpageExtractionService>()
+    private val applicationScope by inject<IApplicationCoroutineScope>()
+    
+    @AfterEach
+    fun cleanup() {
+        // Clean up application scope to cancel background coroutines
+        applicationScope.close()
+    }
 
     @ParameterizedTest
     @ValueSource(

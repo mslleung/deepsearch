@@ -5,6 +5,7 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -13,6 +14,7 @@ import org.junit.jupiter.params.provider.ValueSource
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import java.io.File
 
 class WebpageExtractionServiceTest : KoinTest {
@@ -26,6 +28,13 @@ class WebpageExtractionServiceTest : KoinTest {
     private val browserPool by inject<IBrowserPool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val webpageExtractionService by inject<IWebpageExtractionService>()
+    private val applicationScope by inject<IApplicationCoroutineScope>()
+    
+    @AfterEach
+    fun cleanup() {
+        // Clean up application scope to cancel background coroutines
+        applicationScope.close()
+    }
 
     @Test
     fun `extract rust docs for debugging`() = runTest(testCoroutineDispatcher) {

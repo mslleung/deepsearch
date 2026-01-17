@@ -8,6 +8,7 @@ import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.UserId
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -18,6 +19,7 @@ import org.junit.jupiter.params.provider.ValueSource
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import java.util.concurrent.TimeUnit
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
@@ -49,6 +51,13 @@ class BatchPipelineIntegrationTest : KoinTest {
 
     private val batchJobService by inject<IBatchPeriodicIndexJobService>()
     private val webpageCacheService by inject<IWebpageCacheService>()
+    private val applicationScope by inject<IApplicationCoroutineScope>()
+    
+    @AfterEach
+    fun cleanup() {
+        // Clean up application scope to cancel background coroutines
+        applicationScope.close()
+    }
 
     /**
      * Note: This test uses applicationBenchmarkTestModule and runBlocking because:

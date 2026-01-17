@@ -9,6 +9,7 @@ import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import java.security.MessageDigest
 import java.util.*
 import kotlin.io.encoding.Base64
@@ -50,6 +51,7 @@ class GeminiFileSearchServiceTest : KoinTest {
     }
 
     private val fileSearchService by inject<IGeminiFileSearchService>()
+    private val applicationScope by inject<IApplicationCoroutineScope>()
 
     // Test domain - use unique domain to avoid conflicts
     private val testDomain = "test-deepsearch-${System.currentTimeMillis()}.example.com"
@@ -68,7 +70,8 @@ class GeminiFileSearchServiceTest : KoinTest {
     }
 
     @AfterAll
-    fun printPerformanceReport() {
+    fun cleanup() {
+        // Print performance report
         println("\n" + "=".repeat(60))
         println("GEMINI FILE SEARCH PERFORMANCE REPORT")
         println("=".repeat(60))
@@ -76,6 +79,9 @@ class GeminiFileSearchServiceTest : KoinTest {
             println("  $operation: ${timeMs}ms")
         }
         println("=".repeat(60))
+        
+        // Clean up application scope to cancel background coroutines
+        applicationScope.close()
     }
 
     // ==================== Store Management Tests ====================

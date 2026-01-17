@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
@@ -19,6 +20,7 @@ import org.junit.jupiter.params.provider.CsvSource
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import kotlin.system.measureTimeMillis
 
 /**
@@ -45,8 +47,15 @@ class PdfProcessingBenchmarkTest : KoinTest {
     private val pdfPreviewService by inject<IPdfPreviewService>()
     private val pdfSourceEvalService by inject<IPdfSourceEvalService>()
     private val fileSearchService by inject<IFileSearchService>()
+    private val applicationScope by inject<IApplicationCoroutineScope>()
 
     private val httpClient = HttpClient(OkHttp)
+    
+    @AfterEach
+    fun cleanup() {
+        // Clean up application scope to cancel background coroutines
+        applicationScope.close()
+    }
 
     /**
      * Benchmark PDF preview path vs index+query path.

@@ -10,6 +10,7 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDType1Font
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts
+import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.MethodOrderer
 import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.Test
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import kotlin.io.encoding.Base64
@@ -49,8 +51,15 @@ class GeminiFileSearchStressTest : KoinTest {
     }
 
     private val fileSearchService by inject<IGeminiFileSearchService>()
+    private val applicationScope by inject<IApplicationCoroutineScope>()
 
     private val testDomain = "stress-test-${System.currentTimeMillis()}.example.com"
+    
+    @AfterAll
+    fun cleanup() {
+        // Clean up application scope to cancel background coroutines
+        applicationScope.close()
+    }
     private var testStoreInfo: FileSearchStoreInfo? = null
 
     // ==================== TEST DOCUMENT 1: Technical Manual ====================

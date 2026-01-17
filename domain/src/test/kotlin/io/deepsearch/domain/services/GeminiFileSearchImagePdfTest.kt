@@ -8,6 +8,7 @@ import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
+import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.MethodOrderer
 import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.Test
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
 import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.config.IApplicationCoroutineScope
 import java.awt.Color
 import java.awt.Font
 import java.awt.image.BufferedImage
@@ -47,9 +49,16 @@ class GeminiFileSearchImagePdfTest : KoinTest {
     }
 
     private val fileSearchService by inject<IGeminiFileSearchService>()
+    private val applicationScope by inject<IApplicationCoroutineScope>()
 
     // Test domain for this test class
     private val testDomain = "test-pdf-images-${System.currentTimeMillis()}.example.com"
+    
+    @AfterAll
+    fun cleanup() {
+        // Clean up application scope to cancel background coroutines
+        applicationScope.close()
+    }
     private var testStoreInfo: FileSearchStoreInfo? = null
 
     // ==================== Test 1: Image-Only PDF ====================
