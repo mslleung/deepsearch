@@ -6,10 +6,14 @@ import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.VisualIdentificationInput
 import io.deepsearch.domain.agents.VisualIdentificationOutput
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.models.entities.VisionDetectionCache
 import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.models.valueobjects.SessionId
+import io.deepsearch.domain.repositories.IVisionDetectionCacheRepository
 import io.deepsearch.domain.services.BatchContentRequest
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
@@ -103,17 +107,135 @@ interface IVisualIdentificationService {
 }
 
 /**
+ * Cached vision detection result for serialization.
+ * Stores the full agent output so we can return it on cache hit.
+ */
+@Serializable
+private data class CachedVisionResult(
+    val semanticElements: CachedSemanticElements,
+    val tables: List<CachedTableIdentification>
+)
+
+@Serializable
+private data class CachedSemanticElements(
+    val headerDataId: String? = null,
+    val headerNote: String? = null,
+    val footerDataId: String? = null,
+    val footerNote: String? = null,
+    val navSidebarDataId: String? = null,
+    val navSidebarNote: String? = null,
+    val breadcrumbDataId: String? = null,
+    val breadcrumbNote: String? = null,
+    val cookieBannerDataId: String? = null,
+    val cookieBannerNote: String? = null
+)
+
+@Serializable
+private data class CachedTableIdentification(
+    val cssSelector: String,
+    val dataId: String,
+    val auxiliaryInfo: String,
+    val containsMedia: Boolean
+)
+
+/**
  * Implementation of combined visual identification service.
  * 
  * This service delegates to VisualIdentificationAgent for the actual LLM call,
  * which detects both semantic elements and tables in a single vision-based request.
+ * 
+ * Caching is implemented at the service layer using a hash of screenshot bytes + structural HTML.
  */
 class VisualIdentificationService(
     private val visualIdentificationAgent: IVisualIdentificationAgent,
-    private val tokenUsageService: ILlmTokenUsageService
+    private val tokenUsageService: ILlmTokenUsageService,
+    private val visionDetectionCacheRepository: IVisionDetectionCacheRepository
 ) : IVisualIdentificationService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+    
+    private val cacheJson = Json { 
+        ignoreUnknownKeys = true 
+        encodeDefaults = true
+    }
+
+    // ========== Caching Helper Methods ==========
+
+    /**
+     * Strips data-ds-id attributes from HTML to create a stable structural hash.
+     * data-ds-id values change on every page load, so we remove them before hashing.
+     */
+    private fun stripDataDsId(html: String): String {
+        return html.replace(Regex("""data-ds-id="[^"]*""""), "")
+    }
+
+    /**
+     * Computes SHA-256 hash of screenshot bytes + structural HTML.
+     * Used as cache key for vision detection results.
+     */
+    private fun computeVisionContentHash(screenshotBytes: ByteArray, html: String): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(screenshotBytes)
+        digest.update(stripDataDsId(html).toByteArray(Charsets.UTF_8))
+        return digest.digest()
+    }
+
+    private fun agentOutputToCached(output: VisualIdentificationOutput): CachedVisionResult {
+        return CachedVisionResult(
+            semanticElements = CachedSemanticElements(
+                headerDataId = output.semanticElements.header?.dataId,
+                headerNote = output.semanticElements.header?.note,
+                footerDataId = output.semanticElements.footer?.dataId,
+                footerNote = output.semanticElements.footer?.note,
+                navSidebarDataId = output.semanticElements.navSidebar?.dataId,
+                navSidebarNote = output.semanticElements.navSidebar?.note,
+                breadcrumbDataId = output.semanticElements.breadcrumb?.dataId,
+                breadcrumbNote = output.semanticElements.breadcrumb?.note,
+                cookieBannerDataId = output.semanticElements.cookieBanner?.dataId,
+                cookieBannerNote = output.semanticElements.cookieBanner?.note
+            ),
+            tables = output.tables.map { table ->
+                CachedTableIdentification(
+                    cssSelector = table.cssSelector,
+                    dataId = table.dataId,
+                    auxiliaryInfo = table.auxiliaryInfo,
+                    containsMedia = table.containsMedia
+                )
+            }
+        )
+    }
+
+    private fun cachedToResult(cached: CachedVisionResult): VisualIdentificationResult {
+        return VisualIdentificationResult(
+            semanticElements = SemanticElements(
+                header = cached.semanticElements.headerDataId?.let { 
+                    io.deepsearch.domain.models.valueobjects.IdentifiedElement(it, cached.semanticElements.headerNote ?: "")
+                },
+                footer = cached.semanticElements.footerDataId?.let {
+                    io.deepsearch.domain.models.valueobjects.IdentifiedElement(it, cached.semanticElements.footerNote ?: "")
+                },
+                navSidebar = cached.semanticElements.navSidebarDataId?.let {
+                    io.deepsearch.domain.models.valueobjects.IdentifiedElement(it, cached.semanticElements.navSidebarNote ?: "")
+                },
+                breadcrumb = cached.semanticElements.breadcrumbDataId?.let {
+                    io.deepsearch.domain.models.valueobjects.IdentifiedElement(it, cached.semanticElements.breadcrumbNote ?: "")
+                },
+                cookieBanner = cached.semanticElements.cookieBannerDataId?.let {
+                    io.deepsearch.domain.models.valueobjects.IdentifiedElement(it, cached.semanticElements.cookieBannerNote ?: "")
+                },
+                adBanners = emptyList(),
+                popups = emptyList()
+            ),
+            tables = cached.tables.map { table ->
+                TableIdentification(
+                    cssSelector = table.cssSelector,
+                    dataId = table.dataId,
+                    auxiliaryInfo = table.auxiliaryInfo,
+                    containsMedia = table.containsMedia
+                )
+            }
+        )
+    }
 
     // ========== Interactive Mode Methods ==========
 
@@ -126,6 +248,18 @@ class VisualIdentificationService(
             "Starting combined visual identification: HTML={} bytes, screenshot={} bytes",
             pageSnapshot.html.length, screenshot.bytes.size
         )
+
+        // Check cache first
+        val contentHash = computeVisionContentHash(screenshot.bytes, pageSnapshot.html)
+        val cached = visionDetectionCacheRepository.findByHash(contentHash)
+        
+        if (cached != null) {
+            logger.debug("Vision detection cache HIT")
+            val cachedResult = cacheJson.decodeFromString<CachedVisionResult>(cached.visionResponseJson)
+            return cachedToResult(cachedResult)
+        }
+        
+        logger.debug("Vision detection cache MISS - calling LLM")
 
         val agentOutput = visualIdentificationAgent.generate(
             VisualIdentificationInput(
@@ -142,6 +276,15 @@ class VisualIdentificationService(
             promptTokens = agentOutput.tokenUsage.promptTokens,
             outputTokens = agentOutput.tokenUsage.outputTokens,
             totalTokens = agentOutput.tokenUsage.totalTokens
+        )
+
+        // Cache the result
+        val cachedResult = agentOutputToCached(agentOutput)
+        visionDetectionCacheRepository.upsert(
+            VisionDetectionCache(
+                contentHash = contentHash,
+                visionResponseJson = cacheJson.encodeToString(cachedResult)
+            )
         )
 
         logger.debug(

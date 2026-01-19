@@ -93,6 +93,10 @@ private val infrastructureCommonTestModule = module {
     
     // External API usage table (for cost tracking)
     singleOf(::ExternalApiUsageTable)
+    
+    // Visual identification cache tables
+    singleOf(::HiddenContainerTableCacheTable)
+    singleOf(::VisionDetectionCacheTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -136,6 +140,10 @@ private val infrastructureCommonTestModule = module {
     
     // External API usage repository (for cost tracking)
     singleOf(::ExposedExternalApiUsageRepository) bind IExternalApiUsageRepository::class
+    
+    // Visual identification cache repositories
+    singleOf(::ExposedHiddenContainerTableCacheRepository) bind IHiddenContainerTableCacheRepository::class
+    singleOf(::ExposedVisionDetectionCacheRepository) bind IVisionDetectionCacheRepository::class
     
     // In-memory temporary file storage for testing (replaces GCS in production)
     singleOf(::InMemoryTemporaryFileStorageService) bind ITemporaryFileStorageService::class

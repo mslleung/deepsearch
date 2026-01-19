@@ -93,6 +93,10 @@ val infrastructureModule = module {
     // External API usage table (for cost tracking)
     singleOf(::ExternalApiUsageTable)
     
+    // Visual identification cache tables
+    singleOf(::HiddenContainerTableCacheTable)
+    singleOf(::VisionDetectionCacheTable)
+    
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
@@ -131,6 +135,10 @@ val infrastructureModule = module {
     
     // External API usage repository (for cost tracking)
     singleOf(::ExposedExternalApiUsageRepository) bind IExternalApiUsageRepository::class
+    
+    // Visual identification cache repositories
+    singleOf(::ExposedHiddenContainerTableCacheRepository) bind IHiddenContainerTableCacheRepository::class
+    singleOf(::ExposedVisionDetectionCacheRepository) bind IVisionDetectionCacheRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {
