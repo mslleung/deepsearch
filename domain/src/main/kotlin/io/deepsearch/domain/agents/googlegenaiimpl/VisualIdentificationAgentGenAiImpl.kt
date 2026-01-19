@@ -581,9 +581,10 @@ class VisualIdentificationAgentGenAiImpl(
 
         if (targetArea <= 0) return null
 
-        var bestMatch: Triple<String, Double, String>? = null // dataId, score, xpath
+        var bestMatch: Pair<String, Double>? = null // dsId, score
 
-        for ((xpath, bbox) in pageBoundingBoxes) {
+        // pageBoundingBoxes keys are data-ds-id values (e.g., "ds-element-123"), not XPaths
+        for ((dsId, bbox) in pageBoundingBoxes) {
             val elemLeft = bbox.left
             val elemTop = bbox.top
             val elemRight = bbox.right
@@ -609,16 +610,15 @@ class VisualIdentificationAgentGenAiImpl(
                 val coverageScore = kotlin.math.sqrt(visionCoverage * elementCoverage)
                 val score = maxOf(iou, coverageScore)
 
-                val element = findElementByXPath(doc, xpath)
-                val dataId = element?.attr("data-ds-id")
-                if (dataId?.isNotEmpty() == true && (bestMatch == null || score > bestMatch.second)) {
-                    bestMatch = Triple(dataId, score, xpath)
+                if (dsId.isNotEmpty() && (bestMatch == null || score > bestMatch.second)) {
+                    bestMatch = Pair(dsId, score)
                 }
             }
         }
 
         return if (bestMatch != null) {
-            val element = findElementByXPath(doc, bestMatch.third)!!
+            val element = doc.select("[data-ds-id=\"${bestMatch.first}\"]").firstOrNull()
+                ?: return null.also { logger.debug("Could not find element with data-ds-id={}", bestMatch.first) }
             val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
             val scoreLabel = when {
                 bestMatch.second >= 0.8 -> "excellent"
@@ -669,9 +669,10 @@ class VisualIdentificationAgentGenAiImpl(
         val pageDiagonal = kotlin.math.sqrt(pageWidth * pageWidth + pageHeight * pageHeight)
         if (pageDiagonal <= 0) return null
 
-        var bestMatch: Triple<String, Double, String>? = null // dataId, score, xpath
+        var bestMatch: Pair<String, Double>? = null // dsId, score
 
-        for ((xpath, bbox) in pageBoundingBoxes) {
+        // pageBoundingBoxes keys are data-ds-id values (e.g., "ds-element-123"), not XPaths
+        for ((dsId, bbox) in pageBoundingBoxes) {
             val elemLeft = bbox.left
             val elemTop = bbox.top
             val elemRight = bbox.right
@@ -689,15 +690,14 @@ class VisualIdentificationAgentGenAiImpl(
             // Convert to score: higher is better (lower difference = higher score)
             val score = 1.0 / (1.0 + normalizedDiff)
 
-            val element = findElementByXPath(doc, xpath)
-            val dataId = element?.attr("data-ds-id")
-            if (dataId?.isNotEmpty() == true && (bestMatch == null || score > bestMatch.second)) {
-                bestMatch = Triple(dataId, score, xpath)
+            if (dsId.isNotEmpty() && (bestMatch == null || score > bestMatch.second)) {
+                bestMatch = Pair(dsId, score)
             }
         }
 
         return if (bestMatch != null) {
-            val element = findElementByXPath(doc, bestMatch.third)!!
+            val element = doc.select("[data-ds-id=\"${bestMatch.first}\"]").firstOrNull()
+                ?: return null.also { logger.debug("Could not find element with data-ds-id={}", bestMatch.first) }
             val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
             val scoreLabel = when {
                 bestMatch.second >= 0.8 -> "excellent"
@@ -859,25 +859,6 @@ class VisualIdentificationAgentGenAiImpl(
     }
 
     // ========== Helper Methods ==========
-
-    private fun findElementByXPath(doc: Document, xpath: String): org.jsoup.nodes.Element? {
-        if (!xpath.startsWith("./")) return null
-
-        val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)]""")
-        var current: org.jsoup.nodes.Element = doc.body() ?: return null
-
-        val parts = xpath.removePrefix("./").split("/").filter { it.isNotEmpty() }
-        for (part in parts) {
-            val match = xpathRegex.matchEntire(part) ?: return null
-            val tagName = match.groupValues[1]
-            val index = match.groupValues[2].toInt() - 1
-
-            val children = current.children().filter { it.tagName().equals(tagName, ignoreCase = true) }
-            current = children.getOrNull(index) ?: return null
-        }
-
-        return current
-    }
 
     private fun detectMediaInTable(tableId: String, doc: Document): Boolean {
         val tableElement = doc.select("[data-ds-id=\"$tableId\"]").firstOrNull() ?: return false
