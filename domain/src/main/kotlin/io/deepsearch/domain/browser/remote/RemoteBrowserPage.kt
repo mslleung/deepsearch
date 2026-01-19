@@ -173,6 +173,15 @@ class RemoteBrowserPage(
         }
     }
 
+    override suspend fun injectStableIds(): IBrowserPage.StableIdInjectionResult {
+        val r = pageCmdParse<StableIdInjectionResponse>(PageCommand.InjectStableIds)
+        return IBrowserPage.StableIdInjectionResult(
+            elements = r.elements,
+            icons = r.icons,
+            images = r.images
+        )
+    }
+
     override suspend fun captureSnapshot(): IBrowserPage.PageSnapshot {
         val r = pageCmdParse<PageSnapshotResponse>(PageCommand.CaptureSnapshot)
         return IBrowserPage.PageSnapshot(
@@ -209,7 +218,7 @@ class RemoteBrowserPage(
                 IBrowserPage.BoundingBox(b.left, b.top, b.right, b.bottom)
             },
             hiddenContainers = r.hiddenContainers.map { h ->
-                IBrowserPage.HiddenContainer(h.id, h.xpath, h.html)
+                IBrowserPage.HiddenContainer(h.id, h.html)
             }
         )
     }

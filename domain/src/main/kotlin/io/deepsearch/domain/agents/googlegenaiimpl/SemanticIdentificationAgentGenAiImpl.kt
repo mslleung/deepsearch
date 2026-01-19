@@ -217,17 +217,15 @@ class SemanticIdentificationAgentGenAiImpl(
     )
 
     override suspend fun generate(input: SemanticIdentificationInput): SemanticIdentificationOutput {
-        val originalHtml = input.pageSnapshot.html
+        // HTML already has data-ds-id attributes from browser's injectStableIds()
+        val htmlWithIds = input.pageSnapshot.html
         val boundingBoxes = input.pageSnapshot.boundingBoxes
         val screenshot = input.screenshot
 
         logger.debug(
             "Semantic identification: HTML={} bytes, screenshot={} bytes, {} bounding boxes",
-            originalHtml.length, screenshot.bytes.size, boundingBoxes.size
+            htmlWithIds.length, screenshot.bytes.size, boundingBoxes.size
         )
-
-        // Inject stable identifiers for DOM element lookup
-        val htmlWithIds = injectStableIdentifiers(originalHtml, "ds-semantic")
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
@@ -370,12 +368,11 @@ class SemanticIdentificationAgentGenAiImpl(
         val resolvedAdBanners = response.adBanners.mapNotNull { resolveElement(it) }
         val resolvedPopups = response.popups.mapNotNull { resolveElement(it) }
 
-        // Convert resolved elements to IdentifiedElements with both cssSelector and dataId
-        // The cssSelector is used for initial injection, dataId for subsequent operations
+        // Convert resolved elements to IdentifiedElements
+        // The dataId references the stable data-ds-id attribute
         fun toIdentifiedElement(resolved: ResolvedElement?): IdentifiedElement? {
             if (resolved == null) return null
             return IdentifiedElement(
-                cssSelector = resolved.cssSelector,
                 dataId = resolved.llmResult.id,
                 note = resolved.llmResult.note
             )
@@ -446,7 +443,8 @@ class SemanticIdentificationAgentGenAiImpl(
 
             var bestMatch: Triple<String, Double, Double>? = null // dataId, score, iou
 
-            for ((xpath, bbox) in pageBoundingBoxes) {
+            // Bounding boxes are keyed by data-ds-id
+            for ((dsId, bbox) in pageBoundingBoxes) {
                 val elemLeft = bbox.left
                 val elemTop = bbox.top
                 val elemRight = bbox.right
@@ -479,12 +477,9 @@ class SemanticIdentificationAgentGenAiImpl(
                     val score = maxOf(iou, coverageScore)
 
                     // No threshold - always take best match to avoid false negatives
+                    // Note: bounding boxes are now keyed by data-ds-id, so the key IS the dataId
                     if (bestMatch == null || score > bestMatch.second) {
-                        val element = findElementByXPath(doc, xpath)
-                        val dataId = element?.attr("data-ds-id")
-                        if (dataId?.isNotEmpty() == true) {
-                            bestMatch = Triple(dataId, score, iou)
-                        }
+                        bestMatch = Triple(dsId, score, iou)
                     }
                 }
             }
@@ -518,42 +513,6 @@ class SemanticIdentificationAgentGenAiImpl(
         )
     }
 
-
-    /**
-     * Find element by XPath in the parsed document.
-     * XPath format: ./tagname[index]/tagname[index]/...
-     */
-    private fun findElementByXPath(doc: Document, xpath: String): org.jsoup.nodes.Element? {
-        // XPath format: ./tagname[index]/tagname[index]/...
-        if (!xpath.startsWith("./")) return null
-
-        val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)]""")
-        var current: org.jsoup.nodes.Element = doc.body() ?: return null
-
-        val parts = xpath.removePrefix("./").split("/").filter { it.isNotEmpty() }
-        for (part in parts) {
-            val match = xpathRegex.matchEntire(part) ?: return null
-            val tagName = match.groupValues[1]
-            val index = match.groupValues[2].toInt() - 1 // XPath is 1-indexed
-
-            val children = current.children().filter { it.tagName().equals(tagName, ignoreCase = true) }
-            current = children.getOrNull(index) ?: return null
-        }
-
-        return current
-    }
-
-    private fun injectStableIdentifiers(html: String, prefix: String): String {
-        val doc: Document = Jsoup.parse(html)
-        var idCounter = 0
-
-        // Only inject on structural elements relevant for semantic identification
-        doc.select("header, footer, nav, aside, section, article, main, div").forEach { element ->
-            element.attr("data-ds-id", "$prefix-${idCounter++}")
-        }
-
-        return doc.outerHtml()
-    }
 
     /**
      * Clean HTML to reduce token count while preserving semantic structure.
@@ -663,7 +622,8 @@ class SemanticIdentificationAgentGenAiImpl(
         pageWidth: Double?,
         pageHeight: Double?
     ): SemanticIdentificationBatchRequest {
-        val htmlWithIds = injectStableIdentifiers(html, "ds-semantic")
+        // HTML already has data-ds-id attributes from browser's injectStableIds()
+        val htmlWithIds = html
 
         // Use vision if screenshot is provided, otherwise fall back to HTML-based detection
         val request = if (screenshotBase64 != null && screenshotMimeType != null) {
@@ -742,9 +702,9 @@ class SemanticIdentificationAgentGenAiImpl(
 
         fun resolveElement(llmResult: LlmSemanticResult?): IdentifiedElement? {
             if (llmResult == null) return null
-            val cssSelector = cssSelectorsMap[llmResult.id] ?: return null
+            // Verify the element exists in the HTML
+            if (cssSelectorsMap[llmResult.id] == null) return null
             return IdentifiedElement(
-                cssSelector = cssSelector,
                 dataId = llmResult.id,
                 note = llmResult.note
             )
@@ -789,9 +749,10 @@ class SemanticIdentificationAgentGenAiImpl(
             if (targetArea <= 0) return null
 
             // Find best matching element by IoU
-            var bestMatch: Triple<String, Double, org.jsoup.nodes.Element?>? = null
+            // Bounding boxes are keyed by data-ds-id
+            var bestMatch: Pair<String, Double>? = null // dataId, score
 
-            for ((xpath, elementBox) in boundingBoxes) {
+            for ((dsId, elementBox) in boundingBoxes) {
                 val elementLeft = elementBox.left
                 val elementTop = elementBox.top
                 val elementRight = elementBox.right
@@ -825,21 +786,13 @@ class SemanticIdentificationAgentGenAiImpl(
 
                 // No threshold - always pick best match to avoid false negatives
                 if (bestMatch == null || score > bestMatch.second) {
-                    val element = findElementByXPath(doc, xpath)
-                    if (element != null) {
-                        bestMatch = Triple(xpath, score, element)
-                    }
+                    bestMatch = dsId to score
                 }
             }
 
             // Always return best match if found (no threshold)
             if (bestMatch != null) {
-                val element = bestMatch.third!!
-                val dataId = element.attr("data-ds-id")
-                if (dataId.isNotEmpty()) {
-                    val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
-                    return IdentifiedElement(cssSelector, dataId, visionElement.label)
-                }
+                return IdentifiedElement(bestMatch.first, visionElement.label)
             }
             return null
         }
@@ -857,8 +810,7 @@ class SemanticIdentificationAgentGenAiImpl(
             doc.select("header, [role=banner]").firstOrNull()?.let {
                 val dataId = it.attr("data-ds-id")
                 if (dataId.isNotEmpty()) {
-                    val cssSelector = cssSelectorConstructionService.constructCssSelector(it)
-                    IdentifiedElement(cssSelector, dataId, "Programmatic header")
+                    IdentifiedElement(dataId, "Programmatic header")
                 } else null
             }
         } else header
@@ -867,8 +819,7 @@ class SemanticIdentificationAgentGenAiImpl(
             doc.select("footer, [role=contentinfo]").firstOrNull()?.let {
                 val dataId = it.attr("data-ds-id")
                 if (dataId.isNotEmpty()) {
-                    val cssSelector = cssSelectorConstructionService.constructCssSelector(it)
-                    IdentifiedElement(cssSelector, dataId, "Programmatic footer")
+                    IdentifiedElement(dataId, "Programmatic footer")
                 } else null
             }
         } else footer

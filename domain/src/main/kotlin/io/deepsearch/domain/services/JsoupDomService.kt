@@ -20,20 +20,11 @@ data class CssSelectorReplacement(
  * Service for manipulating DOM using Jsoup.
  * Provides operations equivalent to browser DOM manipulation,
  * allowing the browser to be released earlier in the extraction pipeline.
+ * 
+ * Note: ID injection is no longer needed in Jsoup since the browser's
+ * injectStableIds() injects all data-ds-id attributes before snapshot capture.
  */
 interface IJsoupDomService {
-    /**
-     * Inject data-ds-id attributes into icon and image elements.
-     * 
-     * This mirrors the browser's behavior where icon/image extraction injects
-     * data-ds-id attributes. When browser operations run in parallel with snapshot
-     * capture, the snapshot HTML won't have these attributes, so we need to
-     * inject them in Jsoup before doing media replacements.
-     * 
-     * @param doc The Jsoup document to modify (mutated in place)
-     */
-    fun injectMediaIdentifiers(doc: Document)
-    
     /**
      * Replace elements matching CSS selectors with text content.
      * If text is null, the element is removed.
@@ -103,16 +94,6 @@ interface IJsoupDomService {
      */
     fun getElementsHtml(doc: Document, selectors: List<String>): Map<String, String?>
     
-    /**
-     * Inject data-ds-id attributes into elements found by CSS selectors.
-     * This is used to restore the original behavior where identifiers were
-     * injected into the browser DOM for stable subsequent operations.
-     * 
-     * @param doc The Jsoup document to modify (mutated in place)
-     * @param injections List of pairs: (cssSelector, dataId)
-     * @return Number of successful injections
-     */
-    fun injectIdentifiers(doc: Document, injections: List<Pair<String, String>>): Int
 }
 
 class JsoupDomService : IJsoupDomService {
@@ -125,91 +106,6 @@ class JsoupDomService : IJsoupDomService {
             "script", "style", "noscript", "button", "iframe",
             "nav", "header", "footer", "aside", "link", "meta"
         )
-        
-        // Icon selectors - must match extractIcons.ts exactly to get the same element order
-        private val ICON_SELECTORS = listOf(
-            // SVG icons
-            "svg",
-            // Font Awesome
-            "i.fa", "i.fas", "i.far", "i.fab", "i.fal", "i.fad", "i.fass", "i.fasr", "i.fasl",
-            "i[class^=fa-]", "i[class*=\" fa-\"]",
-            // Bootstrap Icons
-            "i.bi", "i[class^=bi-]", "i[class*=\" bi-\"]",
-            // Material Design Icons
-            "i.mdi", "i[class^=mdi-]", "i[class*=\" mdi-\"]",
-            // Google Material Icons
-            ".material-icons", ".material-icons-outlined", ".material-icons-round",
-            ".material-icons-sharp", ".material-icons-two-tone",
-            ".material-symbols-outlined", ".material-symbols-rounded", ".material-symbols-sharp",
-            // Ionicons
-            "ion-icon", "i[class^=ion-]", "i[class*=\" ion-\"]",
-            // Glyphicons
-            ".glyphicon",
-            // Phosphor Icons
-            "i.ph", "i[class^=ph-]", "i[class*=\" ph-\"]",
-            // Remix Icons
-            "i[class^=ri-]", "i[class*=\" ri-\"]",
-            // Line Awesome
-            "i.la", "i[class^=la-]", "i[class*=\" la-\"]",
-            // Unicons
-            "i.uil", "i.uis", "i.uim", "i.uib",
-            // Boxicons
-            "i.bx", "i[class^=bx-]", "i[class^=bxs-]", "i[class^=bxl-]",
-            // Octicons
-            ".octicon",
-            // Feather Icons
-            "[data-feather]",
-            // Lucide Icons
-            "[data-lucide]",
-            // css.gg
-            "i[class^=gg-]", "i[class*=\" gg-\"]",
-            // Tabler Icons
-            "i.ti", "i[class^=ti-]", "i[class*=\" ti-\"]",
-            // Heroicons
-            "[class*=heroicon]",
-            // Generic icon patterns
-            "i[class*=icon]", "i[class*=Icon]",
-            "span[class*=icon]", "span[class*=Icon]",
-            "[class*=icon-]", "[class*=Icon-]",
-            "[class*=-icon]", "[class*=-Icon]",
-            "[class*=ico-]", "[class*=glyph]",
-            "[data-icon]",
-            "i[aria-hidden=true]",
-            "[role=img]:not(img)"
-        )
-        
-        // Image selectors - must match extractImages.ts
-        private val IMAGE_SELECTORS = listOf(
-            "img",
-            "picture img",
-            "[style*=background-image]",
-            "[data-src]",
-            "[data-lazy-src]"
-        )
-    }
-    
-    override fun injectMediaIdentifiers(doc: Document) {
-        // Inject icon identifiers (ds-icon-0, ds-icon-1, etc.)
-        val iconSelector = ICON_SELECTORS.joinToString(", ")
-        val iconElements = doc.select(iconSelector)
-        var iconCounter = 0
-        for (element in iconElements) {
-            if (!element.hasAttr("data-ds-id")) {
-                element.attr("data-ds-id", "ds-icon-${iconCounter++}")
-            }
-        }
-        logger.debug("Injected data-ds-id into {} icon elements", iconCounter)
-        
-        // Inject image identifiers (ds-image-0, ds-image-1, etc.)
-        val imageSelector = IMAGE_SELECTORS.joinToString(", ")
-        val imageElements = doc.select(imageSelector)
-        var imageCounter = 0
-        for (element in imageElements) {
-            if (!element.hasAttr("data-ds-id")) {
-                element.attr("data-ds-id", "ds-image-${imageCounter++}")
-            }
-        }
-        logger.debug("Injected data-ds-id into {} image elements", imageCounter)
     }
     
     override fun replaceElementsWithText(doc: Document, replacements: List<CssSelectorReplacement>) {
@@ -413,51 +309,6 @@ class JsoupDomService : IJsoupDomService {
         }
         
         return result.joinToString("\n")
-    }
-    
-    override fun injectIdentifiers(doc: Document, injections: List<Pair<String, String>>): Int {
-        if (injections.isEmpty()) {
-            return 0
-        }
-        
-        var successCount = 0
-        var failedCount = 0
-        
-        for ((cssSelector, dataId) in injections) {
-            try {
-                val element = doc.selectFirst(cssSelector)
-                if (element != null) {
-                    element.attr("data-ds-id", dataId)
-                    successCount++
-                } else {
-                    // Try normalized selector for table elements
-                    if (cssSelector.contains("table") || cssSelector.contains("tr") || cssSelector.contains("td") || cssSelector.contains("th")) {
-                        val normalizedSelector = normalizeTableSelector(cssSelector)
-                        if (normalizedSelector != cssSelector) {
-                            val normalizedElement = doc.selectFirst(normalizedSelector)
-                            if (normalizedElement != null) {
-                                normalizedElement.attr("data-ds-id", dataId)
-                                successCount++
-                                logger.debug("Injected identifier '{}' using normalized selector '{}'", dataId, normalizedSelector)
-                                continue
-                            }
-                        }
-                    }
-                    failedCount++
-                    logger.debug("Failed to inject identifier '{}': element not found for selector '{}'", dataId, cssSelector)
-                }
-            } catch (e: Exception) {
-                failedCount++
-                logger.warn("Failed to inject identifier '{}' for selector '{}': {}", dataId, cssSelector, e.message)
-            }
-        }
-        
-        if (failedCount > 0) {
-            logger.warn("Failed to inject {} of {} identifiers", failedCount, injections.size)
-        }
-        logger.debug("Successfully injected {} identifiers into Jsoup document", successCount)
-        
-        return successCount
     }
 }
 

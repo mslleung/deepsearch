@@ -1,6 +1,7 @@
 package io.deepsearch.domain.services
 
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.models.valueobjects.StableElementId
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -18,22 +19,17 @@ data class DerivedBoundingBoxes(
 /**
  * Service for deriving element-relative bounding boxes from page-level bounding boxes.
  * 
- * The page snapshot contains bounding boxes for all elements keyed by XPath relative to body.
+ * The page snapshot contains bounding boxes for all elements keyed by data-ds-id.
  * Table interpretation needs bounding boxes relative to the table element itself.
  * This service transforms the coordinate system accordingly.
- * 
- * Note: Handles HTML normalization differences between browser and Jsoup.
- * Browsers and Jsoup may add implicit elements like <tbody> to tables,
- * which can cause XPath mismatches. This service tries multiple XPath
- * variations to find the correct bounding box match.
  */
 interface IBoundingBoxDerivationService {
     /**
      * Derives element-relative bounding boxes from page-level bounding boxes.
      * 
-     * @param cssSelector CSS selector for the target element
+     * @param cssSelector CSS selector for the target element (should be a data-ds-id selector)
      * @param html Full page HTML (with data-ds-id attributes)
-     * @param pageBoundingBoxes Bounding boxes from capturePageSnapshot (XPath from body -> BoundingBox)
+     * @param pageBoundingBoxes Bounding boxes from capturePageSnapshot (data-ds-id -> BoundingBox)
      * @return DerivedBoundingBoxes containing element HTML and relative bounding boxes,
      *         or null if element not found
      */
@@ -58,14 +54,25 @@ interface IBoundingBoxDerivationService {
         html: String,
         pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>
     ): Map<String, DerivedBoundingBoxes?>
+    
+    /**
+     * Derives relative bounding boxes for child elements given parent and child IDs.
+     * 
+     * @param parentId The stable element ID of the parent element
+     * @param childIds The stable element IDs of the child elements
+     * @param absoluteBoundingBoxes Map of data-ds-id string values to absolute bounding boxes
+     * @return Map of child data-ds-id string values to relative bounding boxes
+     */
+    fun deriveRelativeBoundingBoxes(
+        parentId: StableElementId,
+        childIds: List<StableElementId>,
+        absoluteBoundingBoxes: Map<String, IBrowserPage.BoundingBox>
+    ): Map<String, IBrowserPage.BoundingBox>
 }
 
 class BoundingBoxDerivationService : IBoundingBoxDerivationService {
     
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    
-    // Implicit table elements that may be added/removed by HTML normalization
-    private val implicitTableElements = setOf("tbody", "thead", "tfoot")
     
     override fun deriveElementBoundingBoxes(
         cssSelector: String,
@@ -106,6 +113,24 @@ class BoundingBoxDerivationService : IBoundingBoxDerivationService {
         }
     }
     
+    override fun deriveRelativeBoundingBoxes(
+        parentId: StableElementId,
+        childIds: List<StableElementId>,
+        absoluteBoundingBoxes: Map<String, IBrowserPage.BoundingBox>
+    ): Map<String, IBrowserPage.BoundingBox> {
+        val parentBbox = absoluteBoundingBoxes[parentId.stringValue] ?: return emptyMap()
+        
+        return childIds.mapNotNull { childId ->
+            val childBbox = absoluteBoundingBoxes[childId.stringValue] ?: return@mapNotNull null
+            childId.stringValue to IBrowserPage.BoundingBox(
+                left = childBbox.left - parentBbox.left,
+                top = childBbox.top - parentBbox.top,
+                right = childBbox.right - parentBbox.left,
+                bottom = childBbox.bottom - parentBbox.top
+            )
+        }.toMap()
+    }
+    
     private fun deriveElementBoundingBoxesInternal(
         cssSelector: String,
         doc: Document,
@@ -121,197 +146,70 @@ class BoundingBoxDerivationService : IBoundingBoxDerivationService {
         // Get the element's HTML
         val elementHtml = element.outerHtml()
         
-        // Compute XPath from body to this element and find its bounding box
-        val body = doc.body() ?: return null
-        val (elementXPath, elementBBox) = findElementBoundingBox(element, body, pageBoundingBoxes)
-            ?: run {
-                logger.warn("Could not find bounding box for element with selector: {}", cssSelector)
-                // Return HTML without bounding boxes - table interpretation can still work
-                return DerivedBoundingBoxes(elementHtml, emptyMap())
-            }
+        // Get the element's data-ds-id
+        val elementDsId = element.attr("data-ds-id")
+        if (elementDsId.isBlank()) {
+            logger.warn("Element has no data-ds-id attribute for selector: {}", cssSelector)
+            // Return HTML without bounding boxes - table interpretation can still work
+            return DerivedBoundingBoxes(elementHtml, emptyMap())
+        }
         
-        logger.debug("Element XPath from body: {} (found bounding box)", elementXPath)
+        // Get the element's absolute bounding box
+        val elementBBox = pageBoundingBoxes[elementDsId]
+        if (elementBBox == null) {
+            logger.warn("No bounding box found for data-ds-id: {}", elementDsId)
+            return DerivedBoundingBoxes(elementHtml, emptyMap())
+        }
         
-        // Find all descendant bounding boxes using flexible XPath matching
-        val relativeBoundingBoxes = deriveRelativeBoundingBoxes(
-            elementXPath, elementBBox, pageBoundingBoxes
+        // Find all descendant bounding boxes and compute relative coordinates
+        val relativeBoundingBoxes = deriveRelativeBoundingBoxesFromElement(
+            element, elementBBox, pageBoundingBoxes
         )
         
-        logger.debug("Derived {} bounding boxes for element", relativeBoundingBoxes.size)
+        logger.debug("Derived {} bounding boxes for element with data-ds-id: {}", 
+            relativeBoundingBoxes.size, elementDsId)
         
         return DerivedBoundingBoxes(elementHtml, relativeBoundingBoxes)
     }
     
     /**
-     * Finds the element's bounding box by trying multiple XPath variations.
-     * Handles cases where Jsoup's XPath doesn't match the browser's due to
-     * implicit element normalization (e.g., tbody).
-     * 
-     * @return Pair of (xpath that matched, bounding box) or null if not found
-     */
-    private fun findElementBoundingBox(
-        element: Element,
-        body: Element,
-        pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>
-    ): Pair<String, IBrowserPage.BoundingBox>? {
-        // Try 1: Normal XPath (includes all elements)
-        val normalXPath = computeRelativeXPath(element, body, skipImplicit = false)
-        if (normalXPath != null) {
-            pageBoundingBoxes[normalXPath]?.let { 
-                return normalXPath to it 
-            }
-        }
-        
-        // Try 2: XPath skipping implicit table elements (tbody/thead/tfoot)
-        // This handles cases where Jsoup added implicit elements that the browser didn't have
-        val xpathSkippingImplicit = computeRelativeXPath(element, body, skipImplicit = true)
-        if (xpathSkippingImplicit != null && xpathSkippingImplicit != normalXPath) {
-            pageBoundingBoxes[xpathSkippingImplicit]?.let { 
-                logger.debug("Found bounding box using XPath without implicit elements: {} -> {}", 
-                    normalXPath, xpathSkippingImplicit)
-                return xpathSkippingImplicit to it 
-            }
-        }
-        
-        // Try 3: Search for an XPath in pageBoundingBoxes that matches when we ignore implicit elements
-        // This handles cases where the browser had implicit elements that Jsoup normalized away
-        if (normalXPath != null) {
-            val normalizedNormal = normalizeXPathForComparison(normalXPath)
-            for ((xpath, bbox) in pageBoundingBoxes) {
-                if (normalizeXPathForComparison(xpath) == normalizedNormal) {
-                    logger.debug("Found bounding box using normalized XPath comparison: {} matches {}", 
-                        normalXPath, xpath)
-                    return xpath to bbox
-                }
-            }
-        }
-        
-        return null
-    }
-    
-    /**
      * Derives relative bounding boxes for all descendants of an element.
-     * Uses flexible XPath matching to handle normalization differences.
+     * Bounding boxes are keyed by the data-ds-id of each descendant.
      */
-    private fun deriveRelativeBoundingBoxes(
-        elementXPath: String,
+    private fun deriveRelativeBoundingBoxesFromElement(
+        element: Element,
         elementBBox: IBrowserPage.BoundingBox,
         pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>
-    ): MutableMap<String, IBrowserPage.BoundingBox> {
+    ): Map<String, IBrowserPage.BoundingBox> {
         val relativeBoundingBoxes = mutableMapOf<String, IBrowserPage.BoundingBox>()
         
         // Add the element itself with relative position (0,0 origin)
-        relativeBoundingBoxes["."] = IBrowserPage.BoundingBox(
-            left = 0.0,
-            top = 0.0,
-            right = elementBBox.right - elementBBox.left,
-            bottom = elementBBox.bottom - elementBBox.top
-        )
+        val elementDsId = element.attr("data-ds-id")
+        if (elementDsId.isNotBlank()) {
+            relativeBoundingBoxes[elementDsId] = IBrowserPage.BoundingBox(
+                left = 0.0,
+                top = 0.0,
+                right = elementBBox.right - elementBBox.left,
+                bottom = elementBBox.bottom - elementBBox.top
+            )
+        }
         
-        val xpathPrefix = "$elementXPath/"
-        val normalizedPrefix = normalizeXPathForComparison(elementXPath) + "/"
-        
-        for ((xpath, bbox) in pageBoundingBoxes) {
-            var relativeXPath: String? = null
+        // Find all descendants with data-ds-id
+        for (descendant in element.select("[data-ds-id]")) {
+            val dsId = descendant.attr("data-ds-id")
+            if (dsId.isBlank() || dsId == elementDsId) continue
             
-            // Direct prefix match
-            if (xpath.startsWith(xpathPrefix)) {
-                relativeXPath = "./" + xpath.removePrefix(xpathPrefix)
-            } 
-            // Normalized prefix match (handles tbody differences)
-            else {
-                val normalizedXPath = normalizeXPathForComparison(xpath)
-                if (normalizedXPath.startsWith(normalizedPrefix)) {
-                    // Use the normalized relative path
-                    relativeXPath = "./" + normalizedXPath.removePrefix(normalizedPrefix)
-                }
-            }
+            val descendantBBox = pageBoundingBoxes[dsId] ?: continue
             
-            if (relativeXPath != null) {
-                // Transform coordinates to be relative to the element
-                val relativeBBox = IBrowserPage.BoundingBox(
-                    left = bbox.left - elementBBox.left,
-                    top = bbox.top - elementBBox.top,
-                    right = bbox.right - elementBBox.left,
-                    bottom = bbox.bottom - elementBBox.top
-                )
-                relativeBoundingBoxes[relativeXPath] = relativeBBox
-            }
+            // Transform coordinates to be relative to the element
+            relativeBoundingBoxes[dsId] = IBrowserPage.BoundingBox(
+                left = descendantBBox.left - elementBBox.left,
+                top = descendantBBox.top - elementBBox.top,
+                right = descendantBBox.right - elementBBox.left,
+                bottom = descendantBBox.bottom - elementBBox.top
+            )
         }
         
         return relativeBoundingBoxes
     }
-    
-    /**
-     * Normalizes an XPath by removing implicit table elements (tbody, thead, tfoot).
-     * This allows comparison between XPaths from different HTML parsers.
-     * 
-     * Example: "./div[1]/table[1]/tbody[1]/tr[1]" -> "./div[1]/table[1]/tr[1]"
-     */
-    private fun normalizeXPathForComparison(xpath: String): String {
-        if (!xpath.startsWith("./")) return xpath
-        
-        val parts = xpath.substring(2).split("/")
-        val normalizedParts = parts.filter { part ->
-            // Extract tag name from "tagname[index]"
-            val tagName = part.substringBefore('[').lowercase()
-            !implicitTableElements.contains(tagName)
-        }
-        
-        return "./" + normalizedParts.joinToString("/")
-    }
-    
-    /**
-     * Computes the XPath of an element relative to a parent element.
-     * Returns XPath in format: ./tagname[index]/tagname[index]/...
-     * 
-     * @param skipImplicit If true, skips implicit table elements (tbody/thead/tfoot)
-     *                     when they are direct children of table elements
-     */
-    private fun computeRelativeXPath(
-        element: Element, 
-        parent: Element,
-        skipImplicit: Boolean = false
-    ): String? {
-        if (element == parent) {
-            return "."
-        }
-        
-        val path = mutableListOf<String>()
-        var current: Element? = element
-        
-        while (current != null && current != parent) {
-            val tagName = current.tagName().lowercase()
-            val parentTagName = current.parent()?.tagName()?.lowercase()
-            
-            // Skip implicit table elements if requested
-            val shouldSkip = skipImplicit && 
-                implicitTableElements.contains(tagName) && 
-                parentTagName == "table"
-            
-            if (!shouldSkip) {
-                // Count same-tag siblings before this element
-                var index = 1
-                var sibling = current.previousElementSibling()
-                while (sibling != null) {
-                    if (sibling.tagName().lowercase() == tagName) {
-                        index++
-                    }
-                    sibling = sibling.previousElementSibling()
-                }
-                
-                path.add(0, "$tagName[$index]")
-            }
-            
-            current = current.parent()
-        }
-        
-        // Check if we reached the parent
-        return if (current == parent) {
-            "./" + path.joinToString("/")
-        } else {
-            null
-        }
-    }
 }
-

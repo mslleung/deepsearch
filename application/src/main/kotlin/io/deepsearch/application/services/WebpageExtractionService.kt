@@ -83,15 +83,14 @@ class WebpageExtractionService(
      * 
      * Pipelined flow with early browser release:
      * 
+     *   injectStableIds() ──────────> All elements get data-ds-id attributes
      *   capturePageSnapshot() ──┬──> identifyVisualElements() (semantic + tables in 1 call)
      *   takeFullPageScreenshot()┘
      *   extractIcons() ────────────> interpretIcons()
      *   extractImages() ───────────> interpretImages()
      *   
-     * All browser operations run in parallel for maximum speed.
-     * The snapshot HTML doesn't contain data-ds-id attributes (injected by
-     * icon/image extraction), but we re-inject them into the Jsoup document
-     * during DOM processing using the CSS selectors from extraction results.
+     * ID injection runs first (~10ms), then all browser operations run in parallel.
+     * The snapshot HTML contains stable data-ds-id attributes for all elements.
      *   
      * >>> BROWSER RELEASED when all browser ops complete <<<
      *   
@@ -105,7 +104,16 @@ class WebpageExtractionService(
         logger.debug("Starting pipelined extraction...")
         val result: WebpageExtractionResult
         val totalDuration = measureTimeMillis {
-            // ===== Browser Captures (all parallel) =====
+            // ===== Phase 1: Inject Stable IDs (fast, ~10ms) =====
+            // All elements get data-ds-id attributes BEFORE any extraction begins.
+            // This ensures consistent IDs across snapshot, icons, and images.
+            val injectionResult = webpage.injectStableIds()
+            logger.debug(
+                "Injected stable IDs: {} elements, {} icons, {} images",
+                injectionResult.elements, injectionResult.icons, injectionResult.images
+            )
+
+            // ===== Phase 2: Browser Captures (all parallel) =====
             // Screenshot is captured once and shared between:
             // - Visual identification (semantic + tables in single vision call)
             // - Image extraction (fallback cropping for CORS-blocked images)
@@ -271,24 +279,10 @@ class WebpageExtractionService(
         sessionId: SessionId
     ): WebpageExtractionResult {
         val imageMapping = llmResults.imageMapping
+        // HTML already has data-ds-id attributes from browser's injectStableIds()
         val jsoupDoc = Jsoup.parse(snapshot.html)
 
-        // ===== Step 1: Inject all identifiers into Jsoup document =====
-        // This restores the original behavior where data-ds-id attributes were
-        // injected into the browser DOM for stable subsequent operations.
-
-        // Inject media identifiers (icons + images)
-        jsoupDomService.injectMediaIdentifiers(jsoupDoc)
-
-        // Inject semantic element identifiers using CSS selectors from agents
-        val semanticInjections = collectSemanticInjections(llmResults.semanticElements)
-        jsoupDomService.injectIdentifiers(jsoupDoc, semanticInjections)
-
-        // Inject table identifiers using CSS selectors from agents
-        val tableInjections = llmResults.tableIdentifications.map { it.cssSelector to it.dataId }
-        jsoupDomService.injectIdentifiers(jsoupDoc, tableInjections)
-
-        // ===== Step 2: Apply media replacements (icons + images) =====
+        // ===== Step 1: Apply media replacements (icons + images) =====
         val mediaReplacements = llmResults.iconReplacements + llmResults.imageReplacements
         jsoupDomService.replaceElementsWithText(jsoupDoc, mediaReplacements)
 
@@ -419,21 +413,6 @@ class WebpageExtractionService(
         // Return replacements using stable data-ds-id selectors
         return tableInputs.zip(markdowns).map { (input, markdown) ->
             CssSelectorReplacement("[data-ds-id=\"${input.tableIdentification.dataId}\"]", markdown)
-        }
-    }
-
-    /**
-     * Collects (cssSelector, dataId) pairs for injecting identifiers into Jsoup document.
-     */
-    private fun collectSemanticInjections(semanticElements: SemanticElements): List<Pair<String, String>> {
-        return buildList {
-            semanticElements.header?.let { add(it.cssSelector to it.dataId) }
-            semanticElements.footer?.let { add(it.cssSelector to it.dataId) }
-            semanticElements.navSidebar?.let { add(it.cssSelector to it.dataId) }
-            semanticElements.breadcrumb?.let { add(it.cssSelector to it.dataId) }
-            semanticElements.cookieBanner?.let { add(it.cssSelector to it.dataId) }
-            addAll(semanticElements.adBanners.map { it.cssSelector to it.dataId })
-            addAll(semanticElements.popups.map { it.cssSelector to it.dataId })
         }
     }
 

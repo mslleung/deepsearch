@@ -184,12 +184,9 @@ class TableInterpretationBatchHandler(
                     images = images
                 )
 
-                // Start with cleaned HTML that has semantic IDs injected
+                // Start with cleaned HTML (already has data-ds-id attributes)
                 val cleanedHtml = snapshotFromGcs.cleanedHtml ?: snapshotFromGcs.html
                 val doc = Jsoup.parse(cleanedHtml)
-
-                // Inject media identifiers
-                jsoupDomService.injectMediaIdentifiers(doc)
 
                 // Build and apply media replacements using shared utility
                 val mediaResult = MediaReplacementBuilder.buildFromIconsAndImages(

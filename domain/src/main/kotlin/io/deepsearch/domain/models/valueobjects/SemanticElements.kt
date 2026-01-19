@@ -8,12 +8,14 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class IdentifiedElement(
-    /** CSS selector for initial lookup (may be position-based). */
-    val cssSelector: String,
-    /** Stable data-ds-id value for subsequent operations (e.g., "ds-semantic-5"). */
+    /** Stable data-ds-id value for element reference (e.g., "ds-element-5"). */
     val dataId: String,
+    /** Human-readable note about why this element was identified. */
     val note: String
-)
+) {
+    /** CSS selector derived from the dataId for easy element lookup. */
+    val cssSelector: String get() = "[data-ds-id=\"$dataId\"]"
+}
 
 /**
  * Structured collection of all semantic elements on a webpage.
@@ -30,4 +32,3 @@ data class SemanticElements(
     val adBanners: List<IdentifiedElement> = emptyList(),
     val popups: List<IdentifiedElement> = emptyList()
 )
-

@@ -74,16 +74,8 @@ class PageResultProcessor(
                     pageHeight
                 )
 
-                // Inject both semantic and table IDs into HTML
+                // HTML already has data-ds-id attributes from browser's injectStableIds()
                 val doc = Jsoup.parse(pending.htmlWithIds)
-
-                // Inject semantic element IDs
-                val semanticInjections = buildSemanticInjections(visualResult.semanticElements)
-                jsoupDomService.injectIdentifiers(doc, semanticInjections)
-
-                // Inject table IDs
-                val tableInjections = visualResult.tables.map { it.cssSelector to it.dataId }
-                jsoupDomService.injectIdentifiers(doc, tableInjections)
 
                 // Store results to GCS
                 snapshotStorage.storeContentLlmResults(
@@ -123,16 +115,8 @@ class PageResultProcessor(
             val basePath = urlState.snapshotBasePath ?: continue
             val pageData = collected.urlPages[urlStateId] ?: continue
 
-            // Inject both semantic and table IDs into HTML
+            // HTML already has data-ds-id attributes from browser's injectStableIds()
             val doc = Jsoup.parse(pageData.html)
-
-            // Inject semantic element IDs
-            val semanticInjections = buildSemanticInjections(visualResult.semanticElements)
-            jsoupDomService.injectIdentifiers(doc, semanticInjections)
-
-            // Inject table IDs
-            val tableInjections = visualResult.tables.map { it.cssSelector to it.dataId }
-            jsoupDomService.injectIdentifiers(doc, tableInjections)
 
             // Store results to GCS
             snapshotStorage.storeContentLlmResults(
@@ -145,18 +129,6 @@ class PageResultProcessor(
                     imageTexts = null
                 )
             )
-        }
-    }
-
-    private fun buildSemanticInjections(elements: SemanticElements): List<Pair<String, String>> {
-        return buildList {
-            elements.header?.let { add(it.cssSelector to it.dataId) }
-            elements.footer?.let { add(it.cssSelector to it.dataId) }
-            elements.navSidebar?.let { add(it.cssSelector to it.dataId) }
-            elements.breadcrumb?.let { add(it.cssSelector to it.dataId) }
-            elements.cookieBanner?.let { add(it.cssSelector to it.dataId) }
-            addAll(elements.adBanners.map { it.cssSelector to it.dataId })
-            addAll(elements.popups.map { it.cssSelector to it.dataId })
         }
     }
 

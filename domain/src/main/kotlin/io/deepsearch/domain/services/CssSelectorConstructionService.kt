@@ -1,35 +1,34 @@
 package io.deepsearch.domain.services
 
+import io.deepsearch.domain.models.valueobjects.StableElementId
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
  * Service for constructing CSS selectors from HTML snippets.
- * Used by agents that receive HTML snippets from LLMs and need to convert them
- * to CSS selectors for querying the full DOM.
+ * 
+ * With the unified ID injection system, all elements have stable data-ds-id attributes.
+ * This service primarily provides utility methods for working with these IDs.
  */
 interface ICssSelectorConstructionService {
     /**
-     * Constructs a CSS selector from a stable identifier by finding the element in the HTML
-     * and building a selector based on its attributes and structure.
+     * Constructs a CSS selector from a stable identifier.
+     * Simply returns a data-ds-id attribute selector.
      *
-     * @param identifier The data-ds-id value (e.g., "ds-semantic-5")
-     * @param htmlWithIdentifiers The HTML document containing injected data-ds-id attributes
-     * @return A CSS selector that can locate the element in the original webpage, or null if element not found
+     * @param identifier The data-ds-id value (e.g., "ds-element-5")
+     * @param htmlWithIdentifiers The HTML document (unused, kept for API compatibility)
+     * @return A CSS selector that can locate the element: [data-ds-id="$identifier"]
      */
     fun constructCssSelectorFromIdentifier(identifier: String, htmlWithIdentifiers: String): String?
 
     /**
-     * Batch version that constructs CSS selectors for multiple identifiers from the same HTML.
-     * This is more efficient than calling [constructCssSelectorFromIdentifier] multiple times
-     * because it parses the HTML only once.
+     * Batch version that constructs CSS selectors for multiple identifiers.
      *
-     * @param identifiers List of data-ds-id values (e.g., ["ds-table-0", "ds-table-1"])
-     * @param htmlWithIdentifiers The HTML document containing injected data-ds-id attributes
-     * @return A map from identifier to CSS selector (null if element not found for that identifier)
+     * @param identifiers List of data-ds-id values (e.g., ["ds-element-0", "ds-element-1"])
+     * @param htmlWithIdentifiers The HTML document (unused, kept for API compatibility)
+     * @return A map from identifier to CSS selector
      */
     fun constructCssSelectorsFromIdentifiers(
         identifiers: List<String>,
@@ -38,461 +37,103 @@ interface ICssSelectorConstructionService {
     
     /**
      * Constructs a CSS selector directly from a Jsoup Element.
-     * Used when the element is already available (e.g., from vision-based detection).
+     * Uses the element's data-ds-id if available, otherwise falls back to structural selector.
      *
      * @param element The Jsoup element to construct a selector for
      * @return A CSS selector that can locate the element
      */
     fun constructCssSelector(element: Element): String
+    
+    /**
+     * Constructs a CSS selector from a StableElementId.
+     *
+     * @param id The stable element ID
+     * @return A CSS selector: [data-ds-id="ds-{type}-{id}"]
+     */
+    fun constructCssSelector(id: StableElementId): String
 }
 
 /**
- * Service for constructing CSS selectors from HTML snippets.
- * Parses HTML snippets provided by LLMs and generates robust CSS selectors
- * that can be used to query elements in the full DOM.
+ * Service for constructing CSS selectors.
+ * 
+ * With the unified ID injection system, selectors are simply data-ds-id attribute selectors.
  */
 class CssSelectorConstructionService : ICssSelectorConstructionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    
-    /**
-     * Escapes special characters in CSS identifiers (IDs and class names) to make them
-     * safe for use in CSS selectors. According to CSS spec, certain characters need to be
-     * escaped with a backslash when used in selectors.
-     * 
-     * @param identifier The raw ID or class name from HTML
-     * @return The escaped identifier safe for use in CSS selectors
-     */
-    private fun escapeCssIdentifier(identifier: String): String {
-        // CSS special characters that need escaping:
-        // : . [ ] ( ) ~ ! @ $ % ^ & * + = , / ' " ; ? # space
-        val specialChars = setOf(
-            ':', '.', '[', ']', '(', ')', '~', '!', '@', '$', '%', '^', '&', '*', 
-            '+', '=', ',', '/', '\'', '"', ';', '?', '#', ' '
-        )
-        
-        return identifier.map { char ->
-            if (char in specialChars) {
-                "\\$char"
-            } else {
-                char.toString()
-            }
-        }.joinToString("")
-    }
-    
-    /**
-     * Filters out CSS class names that Jsoup's selector parser cannot handle reliably,
-     * even when escaped. This primarily affects Tailwind arbitrary variants like [&>*]:space-y-10.
-     * 
-     * @param classes The set of class names from an element
-     * @return A filtered set containing only Jsoup-compatible class names
-     */
-    private fun filterJsoupCompatibleClasses(classes: Set<String>): Set<String> {
-        return classes.filter { className ->
-            // Exclude classes with square brackets (Tailwind arbitrary variants)
-            // These cause Jsoup's selector parser to fail even when properly escaped
-            !className.contains('[') && !className.contains(']')
-        }.toSet()
-    }
-    
-    /**
-     * Compares attributes of two elements, ignoring order.
-     * Only compares attributes that exist on the snippet element.
-     * 
-     * @param snippetElement The element from the LLM snippet
-     * @param candidateElement The candidate element from cleaned HTML
-     * @return true if all snippet attributes match
-     */
-    private fun compareAttributes(snippetElement: Element, candidateElement: Element): Boolean {
-        val snippetAttrs = snippetElement.attributes()
-        val candidateAttrs = candidateElement.attributes()
-        
-        // Check that all snippet attributes exist and match in the candidate
-        for (attr in snippetAttrs) {
-            val snippetValue = attr.value
-            val candidateValue = candidateAttrs.get(attr.key)
-            
-            // Special handling for class attribute - compare as sets
-            if (attr.key == "class") {
-                val snippetClasses = snippetElement.classNames()
-                val candidateClasses = candidateElement.classNames()
-                if (snippetClasses != candidateClasses) {
-                    return false
-                }
-            } else {
-                // For other attributes, exact match required
-                if (snippetValue != candidateValue) {
-                    return false
-                }
-            }
-        }
-        
-        return true
-    }
-    
-    /**
-     * Recursively compares child structure of two elements up to a depth limit.
-     * 
-     * @param snippetElement The element from the LLM snippet
-     * @param candidateElement The candidate element from cleaned HTML
-     * @param depth Current recursion depth
-     * @param maxDepth Maximum recursion depth
-     * @return true if child structures match
-     */
-    private fun compareChildStructure(
-        snippetElement: Element,
-        candidateElement: Element,
-        depth: Int,
-        maxDepth: Int
-    ): Boolean {
-        // Stop recursion at max depth
-        if (depth >= maxDepth) {
-            return true
-        }
-        
-        val snippetChildren = snippetElement.children()
-        val candidateChildren = candidateElement.children()
-        
-        // The snippet might be truncated, so candidate can have MORE children
-        // but must have AT LEAST as many as the snippet shows
-        if (candidateChildren.size < snippetChildren.size) {
-            return false
-        }
-        
-        // Compare each child in the snippet with corresponding child in candidate
-        for (i in snippetChildren.indices) {
-            val snippetChild = snippetChildren[i]
-            val candidateChild = candidateChildren[i]
-            
-            // Compare tag names
-            if (snippetChild.tagName() != candidateChild.tagName()) {
-//                logger.debug(
-//                    "Child tag mismatch at depth {}: expected '{}', found '{}'",
-//                    depth,
-//                    snippetChild.tagName(),
-//                    candidateChild.tagName()
-//                )
-                return false
-            }
-            
-            // Compare attributes
-            if (!compareAttributes(snippetChild, candidateChild)) {
-//                logger.debug(
-//                    "Child attribute mismatch at depth {} for <{}>",
-//                    depth,
-//                    snippetChild.tagName()
-//                )
-                return false
-            }
-            
-            // Recursively compare children
-            if (!compareChildStructure(snippetChild, candidateChild, depth + 1, maxDepth)) {
-                return false
-            }
-        }
-        
-        return true
-    }
-    
-    /**
-     * Builds a hierarchical CSS selector for an element by walking up the DOM tree
-     * to find unique ancestors and constructing a specific path.
-     * 
-     * Strategy:
-     * 1. Walk up to 5 levels to find a unique ancestor (with id or distinctive classes)
-     * 2. Build a selector path from that ancestor to the target element
-     * 3. Include positional selectors (:nth-of-type or :nth-child) when needed for uniqueness
-     * 
-     * @param element The target element to build a selector for
-     * @param doc The full document (for validating selector uniqueness)
-     * @return A hierarchical CSS selector, or null if unable to construct a unique one
-     */
-    private fun buildHierarchicalSelector(element: Element, doc: Document): String {
-        val selectorParts = mutableListOf<String>()
-        var currentElement: Element? = element
-        var foundUniqueAncestor = false
-        val maxLevels = 5
-        var level = 0
-        
-        // Walk up the tree to build the selector path
-        while (currentElement != null && level < maxLevels) {
-            val tagName = currentElement.tagName()
-            val id = currentElement.attr("id")
-            val classes = currentElement.classNames()
-            
-            // Build selector part for this element
-            val selectorPart = when {
-                // If element has an ID, use it as an anchor point
-                id.isNotBlank() -> {
-                    foundUniqueAncestor = true
-                    "#${escapeCssIdentifier(id)}"
-                }
-                // If element has classes, include them
-                classes.isNotEmpty() -> {
-                    val filteredClasses = filterJsoupCompatibleClasses(classes)
-                    if (filteredClasses.isEmpty()) {
-                        // No usable classes, fall back to tag with position
-                        val parent = currentElement.parent()
-                        if (parent != null) {
-                            val siblingsOfSameType = parent.children().filter { it.tagName() == tagName }
-                            if (siblingsOfSameType.size > 1) {
-                                val position = siblingsOfSameType.indexOf(currentElement) + 1
-                                "$tagName:nth-of-type($position)"
-                            } else {
-                                tagName
-                            }
-                        } else {
-                            tagName
-                        }
-                    } else {
-                        val classSelector = "$tagName.${filteredClasses.map { escapeCssIdentifier(it) }.joinToString(".")}"
-                        // Check if this selector is unique at this level
-                        val parent = currentElement.parent()
-                        if (parent != null) {
-                            val siblingsMatching = parent.children().filter { sibling ->
-                                val siblingFilteredClasses = filterJsoupCompatibleClasses(sibling.classNames())
-                                sibling.tagName() == tagName && siblingFilteredClasses == filteredClasses
-                            }
-                            if (siblingsMatching.size > 1) {
-                                // Need positional selector - use :nth-child() with actual child position
-                                // because :nth-of-type() counts ALL elements of the same tag type,
-                                // not just those with matching classes
-                                val allChildren = parent.children()
-                                val childPosition = allChildren.indexOf(currentElement) + 1
-                                "$classSelector:nth-child($childPosition)"
-                            } else {
-                                classSelector
-                            }
-                        } else {
-                            classSelector
-                        }
-                    }
-                }
-                // No id or classes, use tag with position
-                else -> {
-                    val parent = currentElement.parent()
-                    if (parent != null) {
-                        val siblingsOfSameType = parent.children().filter { it.tagName() == tagName }
-                        if (siblingsOfSameType.size > 1) {
-                            val position = siblingsOfSameType.indexOf(currentElement) + 1
-                            "$tagName:nth-of-type($position)"
-                        } else {
-                            tagName
-                        }
-                    } else {
-                        tagName
-                    }
-                }
-            }
-            
-            selectorParts.add(0, selectorPart)
-            
-            // If we found a unique anchor (ID), stop here
-            if (foundUniqueAncestor) {
-                break
-            }
-            
-            // Move up to parent
-            currentElement = currentElement.parent()
-            level++
-            
-            // Stop at body or html
-            if (currentElement?.tagName() == "body" || currentElement?.tagName() == "html") {
-                break
-            }
-        }
-        
-        // Construct the final selector with " > " combinator for direct child relationships
-        val hierarchicalSelector = selectorParts.joinToString(" > ")
-        
-        // Validate that this selector is unique in the document
-        try {
-            val matches = doc.select(hierarchicalSelector)
-            if (matches.size != 1) {
-//                logger.warn("Hierarchical selector '{}' matches {} elements, expected 1", hierarchicalSelector, matches.size)
-                // Return it anyway, as it's still more specific than the base selector
-            }
-        } catch (e: org.jsoup.select.Selector.SelectorParseException) {
-            // If even the hierarchical selector can't be parsed, log and return it anyway
-            // The selector might still work in a real browser even if Jsoup can't parse it
-            logger.warn("Failed to validate hierarchical selector '{}': {}", hierarchicalSelector, e.message)
-        }
-        
-//        logger.debug("Built hierarchical selector: {}", hierarchicalSelector)
-        return hierarchicalSelector
-    }
-    
-    /**
-     * Internal method that constructs a CSS selector from an identifier using a pre-parsed Document.
-     * This allows reuse of the parsed document across multiple identifiers.
-     */
-    private fun constructCssSelectorFromIdentifierInternal(identifier: String, doc: Document): String? {
-        val element = doc.selectFirst("[data-ds-id=\"$identifier\"]")
 
-        if (element == null) {
-            logger.warn("Element with identifier '{}' not found in HTML", identifier)
+    override fun constructCssSelectorFromIdentifier(identifier: String, htmlWithIdentifiers: String): String? {
+        // Validate the identifier format
+        if (!identifier.startsWith("ds-")) {
+            logger.warn("Invalid identifier format (expected ds-* prefix): {}", identifier)
             return null
         }
-
-        // Build a CSS selector based on the element's attributes
-        val tagName = element.tagName()
-        val id = element.attr("id")
-        val classes = element.classNames()
-
-        // Strategy: prefer unique identifiers (id), then classes, then structural position
-        return when {
-            // If element has an ID, use it (should be unique)
-            id.isNotBlank() -> {
-                val idSelector = "#${escapeCssIdentifier(id)}"
-                try {
-                    // Verify it's unique
-                    if (doc.select(idSelector).size == 1) {
-                        idSelector
-                    } else {
-                        // ID is not unique (shouldn't happen but be defensive), fall back to hierarchical
-                        buildHierarchicalSelector(element, doc)
-                    }
-                } catch (e: org.jsoup.select.Selector.SelectorParseException) {
-                    // Jsoup couldn't parse the ID selector, fall back to hierarchical
-                    logger.debug(
-                        "Failed to parse ID selector '{}', falling back to hierarchical: {}",
-                        idSelector, e.message
-                    )
-                    buildHierarchicalSelector(element, doc)
-                }
-            }
-            // If element has classes, try class-based selector
-            classes.isNotEmpty() -> {
-                val filteredClasses = filterJsoupCompatibleClasses(classes)
-                if (filteredClasses.isEmpty()) {
-                    // No Jsoup-compatible classes, use hierarchical selector
-                    buildHierarchicalSelector(element, doc)
-                } else {
-                    val classSelector = "$tagName.${filteredClasses.map { escapeCssIdentifier(it) }.joinToString(".")}"
-                    try {
-                        // Check if class selector is unique
-                        if (doc.select(classSelector).size == 1) {
-                            classSelector
-                        } else {
-                            // Not unique, use hierarchical selector
-                            buildHierarchicalSelector(element, doc)
-                        }
-                    } catch (e: org.jsoup.select.Selector.SelectorParseException) {
-                        // Jsoup couldn't parse the selector, fall back to hierarchical
-                        logger.debug(
-                            "Failed to parse class selector '{}', falling back to hierarchical: {}",
-                            classSelector, e.message
-                        )
-                        buildHierarchicalSelector(element, doc)
-                    }
-                }
-            }
-            // No id or classes, use hierarchical selector
-            else -> buildHierarchicalSelector(element, doc)
-        }
+        
+        return "[data-ds-id=\"$identifier\"]"
     }
 
-    /**
-     * Constructs a CSS selector from a stable identifier by finding the element in the HTML
-     * and building a selector based on its attributes and structure.
-     * 
-     * @param identifier The data-ds-id value (e.g., "ds-semantic-5")
-     * @param htmlWithIdentifiers The HTML document containing injected data-ds-id attributes
-     * @return A CSS selector that can locate the element in the original webpage, or null if element not found
-     */
-    override fun constructCssSelectorFromIdentifier(identifier: String, htmlWithIdentifiers: String): String? {
-        return try {
-            val doc = Jsoup.parse(htmlWithIdentifiers)
-            constructCssSelectorFromIdentifierInternal(identifier, doc)
-        } catch (e: Exception) {
-            logger.error("Failed to construct CSS selector from identifier: {}", identifier, e)
-            null
-        }
-    }
-
-    /**
-     * Batch version that constructs CSS selectors for multiple identifiers from the same HTML.
-     * This is more efficient than calling [constructCssSelectorFromIdentifier] multiple times
-     * because it parses the HTML only once.
-     *
-     * @param identifiers List of data-ds-id values (e.g., ["ds-table-0", "ds-table-1"])
-     * @param htmlWithIdentifiers The HTML document containing injected data-ds-id attributes
-     * @return A map from identifier to CSS selector (null if element not found for that identifier)
-     */
     override fun constructCssSelectorsFromIdentifiers(
         identifiers: List<String>,
         htmlWithIdentifiers: String
     ): Map<String, String?> {
-        if (identifiers.isEmpty()) {
-            return emptyMap()
-        }
-
-        return try {
-            val doc = Jsoup.parse(htmlWithIdentifiers)
-            identifiers.associateWith { identifier ->
-                try {
-                    constructCssSelectorFromIdentifierInternal(identifier, doc)
-                } catch (e: Exception) {
-                    logger.error("Failed to construct CSS selector from identifier: {}", identifier, e)
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            logger.error("Failed to parse HTML for batch CSS selector construction", e)
-            identifiers.associateWith { null }
+        return identifiers.associateWith { identifier ->
+            constructCssSelectorFromIdentifier(identifier, htmlWithIdentifiers)
         }
     }
     
-    /**
-     * Constructs a CSS selector directly from a Jsoup Element.
-     * Used when the element is already available (e.g., from vision-based detection).
-     *
-     * @param element The Jsoup element to construct a selector for
-     * @return A CSS selector that can locate the element
-     */
     override fun constructCssSelector(element: Element): String {
-        // Get the document from the element
-        val doc = element.ownerDocument() ?: return buildHierarchicalSelector(element, Jsoup.parse(element.outerHtml()))
-        
-        // Build selector using the same logic as identifier-based construction
-        val tagName = element.tagName()
-        val id = element.attr("id")
-        val classes = element.classNames()
-
-        return when {
-            // If element has an ID, use it (should be unique)
-            id.isNotBlank() -> {
-                val idSelector = "#${escapeCssIdentifier(id)}"
-                try {
-                    if (doc.select(idSelector).size == 1) {
-                        idSelector
-                    } else {
-                        buildHierarchicalSelector(element, doc)
-                    }
-                } catch (e: org.jsoup.select.Selector.SelectorParseException) {
-                    buildHierarchicalSelector(element, doc)
-                }
-            }
-            // If element has classes, try class-based selector
-            classes.isNotEmpty() -> {
-                val filteredClasses = filterJsoupCompatibleClasses(classes)
-                if (filteredClasses.isEmpty()) {
-                    buildHierarchicalSelector(element, doc)
-                } else {
-                    val classSelector = "$tagName.${filteredClasses.map { escapeCssIdentifier(it) }.joinToString(".")}"
-                    try {
-                        if (doc.select(classSelector).size == 1) {
-                            classSelector
-                        } else {
-                            buildHierarchicalSelector(element, doc)
-                        }
-                    } catch (e: org.jsoup.select.Selector.SelectorParseException) {
-                        buildHierarchicalSelector(element, doc)
-                    }
-                }
-            }
-            else -> buildHierarchicalSelector(element, doc)
+        // Prefer data-ds-id if available
+        val dsId = element.attr("data-ds-id")
+        if (dsId.isNotBlank()) {
+            return "[data-ds-id=\"$dsId\"]"
         }
+        
+        // Fallback: build a hierarchical selector for elements without data-ds-id
+        // This should be rare since injectStableIds should cover all needed elements
+        logger.debug("Element has no data-ds-id, building fallback selector for <{}>", element.tagName())
+        return buildFallbackSelector(element)
+    }
+    
+    override fun constructCssSelector(id: StableElementId): String {
+        return id.cssSelector
+    }
+    
+    /**
+     * Builds a fallback selector for elements without data-ds-id.
+     * Uses tag name with nth-of-type for uniqueness.
+     */
+    private fun buildFallbackSelector(element: Element): String {
+        val parts = mutableListOf<String>()
+        var current: Element? = element
+        var level = 0
+        val maxLevels = 5
+        
+        while (current != null && level < maxLevels) {
+            val tagName = current.tagName()
+            
+            // Skip body and html
+            if (tagName == "body" || tagName == "html") {
+                break
+            }
+            
+            val parent = current.parent()
+            val selectorPart = if (parent != null) {
+                val siblingsOfSameType = parent.children().filter { it.tagName() == tagName }
+                if (siblingsOfSameType.size > 1) {
+                    val position = siblingsOfSameType.indexOf(current) + 1
+                    "$tagName:nth-of-type($position)"
+                } else {
+                    tagName
+                }
+            } else {
+                tagName
+            }
+            
+            parts.add(0, selectorPart)
+            current = parent
+            level++
+        }
+        
+        return parts.joinToString(" > ")
     }
 }
-

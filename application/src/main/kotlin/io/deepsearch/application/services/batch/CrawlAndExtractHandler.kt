@@ -273,6 +273,9 @@ class CrawlAndExtractHandler(
         withResolvedPage(url, proxyConfig) { page ->
             val html = page.getFullHtml()
             
+            // Inject stable IDs before any extraction (ensures consistent IDs across all captures)
+            page.injectStableIds()
+            
             // Parallel browser captures (including screenshot for vision-based identification)
             data class BrowserCaptures(
                 val snapshot: IBrowserPage.PageSnapshotWithMetadata,

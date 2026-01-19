@@ -426,13 +426,11 @@ class ParallelEmbeddingAndKgHandler(
             return MarkdownBuildResult(markdown, emptyMap())
         }
 
+        // HTML already has data-ds-id attributes
         val html = cachingData.cleanedHtml ?: cachingData.html
         val doc = Jsoup.parse(html)
 
-        // Step 1: Inject media identifiers
-        jsoupDomService.injectMediaIdentifiers(doc)
-
-        // Step 2: Apply icon/image replacements using shared utility
+        // Step 1: Apply icon/image replacements using shared utility
         val mediaResult = MediaReplacementBuilder.buildFromIconsAndImages(
             icons,
             images,

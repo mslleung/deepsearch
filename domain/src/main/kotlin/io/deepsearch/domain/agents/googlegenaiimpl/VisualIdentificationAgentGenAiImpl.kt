@@ -290,18 +290,17 @@ class VisualIdentificationAgentGenAiImpl(
     // ========== Main Generate Method ==========
 
     override suspend fun generate(input: VisualIdentificationInput): VisualIdentificationOutput = coroutineScope {
-        val originalHtml = input.pageSnapshot.html
+        // HTML already has data-ds-id attributes from browser's injectStableIds()
+        val htmlWithIds = input.pageSnapshot.html
         val boundingBoxes = input.pageSnapshot.boundingBoxes
         val hiddenContainers = input.pageSnapshot.hiddenContainers
         val screenshot = input.screenshot
 
         logger.debug(
             "Visual identification: HTML={} bytes, screenshot={} bytes, {} bounding boxes, {} hidden containers",
-            originalHtml.length, screenshot.bytes.size, boundingBoxes.size, hiddenContainers.size
+            htmlWithIds.length, screenshot.bytes.size, boundingBoxes.size, hiddenContainers.size
         )
 
-        // Inject stable identifiers for both semantic and table elements
-        val htmlWithIds = injectStableIdentifiers(originalHtml)
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
 
         // ========== Scale image for Gemini API if needed ==========
@@ -476,29 +475,6 @@ class VisualIdentificationAgentGenAiImpl(
     }
 
     // ========== ID Injection ==========
-
-    /**
-     * Inject stable data-ds-id attributes into potential elements.
-     * Uses a unified "ds-visual" prefix for both semantic and table elements.
-     */
-    private fun injectStableIdentifiers(html: String): String {
-        val doc: Document = Jsoup.parse(html)
-        var idCounter = 0
-
-        // Semantic element candidates
-        doc.select("header, footer, nav, aside, section, article, main, div").forEach { element ->
-            element.attr("data-ds-id", "ds-visual-${idCounter++}")
-        }
-
-        // Table element candidates (some overlap with above, but that's fine)
-        doc.select("table, ul, ol, dl").forEach { element ->
-            if (!element.hasAttr("data-ds-id")) {
-                element.attr("data-ds-id", "ds-visual-${idCounter++}")
-            }
-        }
-
-        return doc.outerHtml()
-    }
 
     // ========== Vision to DOM Mapping ==========
 
@@ -843,7 +819,6 @@ class VisualIdentificationAgentGenAiImpl(
         fun toIdentifiedElement(element: MappedElement?): IdentifiedElement? {
             if (element == null) return null
             return IdentifiedElement(
-                cssSelector = element.cssSelector,
                 dataId = element.dataId,
                 note = element.label
             )
@@ -979,14 +954,16 @@ class VisualIdentificationAgentGenAiImpl(
     /**
      * Detect tables in a hidden container using HTML-based LLM detection.
      * Hidden containers (accordion panels, collapsed sections, etc.) are not visible in screenshots.
+     * 
+     * Note: container.html already has data-ds-id attributes from the browser's injectStableIds()
      */
     private suspend fun detectTablesInHiddenContainer(
         container: IBrowserPage.HiddenContainer,
         fullHtmlWithIds: String,
         modelId: String
     ): Pair<List<HiddenTableResult>, TokenUsageMetrics> {
-        val snippetWithIds = injectHiddenContainerIdentifiers(container.html, "ds-hidden-${container.id}")
-        val cleanedSnippet = cleanHtml(snippetWithIds)
+        // container.html already has data-ds-id attributes from browser injection
+        val cleanedSnippet = cleanHtml(container.html)
 
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
@@ -1032,15 +1009,6 @@ class VisualIdentificationAgentGenAiImpl(
         }
 
         return validatedTables to tokenUsage
-    }
-
-    private fun injectHiddenContainerIdentifiers(html: String, idPrefix: String): String {
-        val doc: Document = Jsoup.parse(html)
-        var idCounter = 0
-        doc.select("table, div, section, article, main, aside, ul, ol, dl").forEach { element ->
-            element.attr("data-ds-id", "$idPrefix-${idCounter++}")
-        }
-        return doc.outerHtml()
     }
 
     private fun cleanHtml(rawHtml: String): String {
@@ -1104,7 +1072,8 @@ class VisualIdentificationAgentGenAiImpl(
         pageWidth: Double,
         pageHeight: Double
     ): VisualIdentificationBatchRequest {
-        val htmlWithIds = injectStableIdentifiers(html)
+        // HTML already has data-ds-id attributes from browser's injectStableIds()
+        val htmlWithIds = html
 
         val metadata = mapOf(
             "pageWidth" to pageWidth.toString(),

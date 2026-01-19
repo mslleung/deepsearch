@@ -214,6 +214,34 @@ interface IBrowserPage {
     )
 
     /**
+     * Result of stable ID injection.
+     * Contains counts of injected IDs by type.
+     */
+    data class StableIdInjectionResult(
+        /** Number of structural/semantic elements injected (ds-element-N) */
+        val elements: Int,
+        /** Number of icon elements injected (ds-icon-N) */
+        val icons: Int,
+        /** Number of image elements injected (ds-image-N) */
+        val images: Int
+    )
+
+    /**
+     * Inject stable data-ds-id attributes on all elements the pipeline needs.
+     * 
+     * ID Format: ds-{type}-{id} where:
+     * - type: element | icon | image
+     * - id: Sequential integer (0, 1, 2, ...)
+     * 
+     * This method must be called BEFORE any extraction methods (capturePageSnapshot,
+     * extractIcons, extractImages) to ensure all elements have stable IDs that can
+     * be referenced later.
+     * 
+     * @return StableIdInjectionResult with counts of injected IDs by type
+     */
+    suspend fun injectStableIds(): StableIdInjectionResult
+
+    /**
      * Information about an image that failed to be extracted via canvas rendering.
      * These images can be captured via screenshot fallback.
      */
@@ -258,10 +286,13 @@ interface IBrowserPage {
     /**
      * Hidden container detected in the page (accordion content, tab panels, etc.)
      * These are not visible in screenshots but may contain table structures.
+     * 
+     * Identified by their data-ds-id attribute (injected by injectStableIds).
      */
     data class HiddenContainer(
+        /** The data-ds-id of the hidden container element */
         val id: String,
-        val xpath: String,
+        /** The outer HTML of the hidden container */
         val html: String
     )
 

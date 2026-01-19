@@ -214,18 +214,17 @@ class TableIdentificationAgentGenAiImpl(
     }
 
     override suspend fun generate(input: TableIdentificationInput): TableIdentificationOutput = coroutineScope {
-        val originalHtml = input.pageSnapshot.html
+        // HTML already has data-ds-id attributes from browser's injectStableIds()
+        val htmlWithIds = input.pageSnapshot.html
         val boundingBoxes = input.pageSnapshot.boundingBoxes
         val hiddenContainers = input.pageSnapshot.hiddenContainers
         val screenshot = input.screenshot
 
         logger.debug(
             "Table identification: HTML={} bytes, screenshot={} bytes, {} hidden containers",
-            originalHtml.length, screenshot.bytes.size, hiddenContainers.size
+            htmlWithIds.length, screenshot.bytes.size, hiddenContainers.size
         )
 
-        // Inject stable identifiers into all HTML
-        val htmlWithIds = injectStableIdentifiers(originalHtml, "ds-table")
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
 
         // Extract semantic <table> elements programmatically (no LLM needed)
@@ -393,17 +392,6 @@ class TableIdentificationAgentGenAiImpl(
         return parts.joinToString(" | ")
     }
 
-    private fun injectStableIdentifiers(cleanedHtml: String, idPrefix: String): String {
-        val doc: Document = Jsoup.parse(cleanedHtml)
-
-        var idCounter = 0
-        doc.select("table, div, section, article, main, aside, ul, ol, dl").forEach { element ->
-            element.attr("data-ds-id", "$idPrefix-${idCounter++}")
-        }
-
-        return doc.outerHtml()
-    }
-
     private fun extractSemanticTables(htmlWithIds: String): Pair<List<LlmTableResult>, String> {
         val doc = Jsoup.parse(htmlWithIds)
         val tables = mutableListOf<LlmTableResult>()
@@ -547,7 +535,8 @@ class TableIdentificationAgentGenAiImpl(
         pageWidth: Double?,
         pageHeight: Double?
     ): TableIdentificationBatchRequest {
-        val htmlWithIds = injectStableIdentifiers(html, "ds-table")
+        // HTML already has data-ds-id attributes from browser's injectStableIds()
+        val htmlWithIds = html
 
         // Apply programmatic extraction to reduce LLM workload (same as interactive mode)
         val (programmaticTables, reducedHtml) = extractSemanticTables(htmlWithIds)
@@ -896,15 +885,16 @@ class TableIdentificationAgentGenAiImpl(
      * 
      * Hidden containers (accordion panels, collapsed sections, etc.) are not visible in screenshots,
      * so we process their HTML snippets individually with higher fidelity since they are smaller.
+     * 
+     * Note: container.html already has data-ds-id attributes from the browser's injectStableIds()
      */
     private suspend fun detectTablesInHiddenContainer(
         container: IBrowserPage.HiddenContainer,
         fullHtmlWithIds: String,
         modelId: String
     ): Pair<List<LlmTableResult>, TokenUsageMetrics> {
-        // Inject identifiers into the container's HTML snippet
-        val snippetWithIds = injectStableIdentifiers(container.html, "ds-hidden-${container.id}")
-        val cleanedSnippet = cleanHtml(snippetWithIds)
+        // container.html already has data-ds-id attributes from browser injection
+        val cleanedSnippet = cleanHtml(container.html)
 
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 

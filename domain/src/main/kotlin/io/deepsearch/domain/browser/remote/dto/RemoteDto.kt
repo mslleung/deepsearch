@@ -121,6 +121,9 @@ sealed class PageCommand {
     @Serializable @SerialName("injectAttributesByCssSelectors")
     data class InjectAttributesByCssSelectors(val injections: List<AttributeInjection>) : PageCommand()
     
+    @Serializable @SerialName("injectStableIds")
+    data object InjectStableIds : PageCommand()
+    
     @Serializable @SerialName("getTableInterpretationData")
     data class GetTableInterpretationData(val cssSelector: String) : PageCommand()
     
@@ -203,9 +206,20 @@ data class FullPageSnapshotResponse(
 
 @Serializable
 data class HiddenContainerResponse(
+    /** The data-ds-id of the hidden container element */
     val id: String,
-    val xpath: String,
+    /** The outer HTML of the hidden container */
     val html: String
+)
+
+@Serializable
+data class StableIdInjectionResponse(
+    /** Number of structural/semantic elements injected (ds-element-N) */
+    val elements: Int,
+    /** Number of icon elements injected (ds-icon-N) */
+    val icons: Int,
+    /** Number of image elements injected (ds-image-N) */
+    val images: Int
 )
 
 @Serializable

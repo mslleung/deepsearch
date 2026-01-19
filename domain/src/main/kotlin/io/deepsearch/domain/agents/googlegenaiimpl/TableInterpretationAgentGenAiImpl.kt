@@ -152,6 +152,10 @@ class TableInterpretationAgentGenAiImpl(
         )
     }
 
+    /**
+     * Inject bounding box attributes into HTML elements that have data-ds-id.
+     * Bounding boxes are keyed by data-ds-id (not XPath).
+     */
     private fun injectBoundingBoxes(html: String, boundingBoxes: Map<String, IBrowserPage.BoundingBox>): String {
         if (boundingBoxes.isEmpty()) {
             return html
@@ -162,17 +166,12 @@ class TableInterpretationAgentGenAiImpl(
             val doc = Jsoup.parseBodyFragment(html)
             doc.outputSettings().prettyPrint(false)
 
-            // The table should be the first child in the body
-            val root = doc.body().children().firstOrNull() ?: return html
-
-            // Pre-compile regex for performance
-            val xpathRegex = Regex("""([a-zA-Z0-9_\-:]+)\[(\d+)]""")
-
             // Tags relevant for table interpretation (structure and cell boundaries)
             // Includes semantic table elements and divs for CSS-based tables
-            val relevantTags = setOf("table", "thead", "tbody", "tfoot", "tr", "td", "th", "div")
+            val relevantTags = setOf("table", "thead", "tbody", "tfoot", "tr", "td", "th", "div", "li", "ul", "ol", "dl", "dt", "dd")
 
-            for ((xpath, bbox) in boundingBoxes) {
+            // Find all elements with data-ds-id and inject bounding boxes
+            for ((dsId, bbox) in boundingBoxes) {
                 val width = bbox.right - bbox.left
                 val height = bbox.bottom - bbox.top
 
@@ -183,8 +182,8 @@ class TableInterpretationAgentGenAiImpl(
 
                 val bboxValue = "${bbox.left.toInt()} ${bbox.top.toInt()} ${bbox.right.toInt()} ${bbox.bottom.toInt()}"
 
-                // XPath format: ./tagname[index]/tagname[index]/...
-                val element = findElementByRelativeXPath(root, xpath, xpathRegex)
+                // Find element by data-ds-id
+                val element = doc.selectFirst("[data-ds-id=\"$dsId\"]")
 
                 // Only inject bounding boxes on elements relevant for table structure
                 if (element != null && element.tagName() in relevantTags) {
@@ -200,56 +199,6 @@ class TableInterpretationAgentGenAiImpl(
         }
     }
 
-    /**
-     * Find an element using a relative XPath expression starting from a root element.
-     * XPath format: ./tagname[index]/tagname[index]/... or "." for the root itself
-     */
-    private fun findElementByRelativeXPath(
-        root: org.jsoup.nodes.Element,
-        xpath: String,
-        regex: Regex
-    ): org.jsoup.nodes.Element? {
-        if (xpath == ".") {
-            return root
-        }
-
-        if (!xpath.startsWith("./")) {
-            return null
-        }
-
-        val parts = xpath.substring(2).split("/")
-        var current = root
-
-        for (part in parts) {
-            // Parse "tagname[index]"
-            val match = regex.find(part) ?: return null
-            val tagName = match.groupValues[1]
-            val index = match.groupValues[2].toInt()
-
-            // Find the nth child with the matching tag name (1-based index)
-            // Optimize: traverse children manually to avoid creating new lists
-            var count = 0
-            var found: org.jsoup.nodes.Element? = null
-
-            val children = current.children()
-            for (child in children) {
-                if (child.tagName().equals(tagName, ignoreCase = true)) {
-                    count++
-                    if (count == index) {
-                        found = child
-                        break
-                    }
-                }
-            }
-
-            if (found == null) {
-                return null
-            }
-            current = found
-        }
-
-        return current
-    }
 
     private fun combineMarkdownWithAdditionalInfo(markdown: String, additionalInfo: String?): String {
         return if (additionalInfo.isNullOrBlank()) {
