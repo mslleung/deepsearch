@@ -21,15 +21,24 @@ interface IHtmlToMarkdownService {
 
 /**
  * Implementation using flexmark-java's HTML-to-Markdown converter.
+ * 
+ * Configured for RAG-friendly output:
+ * - SKIP_ATTRIBUTES: Prevents Pandoc-style IDs {#...} from being added (CMS widget IDs, etc.)
+ * - SKIP_CHAR_ESCAPE: Prevents unnecessary escaping of &, <, > for cleaner text
+ * 
+ * Falls back to post-processing for any edge cases the configuration doesn't catch.
  */
 class HtmlToMarkdownService : IHtmlToMarkdownService {
     
     private val converter: FlexmarkHtmlConverter
-    
+
     init {
-        val options = MutableDataSet()
-        // Default options work well for most cases
-        // Additional configuration can be added here if needed
+        val options = MutableDataSet().apply {
+            // Skip attribute conversion (e.g., {#id}, {.class}) - not useful for RAG
+            set(FlexmarkHtmlConverter.SKIP_ATTRIBUTES, true)
+            // Skip escaping special characters - we want clean readable text for RAG
+            set(FlexmarkHtmlConverter.SKIP_CHAR_ESCAPE, true)
+        }
         converter = FlexmarkHtmlConverter.builder(options).build()
     }
     
