@@ -17,6 +17,17 @@ data class CssSelectorReplacement(
 )
 
 /**
+ * Mapping between a placeholder token and its replacement text.
+ * Used to defer media insertion until after HTML-to-Markdown conversion.
+ */
+data class MediaPlaceholderMapping(
+    /** The placeholder token inserted into the DOM, e.g., "{{MEDIA:abc123}}" */
+    val placeholder: String,
+    /** The actual text to replace the placeholder with, e.g., "Search icon" or "![desc](#img-1)" */
+    val text: String
+)
+
+/**
  * Service for manipulating DOM using Jsoup.
  * Provides operations equivalent to browser DOM manipulation,
  * allowing the browser to be released earlier in the extraction pipeline.
@@ -93,6 +104,20 @@ interface IJsoupDomService {
      * @return Map of CSS selector to outer HTML (null if not found)
      */
     fun getElementsHtml(doc: Document, selectors: List<String>): Map<String, String?>
+    
+    /**
+     * Replace elements with placeholder tokens instead of actual text.
+     * Used to defer media insertion until after HTML-to-Markdown conversion,
+     * preventing markdown syntax from being escaped.
+     * 
+     * @param doc The Jsoup document to modify (mutated in place)
+     * @param replacements List of CSS selector to text replacements
+     * @return Map of placeholder token to MediaPlaceholderMapping for later substitution
+     */
+    fun replaceElementsWithPlaceholders(
+        doc: Document,
+        replacements: List<CssSelectorReplacement>
+    ): Map<String, MediaPlaceholderMapping>
     
 }
 
@@ -255,6 +280,78 @@ class JsoupDomService : IJsoupDomService {
                 null
             }
         }
+    }
+    
+    override fun replaceElementsWithPlaceholders(
+        doc: Document,
+        replacements: List<CssSelectorReplacement>
+    ): Map<String, MediaPlaceholderMapping> {
+        if (replacements.isEmpty()) {
+            return emptyMap()
+        }
+        
+        val placeholderMap = mutableMapOf<String, MediaPlaceholderMapping>()
+        var placeholderCounter = 0
+        var replaced = 0
+        var removed = 0
+        var notFound = 0
+        
+        for (replacement in replacements) {
+            try {
+                var elements = doc.select(replacement.cssSelector)
+                
+                // If selector didn't match, try normalizing for table tbody insertion
+                if (elements.isEmpty() && replacement.cssSelector.contains("table")) {
+                    val normalizedSelector = normalizeTableSelector(replacement.cssSelector)
+                    if (normalizedSelector != replacement.cssSelector) {
+                        elements = doc.select(normalizedSelector)
+                        if (elements.isNotEmpty()) {
+                            logger.debug("Selector '{}' matched after normalizing to '{}'", 
+                                replacement.cssSelector, normalizedSelector)
+                        }
+                    }
+                }
+                
+                if (elements.isEmpty()) {
+                    notFound++
+                    logger.debug("No elements found for selector: {}", replacement.cssSelector)
+                }
+                
+                for (element in elements) {
+                    if (replacement.text != null) {
+                        // Generate unique placeholder token
+                        val placeholderId = "MEDIA_${placeholderCounter++}"
+                        val placeholder = "{{$placeholderId}}"
+                        
+                        // Store the mapping
+                        placeholderMap[placeholderId] = MediaPlaceholderMapping(
+                            placeholder = placeholder,
+                            text = replacement.text
+                        )
+                        
+                        // Replace element with a span containing the placeholder
+                        val textContainer = Element(Tag.valueOf("span"), "")
+                        textContainer.appendText(placeholder)
+                        element.replaceWith(textContainer)
+                        replaced++
+                    } else {
+                        // Remove element (no placeholder needed)
+                        element.remove()
+                        removed++
+                    }
+                }
+            } catch (e: Exception) {
+                logger.warn("Failed to replace element for selector '{}': {}", replacement.cssSelector, e.message)
+            }
+        }
+        
+        if (notFound > 0) {
+            logger.warn("{} of {} media replacements had no matching elements (CSS selector mismatch)", 
+                notFound, replacements.size)
+        }
+        logger.debug("Replaced {} elements with placeholders, removed {} elements", replaced, removed)
+        
+        return placeholderMap
     }
     
     /**

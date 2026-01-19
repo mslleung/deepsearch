@@ -28,6 +28,10 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.jsoup)
 
+    // HTML to Markdown conversion
+    implementation(libs.flexmark)
+    implementation(libs.flexmark.html2md)
+
     // Apache HttpClient 5 - required for Google ADK Dev UI
     implementation(libs.apache.httpclient5)
     implementation(libs.apache.httpcore5)

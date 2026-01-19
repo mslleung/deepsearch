@@ -19,8 +19,10 @@ import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IBoundingBoxDerivationService
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IGeminiFileSearchService
+import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IImageDimensionService
 import io.deepsearch.domain.services.IJsoupDomService
+import io.deepsearch.domain.services.HtmlToMarkdownService
 import io.deepsearch.domain.services.ImageDimensionService
 import io.deepsearch.domain.services.IJwtService
 import io.deepsearch.domain.services.INormalizeUrlService
@@ -66,6 +68,7 @@ val domainModule = module {
     singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
     singleOf(::BoundingBoxDerivationService) bind IBoundingBoxDerivationService::class
     singleOf(::JsoupDomService) bind IJsoupDomService::class
+    singleOf(::HtmlToMarkdownService) bind IHtmlToMarkdownService::class
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
     singleOf(::ImageDimensionService) bind IImageDimensionService::class
     

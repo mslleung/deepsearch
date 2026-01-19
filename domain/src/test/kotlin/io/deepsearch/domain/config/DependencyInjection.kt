@@ -18,8 +18,10 @@ import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import io.deepsearch.domain.services.IBoundingBoxDerivationService
 import io.deepsearch.domain.services.ICssSelectorConstructionService
+import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IJsoupDomService
 import io.deepsearch.domain.services.IJwtService
+import io.deepsearch.domain.services.HtmlToMarkdownService
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.services.ISerperService
 import io.deepsearch.domain.services.ITextEmbeddingService
@@ -130,6 +132,7 @@ private val domainCommonTestModule = module {
     singleOf(::BoundingBoxDerivationService) bind IBoundingBoxDerivationService::class
     singleOf(::CssSelectorConstructionService) bind ICssSelectorConstructionService::class
     singleOf(::JsoupDomService) bind IJsoupDomService::class
+    singleOf(::HtmlToMarkdownService) bind IHtmlToMarkdownService::class
     singleOf(::JwtService) bind IJwtService::class
     singleOf(::OcrImageTextExtractionService) bind IOcrImageTextExtractionService::class
     singleOf(::SerperService) bind ISerperService::class

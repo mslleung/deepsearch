@@ -8,7 +8,9 @@ import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.services.CssSelectorReplacement
 import io.deepsearch.domain.services.IBoundingBoxDerivationService
+import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IJsoupDomService
+import io.deepsearch.domain.services.MediaPlaceholderMapping
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -50,6 +52,7 @@ class WebpageExtractionService(
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
     private val boundingBoxDerivationService: IBoundingBoxDerivationService,
     private val jsoupDomService: IJsoupDomService,
+    private val htmlToMarkdownService: IHtmlToMarkdownService,
     private val markdownFormattingService: IMarkdownFormattingService
 ) : IWebpageExtractionService {
 
@@ -282,11 +285,13 @@ class WebpageExtractionService(
         // HTML already has data-ds-id attributes from browser's injectStableIds()
         val jsoupDoc = Jsoup.parse(snapshot.html)
 
-        // ===== Step 1: Apply media replacements (icons + images) =====
+        // ===== Step 1: Apply media replacements with PLACEHOLDERS =====
+        // Use placeholders instead of actual text to prevent markdown syntax escaping
+        // during HTML-to-Markdown conversion
         val mediaReplacements = llmResults.iconReplacements + llmResults.imageReplacements
-        jsoupDomService.replaceElementsWithText(jsoupDoc, mediaReplacements)
+        val placeholderMap = jsoupDomService.replaceElementsWithPlaceholders(jsoupDoc, mediaReplacements)
 
-        // ===== Step 3: Extract popup text before removal =====
+        // ===== Step 2: Extract popup text before removal =====
         // Use stable data-ds-id selectors instead of position-based CSS selectors
         val popupText = llmResults.semanticElements.popups
             .map { "[data-ds-id=\"${it.dataId}\"]" }
@@ -296,33 +301,34 @@ class WebpageExtractionService(
             .joinToString("\n")
             .takeIf { it.isNotBlank() }
 
-        // ===== Step 4: Remove semantic elements =====
+        // ===== Step 3: Remove semantic elements =====
         // Use stable data-ds-id selectors instead of position-based CSS selectors
         jsoupDomService.removeElements(jsoupDoc, collectSemanticDataIdSelectors(llmResults.semanticElements))
 
-        // ===== Step 5: Interpret and replace tables =====
+        // ===== Step 4: Interpret and replace tables =====
         // Tables use data-ds-id selectors which remain stable after semantic removal
+        // Pass placeholderMap so table snippets can have placeholders resolved before LLM interpretation
         val tableReplacements = interpretTablesWithDerivedData(
             llmResults.tableIdentifications,
             snapshot.html,
             snapshot.boundingBoxes,
             jsoupDoc,
-            sessionId
+            sessionId,
+            placeholderMap
         )
         jsoupDomService.replaceElementsWithText(jsoupDoc, tableReplacements)
 
-        // ===== Step 6: Extract final text =====
-        val extractedText = jsoupDomService.extractTextContent(jsoupDoc)
+        // ===== Step 5: Convert HTML to Markdown =====
+        // Placeholders pass through cleanly without escaping
+        val rawMarkdown = htmlToMarkdownService.convert(jsoupDoc.html())
 
-        // ===== Step 7: Format markdown using LLM =====
-//        val markdown = markdownFormattingService.formatMarkdown(
-//            rawText = extractedText,
-//            url = snapshot.url,
-//            title = snapshot.title,
-//            description = snapshot.description,
-//            popupText = popupText,
-//            sessionId = sessionId
-//        )
+        // ===== Step 6: Replace placeholders with actual text =====
+        var finalMarkdown = rawMarkdown
+        placeholderMap.values.forEach { mapping ->
+            finalMarkdown = finalMarkdown.replace(mapping.placeholder, mapping.text)
+        }
+
+        // ===== Step 7: Add metadata header and popup content =====
         val markdown = buildString {
             appendLine("URL: ${snapshot.url}")
             if (snapshot.title.isNotBlank()) {
@@ -332,7 +338,15 @@ class WebpageExtractionService(
                 appendLine("Description: ${snapshot.description}")
             }
             appendLine()
-            append(extractedText)
+            append(finalMarkdown)
+            // Append popup text at the end if present (dialogs, tooltips, etc.)
+            if (!popupText.isNullOrBlank()) {
+                appendLine()
+                appendLine("---")
+                appendLine("## Popup Content")
+                appendLine()
+                append(popupText)
+            }
         }
 
         return WebpageExtractionResult(
@@ -358,14 +372,16 @@ class WebpageExtractionService(
 
     /**
      * Interprets tables using pre-computed data derived from the page snapshot.
-     * Uses Jsoup document for HTML extraction (after media replacement).
+     * Uses Jsoup document for HTML extraction (after media placeholder replacement).
+     * Resolves placeholders in table HTML snippets before sending to LLM.
      */
     private suspend fun interpretTablesWithDerivedData(
         tables: List<TableIdentification>,
         originalHtml: String,
         pageBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
         jsoupDoc: org.jsoup.nodes.Document,
-        sessionId: SessionId
+        sessionId: SessionId,
+        placeholderMap: Map<String, MediaPlaceholderMapping>
     ): List<CssSelectorReplacement> {
         if (tables.isEmpty()) {
             return emptyList()
@@ -386,11 +402,17 @@ class WebpageExtractionService(
 
             // Use stable data-ds-id selector (identifiers were injected earlier)
             val dataIdSelector = "[data-ds-id=\"${table.dataId}\"]"
-            val currentHtml = jsoupDomService.getElementHtml(jsoupDoc, dataIdSelector)
-            if (currentHtml == null) {
+            val tableHtmlWithPlaceholders = jsoupDomService.getElementHtml(jsoupDoc, dataIdSelector)
+            if (tableHtmlWithPlaceholders == null) {
                 // Table was likely removed with a semantic element - this is expected
                 logger.debug("Table element not found (may have been removed with semantic element): {}", table.dataId)
                 return@mapNotNull null
+            }
+
+            // Resolve placeholders to actual text for LLM interpretation
+            // LLM needs to see "Search icon" or "![Product photo](#img-1)" not "{{MEDIA_0}}"
+            val tableHtmlForLlm = placeholderMap.values.fold(tableHtmlWithPlaceholders) { html, mapping ->
+                html.replace(mapping.placeholder, mapping.text)
             }
 
             // Use derived bounding boxes, or empty if not available
@@ -398,7 +420,7 @@ class WebpageExtractionService(
 
             TableInterpretationInput(
                 tableIdentification = table,
-                tableHtml = currentHtml,
+                tableHtml = tableHtmlForLlm,
                 boundingBoxes = boundingBoxes
             )
         }
