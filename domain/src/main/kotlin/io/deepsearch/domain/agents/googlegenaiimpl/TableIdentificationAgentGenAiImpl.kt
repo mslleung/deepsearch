@@ -286,36 +286,60 @@ class TableIdentificationAgentGenAiImpl(
 
         val tokenUsage = visionUsage + hiddenUsage
 
-        // ========== Deduplicate: Remove hidden tables that overlap with vision-detected tables ==========
-        // A hidden table might be a descendant or ancestor of a vision-detected table
+        // ========== Deduplicate: Remove vision tables that overlap with programmatic tables ==========
+        // Vision detection may find the same <table> element that was already extracted programmatically
         val doc = Jsoup.parse(htmlWithIds)
-        val visionIds = (programmaticTables + visionTables).map { it.id }.toSet()
+        val programmaticIds = programmaticTables.map { it.id }.toSet()
+
+        val deduplicatedVisionTables = visionTables.filter { visionTable ->
+            val visionElement = doc.select("[data-ds-id=\"${visionTable.id}\"]").firstOrNull()
+                ?: return@filter true // Keep if element not found (shouldn't happen)
+
+            // Check if this vision table is a descendant, ancestor, or same as any programmatic table
+            val isOverlapping = programmaticIds.any { programmaticId ->
+                val programmaticElement = doc.select("[data-ds-id=\"$programmaticId\"]").firstOrNull()
+                    ?: return@any false
+                // Skip if vision is inside programmatic, or programmatic is inside vision, or same element
+                visionElement.parents().contains(programmaticElement) ||
+                        programmaticElement.parents().contains(visionElement) ||
+                        visionElement == programmaticElement
+            }
+
+            if (isOverlapping) {
+                logger.debug("Deduplicating vision table '{}' - overlaps with programmatic table", visionTable.id)
+            }
+            !isOverlapping
+        }
+
+        // ========== Deduplicate: Remove hidden tables that overlap with programmatic/vision tables ==========
+        // A hidden table might be a descendant or ancestor of a programmatic or vision-detected table
+        val combinedIds = (programmaticIds + deduplicatedVisionTables.map { it.id }).toSet()
 
         val deduplicatedHiddenTables = hiddenTables.filter { hiddenTable ->
             val hiddenElement = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull()
                 ?: return@filter true // Keep if element not found (shouldn't happen)
 
-            // Check if this hidden table is a descendant or ancestor of any vision table
-            val isOverlapping = visionIds.any { visionId ->
-                val visionElement = doc.select("[data-ds-id=\"$visionId\"]").firstOrNull()
+            // Check if this hidden table is a descendant or ancestor of any combined table
+            val isOverlapping = combinedIds.any { combinedId ->
+                val combinedElement = doc.select("[data-ds-id=\"$combinedId\"]").firstOrNull()
                     ?: return@any false
-                // Skip if hidden is inside vision, or vision is inside hidden
-                hiddenElement.parents().contains(visionElement) ||
-                        visionElement.parents().contains(hiddenElement) ||
-                        hiddenElement == visionElement
+                // Skip if hidden is inside combined, or combined is inside hidden
+                hiddenElement.parents().contains(combinedElement) ||
+                        combinedElement.parents().contains(hiddenElement) ||
+                        hiddenElement == combinedElement
             }
 
             if (isOverlapping) {
-                logger.debug("Deduplicating hidden table '{}' - overlaps with vision-detected table", hiddenTable.id)
+                logger.debug("Deduplicating hidden table '{}' - overlaps with programmatic/vision table", hiddenTable.id)
             }
             !isOverlapping
         }
 
-        val allTableResults = programmaticTables + visionTables + deduplicatedHiddenTables
+        val allTableResults = programmaticTables + deduplicatedVisionTables + deduplicatedHiddenTables
 
         logger.debug(
-            "Total tables: {} ({} semantic, {} vision, {} hidden after dedup from {})",
-            allTableResults.size, programmaticTables.size, visionTables.size,
+            "Total tables: {} ({} semantic, {} vision after dedup from {}, {} hidden after dedup from {})",
+            allTableResults.size, programmaticTables.size, deduplicatedVisionTables.size, visionTables.size,
             deduplicatedHiddenTables.size, hiddenTables.size
         )
 

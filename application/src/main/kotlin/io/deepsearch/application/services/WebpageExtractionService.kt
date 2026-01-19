@@ -11,6 +11,7 @@ import io.deepsearch.domain.services.IBoundingBoxDerivationService
 import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IJsoupDomService
 import io.deepsearch.domain.services.MediaPlaceholderMapping
+import io.deepsearch.domain.services.PlaceholderPrefix
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -290,6 +291,7 @@ class WebpageExtractionService(
         // during HTML-to-Markdown conversion
         val mediaReplacements = llmResults.iconReplacements + llmResults.imageReplacements
         val placeholderMap = jsoupDomService.replaceElementsWithPlaceholders(jsoupDoc, mediaReplacements)
+            .toMutableMap()
 
         // ===== Step 2: Extract popup text before removal =====
         // Use stable data-ds-id selectors instead of position-based CSS selectors
@@ -316,7 +318,12 @@ class WebpageExtractionService(
             sessionId,
             placeholderMap
         )
-        jsoupDomService.replaceElementsWithText(jsoupDoc, tableReplacements)
+        // Use placeholders for tables too - this prevents markdown newlines from being escaped
+        // during HTML-to-Markdown conversion. Use TABLE prefix to avoid ID collisions with media placeholders.
+        val tablePlaceholders = jsoupDomService.replaceElementsWithPlaceholders(
+            jsoupDoc, tableReplacements, PlaceholderPrefix.TABLE
+        )
+        placeholderMap.putAll(tablePlaceholders)
 
         // ===== Step 5: Convert HTML to Markdown =====
         // Placeholders pass through cleanly without escaping

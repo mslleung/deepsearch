@@ -21,11 +21,22 @@ data class CssSelectorReplacement(
  * Used to defer media insertion until after HTML-to-Markdown conversion.
  */
 data class MediaPlaceholderMapping(
-    /** The placeholder token inserted into the DOM, e.g., "{{MEDIA:abc123}}" */
+    /** The placeholder token inserted into the DOM, e.g., "{{MEDIA_0}}" */
     val placeholder: String,
     /** The actual text to replace the placeholder with, e.g., "Search icon" or "![desc](#img-1)" */
     val text: String
 )
+
+/**
+ * Prefix types for placeholder IDs to avoid collisions when calling
+ * replaceElementsWithPlaceholders multiple times.
+ */
+enum class PlaceholderPrefix(val prefix: String) {
+    /** For icons and images */
+    MEDIA("MEDIA"),
+    /** For table markdown */
+    TABLE("TABLE")
+}
 
 /**
  * Service for manipulating DOM using Jsoup.
@@ -112,11 +123,14 @@ interface IJsoupDomService {
      * 
      * @param doc The Jsoup document to modify (mutated in place)
      * @param replacements List of CSS selector to text replacements
+     * @param placeholderPrefix Prefix for placeholder IDs. Use different prefixes
+     *        when calling this function multiple times to avoid ID collisions.
      * @return Map of placeholder token to MediaPlaceholderMapping for later substitution
      */
     fun replaceElementsWithPlaceholders(
         doc: Document,
-        replacements: List<CssSelectorReplacement>
+        replacements: List<CssSelectorReplacement>,
+        placeholderPrefix: PlaceholderPrefix = PlaceholderPrefix.MEDIA
     ): Map<String, MediaPlaceholderMapping>
     
 }
@@ -284,7 +298,8 @@ class JsoupDomService : IJsoupDomService {
     
     override fun replaceElementsWithPlaceholders(
         doc: Document,
-        replacements: List<CssSelectorReplacement>
+        replacements: List<CssSelectorReplacement>,
+        placeholderPrefix: PlaceholderPrefix
     ): Map<String, MediaPlaceholderMapping> {
         if (replacements.isEmpty()) {
             return emptyMap()
@@ -319,8 +334,8 @@ class JsoupDomService : IJsoupDomService {
                 
                 for (element in elements) {
                     if (replacement.text != null) {
-                        // Generate unique placeholder token
-                        val placeholderId = "MEDIA_${placeholderCounter++}"
+                        // Generate unique placeholder token using the provided prefix
+                        val placeholderId = "${placeholderPrefix.prefix}_${placeholderCounter++}"
                         val placeholder = "{{$placeholderId}}"
                         
                         // Store the mapping
