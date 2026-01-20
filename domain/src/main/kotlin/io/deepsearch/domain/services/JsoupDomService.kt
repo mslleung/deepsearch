@@ -133,7 +133,31 @@ interface IJsoupDomService {
         placeholderPrefix: PlaceholderPrefix = PlaceholderPrefix.MEDIA
     ): Map<String, MediaPlaceholderMapping>
     
+    /**
+     * Cleans up the DOM to prevent markdown conversion artifacts.
+     * Removes empty elements and structures that would produce unwanted markdown markers.
+     * 
+     * This should be called BEFORE HTML-to-Markdown conversion to prevent:
+     * - Empty list items producing `* ` artifacts
+     * - Empty blockquote children producing orphan `>` markers
+     * - Empty paragraphs/divs producing excessive blank lines
+     * - Carousel/slider navigation dots producing stray markers
+     * 
+     * @param doc The Jsoup document to modify (mutated in place)
+     * @return Cleanup statistics for logging
+     */
+    fun cleanupForMarkdownConversion(doc: Document): MarkdownCleanupStats
+    
 }
+
+/**
+ * Statistics from markdown cleanup operation.
+ */
+data class MarkdownCleanupStats(
+    val emptyListItemsRemoved: Int,
+    val emptyBlockquoteChildrenRemoved: Int,
+    val emptyElementsRemoved: Int,
+)
 
 class JsoupDomService : IJsoupDomService {
     
@@ -367,6 +391,188 @@ class JsoupDomService : IJsoupDomService {
         logger.debug("Replaced {} elements with placeholders, removed {} elements", replaced, removed)
         
         return placeholderMap
+    }
+    
+    override fun cleanupForMarkdownConversion(doc: Document): MarkdownCleanupStats {
+        var emptyListItemsRemoved = 0
+        var emptyBlockquoteChildrenRemoved = 0
+        var emptyElementsRemoved = 0
+        
+        // ===== Step 1: Remove empty list items =====
+        // Empty <li> elements produce `* ` or `- ` artifacts in markdown
+        // Check recursively since removing children might leave parents empty
+        var removedInPass: Int
+        do {
+            removedInPass = 0
+            val emptyListItems = doc.select("li").filter { li ->
+                isEffectivelyEmpty(li)
+            }
+            for (li in emptyListItems) {
+                li.remove()
+                emptyListItemsRemoved++
+                removedInPass++
+            }
+        } while (removedInPass > 0)
+        
+        // ===== Step 2: Remove empty lists (ul/ol with no items left) =====
+        doc.select("ul, ol").filter { list ->
+            list.children().isEmpty() || list.children().all { it.tagName() == "li" && isEffectivelyEmpty(it) }
+        }.forEach { list ->
+            list.remove()
+            emptyElementsRemoved++
+        }
+        
+        // ===== Step 3: Clean up blockquotes =====
+        // Remove empty children that would produce orphan `>` markers
+        for (blockquote in doc.select("blockquote")) {
+            // Remove empty child elements (empty <p>, <div>, <cite>, <footer>, etc.)
+            val emptyChildren = blockquote.children().filter { child ->
+                isEffectivelyEmpty(child)
+            }
+            for (child in emptyChildren) {
+                child.remove()
+                emptyBlockquoteChildrenRemoved++
+            }
+            
+            // Also clean up text nodes that are only whitespace
+            blockquote.childNodes()
+                .filterIsInstance<TextNode>()
+                .filter { it.text().isBlank() }
+                .forEach { it.remove() }
+        }
+        
+        // Remove blockquotes that became empty
+        doc.select("blockquote").filter { isEffectivelyEmpty(it) }.forEach { 
+            it.remove()
+            emptyElementsRemoved++
+        }
+        
+        // ===== Step 4: Remove other empty block elements that cause blank lines =====
+        // These elements can cause excessive blank lines or empty markers
+        val emptyBlockSelectors = listOf("p", "div", "span", "section", "article")
+        for (selector in emptyBlockSelectors) {
+            // Only remove truly empty elements (no meaningful children)
+            // Be careful not to remove structural containers
+            doc.select(selector).filter { element ->
+                isEffectivelyEmpty(element) && !hasStructuralRole(element)
+            }.forEach { element ->
+                element.remove()
+                emptyElementsRemoved++
+            }
+        }
+        
+        // ===== Step 5: Clean up excessive <br> elements =====
+        // Multiple consecutive <br> elements can cause blank line issues
+        // Replace 3+ consecutive <br> with just 2
+        for (br in doc.select("br").toList()) {
+            var consecutiveBrCount = 1
+            var nextSibling = br.nextSibling()
+            val toRemove = mutableListOf<Node>()
+            
+            while (nextSibling != null) {
+                when {
+                    nextSibling is Element && nextSibling.tagName() == "br" -> {
+                        consecutiveBrCount++
+                        if (consecutiveBrCount > 2) {
+                            toRemove.add(nextSibling)
+                        }
+                        nextSibling = nextSibling.nextSibling()
+                    }
+                    nextSibling is TextNode && nextSibling.text().isBlank() -> {
+                        // Skip whitespace-only text nodes
+                        nextSibling = nextSibling.nextSibling()
+                    }
+                    else -> break
+                }
+            }
+            
+            toRemove.forEach { it.remove() }
+        }
+        
+        // ===== Step 6: Remove elements with only non-breaking spaces or zero-width chars =====
+        // These can cause invisible empty markers
+        val invisibleCharsPattern = Regex("^[\\s\\u00A0\\u200B\\u200C\\u200D\\uFEFF]*$")
+        doc.select("*").filter { element ->
+            element.ownText().matches(invisibleCharsPattern) && 
+            element.children().isEmpty() &&
+            element.tagName() !in setOf("br", "hr", "img", "input", "meta", "link")
+        }.forEach { element ->
+            // Check if removal is safe (not structural)
+            if (!hasStructuralRole(element) && element.parent() != null) {
+                element.remove()
+                emptyElementsRemoved++
+            }
+        }
+        
+        val stats = MarkdownCleanupStats(
+            emptyListItemsRemoved = emptyListItemsRemoved,
+            emptyBlockquoteChildrenRemoved = emptyBlockquoteChildrenRemoved,
+            emptyElementsRemoved = emptyElementsRemoved,
+        )
+        
+        logger.debug(
+            "Markdown cleanup: {} empty list items, {} empty blockquote children, {} empty elements",
+            stats.emptyListItemsRemoved,
+            stats.emptyBlockquoteChildrenRemoved,
+            stats.emptyElementsRemoved,
+        )
+        
+        return stats
+    }
+    
+    /**
+     * Checks if an element is effectively empty (no meaningful text content).
+     * An element is considered empty if:
+     * - It has no text content (or only whitespace)
+     * - It has no meaningful child elements (images, inputs, etc.)
+     */
+    private fun isEffectivelyEmpty(element: Element): Boolean {
+        // Check for meaningful text
+        val text = element.text().trim()
+        if (text.isNotEmpty()) {
+            return false
+        }
+        
+        // Check for meaningful child elements that shouldn't be removed
+        val meaningfulChildren = element.select("img, svg, video, audio, canvas, iframe, input, textarea, select, button, object, embed")
+        if (meaningfulChildren.isNotEmpty()) {
+            return false
+        }
+        
+        // Check for placeholder text (our own markers)
+        if (element.html().contains("{{")) {
+            return false
+        }
+        
+        return true
+    }
+    
+    /**
+     * Checks if an element has a structural role and shouldn't be removed even if empty.
+     * These elements might be used for layout or have semantic meaning.
+     */
+    private fun hasStructuralRole(element: Element): Boolean {
+        // Elements with IDs are often used as anchors/references
+        if (element.id().isNotEmpty()) {
+            return true
+        }
+        
+        // Elements with ARIA roles have semantic meaning
+        if (element.hasAttr("role")) {
+            return true
+        }
+        
+        // Elements that are structural containers (could be populated dynamically)
+        val structuralClasses = setOf(
+            "container", "wrapper", "main", "content", "body",
+            "row", "col", "column", "grid", "flex"
+        )
+        val elementClasses = element.classNames().map { it.lowercase() }
+        if (elementClasses.any { cls -> structuralClasses.any { cls.contains(it) } }) {
+            return true
+        }
+        
+        return false
     }
     
     /**

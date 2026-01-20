@@ -342,17 +342,29 @@ class WebpageExtractionService(
         )
         placeholderMap.putAll(tablePlaceholders)
 
-        // ===== Step 5: Convert HTML to Markdown =====
+        // ===== Step 5: Clean up DOM before markdown conversion =====
+        // Remove empty elements that would produce markdown artifacts like orphan `>` or `* `
+        val cleanupStats = jsoupDomService.cleanupForMarkdownConversion(jsoupDoc)
+        if (cleanupStats.emptyListItemsRemoved > 0 || cleanupStats.emptyBlockquoteChildrenRemoved > 0) {
+            logger.debug(
+                "Markdown pre-cleanup: {} list items, {} blockquote children, {} elements",
+                cleanupStats.emptyListItemsRemoved,
+                cleanupStats.emptyBlockquoteChildrenRemoved,
+                cleanupStats.emptyElementsRemoved,
+            )
+        }
+
+        // ===== Step 6: Convert HTML to Markdown =====
         // Placeholders pass through cleanly without escaping
         val rawMarkdown = htmlToMarkdownService.convert(jsoupDoc.html())
 
-        // ===== Step 6: Replace placeholders with actual text =====
+        // ===== Step 7: Replace placeholders with actual text =====
         var finalMarkdown = rawMarkdown
         placeholderMap.values.forEach { mapping ->
             finalMarkdown = finalMarkdown.replace(mapping.placeholder, mapping.text)
         }
 
-        // ===== Step 7: Add metadata header and popup content =====
+        // ===== Step 8: Add metadata header and popup content =====
         val markdown = buildString {
             appendLine("URL: ${snapshot.url}")
             if (snapshot.title.isNotBlank()) {

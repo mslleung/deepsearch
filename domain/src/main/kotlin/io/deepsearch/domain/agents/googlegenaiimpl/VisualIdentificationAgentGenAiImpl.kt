@@ -902,17 +902,6 @@ class VisualIdentificationAgentGenAiImpl(
             }
         }
 
-        // Semantic <nav>/<aside> is a fallback only (not override) - vision may be more accurate
-        // for identifying the actual navigation sidebar vs inline nav elements
-        if (result["navSidebar"] == null) {
-            doc.selectFirst("nav[data-ds-id]:not(header nav):not(footer nav), aside[role=navigation][data-ds-id]")?.let { element ->
-                val dataId = element.attr("data-ds-id")
-                val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
-                result["navSidebar"] = MappedElement(dataId, cssSelector, "Semantic <nav>/<aside> element")
-                logger.debug("Semantic fallback: Found <nav>/<aside> element with id {}", dataId)
-            }
-        }
-
         return result
     }
 
