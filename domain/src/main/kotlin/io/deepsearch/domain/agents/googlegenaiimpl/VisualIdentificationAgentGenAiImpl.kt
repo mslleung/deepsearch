@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.IVisualIdentificationAgent
 import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
@@ -126,15 +127,13 @@ class VisualIdentificationAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("tables"))
+        .required(listOf("popups", "tables"))
         .build()
 
     private val combinedSystemInstruction = """
         Detect all visual elements in this webpage screenshot for content extraction.
         
         Return bounding boxes using box_2d format: [ymin, xmin, ymax, xmax] where coordinates are scaled to [0, 1000].
-        - ymin/ymax: vertical position (0 = top, 1000 = bottom)
-        - xmin/xmax: horizontal position (0 = left, 1000 = right)
         
         ## SEMANTIC ELEMENTS (navigation/chrome to remove):
         Identify these navigational elements:
@@ -260,18 +259,26 @@ class VisualIdentificationAgentGenAiImpl(
         - Cleaned HTML structure with data-ds-id attributes on container elements
 
         === TABLE IDENTIFICATION ===
-        Identify NON-SEMANTIC table/grid structures:
+        Identify the ROOT container of table/grid structures:
         - CSS Grid layouts displaying tabular data (pricing tables, feature comparisons)
         - Flexbox-based data grids
         - Div-based tables with row/column patterns
+        
+        CRITICAL RULES:
+        - Return ONLY the OUTERMOST container that encompasses the entire table structure
+        - Do NOT identify individual rows as separate tables
+        - If you see multiple sibling elements with identical grid layouts (e.g., all using grid-cols-4), 
+          these are ROWS of a single table - identify their PARENT container instead
+        - A table has MULTIPLE rows; a single grid row is NOT a table by itself
+        
         Return the data-ds-id of the ROOT container. Note any complex styling in specialConsideration.
 
         === MOBILE LAYOUT IDENTIFICATION ===
         Identify mobile UI structures:
-        - Mobile/hamburger menu contents
-        - Responsive navigation
-        - Collapsible mobile-specific UI sections
+        - Mobile layout
         Return the data-ds-id of the ROOT container.
+
+        Return empty array if no table/mobile layout is identified.
 
         Expected output:
         {
@@ -337,8 +344,6 @@ class VisualIdentificationAgentGenAiImpl(
             htmlWithIds.length, screenshot.bytes.size, boundingBoxes.size, hiddenContainers.size
         )
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
-
         // ========== Scale image for Gemini API if needed ==========
         // Very tall full-page screenshots (e.g., Wikipedia at 20,000+ px) can cause
         // "Unable to process input image" errors. We scale down for Gemini while
@@ -359,11 +364,11 @@ class VisualIdentificationAgentGenAiImpl(
         // 2. HTML detection for each hidden container (in parallel)
 
         val visionDeferred = async {
-            var tokenUsage = TokenUsageMetrics.empty(modelId)
+            var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_FLASH_PREVIEW.modelId)
             val response = withContext(dispatcherProvider.io) {
                 retryLlmCall<CombinedVisionResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_vision") {
                     val result = client.models.generateContent(
-                        modelId,
+                        ModelIds.GEMINI_3_FLASH_PREVIEW.modelId,
                         listOf(
                             Content.fromParts(
                                 // Use scaled image for Gemini API
@@ -372,12 +377,12 @@ class VisualIdentificationAgentGenAiImpl(
                             )
                         ),
                         GenerateContentConfig.builder()
-                            .temperature(0F)
+                            .temperature(1F)
                             .responseSchema(combinedOutputSchema)
                             .responseMimeType("application/json")
                             .thinkingConfig(
                                 ThinkingConfig.builder()
-                                    .thinkingBudget(0)
+                                    .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                     .build()
                             )
                             .systemInstruction(Content.fromParts(Part.fromText(combinedSystemInstruction)))
@@ -388,7 +393,7 @@ class VisualIdentificationAgentGenAiImpl(
 
                     result.usageMetadata().ifPresent { metadata ->
                         tokenUsage = TokenUsageMetrics(
-                            modelName = modelId,
+                            modelName = ModelIds.GEMINI_3_FLASH_PREVIEW.modelId,
                             promptTokens = metadata.promptTokenCount().orElse(0),
                             outputTokens = metadata.candidatesTokenCount().orElse(0),
                             totalTokens = metadata.totalTokenCount().orElse(0)
@@ -403,7 +408,7 @@ class VisualIdentificationAgentGenAiImpl(
 
         // Hidden container analysis with caching
         val (hiddenTables, hiddenMobileLayouts, hiddenUsage) = analyzeHiddenContainersWithCache(
-            hiddenContainers, htmlWithIds, modelId
+            hiddenContainers, htmlWithIds, ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         )
 
         // Await vision results
