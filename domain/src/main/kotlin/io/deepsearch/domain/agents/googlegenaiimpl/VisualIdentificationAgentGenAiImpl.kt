@@ -450,8 +450,50 @@ class VisualIdentificationAgentGenAiImpl(
         val visionAndProgrammaticTables = mergeTables(visionMappedTables, programmaticTables, doc)
         val visionIds = visionAndProgrammaticTables.map { it.dataId }.toSet()
 
-        // Deduplicate hidden tables against vision-detected tables
-        val deduplicatedHiddenTables = hiddenTables.filter { hiddenTable ->
+        // ========== Step 1: Deduplicate hidden tables against each other ==========
+        // If a table is a child of another table, keep only the parent (prevents individual rows
+        // from being treated as separate tables when they are part of a larger table structure)
+        val hiddenTableIds = hiddenTables.map { it.id }.toSet()
+        val tablesAfterSelfDedup = hiddenTables.filter { hiddenTable ->
+            val hiddenElement = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull()
+                ?: return@filter true
+
+            // Check if this table is a child of another hidden table
+            val isChildOfAnotherTable = hiddenTableIds.any { otherId ->
+                if (otherId == hiddenTable.id) return@any false
+                val otherElement = doc.select("[data-ds-id=\"$otherId\"]").firstOrNull()
+                    ?: return@any false
+                hiddenElement.parents().contains(otherElement)
+            }
+
+            if (isChildOfAnotherTable) {
+                logger.debug("Removing hidden table '{}' - it's a child of another hidden table", hiddenTable.id)
+            }
+            !isChildOfAnotherTable
+        }
+
+        // ========== Step 2: Deduplicate hidden tables against mobile layouts ==========
+        // Tables inside mobile layouts will be removed anyway when the mobile layout is removed
+        val mobileLayoutIds = hiddenMobileLayouts.map { it.id }.toSet()
+        val tablesAfterMobileDedup = tablesAfterSelfDedup.filter { hiddenTable ->
+            val hiddenElement = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull()
+                ?: return@filter true
+
+            // Check if this table is inside a mobile layout
+            val isInsideMobileLayout = mobileLayoutIds.any { layoutId ->
+                val layoutElement = doc.select("[data-ds-id=\"$layoutId\"]").firstOrNull()
+                    ?: return@any false
+                hiddenElement.parents().contains(layoutElement) || hiddenElement == layoutElement
+            }
+
+            if (isInsideMobileLayout) {
+                logger.debug("Removing hidden table '{}' - it's inside a mobile layout that will be removed", hiddenTable.id)
+            }
+            !isInsideMobileLayout
+        }
+
+        // ========== Step 3: Deduplicate hidden tables against vision-detected tables ==========
+        val deduplicatedHiddenTables = tablesAfterMobileDedup.filter { hiddenTable ->
             val hiddenElement = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull()
                 ?: return@filter true
 
@@ -485,9 +527,10 @@ class VisualIdentificationAgentGenAiImpl(
         val finalTables = visionAndProgrammaticTables + hiddenMappedTables
 
         logger.debug(
-            "Total tables: {} ({} vision/programmatic, {} hidden after dedup from {})",
+            "Total tables: {} ({} vision/programmatic, {} hidden after dedup: {} raw -> {} after self-dedup -> {} after mobile-dedup -> {} after vision-dedup)",
             finalTables.size, visionAndProgrammaticTables.size,
-            hiddenMappedTables.size, hiddenTables.size
+            hiddenMappedTables.size, hiddenTables.size, tablesAfterSelfDedup.size,
+            tablesAfterMobileDedup.size, deduplicatedHiddenTables.size
         )
 
         // ========== Build mobile layout identifications from hidden containers ==========
