@@ -5,35 +5,48 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.extension.RegisterExtension
+import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
 import org.koin.test.KoinTest
 import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
 import io.deepsearch.domain.config.IApplicationCoroutineScope
-import java.io.File
 
+/**
+ * Integration tests for WebpageExtractionService.
+ * 
+ * Uses PER_CLASS lifecycle with manual Koin management to share the Koin context
+ * (including database connections, browser pool, etc.) across all test methods.
+ * Database initialization is handled by createdAtStart() in test DI module.
+ */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class WebpageExtractionServiceTest : KoinTest {
-
-    @JvmField
-    @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
-        modules(applicationBenchmarkTestModule)
-    }
 
     private val browserPool by inject<IBrowserPool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val webpageExtractionService by inject<IWebpageExtractionService>()
     private val applicationScope by inject<IApplicationCoroutineScope>()
     
-    @AfterEach
-    fun cleanup() {
+    @BeforeAll
+    fun setup() {
+        // Start Koin once for all tests in this class.
+        // DatabaseConfigurationService has createdAtStart() so schema init happens here.
+        startKoin {
+            modules(applicationBenchmarkTestModule)
+        }
+    }
+    
+    @AfterAll
+    fun teardown() {
         // Clean up application scope to cancel background coroutines
         applicationScope.close()
+        stopKoin()
     }
 
     @Test
@@ -41,6 +54,7 @@ class WebpageExtractionServiceTest : KoinTest {
         val url = "https://doc.rust-lang.org/book/ch01-00-getting-started.html"
         browserPool.withPage { page ->
             page.navigate(url)
+            page.waitForLoad() // Wait for full page load (required for JS-heavy pages)
             val result = webpageExtractionService.extractWebpage(page, QuerySessionId("rust-debug"))
             
             println("=== RUST DOCS EXTRACTION DEBUG ===")
@@ -66,6 +80,7 @@ class WebpageExtractionServiceTest : KoinTest {
         val url = "https://en.wikipedia.org/wiki/Artificial_intelligence"
         browserPool.withPage { page ->
             page.navigate(url)
+            page.waitForLoad() // Wait for full page load
             val result = webpageExtractionService.extractWebpage(page, QuerySessionId("wiki-debug"))
             
             println("=== WIKIPEDIA EXTRACTION DEBUG ===")
@@ -86,7 +101,9 @@ class WebpageExtractionServiceTest : KoinTest {
             "https://mybeame.com/beame-student-discount",
             "https://www.otandp.com/body-check/",
             "https://sleekflow.io/pricing",
-            
+            "https://sleekflow.io/fair-use-policy",
+            "https://sleekflow.io/ticketing",
+
             // Developer/Tech sites
             // 1. GitHub project page (open source)
             "https://github.com/microsoft/vscode",
@@ -108,7 +125,7 @@ class WebpageExtractionServiceTest : KoinTest {
             "https://stripe.com/docs/payments",
             // 10. Vercel homepage (developer platform)
             "https://vercel.com/",
-            
+
             // Additional diverse URLs
             // 11. Hacker News - Tech news aggregator (minimal styling, table extraction)
             "https://news.ycombinator.com/",
@@ -127,6 +144,7 @@ class WebpageExtractionServiceTest : KoinTest {
     fun `extract webpage text`(url: String) = runTest(testCoroutineDispatcher) {
         browserPool.withPage { page ->
             page.navigate(url)
+            page.waitForLoad() // Wait for full page load (required for JS-heavy pages)
             val text = webpageExtractionService.extractWebpage(page, QuerySessionId("test-session-id"))
 
             assertTrue(text.markdown.length > 200)

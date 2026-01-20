@@ -17,6 +17,7 @@ import io.deepsearch.infrastructure.storage.InMemoryImageStorageService
 import io.deepsearch.infrastructure.storage.InMemoryTemporaryFileStorageService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.koin.core.module.dsl.createdAtStart
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
@@ -40,8 +41,9 @@ private val infrastructureCommonTestModule = module {
         )
     }
     
-    // Database services (no createdAtStart - lazy init allows DatabaseTables to use KoinComponent.inject())
-    singleOf(::DatabaseConfigurationService) bind IDatabaseConfigurationService::class
+    // Database services - createdAtStart triggers schema initialization at Koin startup
+    // instead of lazily during the first test, avoiding ~4s overhead in test timing
+    singleOf(::DatabaseConfigurationService) { createdAtStart() } bind IDatabaseConfigurationService::class
 
     singleOf(::DatabaseCryptoService) bind IDatabaseCryptoService::class
     singleOf(::TransactionService) bind ITransactionService::class
