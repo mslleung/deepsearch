@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
@@ -64,6 +65,8 @@ class WebpageExtractionService(
     private data class LlmResults(
         val semanticElements: SemanticElements,
         val tableIdentifications: List<TableIdentification>,
+        /** Mobile layouts found in hidden containers (duplicate UI structures to be removed) */
+        val hiddenMobileLayouts: List<MobileLayoutIdentification>,
         val iconReplacements: List<CssSelectorReplacement>,
         val imageReplacements: List<CssSelectorReplacement>,
         val imageHashes: List<ByteArray>,
@@ -158,16 +161,18 @@ class WebpageExtractionService(
             val llmResults = LlmResults(
                 semanticElements = visualResult.semanticElements,
                 tableIdentifications = visualResult.tables,
+                hiddenMobileLayouts = visualResult.hiddenMobileLayouts,
                 iconReplacements = iconRepl.await().replacements,
                 imageReplacements = imageResult.replacements,
                 imageHashes = imageResult.hashes,
                 imageMapping = imageResult.imageMapping
             )
             logger.debug(
-                "LLM operations complete in {} ms: {} semantic, {} tables, {} icons, {} images",
+                "LLM operations complete in {} ms: {} semantic, {} tables, {} hidden navs, {} icons, {} images",
                 llmDuration,
                 countSemanticElements(llmResults.semanticElements),
                 llmResults.tableIdentifications.size,
+                llmResults.hiddenMobileLayouts.size,
                 llmResults.iconReplacements.size,
                 llmResults.imageReplacements.size
             )
@@ -306,6 +311,18 @@ class WebpageExtractionService(
         // ===== Step 3: Remove semantic elements =====
         // Use stable data-ds-id selectors instead of position-based CSS selectors
         jsoupDomService.removeElements(jsoupDoc, collectSemanticDataIdSelectors(llmResults.semanticElements))
+
+        // ===== Step 3.5: Remove hidden mobile layout elements =====
+        // Hidden mobile layouts are duplicate UI structures that should be removed
+        if (llmResults.hiddenMobileLayouts.isNotEmpty()) {
+            val layoutSelectors = llmResults.hiddenMobileLayouts.map { "[data-ds-id=\"${it.dataId}\"]" }
+            jsoupDomService.removeElements(jsoupDoc, layoutSelectors)
+            logger.debug(
+                "Removed {} hidden mobile layout elements: {}",
+                llmResults.hiddenMobileLayouts.size,
+                llmResults.hiddenMobileLayouts.map { it.description }
+            )
+        }
 
         // ===== Step 4: Interpret and replace tables =====
         // Tables use data-ds-id selectors which remain stable after semantic removal

@@ -53,6 +53,8 @@ class ExposedHiddenContainerTableCacheRepository(
                 it[structuralHtmlHash] = hashBase64
                 it[hasTables] = cache.hasTables
                 it[tablesJson] = cache.tablesJson
+                it[hasMobileLayouts] = cache.hasMobileLayouts
+                it[mobileLayoutsJson] = cache.mobileLayoutsJson
                 it[createdAtEpochMs] = cache.createdAt.toEpochMilliseconds()
                 it[updatedAtEpochMs] = cache.updatedAt.toEpochMilliseconds()
                 it[version] = cache.version
@@ -74,6 +76,8 @@ class ExposedHiddenContainerTableCacheRepository(
                 this[hiddenContainerTable.structuralHtmlHash] = hashBase64
                 this[hiddenContainerTable.hasTables] = cache.hasTables
                 this[hiddenContainerTable.tablesJson] = cache.tablesJson
+                this[hiddenContainerTable.hasMobileLayouts] = cache.hasMobileLayouts
+                this[hiddenContainerTable.mobileLayoutsJson] = cache.mobileLayoutsJson
                 this[hiddenContainerTable.createdAtEpochMs] = cache.createdAt.toEpochMilliseconds()
                 this[hiddenContainerTable.updatedAtEpochMs] = cache.updatedAt.toEpochMilliseconds()
                 this[hiddenContainerTable.version] = cache.version
@@ -85,6 +89,8 @@ class ExposedHiddenContainerTableCacheRepository(
             structuralHtmlHash = Base64.decode(row[hiddenContainerTable.structuralHtmlHash]),
             hasTables = row[hiddenContainerTable.hasTables],
             tablesJson = row[hiddenContainerTable.tablesJson],
+            hasMobileLayouts = row[hiddenContainerTable.hasMobileLayouts],
+            mobileLayoutsJson = row[hiddenContainerTable.mobileLayoutsJson],
             createdAt = Instant.fromEpochMilliseconds(row[hiddenContainerTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[hiddenContainerTable.updatedAtEpochMs]),
             version = row[hiddenContainerTable.version]

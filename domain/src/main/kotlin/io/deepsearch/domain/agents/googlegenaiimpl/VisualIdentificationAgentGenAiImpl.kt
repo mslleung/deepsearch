@@ -6,8 +6,14 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.IVisualIdentificationAgent
+import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.VisualIdentificationBatchRequest
+import io.deepsearch.domain.models.entities.CachedHiddenMobileLayout
+import io.deepsearch.domain.models.entities.CachedHiddenTable
+import io.deepsearch.domain.models.entities.HiddenContainerTableCache
+import io.deepsearch.domain.repositories.IHiddenContainerTableCacheRepository
+import java.security.MessageDigest
 import io.deepsearch.domain.agents.VisualIdentificationInput
 import io.deepsearch.domain.agents.VisualIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -42,7 +48,8 @@ class VisualIdentificationAgentGenAiImpl(
     private val client: com.google.genai.Client,
     private val cssSelectorConstructionService: ICssSelectorConstructionService,
     private val imageDimensionService: IImageDimensionService,
-    private val dispatcherProvider: IDispatcherProvider
+    private val dispatcherProvider: IDispatcherProvider,
+    private val hiddenContainerCacheRepository: IHiddenContainerTableCacheRepository
 ) : IVisualIdentificationAgent {
 
     companion object {
@@ -92,10 +99,6 @@ class VisualIdentificationAgentGenAiImpl(
                     .build(),
                 "label" to Schema.builder().type("STRING")
                     .description("Brief description of the table's content")
-                    .build(),
-                "columnHeaders" to Schema.builder().type("STRING")
-                    .description("Column headers, comma-separated")
-                    .nullable(true)
                     .build()
             )
         )
@@ -146,14 +149,13 @@ class VisualIdentificationAgentGenAiImpl(
         Identify all table or grid structures containing data:
         - Include data tables, comparison tables, pricing tables, grid layouts
         - Provide a brief label describing the table's content
-        - If the table contains a header row, list the column headers (comma-separated). Null if there is no header row.
         
         Example output:
         {
             "header": {"box_2d": [0, 0, 50, 1000], "label": "Navigation bar with logo"},
             "footer": {"box_2d": [920, 0, 1000, 1000], "label": "Footer with links"},
             "tables": [
-                {"box_2d": [200, 50, 600, 950], "label": "Pricing comparison", "columnHeaders": "Basic, Pro, Enterprise"}
+                {"box_2d": [200, 50, 600, 950], "label": "Pricing comparison table"}
             ]
         }
     """.trimIndent()
@@ -176,8 +178,7 @@ class VisualIdentificationAgentGenAiImpl(
     private data class VisionTableElement(
         @kotlinx.serialization.SerialName("box_2d")
         val box2d: List<Int>,
-        val label: String,
-        val columnHeaders: String? = null
+        val label: String
     ) {
         val ymin: Int get() = box2d.getOrElse(0) { 0 }
         val xmin: Int get() = box2d.getOrElse(1) { 0 }
@@ -196,17 +197,17 @@ class VisualIdentificationAgentGenAiImpl(
         val tables: List<VisionTableElement> = emptyList()
     )
 
-    // ========== HTML-Based Hidden Container Detection Schema ==========
-    // For detecting tables in hidden containers (accordions, tabs, etc.)
+    // ========== HTML-Based Hidden Container Analysis Schema ==========
+    // For detecting tables and navigation menus in hidden containers (accordions, tabs, mobile menus, etc.)
 
-    private val hiddenTableOutputSchema: Schema = Schema.builder()
+    private val hiddenContainerAnalysisSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("List of table IDs for table roots")
+        .description("Analysis of hidden container content - tables and mobile layouts")
         .properties(
             mapOf(
                 "tables" to Schema.builder()
                     .type("ARRAY")
-                    .description("Array of table identifications with data-ds-id values")
+                    .description("Array of table/grid structures identified")
                     .items(
                         Schema.builder()
                             .type("OBJECT")
@@ -215,11 +216,29 @@ class VisualIdentificationAgentGenAiImpl(
                                     "id" to Schema.builder().type("STRING")
                                         .description("The data-ds-id value of the table root element")
                                         .build(),
-                                    "description" to Schema.builder().type("STRING")
-                                        .description("A brief description of the table's purpose or content")
+                                    "specialConsideration" to Schema.builder().type("STRING")
+                                        .description("Notes about non-standard table structure or styling that may affect interpretation (e.g., nested rows, colspan issues, CSS-grid layout)")
+                                        .nullable(true)
+                                        .build()
+                                )
+                            )
+                            .required(listOf("id"))
+                            .build()
+                    )
                                         .build(),
-                                    "columnHeaders" to Schema.builder().type("STRING")
-                                        .description("The column headers of the table, comma-separated")
+                "mobileLayouts" to Schema.builder()
+                    .type("ARRAY")
+                    .description("Array of mobile layout structures")
+                    .items(
+                        Schema.builder()
+                            .type("OBJECT")
+                            .properties(
+                                mapOf(
+                                    "id" to Schema.builder().type("STRING")
+                                        .description("The data-ds-id value of the mobile layout root element")
+                                        .build(),
+                                    "description" to Schema.builder().type("STRING")
+                                        .description("Brief description (e.g., 'Mobile navigation layout', 'Hamburger menu content')")
                                         .build()
                                 )
                             )
@@ -229,47 +248,58 @@ class VisualIdentificationAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("tables"))
+        .required(listOf("tables", "mobileLayouts"))
         .build()
 
-    private val hiddenTableSystemInstruction = """
-        Your task is to identify table structures in the provided HTML and return the stable identifiers of their root containers.
+    private val hiddenContainerAnalysisInstruction = """
+        Your task is to analyze the provided HTML snippet from a hidden container and identify:
+        1. CSS-styled table structures
+        2. Mobile layout structures
 
         Inputs:
-        - Cleaned HTML structure, all possible table containers are injected with data-ds-id attribute 
+        - Cleaned HTML structure with data-ds-id attributes on container elements
 
-        Instructions:
-        - Analyze the HTML to identify tables or grid-like structures
-        - Always target the root containers instead of individual rows and columns
-        - Modern websites may design tables purely using <div> styling, identify them based on semantic meaning
-        - For every table found, return the data-ds-id attribute value pointing to the root container
-        - Additionally, provide:
-          - description: A brief description of the table's purpose or content
-          - columnHeaders: If the table contains a header row, list the column headers (comma-separated). Null if there is no header row.
+        === TABLE IDENTIFICATION ===
+        Identify NON-SEMANTIC table/grid structures:
+        - CSS Grid layouts displaying tabular data (pricing tables, feature comparisons)
+        - Flexbox-based data grids
+        - Div-based tables with row/column patterns
+        Return the data-ds-id of the ROOT container. Note any complex styling in specialConsideration.
 
+        === MOBILE LAYOUT IDENTIFICATION ===
+        Identify mobile UI structures:
+        - Mobile/hamburger menu contents
+        - Responsive navigation
+        - Collapsible mobile-specific UI sections
+        Return the data-ds-id of the ROOT container.
 
-        Expected output shape:
+        Expected output:
         {
             "tables": [
-                {
-                    "id": "string",
-                    "description": "string",
-                    "columnHeaders": "string"
-                }
+                {"id": "ds-element-123", "specialConsideration": "The "Pro" column is most popular."}
+            ],
+            "mobileLayouts": [
+                {"id": "ds-element-456", "description": "Mobile navigation layout"}
             ]
         }
     """.trimIndent()
 
     @Serializable
-    private data class HiddenTableResponse(
-        val tables: List<HiddenTableResult>
+    private data class HiddenContainerAnalysisResponse(
+        val tables: List<HiddenTableResult>,
+        val mobileLayouts: List<HiddenMobileLayoutResult>
     )
 
     @Serializable
     private data class HiddenTableResult(
         val id: String,
-        val description: String,
-        val columnHeaders: String? = null
+        val specialConsideration: String? = null
+    )
+
+    @Serializable
+    private data class HiddenMobileLayoutResult(
+        val id: String,
+        val description: String
     )
 
     // Internal result after IoU mapping
@@ -283,8 +313,14 @@ class VisualIdentificationAgentGenAiImpl(
         val dataId: String,
         val cssSelector: String,
         val label: String,
-        val columnHeaders: String?,
         val containsMedia: Boolean
+    )
+
+    /** Result from analyzing a hidden container - contains both tables and mobile layouts */
+    private data class HiddenContainerAnalysisResult(
+        val containerId: String,
+        val tables: List<HiddenTableResult>,
+        val mobileLayouts: List<HiddenMobileLayoutResult>
     )
 
     // ========== Main Generate Method ==========
@@ -365,25 +401,17 @@ class VisualIdentificationAgentGenAiImpl(
             response to tokenUsage
         }
 
-        // Hidden container detection in parallel
-        val hiddenDeferreds = hiddenContainers.map { container ->
-            async {
-                detectTablesInHiddenContainer(container, htmlWithIds, modelId)
-            }
-        }
+        // Hidden container analysis with caching
+        val (hiddenTables, hiddenMobileLayouts, hiddenUsage) = analyzeHiddenContainersWithCache(
+            hiddenContainers, htmlWithIds, modelId
+        )
 
-        // Await all results
+        // Await vision results
         val (visionResponse, visionUsage) = visionDeferred.await()
-        val hiddenResults = hiddenDeferreds.awaitAll()
-
-        val hiddenTables = hiddenResults.flatMap { it.first }
-        val hiddenUsage = hiddenResults.fold(TokenUsageMetrics.empty(modelId)) { acc, result ->
-            acc + result.second
-        }
 
         logger.debug(
-            "Hidden container detection: {} tables found across {} containers",
-            hiddenTables.size, hiddenContainers.size
+            "Hidden container analysis: {} tables, {} mobile layouts found across {} containers",
+            hiddenTables.size, hiddenMobileLayouts.size, hiddenContainers.size
         )
 
         val tokenUsage = visionUsage + hiddenUsage
@@ -408,8 +436,9 @@ class VisualIdentificationAgentGenAiImpl(
         )
         val visionMappedTables = mapTableElements(filteredTables, boundingBoxes, htmlWithIds, pageWidth, pageHeight, doc)
 
-        // ========== Apply programmatic fallbacks ==========
-        val finalSemantic = applySemanticFallbacks(mappedSemantic, doc)
+        // ========== Apply semantic HTML overrides ==========
+        // Semantic <header>/<footer> tags take priority over vision detection
+        val finalSemantic = applySemanticOverrides(mappedSemantic, doc)
         val programmaticTables = extractSemanticTables(htmlWithIds)
 
         // ========== Merge all tables and deduplicate ==========
@@ -443,8 +472,7 @@ class VisualIdentificationAgentGenAiImpl(
             MappedTable(
                 dataId = hiddenTable.id,
                 cssSelector = cssSelector,
-                label = hiddenTable.description,
-                columnHeaders = hiddenTable.columnHeaders,
+                label = hiddenTable.specialConsideration ?: "",
                 containsMedia = containsMedia
             )
         }
@@ -457,19 +485,29 @@ class VisualIdentificationAgentGenAiImpl(
             hiddenMappedTables.size, hiddenTables.size
         )
 
+        // ========== Build mobile layout identifications from hidden containers ==========
+        val mobileLayoutIdentifications = hiddenMobileLayouts.map { mobileLayout ->
+            MobileLayoutIdentification(
+                dataId = mobileLayout.id,
+                description = mobileLayout.description
+            )
+        }
+
         // ========== Build output ==========
         val semanticElements = buildSemanticElements(finalSemantic)
         val tableIdentifications = buildTableIdentifications(finalTables)
 
         logger.debug(
-            "Visual identification complete: {} semantic elements, {} tables",
+            "Visual identification complete: {} semantic elements, {} tables, {} hidden mobile layouts",
             countSemanticElements(semanticElements),
-            tableIdentifications.size
+            tableIdentifications.size,
+            mobileLayoutIdentifications.size
         )
 
         VisualIdentificationOutput(
             semanticElements = semanticElements,
             tables = tableIdentifications,
+            hiddenMobileLayouts = mobileLayoutIdentifications,
             tokenUsage = tokenUsage
         )
     }
@@ -521,7 +559,6 @@ class VisualIdentificationAgentGenAiImpl(
                 dataId = mapped.dataId,
                 cssSelector = mapped.cssSelector,
                 label = visionTable.label,
-                columnHeaders = visionTable.columnHeaders,
                 containsMedia = containsMedia
             )
         }.distinctBy { it.dataId }
@@ -829,41 +866,50 @@ class VisualIdentificationAgentGenAiImpl(
         return lca
     }
 
-    // ========== Programmatic Fallbacks ==========
+    // ========== Semantic HTML Detection (Primary) ==========
+    // Semantic HTML elements take priority over vision detection.
+    // Vision is only used as a fallback for non-semantic websites.
 
-    private fun applySemanticFallbacks(
+    private fun applySemanticOverrides(
         mapped: Map<String, MappedElement?>,
         doc: Document
     ): Map<String, MappedElement?> {
         val result = mapped.toMutableMap()
 
-        // Fallback for header
-        if (result["header"] == null) {
+        // Semantic <header> overrides vision detection (more reliable)
             doc.selectFirst("header[data-ds-id]")?.let { element ->
                 val dataId = element.attr("data-ds-id")
                 val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
+            val wasOverride = result["header"] != null
                 result["header"] = MappedElement(dataId, cssSelector, "Semantic <header> element")
-                logger.debug("Programmatic fallback: Found <header> element with id {}", dataId)
+            if (wasOverride) {
+                logger.debug("Semantic override: <header> element with id {} replaces vision result", dataId)
+            } else {
+                logger.debug("Semantic detection: Found <header> element with id {}", dataId)
             }
         }
 
-        // Fallback for footer
-        if (result["footer"] == null) {
+        // Semantic <footer> overrides vision detection (more reliable)
             doc.selectFirst("footer[data-ds-id]")?.let { element ->
                 val dataId = element.attr("data-ds-id")
                 val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
+            val wasOverride = result["footer"] != null
                 result["footer"] = MappedElement(dataId, cssSelector, "Semantic <footer> element")
-                logger.debug("Programmatic fallback: Found <footer> element with id {}", dataId)
+            if (wasOverride) {
+                logger.debug("Semantic override: <footer> element with id {} replaces vision result", dataId)
+            } else {
+                logger.debug("Semantic detection: Found <footer> element with id {}", dataId)
             }
         }
 
-        // Fallback for navSidebar
+        // Semantic <nav>/<aside> is a fallback only (not override) - vision may be more accurate
+        // for identifying the actual navigation sidebar vs inline nav elements
         if (result["navSidebar"] == null) {
             doc.selectFirst("nav[data-ds-id]:not(header nav):not(footer nav), aside[role=navigation][data-ds-id]")?.let { element ->
                 val dataId = element.attr("data-ds-id")
                 val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
                 result["navSidebar"] = MappedElement(dataId, cssSelector, "Semantic <nav>/<aside> element")
-                logger.debug("Programmatic fallback: Found <nav>/<aside> element with id {}", dataId)
+                logger.debug("Semantic fallback: Found <nav>/<aside> element with id {}", dataId)
             }
         }
 
@@ -872,8 +918,7 @@ class VisualIdentificationAgentGenAiImpl(
 
     private data class ProgrammaticTable(
         val dataId: String,
-        val description: String,
-        val columnHeaders: String?
+        val description: String
     )
 
     private fun extractSemanticTables(htmlWithIds: String): List<ProgrammaticTable> {
@@ -889,12 +934,8 @@ class VisualIdentificationAgentGenAiImpl(
                 summary.isNotBlank() -> summary
                 else -> ""
             }
-            val headerElements = element.select("th")
-            val columnHeaders = headerElements.map { it.text().trim() }
-                .filter { it.isNotBlank() }
-                .joinToString(", ")
 
-            tables.add(ProgrammaticTable(id, description, columnHeaders))
+            tables.add(ProgrammaticTable(id, description))
         }
 
         return tables
@@ -918,7 +959,6 @@ class VisualIdentificationAgentGenAiImpl(
                     dataId = prog.dataId,
                     cssSelector = cssSelector,
                     label = prog.description,
-                    columnHeaders = prog.columnHeaders,
                     containsMedia = containsMedia
                 )
             }
@@ -950,25 +990,13 @@ class VisualIdentificationAgentGenAiImpl(
 
     private fun buildTableIdentifications(tables: List<MappedTable>): List<TableIdentification> {
         return tables.map { table ->
-            val auxiliaryInfo = buildAuxiliaryInfo(table.label, table.columnHeaders)
             TableIdentification(
                 cssSelector = table.cssSelector,
                 dataId = table.dataId,
-                auxiliaryInfo = auxiliaryInfo,
+                auxiliaryInfo = table.label, // Now contains special consideration or description
                 containsMedia = table.containsMedia
             )
         }
-    }
-
-    private fun buildAuxiliaryInfo(description: String, columnHeaders: String?): String {
-        val parts = mutableListOf<String>()
-        if (description.isNotBlank()) {
-            parts.add("Description: $description")
-        }
-        if (!columnHeaders.isNullOrBlank()) {
-            parts.add("Columns: $columnHeaders")
-        }
-        return parts.joinToString(" | ")
     }
 
     // ========== Helper Methods ==========
@@ -1043,39 +1071,203 @@ class VisualIdentificationAgentGenAiImpl(
         return count
     }
 
-    // ========== Hidden Container Detection ==========
+    // ========== Hidden Container Analysis with Caching ==========
+
+    private val cacheJson = Json { 
+        ignoreUnknownKeys = true 
+        encodeDefaults = true
+    }
 
     /**
-     * Detect tables in a hidden container using HTML-based LLM detection.
-     * Hidden containers (accordion panels, collapsed sections, etc.) are not visible in screenshots.
+     * Analyze hidden containers with caching.
+     * 
+     * Caching is based on structural HTML hash (with data-ds-id stripped).
+     * Cached results store CSS selectors which are stable across page loads.
+     * 
+     * @return Triple of (tables, mobileLayouts, token usage)
+     */
+    private suspend fun analyzeHiddenContainersWithCache(
+        hiddenContainers: List<IBrowserPage.HiddenContainer>,
+        fullHtmlWithIds: String,
+        modelId: String
+    ): Triple<List<HiddenTableResult>, List<HiddenMobileLayoutResult>, TokenUsageMetrics> = coroutineScope {
+        if (hiddenContainers.isEmpty()) {
+            return@coroutineScope Triple(emptyList(), emptyList(), TokenUsageMetrics.empty(modelId))
+        }
+
+        val doc = Jsoup.parse(fullHtmlWithIds)
+
+        // Step 1: Compute structural hashes for all containers
+        val containerWithHashes = hiddenContainers.map { container ->
+            val structuralHash = computeStructuralHash(container.html)
+            container to structuralHash
+        }
+
+        // Step 2: Batch lookup in cache
+        val allHashes = containerWithHashes.map { it.second }
+        val cachedResults = hiddenContainerCacheRepository.findByHashes(allHashes)
+        val cachedByHash = cachedResults.associateBy { it.structuralHtmlHash.toList() }
+
+        // Step 3: Split into cached and uncached
+        val (cached, uncached) = containerWithHashes.partition { (_, hash) ->
+            cachedByHash.containsKey(hash.toList())
+        }
+
+        logger.debug(
+            "Hidden container cache: {} hits, {} misses out of {} containers",
+            cached.size, uncached.size, hiddenContainers.size
+        )
+
+        // Step 4: Process cached results - convert CSS selectors back to data-ds-id
+        val cachedTables = mutableListOf<HiddenTableResult>()
+        val cachedMobileLayouts = mutableListOf<HiddenMobileLayoutResult>()
+
+        for ((container, hash) in cached) {
+            val cacheEntry = cachedByHash[hash.toList()] ?: continue
+
+            // Parse cached tables and map CSS selectors to current data-ds-id
+            val tables = cacheJson.decodeFromString<List<CachedHiddenTable>>(cacheEntry.tablesJson)
+            for (table in tables) {
+                val element = doc.select(table.cssSelector).firstOrNull()
+                val dataId = element?.attr("data-ds-id")
+                if (dataId != null && dataId.isNotEmpty()) {
+                    cachedTables.add(HiddenTableResult(dataId, table.specialConsideration))
+                }
+            }
+
+            // Parse cached mobile layouts and map CSS selectors to current data-ds-id
+            val mobileLayouts = cacheJson.decodeFromString<List<CachedHiddenMobileLayout>>(cacheEntry.mobileLayoutsJson)
+            for (layout in mobileLayouts) {
+                val element = doc.select(layout.cssSelector).firstOrNull()
+                val dataId = element?.attr("data-ds-id")
+                if (dataId != null && dataId.isNotEmpty()) {
+                    cachedMobileLayouts.add(HiddenMobileLayoutResult(dataId, layout.description))
+                }
+            }
+        }
+
+        // Step 5: Analyze uncached containers via LLM in parallel
+        val uncachedDeferreds = uncached.map { (container, hash) ->
+            async {
+                val (result, usage) = analyzeHiddenContainer(container, fullHtmlWithIds, modelId)
+                Triple(container, hash, result) to usage
+            }
+        }
+
+        val uncachedResults = uncachedDeferreds.awaitAll()
+
+        // Collect fresh tables and mobile layouts
+        val freshTables = mutableListOf<HiddenTableResult>()
+        val freshMobileLayouts = mutableListOf<HiddenMobileLayoutResult>()
+        var totalUsage = TokenUsageMetrics.empty(modelId)
+
+        val cachesToSave = mutableListOf<HiddenContainerTableCache>()
+
+        for ((triple, usage) in uncachedResults) {
+            val (container, hash, result) = triple
+            totalUsage += usage
+
+            freshTables.addAll(result.tables)
+            freshMobileLayouts.addAll(result.mobileLayouts)
+
+            // Convert data-ds-id to CSS selectors for caching
+            val tablesToCache = result.tables.mapNotNull { table ->
+                val element = doc.select("[data-ds-id=\"${table.id}\"]").firstOrNull()
+                    ?: return@mapNotNull null
+                val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
+                CachedHiddenTable(cssSelector, table.specialConsideration)
+            }
+
+            val mobileLayoutsToCache = result.mobileLayouts.mapNotNull { layout ->
+                val element = doc.select("[data-ds-id=\"${layout.id}\"]").firstOrNull()
+                    ?: return@mapNotNull null
+                val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
+                CachedHiddenMobileLayout(cssSelector, layout.description)
+            }
+
+            cachesToSave.add(
+                HiddenContainerTableCache(
+                    structuralHtmlHash = hash,
+                    hasTables = tablesToCache.isNotEmpty(),
+                    tablesJson = cacheJson.encodeToString(tablesToCache),
+                    hasMobileLayouts = mobileLayoutsToCache.isNotEmpty(),
+                    mobileLayoutsJson = cacheJson.encodeToString(mobileLayoutsToCache)
+                )
+            )
+        }
+
+        // Step 6: Save new cache entries
+        if (cachesToSave.isNotEmpty()) {
+            try {
+                hiddenContainerCacheRepository.batchUpsert(cachesToSave)
+                logger.debug("Cached {} hidden container analysis results", cachesToSave.size)
+            } catch (e: Exception) {
+                logger.warn("Failed to cache hidden container results: {}", e.message)
+            }
+        }
+
+        // Combine cached + fresh results
+        Triple(
+            cachedTables + freshTables,
+            cachedMobileLayouts + freshMobileLayouts,
+            totalUsage
+        )
+    }
+
+    /**
+     * Compute SHA-256 hash of structural HTML (with data-ds-id stripped).
+     * This creates a stable key for caching that works across page loads.
+     */
+    private fun computeStructuralHash(html: String): ByteArray {
+        // Strip data-ds-id attributes which change on every page load
+        val structuralHtml = html.replace(Regex("""data-ds-id="[^"]*""""), "")
+        val digest = MessageDigest.getInstance("SHA-256")
+        return digest.digest(structuralHtml.toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * Analyze a hidden container for tables and navigation using HTML-based LLM detection.
+     * Hidden containers (accordion panels, collapsed sections, mobile menus, etc.) are not visible in screenshots.
+     * 
+     * Returns both table identifications and navigation identifications.
      * 
      * Note: container.html already has data-ds-id attributes from the browser's injectStableIds()
      */
-    private suspend fun detectTablesInHiddenContainer(
+    private suspend fun analyzeHiddenContainer(
         container: IBrowserPage.HiddenContainer,
         fullHtmlWithIds: String,
         modelId: String
-    ): Pair<List<HiddenTableResult>, TokenUsageMetrics> {
-        // container.html already has data-ds-id attributes from browser injection
-        val cleanedSnippet = cleanHtml(container.html)
+    ): Pair<HiddenContainerAnalysisResult, TokenUsageMetrics> {
+        // Step 1: Extract semantic <table> elements programmatically (no LLM needed)
+        val (semanticTables, htmlWithoutTables) = extractSemanticTablesFromHiddenContainer(container.html)
+        
+        if (semanticTables.isNotEmpty()) {
+            logger.debug(
+                "Hidden container '{}': extracted {} semantic <table> elements programmatically",
+                container.id, semanticTables.size
+            )
+        }
+        
+        // Step 2: Clean remaining HTML for LLM analysis (CSS tables + navigations only)
+        val cleanedSnippet = cleanHtml(htmlWithoutTables)
 
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
-            retryLlmCall<HiddenTableResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_hidden") {
+            retryLlmCall<HiddenContainerAnalysisResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_hidden") {
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(Part.fromText(cleanedSnippet))),
                     GenerateContentConfig.builder()
                         .temperature(0F)
-                        .responseSchema(hiddenTableOutputSchema)
+                        .responseSchema(hiddenContainerAnalysisSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
                                 .thinkingBudget(0)
                                 .build()
                         )
-                        .systemInstruction(Content.fromParts(Part.fromText(hiddenTableSystemInstruction)))
+                        .systemInstruction(Content.fromParts(Part.fromText(hiddenContainerAnalysisInstruction)))
                         .build()
                 )
 
@@ -1094,21 +1286,55 @@ class VisualIdentificationAgentGenAiImpl(
             }
         }
 
-        logger.debug("Hidden container '{}' detection found {} tables", container.id, response.tables.size)
+        logger.debug(
+            "Hidden container '{}' LLM analysis: {} CSS tables, {} mobile layouts",
+            container.id, response.tables.size, response.mobileLayouts.size
+        )
 
         // Validate that IDs exist in the full HTML
-        val validatedTables = response.tables.filter { table ->
-            val doc = Jsoup.parse(fullHtmlWithIds)
+        val doc = Jsoup.parse(fullHtmlWithIds)
+        val validatedLlmTables = response.tables.filter { table ->
             doc.select("[data-ds-id=\"${table.id}\"]").isNotEmpty()
         }
+        val validatedMobileLayouts = response.mobileLayouts.filter { layout ->
+            doc.select("[data-ds-id=\"${layout.id}\"]").isNotEmpty()
+        }
+        
+        // Step 3: Merge semantic tables (programmatic) with CSS tables (LLM-detected)
+        val allTables = semanticTables + validatedLlmTables
 
-        return validatedTables to tokenUsage
+        val analysisResult = HiddenContainerAnalysisResult(
+            containerId = container.id,
+            tables = allTables,
+            mobileLayouts = validatedMobileLayouts
+        )
+
+        return analysisResult to tokenUsage
+    }
+
+    /**
+     * Extract semantic <table> elements from hidden container HTML.
+     * Returns the table IDs and the modified HTML with tables removed.
+     * 
+     * Semantic tables are handled programmatically - no need for LLM analysis.
+     */
+    private fun extractSemanticTablesFromHiddenContainer(html: String): Pair<List<HiddenTableResult>, String> {
+        val doc = Jsoup.parse(html)
+        val tables = mutableListOf<HiddenTableResult>()
+        
+        doc.select("table[data-ds-id]").forEach { element ->
+            val dataId = element.attr("data-ds-id")
+            tables.add(HiddenTableResult(dataId, "Semantic <table> element"))
+            element.remove()
+        }
+        
+        return tables to doc.outerHtml()
     }
 
     private fun cleanHtml(rawHtml: String): String {
         val doc: Document = Jsoup.parse(rawHtml)
 
-        // Remove noise elements
+        // Remove noise elements (note: <table> already removed by extractSemanticTablesFromHiddenContainer)
         doc.select(
             "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
                     "head, title, base, form, input, button, select, textarea, label, fieldset, legend, " +
@@ -1215,8 +1441,8 @@ class VisualIdentificationAgentGenAiImpl(
             filteredTables, boundingBoxes, htmlWithIds, pageWidth, pageHeight, doc
         )
 
-        // Apply fallbacks
-        val finalSemantic = applySemanticFallbacks(mappedSemantic, doc)
+        // Apply semantic HTML overrides (header/footer take priority over vision)
+        val finalSemantic = applySemanticOverrides(mappedSemantic, doc)
         val programmaticTables = extractSemanticTables(htmlWithIds)
         val finalTables = mergeTables(mappedTables, programmaticTables, doc)
 

@@ -77,10 +77,6 @@ class TableIdentificationAgentGenAiImpl(
                                         .build(),
                                     "label" to Schema.builder().type("STRING")
                                         .description("Brief description of the table's content")
-                                        .build(),
-                                    "columnHeaders" to Schema.builder().type("STRING")
-                                        .description("Column headers, comma-separated")
-                                        .nullable(true)
                                         .build()
                                 )
                             )
@@ -101,16 +97,14 @@ class TableIdentificationAgentGenAiImpl(
         - Return bounding boxes using box_2d format: [ymin, xmin, ymax, xmax] where coordinates are scaled to [0, 1000].
             - ymin/ymax: vertical position (0 = top, 1000 = bottom)
             - xmin/xmax: horizontal position (0 = left, 1000 = right)
-        - Generate a description of the table's content
-        - Identify the column headers if applicable
+        - Generate a brief description of the table's content
         
-        Expexted output format:
+        Expected output format:
         {
             "tables": [
                 {
-                    "box_2d": [ymin, xmin, ymax, xmax]
-                    "label" : "brief description of the table's content"
-                    "columnHeaders" "column headers, comma-separated (optional)"
+                    "box_2d": [ymin, xmin, ymax, xmax],
+                    "label": "brief description of the table's content"
                 }
             ]
         }
@@ -134,15 +128,13 @@ class TableIdentificationAgentGenAiImpl(
                                     "id" to Schema.builder().type("STRING")
                                         .description("The data-ds-id value of the table root element (e.g., 'ds-table-0', 'ds-table-5').")
                                         .build(),
-                                    "description" to Schema.builder().type("STRING")
-                                        .description("A brief description of the table's purpose or content based on the webpage context.")
-                                        .build(),
-                                    "columnHeaders" to Schema.builder().type("STRING")
-                                        .description("The column headers of the table, comma-separated.")
+                                    "specialConsideration" to Schema.builder().type("STRING")
+                                        .description("Notes about non-standard table structure or styling that may affect interpretation (e.g., nested rows, irregular colspan, CSS-grid layout). Null if table has standard structure.")
+                                        .nullable(true)
                                         .build()
                                 )
                             )
-                            .required(listOf("id", "description"))
+                            .required(listOf("id"))
                             .build()
                     )
                     .build()
@@ -162,17 +154,14 @@ class TableIdentificationAgentGenAiImpl(
         - Always target the root containers instead of individual rows and columns, a typical webpage should have a limited number of tables/grids
         - Modern websites may design tables purely using <div> styling or structure, you need to identify them based on semantic meaning
         - For every table you find, return the data-ds-id attribute value (e.g., "ds-table-5") pointing to the root container.
-        - Additionally, provide:
-          - description: A brief description of the table's purpose or content based on the webpage context
-          - columnHeaders: The column headers of the table, comma-separated (e.g. "The columns of the table are Basic plan, Premium plan and Enterprise plan."). Null if the table has no header row.
+        - If the table has non-standard structure or complex styling that may affect interpretation, provide a specialConsideration note (e.g., "Uses CSS grid with irregular column spans", "Nested accordion rows")
 
         Expected output shape:
         {
             "tables": [
                 {
                     "id": "string",
-                    "description": "string",
-                    "columnHeaders": "string" | null
+                    "specialConsideration": "string" | null
                 }
             ]
         }
@@ -186,8 +175,7 @@ class TableIdentificationAgentGenAiImpl(
     @Serializable
     private data class LlmTableResult(
         val id: String,
-        val description: String,
-        val columnHeaders: String? = null
+        val specialConsideration: String? = null
     )
 
     @Serializable
@@ -203,8 +191,7 @@ class TableIdentificationAgentGenAiImpl(
     private data class VisionTableResult(
         @kotlinx.serialization.SerialName("box_2d")
         val box2d: List<Int>,
-        val label: String,
-        val columnHeaders: String? = null
+        val label: String
     ) {
         // Helper properties to extract coordinates
         val ymin: Int get() = box2d.getOrElse(0) { 0 }
@@ -369,7 +356,7 @@ class TableIdentificationAgentGenAiImpl(
             TableIdentification(
                 cssSelector = resolved.cssSelector,
                 dataId = resolved.llmResult.id,
-                auxiliaryInfo = combineAuxiliaryInfo(resolved.llmResult.description, resolved.llmResult.columnHeaders),
+                auxiliaryInfo = resolved.llmResult.specialConsideration ?: "",
                 containsMedia = detectMediaInTable(resolved.llmResult.id, docForMediaDetection)
             )
         }
@@ -400,22 +387,6 @@ class TableIdentificationAgentGenAiImpl(
         return hasMedia
     }
 
-    /**
-     * Combines description and column headers into a single auxiliaryInfo string.
-     * The format is "Description: {description} | Columns: {columnHeaders}" with handling
-     * for cases where one or both fields might be empty or null.
-     */
-    private fun combineAuxiliaryInfo(description: String, columnHeaders: String?): String {
-        val parts = mutableListOf<String>()
-        if (description.isNotBlank()) {
-            parts.add("Description: $description")
-        }
-        if (!columnHeaders.isNullOrBlank()) {
-            parts.add("Columns: $columnHeaders")
-        }
-        return parts.joinToString(" | ")
-    }
-
     private fun extractSemanticTables(htmlWithIds: String): Pair<List<LlmTableResult>, String> {
         val doc = Jsoup.parse(htmlWithIds)
         val tables = mutableListOf<LlmTableResult>()
@@ -424,20 +395,8 @@ class TableIdentificationAgentGenAiImpl(
 
         tableElements.forEach { element ->
             val id = element.attr("data-ds-id")
-            val caption = element.select("caption").text()
-            val summary = element.attr("summary")
-            val description = when {
-                caption.isNotBlank() -> caption
-                summary.isNotBlank() -> summary
-                else -> ""
-            }
-            // Extract column headers from <th> elements
-            val headerElements = element.select("th")
-            val columnHeaders = headerElements.map { it.text().trim() }
-                .filter { it.isNotBlank() }
-                .joinToString(", ")
-
-            tables.add(LlmTableResult(id, description, columnHeaders))
+            // Programmatically extracted tables don't have special considerations
+            tables.add(LlmTableResult(id, null))
             element.remove()
         }
 
@@ -677,12 +636,11 @@ class TableIdentificationAgentGenAiImpl(
             }
 
             val containsMedia = detectMediaInTable(llmResult.id, docForMediaDetection)
-            val auxiliaryInfo = combineAuxiliaryInfo(llmResult.description, llmResult.columnHeaders)
 
             TableIdentification(
                 cssSelector = cssSelector,
                 dataId = llmResult.id,
-                auxiliaryInfo = auxiliaryInfo,
+                auxiliaryInfo = llmResult.specialConsideration ?: "",
                 containsMedia = containsMedia
             )
         }
@@ -745,12 +703,11 @@ class TableIdentificationAgentGenAiImpl(
             }
 
             val containsMedia = detectMediaInTable(llmResult.id, doc)
-            val auxiliaryInfo = combineAuxiliaryInfo(llmResult.description, llmResult.columnHeaders)
 
             TableIdentification(
                 cssSelector = cssSelector,
                 dataId = llmResult.id,
-                auxiliaryInfo = auxiliaryInfo,
+                auxiliaryInfo = llmResult.specialConsideration ?: "",
                 containsMedia = containsMedia
             )
         }
@@ -833,13 +790,12 @@ class TableIdentificationAgentGenAiImpl(
                 val dataId = bestMatch.third
                 val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
                 val containsMedia = detectMediaInTable(dataId, doc)
-                val auxiliaryInfo = combineAuxiliaryInfo(visionTable.label, visionTable.columnHeaders)
 
                 mappedTables.add(
                     TableIdentification(
                         cssSelector = cssSelector,
                         dataId = dataId,
-                        auxiliaryInfo = auxiliaryInfo,
+                        auxiliaryInfo = visionTable.label, // Vision provides label as auxiliary info
                         containsMedia = containsMedia
                     )
                 )
@@ -1125,8 +1081,7 @@ class TableIdentificationAgentGenAiImpl(
                 results.add(
                     LlmTableResult(
                         id = bestMatch.third, // dataId
-                        description = visionTable.label,
-                        columnHeaders = visionTable.columnHeaders
+                        specialConsideration = null // Vision-detected tables don't have special considerations
                     )
                 )
             } else {

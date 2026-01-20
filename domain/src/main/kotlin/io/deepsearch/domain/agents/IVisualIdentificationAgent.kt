@@ -24,6 +24,22 @@ data class VisualIdentificationInput(
 ) : IAgent.IAgentInput
 
 /**
+ * Identification of a navigation menu found in hidden containers (mobile menus, etc.).
+ * These are typically duplicate navigation structures that should be removed from the output.
+ */
+/**
+ * Represents a hidden mobile layout structure detected in a hidden container.
+ * Mobile layouts are duplicate UI structures that should be removed from extraction output.
+ */
+@Serializable
+data class MobileLayoutIdentification(
+    /** Stable data-ds-id value for removal (e.g., "ds-element-456") */
+    val dataId: String,
+    /** Description of the mobile layout (e.g., "Mobile navigation menu", "Hamburger menu content") */
+    val description: String
+)
+
+/**
  * Combined output containing both semantic elements and table identifications.
  * This is the result of a single vision-based LLM call that detects both types.
  */
@@ -31,8 +47,10 @@ data class VisualIdentificationInput(
 data class VisualIdentificationOutput(
     /** Semantic/navigation elements identified on the page */
     val semanticElements: SemanticElements,
-    /** Tables/grids identified on the page (vision-detected only, excludes hidden containers) */
+    /** Tables/grids identified on the page (includes both vision-detected and hidden container tables) */
     val tables: List<TableIdentification>,
+    /** Mobile layouts found in hidden containers (duplicate UI structures to be removed) */
+    val hiddenMobileLayouts: List<MobileLayoutIdentification> = emptyList(),
     /** Token usage for the combined call */
     @Contextual val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
