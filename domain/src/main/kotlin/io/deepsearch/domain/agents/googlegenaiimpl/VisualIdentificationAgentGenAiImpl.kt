@@ -364,11 +364,11 @@ class VisualIdentificationAgentGenAiImpl(
         // 2. HTML detection for each hidden container (in parallel)
 
         val visionDeferred = async {
-            var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_FLASH_PREVIEW.modelId)
+            var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
             val response = withContext(dispatcherProvider.io) {
                 retryLlmCall<CombinedVisionResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_vision") {
                     val result = client.models.generateContent(
-                        ModelIds.GEMINI_3_FLASH_PREVIEW.modelId,
+                        ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
                         listOf(
                             Content.fromParts(
                                 // Use scaled image for Gemini API
@@ -377,12 +377,12 @@ class VisualIdentificationAgentGenAiImpl(
                             )
                         ),
                         GenerateContentConfig.builder()
-                            .temperature(1F)
+                            .temperature(0F)
                             .responseSchema(combinedOutputSchema)
                             .responseMimeType("application/json")
                             .thinkingConfig(
                                 ThinkingConfig.builder()
-                                    .thinkingLevel(ThinkingLevel.Known.MINIMAL)
+                                    .thinkingBudget(0)
                                     .build()
                             )
                             .systemInstruction(Content.fromParts(Part.fromText(combinedSystemInstruction)))
@@ -393,7 +393,7 @@ class VisualIdentificationAgentGenAiImpl(
 
                     result.usageMetadata().ifPresent { metadata ->
                         tokenUsage = TokenUsageMetrics(
-                            modelName = ModelIds.GEMINI_3_FLASH_PREVIEW.modelId,
+                            modelName = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
                             promptTokens = metadata.promptTokenCount().orElse(0),
                             outputTokens = metadata.candidatesTokenCount().orElse(0),
                             totalTokens = metadata.totalTokenCount().orElse(0)
