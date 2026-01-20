@@ -4,6 +4,7 @@ import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.BlobInfo
 import com.google.cloud.storage.Storage
 import com.google.cloud.storage.StorageOptions
+import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.GcsConfig
@@ -78,6 +79,7 @@ class GcsBatchSnapshotStorageService(
         private const val CLEANED_HTML_FILE = "cleaned-html.txt"
         private const val SEMANTIC_ELEMENTS_FILE = "semantic-elements.json"
         private const val TABLE_IDENTIFICATIONS_FILE = "table-identifications.json"
+        private const val HIDDEN_MOBILE_LAYOUTS_FILE = "hidden-mobile-layouts.json"
         private const val ICON_INTERPRETATIONS_FILE = "icon-interpretations.json"
         private const val IMAGE_TEXTS_FILE = "image-texts.json"
         private const val TABLE_MARKDOWNS_FILE = "table-markdowns.json"
@@ -198,6 +200,10 @@ class GcsBatchSnapshotStorageService(
             uploads.add(async { storeJson("$basePath/$TABLE_IDENTIFICATIONS_FILE", tables) })
         }
         
+        results.hiddenMobileLayouts?.let { layouts ->
+            uploads.add(async { storeJson("$basePath/$HIDDEN_MOBILE_LAYOUTS_FILE", layouts) })
+        }
+        
         results.iconInterpretations?.let { interpretations ->
             uploads.add(async { storeJson("$basePath/$ICON_INTERPRETATIONS_FILE", interpretations) })
         }
@@ -243,6 +249,7 @@ class GcsBatchSnapshotStorageService(
         val cleanedHtml = async { readText("$basePath/$CLEANED_HTML_FILE") }
         val semanticElements = async { readJson<SemanticElements>("$basePath/$SEMANTIC_ELEMENTS_FILE") }
         val tableIdentifications = async { readJson<List<TableIdentification>>("$basePath/$TABLE_IDENTIFICATIONS_FILE") }
+        val hiddenMobileLayouts = async { readJson<List<MobileLayoutIdentification>>("$basePath/$HIDDEN_MOBILE_LAYOUTS_FILE") }
         val tableMarkdowns = async { readJson<Map<String, String>>("$basePath/$TABLE_MARKDOWNS_FILE") }
         val iconInterpretations = async { readJson<Map<String, String?>>("$basePath/$ICON_INTERPRETATIONS_FILE") }
         val imageTexts = async { readJson<Map<String, String?>>("$basePath/$IMAGE_TEXTS_FILE") }
@@ -255,6 +262,7 @@ class GcsBatchSnapshotStorageService(
             cleanedHtml = cleanedHtml.await(),
             semanticElements = semanticElements.await(),
             tableIdentifications = tableIdentifications.await(),
+            hiddenMobileLayouts = hiddenMobileLayouts.await(),
             tableMarkdowns = tableMarkdowns.await(),
             iconInterpretations = iconInterpretations.await(),
             imageTexts = imageTexts.await(),

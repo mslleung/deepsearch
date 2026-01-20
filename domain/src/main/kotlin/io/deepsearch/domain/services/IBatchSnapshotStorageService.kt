@@ -1,5 +1,6 @@
 package io.deepsearch.domain.services
 
+import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
@@ -260,6 +261,8 @@ data class ContentLlmResults(
     val cleanedHtml: String?,
     val semanticElements: SemanticElements?,
     val tableIdentifications: List<TableIdentification>?,
+    /** Mobile layouts found in hidden containers (duplicate UI structures to be removed) */
+    val hiddenMobileLayouts: List<MobileLayoutIdentification>?,
     val iconInterpretations: Map<String, String?>?,
     val imageTexts: Map<String, String?>?
 )
@@ -272,6 +275,8 @@ data class CachingData(
     val cleanedHtml: String?,
     val semanticElements: SemanticElements?,
     val tableIdentifications: List<TableIdentification>?,
+    /** Mobile layouts found in hidden containers (duplicate UI structures to be removed) */
+    val hiddenMobileLayouts: List<MobileLayoutIdentification>?,
     val tableMarkdowns: Map<String, String>?,
     val iconInterpretations: Map<String, String?>?,
     val imageTexts: Map<String, String?>?,

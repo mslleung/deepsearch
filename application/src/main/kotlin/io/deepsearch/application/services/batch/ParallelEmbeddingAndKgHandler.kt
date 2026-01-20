@@ -14,8 +14,11 @@ import io.deepsearch.domain.services.CachingData
 import io.deepsearch.domain.services.CssSelectorReplacement
 import io.deepsearch.domain.services.IBatchSnapshotStorageService
 import io.deepsearch.domain.services.IGeminiBatchService
+import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IJsoupDomService
 import io.deepsearch.domain.services.MediaFileData
+import io.deepsearch.domain.services.MediaPlaceholderMapping
+import io.deepsearch.domain.services.PlaceholderPrefix
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -43,6 +46,7 @@ class ParallelEmbeddingAndKgHandler(
     private val batchUrlStateRepository: IBatchUrlStateRepository,
     private val geminiBatchService: IGeminiBatchService,
     private val jsoupDomService: IJsoupDomService,
+    private val htmlToMarkdownService: IHtmlToMarkdownService,
     private val webpageCacheService: IWebpageCacheService,
     private val hybridSearchIndexingService: IHybridSearchIndexingService,
     private val knowledgeGraphIndexingService: IKnowledgeGraphIndexingService,
@@ -410,6 +414,20 @@ class ParallelEmbeddingAndKgHandler(
         }
     }
 
+    /**
+     * Builds final markdown from cached data, matching WebpageExtractionService.processDom exactly.
+     * 
+     * Processing steps (matching WebpageExtractionService):
+     * 1. Apply media replacements with PLACEHOLDERS
+     * 2. Extract popup text before removal
+     * 3. Remove semantic elements
+     * 3.5. Remove hidden mobile layout elements
+     * 4. Interpret and replace tables (using placeholders)
+     * 5. Clean up DOM before markdown conversion
+     * 6. Convert HTML to Markdown
+     * 7. Replace placeholders with actual text
+     * 8. Add metadata header and popup content
+     */
     private fun buildFinalMarkdown(
         urlState: BatchUrlState,
         cachingData: CachingData?,
@@ -426,22 +444,26 @@ class ParallelEmbeddingAndKgHandler(
             return MarkdownBuildResult(markdown, emptyMap())
         }
 
-        // HTML already has data-ds-id attributes
+        // HTML already has data-ds-id attributes from browser's injectStableIds()
         val html = cachingData.cleanedHtml ?: cachingData.html
         val doc = Jsoup.parse(html)
 
-        // Step 1: Apply icon/image replacements using shared utility
+        // ===== Step 1: Apply media replacements with PLACEHOLDERS =====
+        // Use placeholders instead of actual text to prevent markdown syntax escaping
+        // during HTML-to-Markdown conversion
         val mediaResult = MediaReplacementBuilder.buildFromIconsAndImages(
             icons,
             images,
             cachingData.iconInterpretations,
             cachingData.imageTexts
         )
-        if (mediaResult.replacements.isNotEmpty()) {
-            jsoupDomService.replaceElementsWithText(doc, mediaResult.replacements)
+        val placeholderMap = if (mediaResult.replacements.isNotEmpty()) {
+            jsoupDomService.replaceElementsWithPlaceholders(doc, mediaResult.replacements).toMutableMap()
+        } else {
+            mutableMapOf()
         }
 
-        // Step 3: Extract popup text before removal (matches WebpageExtractionService behavior)
+        // ===== Step 2: Extract popup text before removal =====
         val popupText = cachingData.semanticElements?.popups
             ?.map { "[data-ds-id=\"${it.dataId}\"]" }
             ?.takeIf { it.isNotEmpty() }
@@ -453,9 +475,9 @@ class ParallelEmbeddingAndKgHandler(
                     .takeIf { it.isNotBlank() }
             }
 
-        // Step 4: Remove semantic elements
+        // ===== Step 3: Remove semantic elements =====
         cachingData.semanticElements?.let { semantic ->
-            listOfNotNull(
+            val semanticSelectors = listOfNotNull(
                 semantic.header?.dataId,
                 semantic.footer?.dataId,
                 semantic.navSidebar?.dataId,
@@ -463,34 +485,78 @@ class ParallelEmbeddingAndKgHandler(
                 semantic.cookieBanner?.dataId
             ).plus(semantic.adBanners.map { it.dataId })
                 .plus(semantic.popups.map { it.dataId })
-                .forEach { dataId ->
-                    doc.select("[data-ds-id=\"$dataId\"]").remove()
-                }
+                .map { "[data-ds-id=\"$it\"]" }
+            jsoupDomService.removeElements(doc, semanticSelectors)
         }
 
-        // Step 5: Replace tables with markdown
+        // ===== Step 3.5: Remove hidden mobile layout elements =====
+        cachingData.hiddenMobileLayouts?.let { layouts ->
+            if (layouts.isNotEmpty()) {
+                val layoutSelectors = layouts.map { "[data-ds-id=\"${it.dataId}\"]" }
+                jsoupDomService.removeElements(doc, layoutSelectors)
+                logger.debug(
+                    "Removed {} hidden mobile layout elements: {}",
+                    layouts.size,
+                    layouts.map { it.description }
+                )
+            }
+        }
+
+        // ===== Step 4: Replace tables with markdown (using placeholders) =====
         val tableReplacements = cachingData.tableMarkdowns?.map { (dataId, markdown) ->
             CssSelectorReplacement("[data-ds-id=\"$dataId\"]", markdown)
         } ?: emptyList()
         if (tableReplacements.isNotEmpty()) {
-            jsoupDomService.replaceElementsWithText(doc, tableReplacements)
+            // Use placeholders for tables too - this prevents markdown newlines from being escaped
+            // during HTML-to-Markdown conversion. Use TABLE prefix to avoid ID collisions.
+            val tablePlaceholders = jsoupDomService.replaceElementsWithPlaceholders(
+                doc, tableReplacements, PlaceholderPrefix.TABLE
+            )
+            placeholderMap.putAll(tablePlaceholders)
         }
 
-        val textContent = jsoupDomService.extractTextContent(doc)
+        // ===== Step 5: Clean up DOM before markdown conversion =====
+        // Remove empty elements that would produce markdown artifacts like orphan `>` or `* `
+        val cleanupStats = jsoupDomService.cleanupForMarkdownConversion(doc)
+        if (cleanupStats.emptyListItemsRemoved > 0 || cleanupStats.emptyBlockquoteChildrenRemoved > 0) {
+            logger.debug(
+                "Markdown pre-cleanup: {} list items, {} blockquote children, {} elements",
+                cleanupStats.emptyListItemsRemoved,
+                cleanupStats.emptyBlockquoteChildrenRemoved,
+                cleanupStats.emptyElementsRemoved
+            )
+        }
 
+        // ===== Step 6: Convert HTML to Markdown =====
+        // Placeholders pass through cleanly without escaping
+        val rawMarkdown = htmlToMarkdownService.convert(doc.html())
+
+        // ===== Step 7: Replace placeholders with actual text =====
+        var finalMarkdown = rawMarkdown
+        placeholderMap.values.forEach { mapping ->
+            finalMarkdown = finalMarkdown.replace(mapping.placeholder, mapping.text)
+        }
+
+        // ===== Step 8: Add metadata header and popup content =====
         val markdown = buildString {
             appendLine("URL: ${urlState.url}")
-            appendLine("Title: ${urlState.title ?: "Unknown"}")
+            if (!urlState.title.isNullOrBlank()) {
+                appendLine("Title: ${urlState.title}")
+            }
             if (!urlState.description.isNullOrBlank()) {
                 appendLine("Description: ${urlState.description}")
             }
             appendLine()
+            append(finalMarkdown)
+            // Append popup text at the end if present (dialogs, tooltips, etc.)
             if (!popupText.isNullOrBlank()) {
-                appendLine(popupText)
                 appendLine()
+                appendLine("---")
+                appendLine("## Popup Content")
+                appendLine()
+                append(popupText)
             }
-            appendLine(textContent)
-        }.trim()
+        }
 
         return MarkdownBuildResult(markdown, mediaResult.imageMapping)
     }

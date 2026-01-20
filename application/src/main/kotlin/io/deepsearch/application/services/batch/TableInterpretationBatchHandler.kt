@@ -150,6 +150,8 @@ class TableInterpretationBatchHandler(
         val cleanedHtml: String?,
         val boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>,
         val tableIdentifications: List<io.deepsearch.domain.agents.TableIdentification>,
+        val hiddenMobileLayouts: List<io.deepsearch.domain.agents.MobileLayoutIdentification>?,
+        val semanticElements: io.deepsearch.domain.models.valueobjects.SemanticElements?,
         val iconInterpretations: Map<String, String?>?,
         val imageTexts: Map<String, String?>?,
         val icons: List<MediaFileData>,
@@ -178,6 +180,8 @@ class TableInterpretationBatchHandler(
                     cleanedHtml = cachingData.cleanedHtml,
                     boundingBoxes = cachingData.boundingBoxes ?: emptyMap(),
                     tableIdentifications = cachingData.tableIdentifications ?: emptyList(),
+                    hiddenMobileLayouts = cachingData.hiddenMobileLayouts,
+                    semanticElements = cachingData.semanticElements,
                     iconInterpretations = cachingData.iconInterpretations,
                     imageTexts = cachingData.imageTexts,
                     icons = icons,
@@ -189,6 +193,7 @@ class TableInterpretationBatchHandler(
                 val doc = Jsoup.parse(cleanedHtml)
 
                 // Build and apply media replacements using shared utility
+                // (LLM needs to see "Search icon" or "![Product photo](#img-1)" not raw HTML)
                 val mediaResult = MediaReplacementBuilder.buildFromIconsAndImages(
                     snapshotFromGcs.icons,
                     snapshotFromGcs.images,
@@ -201,6 +206,36 @@ class TableInterpretationBatchHandler(
                         "[{}] Applied {} media replacements for {}",
                         jobId, mediaResult.replacements.size, urlState.url
                     )
+                }
+
+                // Remove semantic elements (matches WebpageExtractionService Step 3)
+                // Tables inside semantic elements should be skipped
+                snapshotFromGcs.semanticElements?.let { semantic ->
+                    val semanticSelectors = listOfNotNull(
+                        semantic.header?.dataId,
+                        semantic.footer?.dataId,
+                        semantic.navSidebar?.dataId,
+                        semantic.breadcrumb?.dataId,
+                        semantic.cookieBanner?.dataId
+                    ).plus(semantic.adBanners.map { it.dataId })
+                        .plus(semantic.popups.map { it.dataId })
+                        .map { "[data-ds-id=\"$it\"]" }
+                    if (semanticSelectors.isNotEmpty()) {
+                        jsoupDomService.removeElements(doc, semanticSelectors)
+                    }
+                }
+
+                // Remove hidden mobile layout elements (matches WebpageExtractionService Step 3.5)
+                // Tables inside hidden mobile layouts should be skipped
+                snapshotFromGcs.hiddenMobileLayouts?.let { layouts ->
+                    if (layouts.isNotEmpty()) {
+                        val layoutSelectors = layouts.map { "[data-ds-id=\"${it.dataId}\"]" }
+                        jsoupDomService.removeElements(doc, layoutSelectors)
+                        logger.debug(
+                            "[{}] Removed {} hidden mobile layout elements for table extraction",
+                            jobId, layouts.size
+                        )
+                    }
                 }
 
                 // Get tables for interpretation

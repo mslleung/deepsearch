@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.storage
 
+import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
@@ -22,6 +23,7 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
     private val cleanedHtmlStorage = ConcurrentHashMap<String, String>()
     private val semanticElementsStorage = ConcurrentHashMap<String, SemanticElements>()
     private val tableIdentificationsStorage = ConcurrentHashMap<String, List<TableIdentification>>()
+    private val hiddenMobileLayoutsStorage = ConcurrentHashMap<String, List<MobileLayoutIdentification>>()
     private val iconInterpretationsStorage = ConcurrentHashMap<String, Map<String, String?>>()
     private val imageTextsStorage = ConcurrentHashMap<String, Map<String, String?>>()
     private val tableMarkdownsStorage = ConcurrentHashMap<String, Map<String, String>>()
@@ -73,6 +75,7 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         results.cleanedHtml?.let { cleanedHtmlStorage[basePath] = it }
         results.semanticElements?.let { semanticElementsStorage[basePath] = it }
         results.tableIdentifications?.let { tableIdentificationsStorage[basePath] = it }
+        results.hiddenMobileLayouts?.let { hiddenMobileLayoutsStorage[basePath] = it }
         results.iconInterpretations?.let { iconInterpretationsStorage[basePath] = it }
         results.imageTexts?.let { imageTextsStorage[basePath] = it }
     }
@@ -103,6 +106,7 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
             cleanedHtml = cleanedHtmlStorage[basePath],
             semanticElements = semanticElementsStorage[basePath],
             tableIdentifications = tableIdentificationsStorage[basePath],
+            hiddenMobileLayouts = hiddenMobileLayoutsStorage[basePath],
             tableMarkdowns = tableMarkdownsStorage[basePath],
             iconInterpretations = iconInterpretationsStorage[basePath],
             imageTexts = imageTextsStorage[basePath],
@@ -127,6 +131,7 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         if (cleanedHtmlStorage.remove(basePath) != null) count++
         if (semanticElementsStorage.remove(basePath) != null) count++
         if (tableIdentificationsStorage.remove(basePath) != null) count++
+        if (hiddenMobileLayoutsStorage.remove(basePath) != null) count++
         if (iconInterpretationsStorage.remove(basePath) != null) count++
         if (imageTextsStorage.remove(basePath) != null) count++
         if (tableMarkdownsStorage.remove(basePath) != null) count++
@@ -142,8 +147,8 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         listOf(
             htmlStorage, screenshotStorage, boundingBoxStorage, iconStorage, imageStorage,
             cleanedHtmlStorage, semanticElementsStorage, tableIdentificationsStorage,
-            iconInterpretationsStorage, imageTextsStorage, tableMarkdownsStorage,
-            kgExtractionStorage, metadataStorage
+            hiddenMobileLayoutsStorage, iconInterpretationsStorage, imageTextsStorage,
+            tableMarkdownsStorage, kgExtractionStorage, metadataStorage
         ).forEach { storage ->
             val keysToRemove = storage.keys.filter { it.startsWith(prefix) }
             keysToRemove.forEach { key ->
@@ -166,6 +171,7 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         cleanedHtmlStorage.clear()
         semanticElementsStorage.clear()
         tableIdentificationsStorage.clear()
+        hiddenMobileLayoutsStorage.clear()
         iconInterpretationsStorage.clear()
         imageTextsStorage.clear()
         tableMarkdownsStorage.clear()

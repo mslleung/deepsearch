@@ -277,6 +277,9 @@ class CrawlAndExtractHandler(
             page.injectStableIds()
             
             // Parallel browser captures (including screenshot for vision-based identification)
+            // Screenshot is captured once and shared between:
+            // - Visual identification (semantic + tables in single vision call)
+            // - Image extraction (fallback cropping for CORS-blocked images)
             data class BrowserCaptures(
                 val snapshot: IBrowserPage.PageSnapshotWithMetadata,
                 val icons: List<IBrowserPage.Icon>,
@@ -286,8 +289,12 @@ class CrawlAndExtractHandler(
             val captures = coroutineScope {
                 val snapshotDeferred = async { page.capturePageSnapshot() }
                 val iconsDeferred = async { page.extractIcons() }
-                val imagesDeferred = async { page.extractImages() }
                 val screenshotDeferred = async { page.takeFullPageScreenshot() }
+                // Image extraction uses the shared screenshot for fallback (avoids duplicate screenshot capture)
+                val imagesDeferred = async { 
+                    val screenshot = screenshotDeferred.await()
+                    page.extractImagesWithScreenshot(screenshot)
+                }
                 BrowserCaptures(
                     snapshotDeferred.await(),
                     iconsDeferred.await(),

@@ -84,16 +84,18 @@ class PageResultProcessor(
                         cleanedHtml = doc.html(),
                         semanticElements = visualResult.semanticElements,
                         tableIdentifications = visualResult.tables,
+                        hiddenMobileLayouts = visualResult.hiddenMobileLayouts,
                         iconInterpretations = null,
                         imageTexts = null
                     )
                 )
 
                 logger.debug(
-                    "[{}] Processed visual ID for {}: {} semantic, {} tables",
+                    "[{}] Processed visual ID for {}: {} semantic, {} tables, {} hidden layouts",
                     jobId, urlState.url,
                     countSemanticElements(visualResult.semanticElements),
-                    visualResult.tables.size
+                    visualResult.tables.size,
+                    visualResult.hiddenMobileLayouts.size
                 )
             } catch (e: Exception) {
                 logger.warn("[{}] Failed to process visual ID result for {}: {}", jobId, urlState.url, e.message)
@@ -125,6 +127,7 @@ class PageResultProcessor(
                     cleanedHtml = doc.html(),
                     semanticElements = visualResult.semanticElements,
                     tableIdentifications = visualResult.tables,
+                    hiddenMobileLayouts = visualResult.hiddenMobileLayouts,
                     iconInterpretations = null,
                     imageTexts = null
                 )
