@@ -224,12 +224,22 @@ class WebpageExtractionService(
         val duration = measureTimeMillis {
             val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons, sessionId)
             val replacements = icons.zip(interpretedTexts).flatMap { (icon, text) ->
-                icon.cssSelectors.map { CssSelectorReplacement(it, text) }
+                icon.cssSelectors.map { CssSelectorReplacement(it, wrapIconTextAsMarkdown(text)) }
             }
             result = IconInterpretationResult(replacements)
         }
         logger.debug("Icon interpretation took {} ms, {} replacements", duration, result.replacements.size)
         return result
+    }
+
+    /**
+     * Wraps icon label text in curly braces for markdown output.
+     * Uses curly braces because they are markdown-safe (won't trigger links, emphasis, etc.)
+     * 
+     * Example: "search" -> "{search}", "greater than symbol" -> "{greater than symbol}"
+     */
+    private fun wrapIconTextAsMarkdown(label: String?): String? {
+        return label?.let { "{$it}" }
     }
 
     private data class ImageInterpretationResult(

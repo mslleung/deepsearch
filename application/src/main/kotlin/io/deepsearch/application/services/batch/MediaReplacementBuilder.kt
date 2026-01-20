@@ -22,9 +22,9 @@ object MediaReplacementBuilder {
     /**
      * Build CSS selector replacements from icons and images with their interpretations.
      *
-     * Icons are replaced with their label text.
+     * Icons are wrapped in curly braces: `{label}`
      * Images are wrapped in Markdown image syntax: `![text](#img-{number})`
-     * This matches the interactive pipeline's wrapImageTextAsMarkdown behavior.
+     * This matches the interactive pipeline's behavior.
      *
      * Returns both replacements and imageMapping for consistent behavior with interactive pipeline.
      *
@@ -44,12 +44,13 @@ object MediaReplacementBuilder {
         val imageMapping = mutableMapOf<String, String>()
         var imageCounter = 0
 
-        // Icon replacements - simple text labels
+        // Icon replacements - wrapped in curly braces for markdown safety
         icons.forEach { iconData ->
             val label = iconInterpretations?.get(iconData.hash)
             if (label != null) {
+                val wrappedLabel = wrapIconTextAsMarkdown(label)
                 iconData.cssSelectors.forEach { selector ->
-                    replacements.add(CssSelectorReplacement(selector, label))
+                    replacements.add(CssSelectorReplacement(selector, wrappedLabel))
                 }
             }
         }
@@ -75,6 +76,16 @@ object MediaReplacementBuilder {
 
         return MediaReplacementResult(replacements, imageMapping)
     }
+
+    /**
+     * Wrap icon label text in curly braces for markdown output.
+     * Uses curly braces because they are markdown-safe (won't trigger links, emphasis, etc.)
+     * Matches the interactive pipeline's WebpageExtractionService.wrapIconTextAsMarkdown behavior.
+     *
+     * @param label The icon label text
+     * @return Icon wrapped in curly braces: {label}
+     */
+    private fun wrapIconTextAsMarkdown(label: String): String = "{$label}"
 
     /**
      * Wrap image text as Markdown image syntax.
