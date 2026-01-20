@@ -83,9 +83,9 @@ object MediaReplacementBuilder {
      * Matches the interactive pipeline's WebpageExtractionService.wrapIconTextAsMarkdown behavior.
      *
      * @param label The icon label text
-     * @return Icon wrapped in curly braces: {label}
+     * @return Icon wrapped in curly braces with icon suffix: {label icon}
      */
-    private fun wrapIconTextAsMarkdown(label: String): String = "{$label}"
+    private fun wrapIconTextAsMarkdown(label: String): String = "{$label icon}"
 
     /**
      * Wrap image text as Markdown image syntax.

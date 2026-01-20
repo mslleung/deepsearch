@@ -236,10 +236,10 @@ class WebpageExtractionService(
      * Wraps icon label text in curly braces for markdown output.
      * Uses curly braces because they are markdown-safe (won't trigger links, emphasis, etc.)
      * 
-     * Example: "search" -> "{search}", "greater than symbol" -> "{greater than symbol}"
+     * Example: "search" -> "{search icon}", "greater than symbol" -> "{greater than symbol icon}"
      */
     private fun wrapIconTextAsMarkdown(label: String?): String? {
-        return label?.let { "{$it}" }
+        return label?.let { "{$it icon}" }
     }
 
     private data class ImageInterpretationResult(
