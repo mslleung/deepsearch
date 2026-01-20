@@ -638,10 +638,18 @@ class VisualIdentificationAgentGenAiImpl(
     }
 
     /**
-     * Map a vision bounding box to a DOM element using closest match algorithm.
-     * This minimizes edge differences rather than maximizing containment,
-     * which is more appropriate for semantic elements like headers that should
-     * match what the LLM visually identified rather than a parent container.
+     * Map a vision bounding box to a DOM element by finding the container root using IoU + LCA.
+     * 
+     * Algorithm:
+     * 1. Calculate IoU (Intersection over Union) for each element against the target bbox
+     * 2. Find candidates with IoU >= threshold (elements that meaningfully match the target)
+     * 3. If multiple candidates exist, compute their LCA (Lowest Common Ancestor)
+     * 4. The result is the container root that encompasses all matching content
+     * 
+     * IoU is preferred over simple overlap because:
+     * - It's scale-invariant and works well regardless of element size
+     * - It penalizes both over-selection (element too big) and under-selection (element too small)
+     * - Range [0,1] provides intuitive threshold tuning
      */
     private fun mapSemanticElementClosestMatch(
         box2d: List<Int>,
@@ -664,56 +672,161 @@ class VisualIdentificationAgentGenAiImpl(
         val targetLeft = xmin * pageWidth / 1000
         val targetBottom = ymax * pageHeight / 1000
         val targetRight = xmax * pageWidth / 1000
+        val targetArea = (targetRight - targetLeft) * (targetBottom - targetTop)
+        
+        if (targetArea <= 0) return null
 
-        // Use page diagonal for normalization
-        val pageDiagonal = kotlin.math.sqrt(pageWidth * pageWidth + pageHeight * pageHeight)
-        if (pageDiagonal <= 0) return null
-
-        var bestMatch: Pair<String, Double>? = null // dsId, score
-
-        // pageBoundingBoxes keys are data-ds-id values (e.g., "ds-element-123"), not XPaths
+        // Step 1: Calculate IoU for each element and find candidates
+        // IoU threshold of 0.8 means ~90% agreement between element and target
+        val iouThreshold = 0.8
+        
+        data class Candidate(
+            val element: org.jsoup.nodes.Element,
+            val dsId: String,
+            val iou: Double
+        )
+        
+        val candidates = mutableListOf<Candidate>()
+        
+        // Debug: log target region
+        logger.debug(
+            "IoU {} target region: [{}, {}, {}, {}] (area={})",
+            elementType,
+            "%.1f".format(targetLeft), "%.1f".format(targetTop),
+            "%.1f".format(targetRight), "%.1f".format(targetBottom),
+            "%.0f".format(targetArea)
+        )
+        
         for ((dsId, bbox) in pageBoundingBoxes) {
-            val elemLeft = bbox.left
-            val elemTop = bbox.top
-            val elemRight = bbox.right
-            val elemBottom = bbox.bottom
-
-            // Calculate edge differences
-            val topDiff = kotlin.math.abs(elemTop - targetTop)
-            val leftDiff = kotlin.math.abs(elemLeft - targetLeft)
-            val rightDiff = kotlin.math.abs(elemRight - targetRight)
-            val bottomDiff = kotlin.math.abs(elemBottom - targetBottom)
-
-            val totalDiff = topDiff + leftDiff + rightDiff + bottomDiff
-            val normalizedDiff = totalDiff / pageDiagonal
-
-            // Convert to score: higher is better (lower difference = higher score)
-            val score = 1.0 / (1.0 + normalizedDiff)
-
-            if (dsId.isNotEmpty() && (bestMatch == null || score > bestMatch.second)) {
-                bestMatch = Pair(dsId, score)
+            val iou = calculateIoU(bbox, targetTop, targetLeft, targetBottom, targetRight, targetArea)
+            
+            // Debug: log first few elements and any with high IoU
+            if (dsId in listOf("ds-element-0", "ds-element-1", "ds-element-2", "ds-element-3", "ds-element-4") || iou >= 0.5) {
+                val element = doc.selectFirst("[data-ds-id=\"$dsId\"]")
+                val tag = element?.tagName() ?: "?"
+                val bboxArea = (bbox.right - bbox.left) * (bbox.bottom - bbox.top)
+                logger.debug(
+                    "IoU {} candidate {}: tag=<{}>, bbox=[{}, {}, {}, {}] (area={}), IoU={}",
+                    elementType, dsId, tag,
+                    "%.1f".format(bbox.left), "%.1f".format(bbox.top),
+                    "%.1f".format(bbox.right), "%.1f".format(bbox.bottom),
+                    "%.0f".format(bboxArea),
+                    "%.3f".format(iou)
+                )
+            }
+            
+            if (iou >= iouThreshold) {
+                val element = doc.selectFirst("[data-ds-id=\"$dsId\"]") ?: continue
+                // Exclude body, html, and script/style elements
+                if (element.tagName() in listOf("body", "html", "script", "style", "noscript")) continue
+                candidates.add(Candidate(element, dsId, iou))
             }
         }
 
-        return if (bestMatch != null) {
-            val element = doc.select("[data-ds-id=\"${bestMatch.first}\"]").firstOrNull()
-                ?: return null.also { logger.debug("Could not find element with data-ds-id={}", bestMatch.first) }
-            val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
-            val scoreLabel = when {
-                bestMatch.second >= 0.8 -> "excellent"
-                bestMatch.second >= 0.6 -> "good"
-                bestMatch.second >= 0.4 -> "moderate"
-                else -> "low"
-            }
-            logger.debug(
-                "Visual {} closest-match to {} with {} score {}",
-                elementType, bestMatch.first, scoreLabel, "%.3f".format(bestMatch.second)
-            )
-            MappedElement(dataId = bestMatch.first, cssSelector = cssSelector, label = label)
-        } else {
-            logger.debug("Could not map visual {} (no elements found)", elementType)
-            null
+        if (candidates.isEmpty()) {
+            logger.debug("No candidates with IoU >= {} found for visual {} region", iouThreshold, elementType)
+            return null
         }
+
+        // Sort by IoU descending
+        val sortedCandidates = candidates.sortedByDescending { it.iou }
+        val containerRoot = findLowestCommonAncestor(sortedCandidates.map { it.element })
+
+        // Validate: don't return body/html as container
+        if (containerRoot.tagName() in listOf("body", "html")) {
+            // Fallback: use the single best IoU match instead of LCA
+            logger.debug("LCA for {} is <{}>, using best IoU match instead", elementType, containerRoot.tagName())
+            val bestMatch = sortedCandidates[0]
+            val cssSelector = cssSelectorConstructionService.constructCssSelector(bestMatch.element)
+            return MappedElement(dataId = bestMatch.dsId, cssSelector = cssSelector, label = label)
+        }
+
+        val dsId = containerRoot.attr("data-ds-id")
+        if (dsId.isEmpty()) {
+            // Fallback: use the single best IoU match
+            val bestMatch = sortedCandidates[0]
+            logger.debug("LCA for {} has no data-ds-id, using best IoU match: {}", elementType, bestMatch.dsId)
+            val cssSelector = cssSelectorConstructionService.constructCssSelector(bestMatch.element)
+            return MappedElement(dataId = bestMatch.dsId, cssSelector = cssSelector, label = label)
+        }
+
+        logger.debug(
+            "Visual {} container root: {} (tag: <{}>, IoU candidates: {}, best IoU: {})",
+            elementType, dsId, containerRoot.tagName(), candidates.size, "%.3f".format(sortedCandidates[0].iou)
+        )
+
+        val cssSelector = cssSelectorConstructionService.constructCssSelector(containerRoot)
+        return MappedElement(dataId = dsId, cssSelector = cssSelector, label = label)
+    }
+
+    /**
+     * Calculate IoU (Intersection over Union) between an element's bounding box and the target region.
+     * IoU = Intersection Area / Union Area
+     * Range: [0, 1] where 1 means perfect overlap
+     */
+    private fun calculateIoU(
+        bbox: IBrowserPage.BoundingBox,
+        targetTop: Double,
+        targetLeft: Double,
+        targetBottom: Double,
+        targetRight: Double,
+        targetArea: Double
+    ): Double {
+        // Calculate intersection
+        val interLeft = maxOf(bbox.left, targetLeft)
+        val interTop = maxOf(bbox.top, targetTop)
+        val interRight = minOf(bbox.right, targetRight)
+        val interBottom = minOf(bbox.bottom, targetBottom)
+        
+        if (interLeft >= interRight || interTop >= interBottom) return 0.0
+        
+        val interArea = (interRight - interLeft) * (interBottom - interTop)
+        val bboxArea = (bbox.right - bbox.left) * (bbox.bottom - bbox.top)
+        
+        if (bboxArea <= 0) return 0.0
+        
+        // Union = Area1 + Area2 - Intersection
+        val unionArea = targetArea + bboxArea - interArea
+        
+        return if (unionArea > 0) interArea / unionArea else 0.0
+    }
+
+    /**
+     * Find the Lowest Common Ancestor (LCA) of a list of elements.
+     * The LCA is the deepest element in the DOM tree that is an ancestor of all given elements.
+     */
+    private fun findLowestCommonAncestor(elements: List<org.jsoup.nodes.Element>): org.jsoup.nodes.Element {
+        if (elements.isEmpty()) throw IllegalArgumentException("Cannot find LCA of empty list")
+        if (elements.size == 1) return elements[0]
+
+        // Get ancestor chains for each element (including the element itself)
+        val ancestorChains = elements.map { element ->
+            val chain = mutableListOf<org.jsoup.nodes.Element>()
+            var current: org.jsoup.nodes.Element? = element
+            while (current != null) {
+                chain.add(current)
+                current = current.parent()
+            }
+            chain.reversed() // Root to leaf order
+        }
+
+        // Find the deepest common ancestor by walking from root
+        var lca: org.jsoup.nodes.Element = ancestorChains[0][0] // Start with root
+        val minDepth = ancestorChains.minOf { it.size }
+
+        for (depth in 0 until minDepth) {
+            val candidateAncestor = ancestorChains[0][depth]
+            val allMatch = ancestorChains.all { chain -> 
+                chain.size > depth && chain[depth] == candidateAncestor 
+            }
+            if (allMatch) {
+                lca = candidateAncestor
+            } else {
+                break // Divergence found, LCA is the previous level
+            }
+        }
+
+        return lca
     }
 
     // ========== Programmatic Fallbacks ==========
