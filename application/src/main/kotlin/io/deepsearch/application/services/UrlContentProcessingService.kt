@@ -335,13 +335,13 @@ class UrlContentProcessingService(
         val previewStart = System.currentTimeMillis()
         val previewResult = htmlPreviewService.prepareHtmlPreview(cachedHtmlString, normalizedUrl)
         val previewTime = System.currentTimeMillis() - previewStart
-        logger.debug("HTML preview ready for {} in {}ms: {} chars", normalizedUrl, previewTime, previewResult.cleanedHtml.length)
+        logger.debug("HTML preview ready for {} in {}ms: {} chars", normalizedUrl, previewTime, previewResult.extractedSentences.length)
         
         // Emit preview before browser starts - this is the key latency win
         send(
             UrlProcessingEvent.HtmlPreviewReady(
                 normalizedUrl,
-                previewResult.cleanedHtml,
+                previewResult.extractedSentences,
                 previewResult.title,
                 previewResult.description
             )
@@ -353,7 +353,7 @@ class UrlContentProcessingService(
             url = normalizedUrl,
             title = previewResult.title,
             description = previewResult.description,
-            markdown = previewResult.cleanedHtml,
+            markdown = previewResult.extractedSentences,
             html = null,  // Skip raw HTML for preview - full extraction will store it
             httpStatus = 200,
             httpReason = "OK",

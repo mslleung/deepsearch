@@ -273,7 +273,7 @@ class WebpageCacheService(
         // Pre-compute cleaned versions when raw HTML is available
         val cleanedPreviewHtml = when {
             // For full HTML content, compute cleaned preview
-            !html.isNullOrBlank() -> htmlPreviewService.prepareHtmlPreview(html, url).cleanedHtml
+            !html.isNullOrBlank() -> htmlPreviewService.prepareHtmlPreview(html, url).extractedSentences
             // For preview mode without HTML, the markdown IS the cleaned preview content
             isPreview && !markdown.isNullOrBlank() -> markdown
             else -> null

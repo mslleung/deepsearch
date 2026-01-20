@@ -17,14 +17,7 @@ data class HtmlPreviewResult(
     val extractedSentences: String,
     val title: String?,
     val description: String?
-) {
-    /**
-     * For backward compatibility - returns extractedSentences.
-     * @deprecated Use extractedSentences instead
-     */
-    @Deprecated("Use extractedSentences instead", ReplaceWith("extractedSentences"))
-    val cleanedHtml: String get() = extractedSentences
-}
+)
 
 interface IHtmlPreviewService {
     /**
