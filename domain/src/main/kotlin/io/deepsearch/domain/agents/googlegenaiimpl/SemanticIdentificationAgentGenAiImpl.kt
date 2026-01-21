@@ -230,17 +230,9 @@ class SemanticIdentificationAgentGenAiImpl(
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        // ========== Scale image for Gemini API if needed ==========
-        // Very tall full-page screenshots can cause "Unable to process input image" errors
-        val scaledResult = withContext(dispatcherProvider.io) {
-            imageDimensionService.scaleImageForGemini(screenshot.bytes, maxDimension = 4096)
-        }
-        
-        if (scaledResult.wasScaled) {
-            logger.info(
-                "Scaled screenshot from {}x{} to fit within 4096px (scale factor: {:.3f})",
-                scaledResult.originalWidth, scaledResult.originalHeight, scaledResult.scaleFactor
-            )
+        // Get image dimensions for coordinate mapping (Gemini uses normalized [0, 1000] coords)
+        val (screenshotWidth, screenshotHeight) = withContext(dispatcherProvider.io) {
+            imageDimensionService.getImageDimensions(screenshot.bytes)
         }
 
         // ========== Vision-based detection ==========
@@ -250,8 +242,7 @@ class SemanticIdentificationAgentGenAiImpl(
                     modelId,
                     listOf(
                         Content.fromParts(
-                            // Use scaled image for Gemini API
-                            Part.fromBytes(scaledResult.scaledBytes, scaledResult.scaledMimeType),
+                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
                             Part.fromText("Analyze this screenshot")
                         )
                     ),
@@ -284,13 +275,13 @@ class SemanticIdentificationAgentGenAiImpl(
         }
 
         // ========== Map vision bounding boxes to DOM elements ==========
-        // Use original dimensions for coordinate mapping (Gemini uses normalized [0, 1000] coords)
+        // Use screenshot dimensions for coordinate mapping (Gemini uses normalized [0, 1000] coords)
         var response = mapVisionToDomElements(
             visionResponse, 
             boundingBoxes, 
             htmlWithIds, 
-            scaledResult.originalWidth.toDouble(),
-            scaledResult.originalHeight.toDouble()
+            screenshotWidth.toDouble(),
+            screenshotHeight.toDouble()
         )
 
         // ========== Programmatic fallback for semantic HTML elements ==========

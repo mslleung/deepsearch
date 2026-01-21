@@ -344,19 +344,9 @@ class VisualIdentificationAgentGenAiImpl(
             htmlWithIds.length, screenshot.bytes.size, boundingBoxes.size, hiddenContainers.size
         )
 
-        // ========== Scale image for Gemini API if needed ==========
-        // Very tall full-page screenshots (e.g., Wikipedia at 20,000+ px) can cause
-        // "Unable to process input image" errors. We scale down for Gemini while
-        // keeping the original for accurate element cropping.
-        val scaledResult = withContext(dispatcherProvider.io) {
-            imageDimensionService.scaleImageForGemini(screenshot.bytes, maxDimension = 4096)
-        }
-        
-        if (scaledResult.wasScaled) {
-            logger.info(
-                "Scaled screenshot from {}x{} to fit within 4096px (scale factor: {:.3f})",
-                scaledResult.originalWidth, scaledResult.originalHeight, scaledResult.scaleFactor
-            )
+        // Get image dimensions for coordinate mapping (Gemini uses normalized [0, 1000] coords)
+        val (screenshotWidth, screenshotHeight) = withContext(dispatcherProvider.io) {
+            imageDimensionService.getImageDimensions(screenshot.bytes)
         }
 
         // ========== Parallel Detection ==========
@@ -371,8 +361,7 @@ class VisualIdentificationAgentGenAiImpl(
                         ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
                         listOf(
                             Content.fromParts(
-                                // Use scaled image for Gemini API
-                                Part.fromBytes(scaledResult.scaledBytes, scaledResult.scaledMimeType),
+                                Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
                                 Part.fromText("Analyze this webpage screenshot for semantic elements and tables.")
                             )
                         ),
@@ -423,8 +412,8 @@ class VisualIdentificationAgentGenAiImpl(
 
         // Use ORIGINAL screenshot dimensions for coordinate mapping
         // The Gemini response uses normalized [0, 1000] coordinates, so we map to original dimensions
-        val pageWidth = scaledResult.originalWidth.toDouble()
-        val pageHeight = scaledResult.originalHeight.toDouble()
+        val pageWidth = screenshotWidth.toDouble()
+        val pageHeight = screenshotHeight.toDouble()
 
         logger.debug("Visual identification dimensions: {}x{} (original)", pageWidth.toInt(), pageHeight.toInt())
 
