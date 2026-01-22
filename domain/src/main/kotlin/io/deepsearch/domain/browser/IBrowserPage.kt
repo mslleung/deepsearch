@@ -486,6 +486,49 @@ interface IBrowserPage {
     suspend fun getTablesInterpretationData(selectors: List<String>): Map<String, TableInterpretationData>
 
     /**
+     * Bounding box data for a single hidden container.
+     */
+    data class HiddenContainerBoundingBoxData(
+        /** The data-ds-id of the hidden container */
+        val containerId: String,
+        /** Bounding box of the container itself */
+        val containerBox: BoundingBox,
+        /** Map of element ds-id to bounding box for all elements inside */
+        val elements: Map<String, BoundingBox>
+    )
+
+    /**
+     * Result of capturing bounding boxes for elements inside hidden containers.
+     * Used for server-side table detection algorithm.
+     */
+    data class HiddenContainerBoundingBoxes(
+        /** Data for each hidden container */
+        val hiddenContainers: List<HiddenContainerBoundingBoxData>,
+        /** Number of hidden containers found */
+        val hiddenContainerCount: Int,
+        /** Total elements captured across all containers */
+        val totalElementsCaptured: Int
+    )
+
+    /**
+     * Capture bounding boxes for all elements inside hidden containers.
+     * 
+     * This method:
+     * 1. Finds all hidden containers (accordions, tabs, etc.)
+     * 2. Reveals them temporarily
+     * 3. Captures bounding boxes for all elements with data-ds-id
+     * 4. Restores the original hidden state
+     * 
+     * The returned data can be used for server-side table detection algorithm
+     * without running complex analysis in the browser.
+     * 
+     * Must be called AFTER [injectStableIds] to ensure elements have data-ds-id attributes.
+     * 
+     * @return HiddenContainerBoundingBoxes containing bounding box data for each hidden container
+     */
+    suspend fun captureHiddenContainerBoundingBoxes(): HiddenContainerBoundingBoxes
+
+    /**
      * Close this page and release associated resources.
      */
     suspend fun close()

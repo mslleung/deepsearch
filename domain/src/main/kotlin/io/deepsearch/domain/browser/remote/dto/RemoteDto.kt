@@ -138,6 +138,9 @@ sealed class PageCommand {
     
     @Serializable @SerialName("getTablesInterpretationData")
     data class GetTablesInterpretationData(val selectors: List<String>) : PageCommand()
+
+    @Serializable @SerialName("captureHiddenContainerBoundingBoxes")
+    data object CaptureHiddenContainerBoundingBoxes : PageCommand()
 }
 
 @Serializable
@@ -241,4 +244,26 @@ data class TableInterpretationDataResponse(
 @Serializable
 data class TablesInterpretationDataResponse(
     val data: Map<String, TableInterpretationDataResponse>
+)
+
+// ==================== Hidden Container Bounding Boxes Response ====================
+
+@Serializable
+data class HiddenContainerBoundingBoxesResponse(
+    /** Data for each hidden container */
+    val hiddenContainers: List<HiddenContainerBoundingBoxDataResponse>,
+    /** Number of hidden containers found */
+    val hiddenContainerCount: Int,
+    /** Total elements captured across all containers */
+    val totalElementsCaptured: Int
+)
+
+@Serializable
+data class HiddenContainerBoundingBoxDataResponse(
+    /** The data-ds-id of the hidden container */
+    val containerId: String,
+    /** Bounding box of the container itself */
+    val containerBox: BoundingBoxResponse,
+    /** Map of element ds-id to bounding box for all elements inside */
+    val elements: Map<String, BoundingBoxResponse>
 )

@@ -332,6 +332,33 @@ class RemoteBrowserPage(
         }
     }
 
+    override suspend fun captureHiddenContainerBoundingBoxes(): IBrowserPage.HiddenContainerBoundingBoxes {
+        val r = pageCmdParse<HiddenContainerBoundingBoxesResponse>(PageCommand.CaptureHiddenContainerBoundingBoxes)
+        return IBrowserPage.HiddenContainerBoundingBoxes(
+            hiddenContainers = r.hiddenContainers.map { c ->
+                IBrowserPage.HiddenContainerBoundingBoxData(
+                    containerId = c.containerId,
+                    containerBox = IBrowserPage.BoundingBox(
+                        left = c.containerBox.left,
+                        top = c.containerBox.top,
+                        right = c.containerBox.right,
+                        bottom = c.containerBox.bottom
+                    ),
+                    elements = c.elements.mapValues { (_, b) ->
+                        IBrowserPage.BoundingBox(
+                            left = b.left,
+                            top = b.top,
+                            right = b.right,
+                            bottom = b.bottom
+                        )
+                    }
+                )
+            },
+            hiddenContainerCount = r.hiddenContainerCount,
+            totalElementsCaptured = r.totalElementsCaptured
+        )
+    }
+
     override suspend fun replaceElementsByXPathWithText(replacements: List<IBrowserPage.XPathReplacementWithText>) {
         idempotentCmd(PageCommand.ReplaceElementsByXPathWithText(replacements.map { XPathReplacement(it.xpath, it.text) }))
     }
