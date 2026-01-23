@@ -6,6 +6,8 @@ import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
+import io.deepsearch.domain.services.DiscoveredTable
+import io.deepsearch.domain.services.IRecursiveTableDiscoveryService
 import io.deepsearch.domain.services.ITableGridDetectorService
 import io.deepsearch.domain.services.TableDetectionBoundingBox
 import io.deepsearch.domain.services.TableGridResult
@@ -20,15 +22,16 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * Spatial Table Identification Experiment
  * 
- * New architecture:
+ * Architecture:
  * 1. Browser: Capture bounding boxes for all elements in hidden containers (simple data extraction)
- * 2. Domain (Kotlin): Run robust gap-based clustering algorithm to detect table grids
- * 3. LLM: Verify detected table candidates
+ * 2. Domain (Kotlin): Recursively traverse DOM + run spatial analysis at each level
+ * 3. LLM: Interpret detected table candidates
  * 
  * Benefits:
  * - Browser does simple DOM work only
  * - Table detection algorithm is in Kotlin (testable, debuggable)
- * - No hardcoded CSS patterns
+ * - Recursive discovery finds nested tables (like accordion sections)
+ * - Automatic deduplication of overlapping tables
  */
 class SpatialTableIdentificationExperimentTest : KoinTest {
 
@@ -41,6 +44,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
     private val testCoroutineDispatcher by inject<kotlinx.coroutines.CoroutineDispatcher>()
     private val browserPool by inject<IBrowserPool>()
     private val tableGridDetectorService by inject<ITableGridDetectorService>()
+    private val recursiveTableDiscoveryService by inject<IRecursiveTableDiscoveryService>()
     private val tableInterpretationAgent by inject<ITableInterpretationAgent>()
 
     // ==================== Tests ====================
@@ -58,7 +62,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
     private suspend fun runSpatialTableDetection(url: String) {
         browserPool.withPage { page ->
             println("\n" + "=".repeat(80))
-            println("SPATIAL TABLE DETECTION: $url")
+            println("RECURSIVE SPATIAL TABLE DETECTION: $url")
             println("=".repeat(80))
 
             // Step 1: Load page
@@ -73,119 +77,55 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             println("Injected ${injectionResult.elements} element IDs, ${injectionResult.icons} icon IDs, ${injectionResult.images} image IDs")
 
             // Step 3: Capture bounding boxes from hidden containers
+            // (This must run BEFORE page snapshot so any re-injected IDs are in the HTML)
             println("\n>>> Step 3: Capturing bounding boxes from hidden containers...")
             val hiddenContainerData = page.captureHiddenContainerBoundingBoxes()
             
             println("\nHidden Container Data:")
             println("  - Hidden containers found: ${hiddenContainerData.hiddenContainerCount}")
             println("  - Total elements captured: ${hiddenContainerData.totalElementsCaptured}")
-
-            // Step 4: Run table grid detection algorithm on each hidden container
-            println("\n>>> Step 4: Running table grid detection algorithm...")
             
-            data class DetectedTable(
-                val containerId: String,
-                val gridResult: TableGridResult,
-                val wasHidden: Boolean
-            )
-            
-            val detectedTables = mutableListOf<DetectedTable>()
-            
+            // Debug: Print container info
             for (container in hiddenContainerData.hiddenContainers) {
-                println("\n  Analyzing container ${container.containerId} (${container.elements.size} elements)...")
-                
-                // Convert to detection bounding boxes
-                val boxes = container.elements.mapValues { (_, box) ->
-                    TableDetectionBoundingBox(
-                        left = box.left,
-                        top = box.top,
-                        right = box.right,
-                        bottom = box.bottom
-                    )
-                }
-                
-                // Debug: Print sample bounding boxes for containers with many elements
-                if (boxes.size >= 50) {
-                    println("    DEBUG: Sample bounding boxes (first 10):")
-                    boxes.entries.take(10).forEach { (id, box) ->
-                        println("      $id: left=${box.left.toInt()}, top=${box.top.toInt()}, w=${(box.right-box.left).toInt()}, h=${(box.bottom-box.top).toInt()}")
-                    }
-                    // Check if boxes have valid sizes
-                    val validBoxes = boxes.filter { (_, b) -> (b.right - b.left) > 0 && (b.bottom - b.top) > 0 }
-                    println("    DEBUG: Valid boxes: ${validBoxes.size}/${boxes.size}")
-                    if (validBoxes.isNotEmpty()) {
-                        val minLeft = validBoxes.values.minOf { it.left }
-                        val maxRight = validBoxes.values.maxOf { it.right }
-                        val minTop = validBoxes.values.minOf { it.top }
-                        val maxBottom = validBoxes.values.maxOf { it.bottom }
-                        println("    DEBUG: Bounding region: left=$minLeft, top=$minTop, right=$maxRight, bottom=$maxBottom")
-                    }
-                }
-                
-                if (boxes.size < 4) {
-                    println("    ⚪ Skipped: too few elements")
-                    continue
-                }
-                
-                val gridResult = tableGridDetectorService.detectTable(boxes)
-                
-                if (gridResult.isTable && gridResult.confidence >= 0.5) {
-                    println("    ✅ Table detected: ${gridResult.rowCount}×${gridResult.colCount} grid (confidence: ${String.format("%.2f", gridResult.confidence)})")
-                    println("       Reason: ${gridResult.reason}")
-                    detectedTables.add(DetectedTable(
-                        containerId = container.containerId,
-                        gridResult = gridResult,
-                        wasHidden = true
-                    ))
-                } else {
-                    println("    ⚪ No table: ${gridResult.reason}")
-                }
+                println("  - Container ${container.containerId}: ${container.elements.size} elements")
             }
 
-            // Also analyze visible elements (get from page snapshot)
-            println("\n  Analyzing visible page content...")
+            // Step 4: Capture page snapshot (for HTML)
+            // (After hidden container processing so HTML has same IDs as bounding boxes)
+            println("\n>>> Step 4: Capturing page snapshot...")
             val pageSnapshot = page.capturePageSnapshot()
-            val visibleBoxes = pageSnapshot.boundingBoxes.mapValues { (_, box) ->
-                TableDetectionBoundingBox(
-                    left = box.left,
-                    top = box.top,
-                    right = box.right,
-                    bottom = box.bottom
-                )
-            }
-            
-            // For visible content, we need to find container elements and analyze their children
-            // For now, let's also run the detector on the full page
-            if (visibleBoxes.size >= 4) {
-                val fullPageResult = tableGridDetectorService.detectTable(visibleBoxes)
-                if (fullPageResult.isTable && fullPageResult.confidence >= 0.5) {
-                    println("    ✅ Page-level table pattern detected")
-                }
-            }
+            println("Captured page HTML: ${pageSnapshot.html.length} chars")
+
+            // Step 5: Recursive table discovery (Kotlin-side DOM traversal + spatial analysis)
+            println("\n>>> Step 5: Running recursive table discovery (Kotlin-side)...")
+            val discoveredTables = recursiveTableDiscoveryService.discoverTablesFromHiddenContainers(
+                hiddenContainerData = hiddenContainerData,
+                fullPageHtml = pageSnapshot.html
+            )
 
             println("\n" + "=".repeat(80))
-            println("DETECTION RESULTS")
+            println("RECURSIVE DISCOVERY RESULTS")
             println("=".repeat(80))
             
-            if (detectedTables.isEmpty()) {
-                println("\nNo tables detected in hidden containers by spatial analysis.")
+            if (discoveredTables.isEmpty()) {
+                println("\nNo tables discovered by recursive spatial analysis.")
                 println("(This may be because tables are visible or use different patterns)")
             } else {
-                println("\nSpatially detected tables (${detectedTables.size}):")
-                detectedTables.forEachIndexed { idx, table ->
-                    println("\n  ${idx + 1}. Container: ${table.containerId}")
+                println("\nDiscovered tables (${discoveredTables.size}):")
+                discoveredTables.forEachIndexed { idx, table ->
+                    println("\n  ${idx + 1}. Element: ${table.elementId} (depth=${table.depth})")
                     println("     Grid: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols")
                     println("     Confidence: ${String.format("%.2f", table.gridResult.confidence)}")
+                    println("     Leaf elements: ${table.elementBoundingBoxes.size}")
                     println("     Reason: ${table.gridResult.reason}")
                 }
             }
 
-            // Step 5: Process detected tables with TableInterpretationAgent
-            if (detectedTables.isNotEmpty()) {
-                println("\n>>> Step 5: Processing detected tables with TableInterpretationAgent...")
+            // Step 6: Process detected tables with TableInterpretationAgent
+            if (discoveredTables.isNotEmpty()) {
+                println("\n>>> Step 6: Processing detected tables with TableInterpretationAgent...")
                 
                 // Re-inject IDs before fetching HTML
-                // (captureHiddenContainerBoundingBoxes may trigger React re-renders that remove our IDs)
                 println("  Re-injecting stable IDs (in case React removed them)...")
                 page.injectStableIds()
                 
@@ -193,8 +133,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 val freshSnapshot = page.capturePageSnapshot()
                 
                 data class InterpretedTable(
-                    val containerId: String,
-                    val gridResult: TableGridResult,
+                    val table: DiscoveredTable,
                     val html: String,
                     val classification: String,
                     val markdown: String
@@ -202,46 +141,36 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 
                 val interpretedTables = mutableListOf<InterpretedTable>()
                 
-                for (table in detectedTables) {
-                    val selector = "[data-ds-id=\"${table.containerId}\"]"
+                for (table in discoveredTables) {
+                    val selector = "[data-ds-id=\"${table.elementId}\"]"
                     val html = page.getElementHtmlByCssSelector(selector)
                     
                     if (html.isBlank()) {
-                        println("  ❌ Could not get HTML for ${table.containerId}")
+                        println("  ❌ Could not get HTML for ${table.elementId}")
                         continue
                     }
                     
-                    println("\n  Processing ${table.containerId}...")
+                    println("\n  Processing ${table.elementId} (depth=${table.depth})...")
                     
                     // Create TableIdentification for the input
                     val tableIdentification = TableIdentification(
                         cssSelector = selector,
-                        dataId = table.containerId,
-                        auxiliaryInfo = "Spatially detected table: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols, confidence: ${String.format("%.2f", table.gridResult.confidence)}. Reason: ${table.gridResult.reason}",
+                        dataId = table.elementId,
+                        auxiliaryInfo = "Recursively discovered table at depth ${table.depth}: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols, confidence: ${String.format("%.2f", table.gridResult.confidence)}. Reason: ${table.gridResult.reason}",
                         containsMedia = false
                     )
-                    
-                    // Get bounding boxes for elements within this table
-                    // Filter to only include bounding boxes for elements within the table container
-                    val tableBoundingBoxes = freshSnapshot.boundingBoxes.filterKeys { dsId ->
-                        // Include bounding boxes that are part of this table's subtree
-                        // This is a simplified approach - we include all bounding boxes
-                        // In production, we'd filter to only descendants of the table element
-                        true
-                    }
                     
                     val input = TableInterpretationInput(
                         tableIdentification = tableIdentification,
                         tableHtml = html,
-                        boundingBoxes = tableBoundingBoxes
+                        boundingBoxes = freshSnapshot.boundingBoxes
                     )
                     
                     try {
                         val output = tableInterpretationAgent.generate(input)
                         
                         interpretedTables.add(InterpretedTable(
-                            containerId = table.containerId,
-                            gridResult = table.gridResult,
+                            table = table,
                             html = html,
                             classification = output.classification.name,
                             markdown = output.markdown
@@ -262,17 +191,18 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 if (interpretedTables.isEmpty()) {
                     println("\nNo tables successfully interpreted.")
                 } else {
-                    interpretedTables.forEachIndexed { idx, table ->
+                    interpretedTables.forEachIndexed { idx, result ->
                         println("\n${"─".repeat(70)}")
-                        println("TABLE ${idx + 1}: ${table.classification}")
+                        println("TABLE ${idx + 1}: ${result.classification}")
                         println("${"─".repeat(70)}")
-                        println("Container ID: ${table.containerId}")
-                        println("Spatial: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols (confidence: ${String.format("%.2f", table.gridResult.confidence)})")
-                        println("Classification: ${table.classification}")
+                        println("Element ID: ${result.table.elementId}")
+                        println("Depth: ${result.table.depth}")
+                        println("Spatial: ${result.table.gridResult.rowCount} rows × ${result.table.gridResult.colCount} cols (confidence: ${String.format("%.2f", result.table.gridResult.confidence)})")
+                        println("Classification: ${result.classification}")
                         println("\nMarkdown output:")
-                        println(table.markdown)
+                        println(result.markdown)
                         println("\nHTML (first 500 chars):")
-                        println(table.html.take(500))
+                        println(result.html.take(500))
                     }
                 }
             }
@@ -282,7 +212,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             println("=".repeat(80))
             println("Hidden containers analyzed: ${hiddenContainerData.hiddenContainerCount}")
             println("Total elements in hidden containers: ${hiddenContainerData.totalElementsCaptured}")
-            println("Spatially detected tables: ${detectedTables.size}")
+            println("Tables discovered by recursive analysis: ${discoveredTables.size}")
         }
     }
 

@@ -23,7 +23,9 @@ import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IImageDimensionService
 import io.deepsearch.domain.services.IJsoupDomService
 import io.deepsearch.domain.services.ITableGridDetectorService
+import io.deepsearch.domain.services.IRecursiveTableDiscoveryService
 import io.deepsearch.domain.detection.TableGridDetectorService
+import io.deepsearch.domain.detection.RecursiveTableDiscoveryService
 import io.deepsearch.domain.services.HtmlToMarkdownService
 import io.deepsearch.domain.services.ImageDimensionService
 import io.deepsearch.domain.services.IJwtService
@@ -74,7 +76,8 @@ val domainModule = module {
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
     singleOf(::ImageDimensionService) bind IImageDimensionService::class
     singleOf(::TableGridDetectorService) bind ITableGridDetectorService::class
-    
+    singleOf(::RecursiveTableDiscoveryService) bind IRecursiveTableDiscoveryService::class
+
     // Gemini Batch API service for cost-effective large-scale processing
     // Uses inline requests for batches under 20MB, 50% cost savings
     singleOf(::GeminiBatchServiceImpl) bind IGeminiBatchService::class

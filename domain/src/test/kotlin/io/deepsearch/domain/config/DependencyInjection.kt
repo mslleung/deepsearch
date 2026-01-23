@@ -44,7 +44,9 @@ import io.deepsearch.domain.services.IGeminiFileSearchService
 import io.deepsearch.domain.services.IImageDimensionService
 import io.deepsearch.domain.services.ImageDimensionService
 import io.deepsearch.domain.services.ITableGridDetectorService
+import io.deepsearch.domain.services.IRecursiveTableDiscoveryService
 import io.deepsearch.domain.detection.TableGridDetectorService
+import io.deepsearch.domain.detection.RecursiveTableDiscoveryService
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.singleOf
@@ -144,6 +146,7 @@ private val domainCommonTestModule = module {
     singleOf(::GeminiFileSearchService) bind IGeminiFileSearchService::class
     singleOf(::ImageDimensionService) bind IImageDimensionService::class
     singleOf(::TableGridDetectorService) bind ITableGridDetectorService::class
+    singleOf(::RecursiveTableDiscoveryService) bind IRecursiveTableDiscoveryService::class
     singleOf(::ProxyAwareHttpClientFactory) bind IProxyAwareHttpClientFactory::class
     singleOf(::ProxyTestService) bind IProxyTestService::class
     singleOf(::FreeProxySyncService)
