@@ -1,5 +1,6 @@
 package io.deepsearch.domain.models.entities
 
+import io.deepsearch.domain.agents.SnippetClassification
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -11,6 +12,7 @@ import kotlin.time.Instant
 @OptIn(ExperimentalTime::class)
 data class WebpageTableInterpretation(
     val tableDataHash: ByteArray, // Hash of screenshot bytes + html
+    val classification: SnippetClassification = SnippetClassification.TABLE,
     val markdown: String,
     val createdAt: Instant = Clock.System.now(),
     val updatedAt: Instant = Clock.System.now(),

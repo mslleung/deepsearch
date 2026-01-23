@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.agents.SnippetClassification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
@@ -607,11 +608,20 @@ class WebpageExtractionService(
         }
 
         // Interpret all tables in batch
-        val markdowns = tableInterpretationService.interpretTablesBatch(tableInputs, sessionId)
+        val results = tableInterpretationService.interpretTablesBatch(tableInputs, sessionId)
 
         // Return replacements using stable data-ds-id selectors
-        return tableInputs.zip(markdowns).map { (input, markdown) ->
-            CssSelectorReplacement("[data-ds-id=\"${input.tableIdentification.dataId}\"]", markdown)
+        // COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT are removed (null text)
+        // Other classifications keep their interpreted markdown
+        return tableInputs.zip(results).map { (input, result) ->
+            val replacementText = if (result.classification.shouldRemoveFromDom()) {
+                // Remove these elements entirely (pass null to cause removal)
+                null
+            } else {
+                // Keep the interpreted markdown for TABLE, CARD, LIST, OTHERS
+                result.markdown
+            }
+            CssSelectorReplacement("[data-ds-id=\"${input.tableIdentification.dataId}\"]", replacementText)
         }
     }
 

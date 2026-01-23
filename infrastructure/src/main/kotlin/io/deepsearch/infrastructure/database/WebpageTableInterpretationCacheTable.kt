@@ -7,6 +7,7 @@ class WebpageTableInterpretationCacheTable(
     private val databaseCryptoService: IDatabaseCryptoService
 ) : Table("webpage_table_interpretations") {
     val tableDataHash = varchar("table_data_hash", length = 128)
+    val classification = varchar("classification", length = 64).default("TABLE")
     val markdown = text("markdown")
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")

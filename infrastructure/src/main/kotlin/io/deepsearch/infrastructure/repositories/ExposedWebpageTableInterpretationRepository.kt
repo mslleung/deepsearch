@@ -1,5 +1,6 @@
 package io.deepsearch.infrastructure.repositories
 
+import io.deepsearch.domain.agents.SnippetClassification
 import io.deepsearch.domain.models.entities.WebpageTableInterpretation
 import io.deepsearch.domain.repositories.IWebpageTableInterpretationRepository
 import io.deepsearch.infrastructure.database.WebpageTableInterpretationCacheTable
@@ -32,6 +33,7 @@ class ExposedWebpageTableInterpretationRepository(
             keys = arrayOf(webpageTableInterpretationTable.tableDataHash)
         ) {
             it[tableDataHash] = hashBase64
+            it[classification] = interpretation.classification.name
             it[markdown] = interpretation.markdown
             it[createdAtEpochMs] = interpretation.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = interpretation.updatedAt.toEpochMilliseconds()
@@ -52,6 +54,7 @@ class ExposedWebpageTableInterpretationRepository(
         ) { interpretation ->
             val hashBase64 = Base64.encode(interpretation.tableDataHash)
             this[webpageTableInterpretationTable.tableDataHash] = hashBase64
+            this[webpageTableInterpretationTable.classification] = interpretation.classification.name
             this[webpageTableInterpretationTable.markdown] = interpretation.markdown
             this[webpageTableInterpretationTable.createdAtEpochMs] = interpretation.createdAt.toEpochMilliseconds()
             this[webpageTableInterpretationTable.updatedAtEpochMs] = interpretation.updatedAt.toEpochMilliseconds()
@@ -80,6 +83,7 @@ class ExposedWebpageTableInterpretationRepository(
     private fun mapRowToWebpageTableInterpretation(row: ResultRow): WebpageTableInterpretation {
         return WebpageTableInterpretation(
             tableDataHash = Base64.decode(row[webpageTableInterpretationTable.tableDataHash]),
+            classification = SnippetClassification.fromString(row[webpageTableInterpretationTable.classification]),
             markdown = row[webpageTableInterpretationTable.markdown],
             createdAt = Instant.fromEpochMilliseconds(row[webpageTableInterpretationTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[webpageTableInterpretationTable.updatedAtEpochMs]),

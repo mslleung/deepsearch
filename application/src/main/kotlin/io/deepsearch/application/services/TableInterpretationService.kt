@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.application.services.batch.TableKey
 import io.deepsearch.domain.agents.ITableInterpretationAgent
+import io.deepsearch.domain.agents.SnippetClassification
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.models.entities.WebpageTableInterpretation
 import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
@@ -18,6 +19,14 @@ import kotlin.io.encoding.Base64
 import kotlin.time.ExperimentalTime
 
 import io.deepsearch.domain.services.BatchContentRequest
+
+/**
+ * Result of table interpretation containing classification and markdown.
+ */
+data class TableInterpretationResult(
+    val classification: SnippetClassification,
+    val markdown: String
+)
 
 /**
  * Input for table interpretation batch request preparation.
@@ -50,8 +59,8 @@ data class TableInterpretationBatchPreparation(
 )
 
 interface ITableInterpretationService {
-    suspend fun interpretTable(input: TableInterpretationInput, sessionId: SessionId): String
-    suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: SessionId): List<String>
+    suspend fun interpretTable(input: TableInterpretationInput, sessionId: SessionId): TableInterpretationResult
+    suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: SessionId): List<TableInterpretationResult>
     
     // ========== Batch API Methods ==========
     
@@ -68,20 +77,21 @@ interface ITableInterpretationService {
     ): TableInterpretationBatchPreparation
     
     /**
-     * Parse batch response and return markdown.
+     * Parse batch response and return interpretation result.
      * 
      * @param responseText JSON response from batch API
-     * @return Markdown string
+     * @return TableInterpretationResult with classification and markdown
      */
-    fun parseBatchResponse(responseText: String): String
+    fun parseBatchResponse(responseText: String): TableInterpretationResult
     
     /**
      * Cache table interpretation result.
      * 
      * @param tableHtmlHash SHA-256 hash of the table HTML
+     * @param classification The content classification
      * @param markdown Interpreted markdown to cache
      */
-    suspend fun cacheResult(tableHtmlHash: ByteArray, markdown: String)
+    suspend fun cacheResult(tableHtmlHash: ByteArray, classification: SnippetClassification, markdown: String)
 }
 
 class TableInterpretationService(
@@ -143,15 +153,20 @@ class TableInterpretationService(
         )
     }
 
-    override fun parseBatchResponse(responseText: String): String {
-        return tableInterpretationAgent.parseBatchResponse(responseText).markdown
+    override fun parseBatchResponse(responseText: String): TableInterpretationResult {
+        val batchResult = tableInterpretationAgent.parseBatchResponse(responseText)
+        return TableInterpretationResult(
+            classification = batchResult.classification,
+            markdown = batchResult.markdown
+        )
     }
 
     @OptIn(ExperimentalTime::class)
-    override suspend fun cacheResult(tableHtmlHash: ByteArray, markdown: String) {
+    override suspend fun cacheResult(tableHtmlHash: ByteArray, classification: SnippetClassification, markdown: String) {
         webpageTableInterpretationRepository.upsert(
             WebpageTableInterpretation(
                 tableDataHash = tableHtmlHash,
+                classification = classification,
                 markdown = markdown
             )
         )
@@ -160,7 +175,7 @@ class TableInterpretationService(
     // ========== Interactive Mode Methods ==========
 
     /**
-     * Interprets a table using an LLM agent and returns markdown.
+     * Interprets a table using an LLM agent and returns classification and markdown.
      * Results are cached in the repository to avoid repeated calls with the same input.
      * 
      * The LLM verifies if the content is actually a data table. If not (e.g., navigation menu,
@@ -170,7 +185,7 @@ class TableInterpretationService(
      * eliminating the need for browser access during interpretation.
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun interpretTable(input: TableInterpretationInput, sessionId: SessionId): String {
+    override suspend fun interpretTable(input: TableInterpretationInput, sessionId: SessionId): TableInterpretationResult {
         // Create a hash from the pre-computed table HTML
         val digest = MessageDigest.getInstance("SHA-256")
         digest.update(input.tableHtml.toByteArray())
@@ -179,7 +194,10 @@ class TableInterpretationService(
         val existing = webpageTableInterpretationRepository.findByHash(dataHash)
         if (existing != null) {
             logger.debug("Cache hit for table {}", input.tableIdentification.auxiliaryInfo)
-            return existing.markdown
+            return TableInterpretationResult(
+                classification = existing.classification,
+                markdown = existing.markdown
+            )
         }
 
         val agentOutput = tableInterpretationAgent.generate(input)
@@ -201,16 +219,18 @@ class TableInterpretationService(
             agentOutput.classification
         )
 
-        val markdown = agentOutput.markdown
-
         webpageTableInterpretationRepository.upsert(
             WebpageTableInterpretation(
                 tableDataHash = dataHash,
-                markdown = markdown
+                classification = agentOutput.classification,
+                markdown = agentOutput.markdown
             )
         )
 
-        return markdown
+        return TableInterpretationResult(
+            classification = agentOutput.classification,
+            markdown = agentOutput.markdown
+        )
     }
 
     /**
@@ -225,14 +245,14 @@ class TableInterpretationService(
      * 
      * @param inputs List of table interpretation inputs with pre-computed data
      * @param sessionId Query session ID for token tracking
-     * @return List of markdown strings in the same order as inputs (empty string for non-tables)
+     * @return List of TableInterpretationResult in the same order as inputs
      */
     @OptIn(ExperimentalTime::class)
-    override suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: SessionId): List<String> {
+    override suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: SessionId): List<TableInterpretationResult> {
         if (inputs.isEmpty()) return emptyList()
 
         // Initialize result storage
-        val results = MutableList<String?>(inputs.size) { null }
+        val results = MutableList<TableInterpretationResult?>(inputs.size) { null }
 
         // Compute hashes using pre-computed table HTML (no browser access needed)
         val hashes = inputs.map { input ->
@@ -255,7 +275,10 @@ class TableInterpretationService(
             val hashKey = Base64.encode(hashes[index])
             val cached = cachedByHash[hashKey]
             if (cached != null) {
-                results[index] = cached.markdown
+                results[index] = TableInterpretationResult(
+                    classification = cached.classification,
+                    markdown = cached.markdown
+                )
             } else {
                 uncachedEntries.add(Triple(index, inputs[index], hashes[index]))
             }
@@ -285,6 +308,7 @@ class TableInterpretationService(
                     
                     index to WebpageTableInterpretation(
                         tableDataHash = hash,
+                        classification = agentOutput.classification,
                         markdown = agentOutput.markdown
                     )
                 }
@@ -300,7 +324,10 @@ class TableInterpretationService(
 
         // Fill remaining results with new interpretations
         for ((index, interpretation) in newInterpretations) {
-            results[index] = interpretation.markdown
+            results[index] = TableInterpretationResult(
+                classification = interpretation.classification,
+                markdown = interpretation.markdown
+            )
         }
 
         // All results are now populated

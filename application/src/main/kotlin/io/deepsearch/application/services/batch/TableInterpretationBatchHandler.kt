@@ -336,13 +336,13 @@ class TableInterpretationBatchHandler(
             val result = results[mapping.requestIndex]
             if (result.success && result.generatedText != null) {
                 val tableMarkdowns = resultsByUrlState.getOrPut(mapping.urlStateId) { mutableMapOf() }
-                val markdown = tableInterpretationService.parseBatchResponse(result.generatedText!!)
-                tableMarkdowns[mapping.tableDataId.value] = markdown
+                val interpretationResult = tableInterpretationService.parseBatchResponse(result.generatedText!!)
+                tableMarkdowns[mapping.tableDataId.value] = interpretationResult.markdown
 
                 // Cache the result
                 val urlState = urlsNeedingProcessingForHash.find { it.id == mapping.urlStateId.value }
                 if (urlState != null) {
-                    cacheTableResult(urlState, mapping.tableDataId, markdown)
+                    cacheTableResult(urlState, mapping.tableDataId, interpretationResult)
                 }
             }
         }
@@ -381,7 +381,11 @@ class TableInterpretationBatchHandler(
         }
     }
 
-    private suspend fun cacheTableResult(urlState: BatchUrlState, tableDataId: TableDataId, markdown: String) {
+    private suspend fun cacheTableResult(
+        urlState: BatchUrlState,
+        tableDataId: TableDataId,
+        interpretationResult: io.deepsearch.application.services.TableInterpretationResult
+    ) {
         val basePath = urlState.snapshotBasePath ?: return
         val tables = snapshotStorage.readTableIdentifications(basePath) ?: return
         val table = tables.find { it.dataId == tableDataId.value } ?: return
@@ -393,6 +397,10 @@ class TableInterpretationBatchHandler(
         val tableHtml = tableElement?.outerHtml() ?: return
 
         val tableHash = MessageDigest.getInstance("SHA-256").digest(tableHtml.toByteArray())
-        tableInterpretationService.cacheResult(tableHash, markdown)
+        tableInterpretationService.cacheResult(
+            tableHash,
+            interpretationResult.classification,
+            interpretationResult.markdown
+        )
     }
 }

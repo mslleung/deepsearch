@@ -170,7 +170,7 @@ class TableInterpretationAgentGenAiImpl(
         }
 
         val classification = SnippetClassification.fromString(response.classification)
-        val combinedMarkdown = combineMarkdownWithAdditionalInfo(response.markdown, response.additionalInfo)
+        val combinedMarkdown = combineMarkdownWithAdditionalInfo(classification, response.markdown, response.additionalInfo)
         
         logger.debug("Table interpretation complete: classification={}, {} chars markdown, {} chars additionalInfo", 
             classification, response.markdown.length, response.additionalInfo.length
@@ -236,14 +236,38 @@ class TableInterpretationAgentGenAiImpl(
     }
 
 
-    private fun combineMarkdownWithAdditionalInfo(markdown: String, additionalInfo: String?): String {
-        return if (additionalInfo.isNullOrBlank()) {
-            markdown
-        } else {
-            // Append additional info as a simple note below the table (no blockquote formatting)
-            // The additionalInfo should already be brief and start with "Note:" per the prompt
-            val trimmedInfo = additionalInfo.trim()
-            "$markdown\n\n*$trimmedInfo*"
+    /**
+     * Combines markdown with additionalInfo based on classification type.
+     * 
+     * Rules:
+     * - TABLE/CARD: Append additionalInfo without newline (on same line)
+     * - LIST/OTHERS: Drop additionalInfo, return only markdown
+     * - COOKIE_DECLARATION_TABLE/HIDDEN_MOBILE_LAYOUT: Return markdown + additionalInfo (will be removed later)
+     */
+    private fun combineMarkdownWithAdditionalInfo(
+        classification: SnippetClassification,
+        markdown: String,
+        additionalInfo: String?
+    ): String {
+        if (additionalInfo.isNullOrBlank()) {
+            return markdown
+        }
+        
+        val trimmedInfo = additionalInfo.trim()
+        
+        return when (classification) {
+            SnippetClassification.TABLE, SnippetClassification.CARD -> {
+                // No newline between markdown and additionalInfo
+                "$markdown\n$trimmedInfo"
+            }
+            SnippetClassification.LIST, SnippetClassification.OTHERS -> {
+                // Drop additionalInfo, just use markdown
+                markdown
+            }
+            SnippetClassification.COOKIE_DECLARATION_TABLE, SnippetClassification.HIDDEN_MOBILE_LAYOUT -> {
+                // Return markdown + additionalInfo (will be removed later, doesn't matter)
+                "$markdown\n\n*$trimmedInfo*"
+            }
         }
     }
 
@@ -466,7 +490,7 @@ class TableInterpretationAgentGenAiImpl(
         return try {
             val response = batchJson.decodeFromString<TableInterpretationResponse>(responseText)
             val classification = SnippetClassification.fromString(response.classification)
-            val combinedMarkdown = combineMarkdownWithAdditionalInfo(response.markdown, response.additionalInfo)
+            val combinedMarkdown = combineMarkdownWithAdditionalInfo(classification, response.markdown, response.additionalInfo)
             TableInterpretationBatchResult(
                 classification = classification,
                 markdown = combinedMarkdown,
