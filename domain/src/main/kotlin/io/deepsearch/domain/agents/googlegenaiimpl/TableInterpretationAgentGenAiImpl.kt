@@ -58,8 +58,6 @@ class TableInterpretationAgentGenAiImpl(
         You are given a HTML snippet that most likely contains a table.
         Your task is to convert it to GitHub-flavored Markdown.
 
-        Use ds-bounding-box="left top right bottom" attributes to understand spatial layout when HTML structure is ambiguous.
-
         Content classification:
         - The snippet is determined to follow a grid-like structure based on spatial analysis
         - You should determine the content type based on HTML structure and content
@@ -114,20 +112,19 @@ class TableInterpretationAgentGenAiImpl(
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
-        // Use pre-computed HTML and bounding boxes (derived from page snapshot)
+        // Use pre-computed HTML (bounding boxes are available but not injected by default)
         val tableHtml = input.tableHtml
-        val boundingBoxes = input.boundingBoxes
 
         logger.debug("Interpreting table to markdown (html length {})", tableHtml.length)
-        logger.debug("Using {} pre-computed bounding boxes", boundingBoxes.size)
-
-        // Inject bounding box attributes into HTML
-        val htmlWithBoundingBoxes = injectBoundingBoxes(tableHtml, boundingBoxes)
 
         // Clean HTML to reduce token usage and noise
-        val cleanedHtml = cleanHtml(htmlWithBoundingBoxes)
+        // Note: Bounding boxes are not injected by default as LLMs understand HTML structure well
+        // without spatial information for typical tables. This significantly reduces token count.
+        val cleanedHtml = cleanHtml(tableHtml)
 
-        logger.debug("Cleaned HTML length: {} (original: {})", cleanedHtml.length, tableHtml.length)
+        logger.debug("Cleaned HTML length: {} (original: {}, reduction: {}%)", 
+            cleanedHtml.length, tableHtml.length, 
+            ((tableHtml.length - cleanedHtml.length) * 100 / tableHtml.length.coerceAtLeast(1)))
 
         val userPrompt = buildString {
             appendLine("Auxiliary Info: ${input.tableIdentification.auxiliaryInfo}")
@@ -188,7 +185,13 @@ class TableInterpretationAgentGenAiImpl(
     /**
      * Inject bounding box attributes into HTML elements that have data-ds-id.
      * Bounding boxes are keyed by data-ds-id (not XPath).
+     * 
+     * NOTE: This function is intentionally not used by default.
+     * Testing showed that LLMs understand HTML table structure well without spatial information,
+     * and injecting bounding boxes increases token count significantly (can add 5-10% to HTML size).
+     * This function is retained for potential future use cases where spatial layout is ambiguous.
      */
+    @Suppress("unused")
     private fun injectBoundingBoxes(html: String, boundingBoxes: Map<String, IBrowserPage.BoundingBox>): String {
         if (boundingBoxes.isEmpty()) {
             return html
@@ -287,18 +290,23 @@ class TableInterpretationAgentGenAiImpl(
             nodesToRemove.forEach { node -> node.remove() }
         }
 
-        // Step 3: Strip attributes except whitelist
+        // Step 3: Strip attributes aggressively to reduce token count
+        // Only keep attributes that are semantically meaningful for table interpretation
         doc.select("*").forEach { element ->
             val attributes = element.attributes().asList()
             val attrsToKeep = attributes.filter { attr ->
-                attr.key == "ds-bounding-box" ||
-                        attr.key == "colspan" ||
-                        attr.key == "rowspan" ||
-                        attr.key == "id" ||
-                        attr.key == "class" ||
-                        attr.key == "role" ||
-                        attr.key == "scope" ||
-                        attr.key.startsWith("data-")
+                when (attr.key) {
+                    // Table-specific attributes essential for structure
+                    "colspan", "rowspan", "scope" -> true
+                    // Keep id for element identification
+                    "id" -> true
+                    // Semantic role for accessibility-based tables
+                    "role" -> attr.value in listOf("table", "row", "cell", "rowgroup", "columnheader", "rowheader", "gridcell")
+                    // Skip class, data-* attributes to reduce token count
+                    // Class names (especially Tailwind/utility classes) can be very verbose
+                    // data-* attrs are framework-specific and add no semantic value
+                    else -> false
+                }
             }
             element.clearAttributes()
             attrsToKeep.forEach { attr ->
@@ -306,7 +314,12 @@ class TableInterpretationAgentGenAiImpl(
             }
         }
 
-        // Step 4: Remove empty elements, preserving table structure
+        // Step 4: Unwrap non-semantic wrapper elements
+        // Elements like <div>, <span> that only wrap a single child and have no attributes
+        // can be unwrapped to simplify the DOM structure
+        unwrapRedundantWrappers(doc)
+
+        // Step 5: Remove empty elements, preserving table structure
         val preserveTags = setOf("td", "th", "tr", "table", "thead", "tbody", "tfoot", "caption")
 
         // Use bottom-up (post-order) traversal to remove empty elements in a single pass
@@ -319,7 +332,63 @@ class TableInterpretationAgentGenAiImpl(
         }
         logger.trace("Removed {} empty elements in single pass", removedCount)
 
+        // Step 6: Normalize whitespace in text nodes to reduce token count
+        normalizeWhitespace(doc)
+
         return doc.body().html()
+    }
+
+    /**
+     * Unwrap non-semantic wrapper elements that add no value.
+     * A wrapper is considered redundant if:
+     * - It's a generic container (div, span)
+     * - It has no attributes (after stripping)
+     * - It contains only a single element child (no text siblings)
+     */
+    private fun unwrapRedundantWrappers(doc: org.jsoup.nodes.Document) {
+        val wrapperTags = setOf("div", "span")
+        var unwrappedCount = 0
+        
+        // Multiple passes since unwrapping can create new redundant wrappers
+        repeat(3) {
+            val toUnwrap = doc.body().select("*").filter { element ->
+                element.tagName() in wrapperTags &&
+                element.attributes().isEmpty &&
+                element.childrenSize() == 1 &&
+                element.ownText().isBlank()
+            }
+            
+            toUnwrap.forEach { element ->
+                element.unwrap()
+                unwrappedCount++
+            }
+            
+            if (toUnwrap.isEmpty()) return@repeat
+        }
+        
+        if (unwrappedCount > 0) {
+            logger.trace("Unwrapped {} redundant wrapper elements", unwrappedCount)
+        }
+    }
+
+    /**
+     * Normalize whitespace in text nodes to reduce token count.
+     * Collapses multiple spaces/newlines into single spaces.
+     */
+    private fun normalizeWhitespace(doc: org.jsoup.nodes.Document) {
+        doc.body().traverse(object : org.jsoup.select.NodeVisitor {
+            override fun head(node: org.jsoup.nodes.Node, depth: Int) {
+                if (node is TextNode) {
+                    val original = node.wholeText
+                    // Collapse multiple whitespace characters into single space
+                    val normalized = original.replace(Regex("\\s+"), " ")
+                    if (normalized != original) {
+                        node.text(normalized)
+                    }
+                }
+            }
+            override fun tail(node: org.jsoup.nodes.Node, depth: Int) {}
+        })
     }
 
     /**
@@ -372,11 +441,11 @@ class TableInterpretationAgentGenAiImpl(
         requestId: String,
         tableHtml: String,
         auxiliaryInfo: String,
-        boundingBoxes: Map<String, IBrowserPage.BoundingBox>
+        @Suppress("UNUSED_PARAMETER") boundingBoxes: Map<String, IBrowserPage.BoundingBox>
     ): BatchContentRequest {
-        // Inject bounding boxes into HTML (same as interactive mode)
-        val htmlWithBoundingBoxes = injectBoundingBoxes(tableHtml, boundingBoxes)
-        val cleanedHtml = cleanHtml(htmlWithBoundingBoxes)
+        // Clean HTML directly without bounding box injection
+        // (same approach as interactive mode - LLMs understand HTML structure well)
+        val cleanedHtml = cleanHtml(tableHtml)
 
         val userPrompt = buildString {
             appendLine("Auxiliary Info: $auxiliaryInfo")
