@@ -84,6 +84,9 @@ data class AnswerAssessment(
  * @property assessment 5-dimension source batch assessment
  * @property status FINISH_SEARCH if all 5 dimensions are satisfied, CONTINUE_SEARCH otherwise
  * @property followUpQueries Suggested queries to gather more information (independent of assessment)
+ * @property refinedRequirements Updated fulfillment requirements based on discovered information.
+ *           When CONTINUE_SEARCH, may contain additions/splits/removals based on what was learned.
+ *           Empty list means no refinement (keep current requirements).
  * @property imageIds List of image IDs referenced in the answer
  * @property tokenUsage Token usage metrics for this synthesis call
  */
@@ -93,6 +96,7 @@ data class StreamingAnswerSynthesisOutput(
     val assessment: AnswerAssessment,
     val status: AnswerStatus,
     val followUpQueries: List<String> = emptyList(),
+    val refinedRequirements: List<String> = emptyList(),
     val imageIds: List<String> = emptyList(),
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
@@ -114,6 +118,7 @@ sealed class StreamingAnswerStreamItem {
      * @property citedSourceUrls URLs of sources that were actually cited in the answer
      * @property status FINISH_SEARCH if all 5 dimensions are satisfied, CONTINUE_SEARCH otherwise
      * @property followUpQueries Suggested queries to gather more information (independent of assessment)
+     * @property refinedRequirements Updated fulfillment requirements based on discovered information
      * @property imageIds List of image IDs referenced in the answer
      */
     data class Complete(
@@ -122,6 +127,7 @@ sealed class StreamingAnswerStreamItem {
         val citedSourceUrls: List<String> = emptyList(),
         val status: AnswerStatus,
         val followUpQueries: List<String> = emptyList(),
+        val refinedRequirements: List<String> = emptyList(),
         val imageIds: List<String> = emptyList()
     ) : StreamingAnswerStreamItem()
 }

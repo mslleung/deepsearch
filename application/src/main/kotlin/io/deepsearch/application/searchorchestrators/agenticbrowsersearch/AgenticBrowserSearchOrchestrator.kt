@@ -366,6 +366,12 @@ class AgenticBrowserSearchOrchestrator(
                     }
             )
 
+            // Initialize accumulator with initial requirements from query processing
+            // Requirements may be refined during synthesis based on discovered content
+            accumulatorRef.set(
+                accumulatorRef.get().copy(currentRequirements = fulfillmentRequirements)
+            )
+
             // Batch sources with timeout, then accumulate and synthesize
             unifiedEvalFlow
                 .chunkedWithTimeout(chunkSize = 100, timeoutMs = 300)
@@ -373,7 +379,7 @@ class AgenticBrowserSearchOrchestrator(
                 .runningFold(accumulatorRef.get()) { state, batch ->
                     aggregateBatchIntoAccumulator(
                         sessionId, state, batch, channel,
-                        expandedQuery, fulfillmentRequirements,
+                        expandedQuery,
                         sessionHistory
                     )
                 }
@@ -867,7 +873,7 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Accumulator for unified answer generation with feedback loop support.
      * Uses URL-keyed source map where markdown sources replace preview sources.
-     * Tracks sources, queries, and synthesis iterations.
+     * Tracks sources, queries, requirements, and synthesis iterations.
      */
     private data class SourceAccumulator(
         /** URL-keyed source map - markdown (isPreview=false) replaces preview (isPreview=true) */
@@ -889,7 +895,9 @@ class AgenticBrowserSearchOrchestrator(
         /** Answer status from last synthesis */
         val status: AnswerStatus = AnswerStatus.CONTINUE_SEARCH,
         /** Follow-up queries from latest synthesis to be emitted upstream */
-        val pendingFollowUpQueries: List<String> = emptyList()
+        val pendingFollowUpQueries: List<String> = emptyList(),
+        /** Current fulfillment requirements (may be refined from original based on discovered content) */
+        val currentRequirements: List<String> = emptyList()
     ) {
         /** Get all evaluated sources as a list (for synthesis agent) */
         val evaluatedSources: List<EvaluatedSource> get() = sourcesByUrl.values.toList()
@@ -902,6 +910,10 @@ class AgenticBrowserSearchOrchestrator(
      * Aggregate a batch of evaluated sources into the accumulator with URL-keyed replacement.
      * Markdown sources (isPreview=false) replace preview sources (isPreview=true) for the same URL.
      * Triggers answer synthesis (via AnswerSynthesisFacadeService) after updating sources.
+     * 
+     * Requirements are refined by the synthesis agent based on discovered content:
+     * - Uses state.currentRequirements for synthesis (which may have been refined in previous iterations)
+     * - Updates currentRequirements if synthesis returns non-empty refinedRequirements
      */
     private suspend fun aggregateBatchIntoAccumulator(
         sessionId: QuerySessionId,
@@ -909,7 +921,6 @@ class AgenticBrowserSearchOrchestrator(
         batch: List<EvaluatedSource>,
         eventChannel: SendChannel<SearchEvent>,
         expandedQuery: String,
-        fulfillmentRequirements: List<String> = emptyList(),
         sessionHistory: SessionHistory = SessionHistory.empty()
     ): SourceAccumulator {
         if (batch.isEmpty()) {
@@ -957,22 +968,38 @@ class AgenticBrowserSearchOrchestrator(
         )
 
         // Synthesize answer with updated sources (via facade service)
+        // Uses current requirements which may have been refined in previous iterations
         val synthesis = answerSynthesisFacadeService.synthesizeAnswer(
             sessionId = sessionId,
             expandedQuery = expandedQuery,
             evaluatedSources = updatedSourcesByUrl.values.toList(),
             previouslySearchedQueries = state.searchedQueries,
-            fulfillmentRequirements = fulfillmentRequirements,
+            fulfillmentRequirements = state.currentRequirements,
             sessionHistory = sessionHistory
         )
 
         val newIterationNumber = state.iterationNumber + 1
         val updatedSourcesPerIteration = state.sourcesPerIteration + updatedSourcesByUrl.size
 
+        // Update requirements if synthesis returned refined ones
+        val updatedRequirements = if (synthesis.refinedRequirements.isNotEmpty()) {
+            logger.info(
+                "[{}] Requirements refined: {} → {} (was: {}, now: {})",
+                sessionId.value,
+                state.currentRequirements.size,
+                synthesis.refinedRequirements.size,
+                state.currentRequirements,
+                synthesis.refinedRequirements
+            )
+            synthesis.refinedRequirements
+        } else {
+            state.currentRequirements
+        }
+
         logger.debug(
-            "[{}] Synthesis iteration {}: {} sources, status={}, citedSources={}, followUpQueries={}",
+            "[{}] Synthesis iteration {}: {} sources, status={}, citedSources={}, followUpQueries={}, requirements={}",
             sessionId.value, newIterationNumber, updatedSourcesByUrl.size, synthesis.status,
-            synthesis.citedSourceUrls.size, synthesis.followUpQueries.size
+            synthesis.citedSourceUrls.size, synthesis.followUpQueries.size, updatedRequirements.size
         )
 
         // Emit synthesis iteration event (persists to timeline + SSE)
@@ -1013,7 +1040,8 @@ class AgenticBrowserSearchOrchestrator(
             iterationNumber = newIterationNumber,
             sourcesPerIteration = updatedSourcesPerIteration,
             status = synthesis.status,
-            pendingFollowUpQueries = pendingFollowUpQueries
+            pendingFollowUpQueries = pendingFollowUpQueries,
+            currentRequirements = updatedRequirements
         )
     }
 

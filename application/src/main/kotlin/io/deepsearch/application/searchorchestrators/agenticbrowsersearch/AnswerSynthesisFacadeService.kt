@@ -20,6 +20,7 @@ data class SynthesisResult(
     val assessment: AnswerAssessment,
     val status: AnswerStatus,
     val followUpQueries: List<String>,
+    val refinedRequirements: List<String>,
     val imageIds: List<String>
 ) {
     /** Whether the answer is complete (status=FINISH_SEARCH from synthesis agent) */
@@ -85,6 +86,7 @@ class AnswerSynthesisFacadeService(
         lateinit var assessment: AnswerAssessment
         var citedSourceUrls = emptyList<String>()
         var followUpQueries = emptyList<String>()
+        var refinedRequirements = emptyList<String>()
         var imageIds = emptyList<String>()
 
         streamingAnswerSynthesisAgent.generateStream(
@@ -108,6 +110,7 @@ class AnswerSynthesisFacadeService(
                     citedSourceUrls = item.citedSourceUrls
                     status = item.status
                     followUpQueries = item.followUpQueries
+                    refinedRequirements = item.refinedRequirements
                     imageIds = item.imageIds
                 }
             }
@@ -119,6 +122,7 @@ class AnswerSynthesisFacadeService(
             assessment = assessment,
             status = status,
             followUpQueries = followUpQueries,
+            refinedRequirements = refinedRequirements,
             imageIds = imageIds
         )
     }

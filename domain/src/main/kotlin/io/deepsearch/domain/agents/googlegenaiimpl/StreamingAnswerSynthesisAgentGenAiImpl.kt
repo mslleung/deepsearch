@@ -103,6 +103,11 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .description("Suggested queries to gather more information and enhance the answer")
                     .items(Schema.builder().type("STRING").build())
                     .build(),
+                "refinedRequirements" to Schema.builder()
+                    .type("ARRAY")
+                    .description("Updated fulfillment requirements based on discovered information (max 10)")
+                    .items(Schema.builder().type("STRING").build())
+                    .build(),
                 "imageIds" to Schema.builder()
                     .type("ARRAY")
                     .description("Image IDs from sources to display with answer (e.g., '1', '2')")
@@ -110,7 +115,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("assessment", "continuation_status", "answer", "citedSourceUrls", "followUpQueries", "imageIds"))
+        .required(listOf("assessment", "continuation_status", "answer", "citedSourceUrls", "followUpQueries", "refinedRequirements", "imageIds"))
         .build()
 
     private val systemInstruction = $$"""
@@ -162,7 +167,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - If fulfillment requirements are provided and ANY requirement is not satisfied, set CONTINUE_SEARCH
 
         ## Step 3: Generate Answer
-        
         - Synthesize facts into a comprehensive, standalone answer for answering the original query and the requirements
         - Eagerly provide as much information as possible
         - Use markdown formatting (headings, lists, bold)
@@ -173,11 +177,17 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - citedSourceUrls should only cite sources that are used in the answer
 
         ## Step 4: Generate Follow-up Queries
-        
         - Suggest queries that could enhance or extend the current answer
         - Focus on related information that would make the answer more complete
         - These are independent of the assessment - even complete answers can have useful follow-ups
         - CRITICAL: Check "Previously searched queries" section - NEVER suggest any query that appears there or is semantically equivalent
+        
+        ## Step 5: Refine Requirements
+        - Based on what you learned from the sources, update the fulfillment requirements to guide subsequent search direction.
+        - Keep the list of requirements small
+        - Each requirement must be atomic and verifiable
+        - Always preserve the core intent of the original query
+        - If FINISH_SEARCH, output the current requirements unchanged
         
         ## Output Format
         {
@@ -192,6 +202,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             "answer": "markdown answer",
             "citedSourceUrls": ["urls used"],
             "followUpQueries": ["queries to enhance answer"],
+            "refinedRequirements": ["updated requirements for next iteration"],
             "imageIds": ["1", "2"]
         }
     """.trimIndent()
@@ -226,6 +237,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val assessment: LlmAnswerAssessment,
         val continuation_status: AnswerStatus,
         val followUpQueries: List<String> = emptyList(),
+        val refinedRequirements: List<String> = emptyList(),
         val imageIds: List<String> = emptyList()
     ) {
         /**
@@ -331,13 +343,14 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         )
 
         logger.debug(
-            "Answer synthesis complete: {} chars, status: {}, {} images, citedSources: {}, followUpQueries: {} (deduped from {})",
+            "Answer synthesis complete: {} chars, status: {}, {} images, citedSources: {}, followUpQueries: {} (deduped from {}), refinedRequirements: {}",
             response.answer.length,
             response.continuation_status,
             originalImageIds.size,
             response.citedSourceUrls.size,
             dedupedFollowUpQueries.size,
-            response.followUpQueries.size
+            response.followUpQueries.size,
+            response.refinedRequirements.size
         )
 
         return StreamingAnswerSynthesisOutput(
@@ -346,6 +359,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             assessment = answerAssessment,
             status = response.continuation_status,
             followUpQueries = dedupedFollowUpQueries,
+            refinedRequirements = response.refinedRequirements,
             imageIds = originalImageIds,
             tokenUsage = tokenUsage
         )
@@ -452,10 +466,11 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             accumulatedJson
         )
 
-        // Extract assessment, status, citedSourceUrls, followUpQueries, and imageIds from the complete JSON
+        // Extract assessment, status, citedSourceUrls, followUpQueries, refinedRequirements, and imageIds from the complete JSON
         val citedSourceUrls = extractCitedSourceUrls(accumulatedJson)
         val status = extractStatus(accumulatedJson)
         val rawFollowUpQueries = extractFollowUpQueries(accumulatedJson)
+        val refinedRequirements = extractRefinedRequirements(accumulatedJson)
         val numberedImageIds = extractImageIds(accumulatedJson)
         val assessment = extractAssessment(accumulatedJson)
         
@@ -468,14 +483,15 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         // Map LLM-selected numbered image IDs back to original hash-based IDs
         val originalImageIds = mapSelectedImagesToOriginal(numberedImageIds, globalImages)
         
-        logger.debug("Streaming answer synthesis complete: {} chars total, status: {}, {} images, citedSources: {}, followUpQueries: {} (deduped from {})", 
-            lastAnswerLength, status, originalImageIds.size, citedSourceUrls.size, followUpQueries.size, rawFollowUpQueries.size)
+        logger.debug("Streaming answer synthesis complete: {} chars total, status: {}, {} images, citedSources: {}, followUpQueries: {} (deduped from {}), refinedRequirements: {}", 
+            lastAnswerLength, status, originalImageIds.size, citedSourceUrls.size, followUpQueries.size, rawFollowUpQueries.size, refinedRequirements.size)
         emit(StreamingAnswerStreamItem.Complete(
             tokenUsage = tokenUsage,
             assessment = assessment,
             citedSourceUrls = citedSourceUrls,
             status = status,
             followUpQueries = followUpQueries,
+            refinedRequirements = refinedRequirements,
             imageIds = originalImageIds
         ))
     }
@@ -532,6 +548,23 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     prev.contains(queryLower)
             }
         }
+    }
+
+    /**
+     * Extract refinedRequirements array from accumulated JSON.
+     */
+    private fun extractRefinedRequirements(json: String): List<String> {
+        val regex = """"refinedRequirements"\s*:\s*\[([^\]]*)\]""".toRegex()
+        val match = regex.find(json) ?: return emptyList()
+        
+        val arrayContent = match.groupValues[1]
+        if (arrayContent.isBlank()) return emptyList()
+        
+        // Extract individual string values from the array
+        val stringRegex = """"([^"]+)"""".toRegex()
+        return stringRegex.findAll(arrayContent)
+            .map { it.groupValues[1] }
+            .toList()
     }
 
     /**
