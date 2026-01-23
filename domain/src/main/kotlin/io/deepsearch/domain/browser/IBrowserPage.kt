@@ -284,29 +284,18 @@ interface IBrowserPage {
     )
 
     /**
-     * Hidden container detected in the page (accordion content, tab panels, etc.)
-     * These are not visible in screenshots but may contain table structures.
-     * 
-     * Identified by their data-ds-id attribute (injected by injectStableIds).
-     */
-    data class HiddenContainer(
-        /** The data-ds-id of the hidden container element */
-        val id: String,
-        /** The outer HTML of the hidden container */
-        val html: String
-    )
-
-    /**
      * Page snapshot with metadata but without media extraction.
      * Used for semantic/table identification which only needs DOM structure.
+     * 
+     * Note: Hidden containers are NOT included. Use captureHiddenContainerBoundingBoxes()
+     * separately as the last browser operation if hidden container analysis is needed.
      */
     data class PageSnapshotWithMetadata(
         val title: String,
         val description: String?,
         val url: String,
         val html: String,
-        val boundingBoxes: Map<String, BoundingBox>,
-        val hiddenContainers: List<HiddenContainer> = emptyList()
+        val boundingBoxes: Map<String, BoundingBox>
     )
 
     /**

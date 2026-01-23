@@ -6,6 +6,38 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.services.BatchContentRequest
 
 /**
+ * Classification of HTML snippet content type.
+ * 
+ * The LLM classifies the snippet to determine how it should be processed:
+ * - TABLE: Tabular data (pricing, comparison, specifications) - converted to markdown table
+ * - CARD: Card-like structures - converted to markdown table for structured data
+ * - LIST: Bullet point or numbered lists - converted to markdown list
+ * - COOKIE_DECLARATION_TABLE: Cookie consent declaration tables (legal boilerplate) - logged and removed
+ * - HIDDEN_MOBILE_LAYOUT: Hidden mobile-specific layouts (duplicate content) - logged and removed
+ * - OTHERS: Non-tabular content - converted to well-formatted markdown
+ */
+enum class SnippetClassification {
+    TABLE,
+    CARD,
+    LIST,
+    COOKIE_DECLARATION_TABLE,
+    HIDDEN_MOBILE_LAYOUT,
+    OTHERS;
+    
+    companion object {
+        fun fromString(value: String): SnippetClassification {
+            return entries.find { it.name.equals(value, ignoreCase = true) } ?: OTHERS
+        }
+    }
+    
+    /** Whether this classification represents tabular content that should be rendered as a table */
+    fun isTabular(): Boolean = this == TABLE || this == CARD
+    
+    /** Whether this classification represents content that should be removed from DOM */
+    fun shouldRemoveFromDom(): Boolean = this == COOKIE_DECLARATION_TABLE || this == HIDDEN_MOBILE_LAYOUT
+}
+
+/**
  * Input for table interpretation with pre-computed data.
  * 
  * The tableHtml and boundingBoxes are derived from the page snapshot,
@@ -22,17 +54,28 @@ data class TableInterpretationInput(
 ) : IAgent.IAgentInput
 
 data class TableInterpretationOutput(
+    /** Classification of the HTML snippet content */
+    val classification: SnippetClassification,
+    /** The markdown representation */
     val markdown: String,
     val tokenUsage: TokenUsageMetrics
-) : IAgent.IAgentOutput
+) : IAgent.IAgentOutput {
+    /** Whether this represents tabular content (TABLE or CARD) */
+    val isTabular: Boolean get() = classification.isTabular()
+}
 
 /**
  * Result of parsing a table interpretation batch response.
  */
 data class TableInterpretationBatchResult(
+    /** Classification of the HTML snippet content */
+    val classification: SnippetClassification,
     val markdown: String,
     val additionalInfo: String
-)
+) {
+    /** Whether this represents tabular content (TABLE or CARD) */
+    val isTabular: Boolean get() = classification.isTabular()
+}
 
 interface ITableInterpretationAgent : IAgent<TableInterpretationInput, TableInterpretationOutput> {
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput

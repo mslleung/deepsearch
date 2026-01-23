@@ -10,13 +10,15 @@ import kotlinx.serialization.Serializable
 /**
  * Input for table identification.
  * 
- * Uses vision-based detection for visible content (from screenshot) and
- * HTML-based detection for hidden content (from pageSnapshot.hiddenContainers).
+ * Uses vision-based detection for visible content (from screenshot).
+ * 
+ * Note: Hidden container table detection is now done separately using TableGridDetector
+ * in WebpageExtractionService, not by this agent.
  * 
  * The browser can be released before table identification begins.
  */
 data class TableIdentificationInput(
-    /** Pre-captured page snapshot containing HTML, bounding boxes, and hidden containers. */
+    /** Pre-captured page snapshot containing HTML and bounding boxes. */
     val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
     /** Full-page screenshot for vision-based table detection (required). */
     val screenshot: IBrowserPage.Screenshot

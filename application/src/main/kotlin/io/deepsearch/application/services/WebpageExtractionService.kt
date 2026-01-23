@@ -1,14 +1,16 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.services.ITableGridDetectorService
+import io.deepsearch.domain.services.TableDetectionBoundingBox
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.services.CssSelectorReplacement
 import io.deepsearch.domain.services.IBoundingBoxDerivationService
+import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IJsoupDomService
 import io.deepsearch.domain.services.MediaPlaceholderMapping
@@ -53,9 +55,11 @@ class WebpageExtractionService(
     private val webpageIconInterpretationService: IWebpageIconInterpretationService,
     private val webpageImageTextExtractionService: IWebpageImageTextExtractionService,
     private val boundingBoxDerivationService: IBoundingBoxDerivationService,
+    private val cssSelectorConstructionService: ICssSelectorConstructionService,
     private val jsoupDomService: IJsoupDomService,
     private val htmlToMarkdownService: IHtmlToMarkdownService,
-    private val markdownFormattingService: IMarkdownFormattingService
+    private val markdownFormattingService: IMarkdownFormattingService,
+    private val tableGridDetectorService: ITableGridDetectorService
 ) : IWebpageExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -65,13 +69,19 @@ class WebpageExtractionService(
     private data class LlmResults(
         val semanticElements: SemanticElements,
         val tableIdentifications: List<TableIdentification>,
-        /** Mobile layouts found in hidden containers (duplicate UI structures to be removed) */
-        val hiddenMobileLayouts: List<MobileLayoutIdentification>,
         val iconReplacements: List<CssSelectorReplacement>,
         val imageReplacements: List<CssSelectorReplacement>,
         val imageHashes: List<ByteArray>,
         /** Mapping of image numbers to original image hash IDs: {"1": "img-abc123"} */
         val imageMapping: Map<String, String>
+    )
+    
+    /** Table candidate detected from hidden container using spatial analysis */
+    private data class HiddenTableCandidate(
+        val containerId: String,
+        val confidence: Double,
+        val rowCount: Int,
+        val colCount: Int
     )
 
     // ========== Pipeline Extension for Flow Composition ==========
@@ -91,17 +101,19 @@ class WebpageExtractionService(
      * Pipelined flow with early browser release:
      * 
      *   injectStableIds() ──────────> All elements get data-ds-id attributes
-     *   capturePageSnapshot() ──┬──> identifyVisualElements() (semantic + tables in 1 call)
+     *   capturePageSnapshot() ──┬──> identifyVisualElements() (semantic + visible tables)
      *   takeFullPageScreenshot()┘
      *   extractIcons() ────────────> interpretIcons()
      *   extractImages() ───────────> interpretImages()
+     *   captureHiddenContainerBoundingBoxes() ──> TableGridDetectorService (server-side)
      *   
-     * ID injection runs first (~10ms), then all browser operations run in parallel.
-     * The snapshot HTML contains stable data-ds-id attributes for all elements.
+     * ID injection runs first (~10ms), then browser operations run in parallel.
+     * captureHiddenContainerBoundingBoxes is called LAST as it may trigger re-renders.
      *   
-     * >>> BROWSER RELEASED when all browser ops complete <<<
+     * >>> BROWSER RELEASED after captureHiddenContainerBoundingBoxes <<<
      *   
-     *   [All LLM results] ─────────> DOM processing (Jsoup)
+     *   TableGridDetectorService identifies hidden table candidates
+     *   [All LLM results + hidden tables] ─────────> DOM processing (Jsoup)
      */
     override suspend fun extractWebpage(
         webpage: IBrowserPage,
@@ -120,7 +132,7 @@ class WebpageExtractionService(
                 injectionResult.elements, injectionResult.icons, injectionResult.images
             )
 
-            // ===== Phase 2: Browser Captures (all parallel) =====
+            // ===== Phase 2: Browser Captures (parallel except hidden bbox) =====
             // Screenshot is captured once and shared between:
             // - Visual identification (semantic + tables in single vision call)
             // - Image extraction (fallback cropping for CORS-blocked images)
@@ -134,7 +146,7 @@ class WebpageExtractionService(
             }
 
             // ===== LLM Operations (pipelined from captures) =====
-            // Combined visual identification: semantic elements + tables in single LLM call
+            // Combined visual identification: semantic elements + visible tables in single LLM call
             val visualId = async {
                 val snapshot = snapshotDeferred.await()
                 val screenshot = screenshotDeferred.await()
@@ -143,36 +155,63 @@ class WebpageExtractionService(
             val iconRepl = pipeFrom(iconsDeferred) { doInterpretIcons(it, sessionId) }
             val imageRepl = pipeFrom(imagesDeferred) { doInterpretImages(it, sessionId, ocrLanguage) }
 
-            // ===== Wait for Browser Release Point =====
+            // ===== Wait for initial browser operations =====
             val snapshot: IBrowserPage.PageSnapshotWithMetadata
-            val browserDuration = measureTimeMillis {
+            var browserDuration = measureTimeMillis {
                 snapshot = snapshotDeferred.await()
-                screenshotDeferred.await() // Wait for screenshot before releasing browser
+                screenshotDeferred.await()
                 iconsDeferred.await()
                 imagesDeferred.await()
             }
-            logger.debug("Browser captures complete in {} ms - releasing browser", browserDuration)
+            logger.debug("Initial browser captures complete in {} ms", browserDuration)
+            
+            // ===== Phase 3: Capture hidden container bounding boxes (LAST browser op) =====
+            // This must be last as it temporarily reveals hidden containers which may trigger re-renders
+            val hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes
+            val hiddenBboxDuration = measureTimeMillis {
+                hiddenBboxData = webpage.captureHiddenContainerBoundingBoxes()
+            }
+            browserDuration += hiddenBboxDuration
+            logger.debug(
+                "Hidden container bbox capture: {} ms, {} containers, {} elements",
+                hiddenBboxDuration, hiddenBboxData.hiddenContainerCount, hiddenBboxData.totalElementsCaptured
+            )
+            
+            // ===== Browser Released =====
             webpage.close()
+            logger.debug("Browser released after {} ms total browser time", browserDuration)
+
+            // ===== Identify hidden table candidates using TableGridDetectorService (server-side) =====
+            val hiddenTableCandidates = identifyHiddenTableCandidates(hiddenBboxData)
+            logger.debug("TableGridDetectorService found {} hidden table candidates", hiddenTableCandidates.size)
 
             // ===== Await LLM Results =====
             val llmDuration = measureTimeMillis { awaitAll(visualId, iconRepl, imageRepl) }
             val visualResult = visualId.await()
             val imageResult = imageRepl.await()
+            
+            // Merge visible tables with hidden table candidates
+            val allTables = mergeVisibleAndHiddenTables(
+                visualResult.tables,
+                hiddenTableCandidates,
+                snapshot.html
+            )
+            
             val llmResults = LlmResults(
                 semanticElements = visualResult.semanticElements,
-                tableIdentifications = visualResult.tables,
-                hiddenMobileLayouts = visualResult.hiddenMobileLayouts,
+                tableIdentifications = allTables,
                 iconReplacements = iconRepl.await().replacements,
                 imageReplacements = imageResult.replacements,
                 imageHashes = imageResult.hashes,
                 imageMapping = imageResult.imageMapping
             )
             logger.debug(
-                "LLM operations complete in {} ms: {} semantic, {} tables, {} hidden navs, {} icons, {} images",
+                "LLM operations complete in {} ms: {} semantic, {} tables ({} visible + {} hidden candidates), {} icons, {} images",
                 llmDuration,
                 countSemanticElements(llmResults.semanticElements),
                 llmResults.tableIdentifications.size,
-                llmResults.hiddenMobileLayouts.size,
+                visualResult.tables.size,
+                hiddenTableCandidates.size,
                 llmResults.iconReplacements.size,
                 llmResults.imageReplacements.size
             )
@@ -190,6 +229,111 @@ class WebpageExtractionService(
         logger.info("Webpage extraction completed in {} ms total", totalDuration)
         result
     }
+    
+    // ========== Hidden Table Detection ==========
+    
+    /**
+     * Identify table candidates from hidden container bounding boxes using TableGridDetectorService.
+     * This is a server-side algorithm that detects grid patterns without LLM calls.
+     */
+    private fun identifyHiddenTableCandidates(
+        hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes
+    ): List<HiddenTableCandidate> {
+        val candidates = mutableListOf<HiddenTableCandidate>()
+        
+        for (container in hiddenBboxData.hiddenContainers) {
+            // Need at least 4 elements for a meaningful table
+            if (container.elements.size < 4) continue
+            
+            // Convert to detection bounding boxes
+            val boxes = container.elements.mapValues { (_, box) ->
+                TableDetectionBoundingBox(
+                    left = box.left,
+                    top = box.top,
+                    right = box.right,
+                    bottom = box.bottom
+                )
+            }
+            
+            val gridResult = tableGridDetectorService.detectTable(boxes)
+            
+            if (gridResult.isTable && gridResult.confidence >= 0.5) {
+                logger.debug(
+                    "Hidden container {} detected as table: {}x{} grid (confidence: {})",
+                    container.containerId, gridResult.rowCount, gridResult.colCount,
+                    "%.2f".format(gridResult.confidence)
+                )
+                candidates.add(HiddenTableCandidate(
+                    containerId = container.containerId,
+                    confidence = gridResult.confidence,
+                    rowCount = gridResult.rowCount,
+                    colCount = gridResult.colCount
+                ))
+            }
+        }
+        
+        return candidates
+    }
+    
+    /**
+     * Merge visible tables (from vision detection) with hidden table candidates.
+     * Deduplicates tables that might overlap between visible and hidden detection.
+     */
+    private fun mergeVisibleAndHiddenTables(
+        visibleTables: List<TableIdentification>,
+        hiddenCandidates: List<HiddenTableCandidate>,
+        html: String
+    ): List<TableIdentification> {
+        if (hiddenCandidates.isEmpty()) {
+            return visibleTables
+        }
+        
+        val doc = Jsoup.parse(html)
+        val visibleIds = visibleTables.map { it.dataId }.toSet()
+        
+        // Deduplicate hidden candidates against visible tables
+        val newHiddenTables = hiddenCandidates.mapNotNull { candidate ->
+            // Skip if already detected as visible table
+            if (candidate.containerId in visibleIds) {
+                logger.debug("Skipping hidden candidate {} - already in visible tables", candidate.containerId)
+                return@mapNotNull null
+            }
+            
+            // Check for parent/child relationship with visible tables
+            val hiddenElement = doc.select("[data-ds-id=\"${candidate.containerId}\"]").firstOrNull()
+                ?: return@mapNotNull null
+            
+            val isOverlapping = visibleIds.any { visionId ->
+                val visionElement = doc.select("[data-ds-id=\"$visionId\"]").firstOrNull()
+                    ?: return@any false
+                hiddenElement.parents().contains(visionElement) ||
+                        visionElement.parents().contains(hiddenElement)
+            }
+            
+            if (isOverlapping) {
+                logger.debug("Skipping hidden candidate {} - overlaps with visible table", candidate.containerId)
+                return@mapNotNull null
+            }
+            
+            // Construct CSS selector for the hidden table
+            val cssSelector = cssSelectorConstructionService.constructCssSelector(hiddenElement)
+            
+            // Check if table contains media
+            val containsMedia = hiddenElement.select("img, svg, i.fa, i.fas, i.far, i.fab").isNotEmpty()
+            
+            TableIdentification(
+                cssSelector = cssSelector,
+                dataId = candidate.containerId,
+                auxiliaryInfo = "Hidden table: ${candidate.rowCount}x${candidate.colCount} grid (confidence: ${"%.0f".format(candidate.confidence * 100)}%)",
+                containsMedia = containsMedia
+            )
+        }
+        
+        logger.debug("Merged {} visible + {} hidden = {} total tables", 
+            visibleTables.size, newHiddenTables.size, visibleTables.size + newHiddenTables.size)
+        
+        return visibleTables + newHiddenTables
+    }
 
     // ========== Browser Capture Operations ==========
 
@@ -203,11 +347,10 @@ class WebpageExtractionService(
             result = visualIdentificationService.identifyVisualElements(sessionId, snapshot, screenshot)
         }
         logger.debug(
-            "Visual identification took {} ms: {} semantic, {} tables ({} hidden containers)",
+            "Visual identification took {} ms: {} semantic, {} visible tables",
             duration,
             countSemanticElements(result.semanticElements),
-            result.tables.size,
-            snapshot.hiddenContainers.size
+            result.tables.size
         )
         return result
     }
@@ -321,18 +464,6 @@ class WebpageExtractionService(
         // ===== Step 3: Remove semantic elements =====
         // Use stable data-ds-id selectors instead of position-based CSS selectors
         jsoupDomService.removeElements(jsoupDoc, collectSemanticDataIdSelectors(llmResults.semanticElements))
-
-        // ===== Step 3.5: Remove hidden mobile layout elements =====
-        // Hidden mobile layouts are duplicate UI structures that should be removed
-        if (llmResults.hiddenMobileLayouts.isNotEmpty()) {
-            val layoutSelectors = llmResults.hiddenMobileLayouts.map { "[data-ds-id=\"${it.dataId}\"]" }
-            jsoupDomService.removeElements(jsoupDoc, layoutSelectors)
-            logger.debug(
-                "Removed {} hidden mobile layout elements: {}",
-                llmResults.hiddenMobileLayouts.size,
-                llmResults.hiddenMobileLayouts.map { it.description }
-            )
-        }
 
         // ===== Step 4: Interpret and replace tables =====
         // Tables use data-ds-id selectors which remain stable after semantic removal

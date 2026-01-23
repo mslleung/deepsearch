@@ -163,6 +163,9 @@ class TableInterpretationService(
      * Interprets a table using an LLM agent and returns markdown.
      * Results are cached in the repository to avoid repeated calls with the same input.
      * 
+     * The LLM verifies if the content is actually a data table. If not (e.g., navigation menu,
+     * card grid, etc.), an empty string is returned.
+     * 
      * The input now contains pre-computed tableHtml derived from the page snapshot,
      * eliminating the need for browser access during interpretation.
      */
@@ -191,6 +194,13 @@ class TableInterpretationService(
             totalTokens = agentOutput.tokenUsage.totalTokens
         )
 
+        // Log classification result
+        logger.debug(
+            "Table interpretation for '{}': classification={}", 
+            input.tableIdentification.dataId, 
+            agentOutput.classification
+        )
+
         val markdown = agentOutput.markdown
 
         webpageTableInterpretationRepository.upsert(
@@ -207,12 +217,15 @@ class TableInterpretationService(
      * Interprets multiple tables in batch, leveraging caching and batch upsert
      * to reduce concurrent upsert issues.
      * 
+     * The LLM verifies if each candidate is actually a data table. Non-tables (e.g., navigation
+     * menus, card grids, etc.) will have empty markdown strings.
+     * 
      * The inputs now contain pre-computed tableHtml derived from the page snapshot,
      * eliminating the need for browser access during interpretation.
      * 
      * @param inputs List of table interpretation inputs with pre-computed data
      * @param sessionId Query session ID for token tracking
-     * @return List of markdown strings in the same order as inputs
+     * @return List of markdown strings in the same order as inputs (empty string for non-tables)
      */
     @OptIn(ExperimentalTime::class)
     override suspend fun interpretTablesBatch(inputs: List<TableInterpretationInput>, sessionId: SessionId): List<String> {
@@ -262,6 +275,12 @@ class TableInterpretationService(
                         promptTokens = agentOutput.tokenUsage.promptTokens,
                         outputTokens = agentOutput.tokenUsage.outputTokens,
                         totalTokens = agentOutput.tokenUsage.totalTokens
+                    )
+                    
+                    logger.debug(
+                        "Table interpretation for '{}': classification={}", 
+                        input.tableIdentification.dataId,
+                        agentOutput.classification
                     )
                     
                     index to WebpageTableInterpretation(

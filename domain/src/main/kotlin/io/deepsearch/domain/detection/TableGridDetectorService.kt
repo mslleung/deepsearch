@@ -1,62 +1,14 @@
 package io.deepsearch.domain.detection
 
-/**
- * Bounding box representing an element's position on the page.
- */
-data class BoundingBox(
-    val left: Double,
-    val top: Double,
-    val right: Double,
-    val bottom: Double
-) {
-    val width: Double get() = right - left
-    val height: Double get() = bottom - top
-    val centerX: Double get() = (left + right) / 2
-    val centerY: Double get() = (top + bottom) / 2
-}
-
-/**
- * Information about a detected grid cell (may span multiple rows/columns).
- */
-data class GridCell(
-    val elementId: String,
-    val rowStart: Int,
-    val rowEnd: Int,      // inclusive - for merged cells rowEnd > rowStart
-    val colStart: Int,
-    val colEnd: Int       // inclusive - for merged cells colEnd > colStart
-)
-
-/**
- * Result of table grid detection.
- */
-data class TableGridResult(
-    val isTable: Boolean,
-    val confidence: Double,
-    val rowCount: Int,
-    val colCount: Int,
-    val rowBoundaries: List<Double>,  // Y coordinates of row separators
-    val colBoundaries: List<Double>,  // X coordinates of column separators  
-    val cells: List<GridCell>,
-    val reason: String
-) {
-    companion object {
-        val NO_TABLE = TableGridResult(
-            isTable = false,
-            confidence = 0.0,
-            rowCount = 0,
-            colCount = 0,
-            rowBoundaries = emptyList(),
-            colBoundaries = emptyList(),
-            cells = emptyList(),
-            reason = "No table detected"
-        )
-    }
-}
+import io.deepsearch.domain.services.GridCell
+import io.deepsearch.domain.services.ITableGridDetectorService
+import io.deepsearch.domain.services.TableDetectionBoundingBox
+import io.deepsearch.domain.services.TableGridResult
 
 /**
  * Robust table grid detection using adaptive gap-based clustering.
  * 
- * This detector analyzes bounding boxes of elements to identify table structures.
+ * This service analyzes bounding boxes of elements to identify table structures.
  * It handles:
  * - Variable cell sizes
  * - Merged cells (spanning multiple rows/columns)
@@ -69,7 +21,7 @@ data class TableGridResult(
  * 3. Assign each box to grid cells (handling spans)
  * 4. Validate the grid structure
  */
-class TableGridDetector {
+class TableGridDetectorService : ITableGridDetectorService {
     
     /**
      * Detect if the given bounding boxes form a table grid.
@@ -77,7 +29,7 @@ class TableGridDetector {
      * @param boxes Map of element ID to bounding box
      * @return Detection result with grid structure if found
      */
-    fun detectTable(boxes: Map<String, BoundingBox>): TableGridResult {
+    override fun detectTable(boxes: Map<String, TableDetectionBoundingBox>): TableGridResult {
         if (boxes.size < 4) {
             return TableGridResult.NO_TABLE.copy(reason = "Need at least 4 boxes")
         }
@@ -255,7 +207,7 @@ class TableGridDetector {
      * A box might span multiple rows and/or columns.
      */
     private fun assignBoxesToGrid(
-        boxList: List<Map.Entry<String, BoundingBox>>,
+        boxList: List<Map.Entry<String, TableDetectionBoundingBox>>,
         rowBoundaries: List<Double>,
         colBoundaries: List<Double>
     ): List<GridCell> {

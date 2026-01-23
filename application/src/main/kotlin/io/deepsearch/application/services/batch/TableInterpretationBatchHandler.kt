@@ -150,7 +150,6 @@ class TableInterpretationBatchHandler(
         val cleanedHtml: String?,
         val boundingBoxes: Map<String, io.deepsearch.domain.browser.IBrowserPage.BoundingBox>,
         val tableIdentifications: List<io.deepsearch.domain.agents.TableIdentification>,
-        val hiddenMobileLayouts: List<io.deepsearch.domain.agents.MobileLayoutIdentification>?,
         val semanticElements: io.deepsearch.domain.models.valueobjects.SemanticElements?,
         val iconInterpretations: Map<String, String?>?,
         val imageTexts: Map<String, String?>?,
@@ -180,7 +179,6 @@ class TableInterpretationBatchHandler(
                     cleanedHtml = cachingData.cleanedHtml,
                     boundingBoxes = cachingData.boundingBoxes ?: emptyMap(),
                     tableIdentifications = cachingData.tableIdentifications ?: emptyList(),
-                    hiddenMobileLayouts = cachingData.hiddenMobileLayouts,
                     semanticElements = cachingData.semanticElements,
                     iconInterpretations = cachingData.iconInterpretations,
                     imageTexts = cachingData.imageTexts,
@@ -222,19 +220,6 @@ class TableInterpretationBatchHandler(
                         .map { "[data-ds-id=\"$it\"]" }
                     if (semanticSelectors.isNotEmpty()) {
                         jsoupDomService.removeElements(doc, semanticSelectors)
-                    }
-                }
-
-                // Remove hidden mobile layout elements (matches WebpageExtractionService Step 3.5)
-                // Tables inside hidden mobile layouts should be skipped
-                snapshotFromGcs.hiddenMobileLayouts?.let { layouts ->
-                    if (layouts.isNotEmpty()) {
-                        val layoutSelectors = layouts.map { "[data-ds-id=\"${it.dataId}\"]" }
-                        jsoupDomService.removeElements(doc, layoutSelectors)
-                        logger.debug(
-                            "[{}] Removed {} hidden mobile layout elements for table extraction",
-                            jobId, layouts.size
-                        )
                     }
                 }
 

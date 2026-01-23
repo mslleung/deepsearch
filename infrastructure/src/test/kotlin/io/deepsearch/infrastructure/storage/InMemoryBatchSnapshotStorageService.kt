@@ -1,6 +1,5 @@
 package io.deepsearch.infrastructure.storage
 
-import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
@@ -18,12 +17,12 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
     private val htmlStorage = ConcurrentHashMap<String, String>()
     private val screenshotStorage = ConcurrentHashMap<String, ScreenshotData>()
     private val boundingBoxStorage = ConcurrentHashMap<String, Map<String, IBrowserPage.BoundingBox>>()
+    private val hiddenContainerBboxStorage = ConcurrentHashMap<String, IBrowserPage.HiddenContainerBoundingBoxes>()
     private val iconStorage = ConcurrentHashMap<String, List<MediaFileData>>()
     private val imageStorage = ConcurrentHashMap<String, List<MediaFileData>>()
     private val cleanedHtmlStorage = ConcurrentHashMap<String, String>()
     private val semanticElementsStorage = ConcurrentHashMap<String, SemanticElements>()
     private val tableIdentificationsStorage = ConcurrentHashMap<String, List<TableIdentification>>()
-    private val hiddenMobileLayoutsStorage = ConcurrentHashMap<String, List<MobileLayoutIdentification>>()
     private val iconInterpretationsStorage = ConcurrentHashMap<String, Map<String, String?>>()
     private val imageTextsStorage = ConcurrentHashMap<String, Map<String, String?>>()
     private val tableMarkdownsStorage = ConcurrentHashMap<String, Map<String, String>>()
@@ -60,6 +59,10 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
             }
         }
         
+        extraction.hiddenContainerBoundingBoxes?.let {
+            hiddenContainerBboxStorage[basePath] = it
+        }
+        
         return basePath
     }
     
@@ -75,7 +78,6 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         results.cleanedHtml?.let { cleanedHtmlStorage[basePath] = it }
         results.semanticElements?.let { semanticElementsStorage[basePath] = it }
         results.tableIdentifications?.let { tableIdentificationsStorage[basePath] = it }
-        results.hiddenMobileLayouts?.let { hiddenMobileLayoutsStorage[basePath] = it }
         results.iconInterpretations?.let { iconInterpretationsStorage[basePath] = it }
         results.imageTexts?.let { imageTextsStorage[basePath] = it }
     }
@@ -86,6 +88,9 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
     
     override suspend fun readBoundingBoxes(basePath: String): Map<String, IBrowserPage.BoundingBox>? =
         boundingBoxStorage[basePath]
+    
+    override suspend fun readHiddenContainerBoundingBoxes(basePath: String): IBrowserPage.HiddenContainerBoundingBoxes? =
+        hiddenContainerBboxStorage[basePath]
     
     override suspend fun readTableIdentifications(basePath: String): List<TableIdentification>? =
         tableIdentificationsStorage[basePath]
@@ -106,11 +111,11 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
             cleanedHtml = cleanedHtmlStorage[basePath],
             semanticElements = semanticElementsStorage[basePath],
             tableIdentifications = tableIdentificationsStorage[basePath],
-            hiddenMobileLayouts = hiddenMobileLayoutsStorage[basePath],
             tableMarkdowns = tableMarkdownsStorage[basePath],
             iconInterpretations = iconInterpretationsStorage[basePath],
             imageTexts = imageTextsStorage[basePath],
-            boundingBoxes = boundingBoxStorage[basePath]
+            boundingBoxes = boundingBoxStorage[basePath],
+            hiddenContainerBoundingBoxes = hiddenContainerBboxStorage[basePath]
         )
     }
     
@@ -126,12 +131,12 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         if (htmlStorage.remove(basePath) != null) count++
         if (screenshotStorage.remove(basePath) != null) count++
         if (boundingBoxStorage.remove(basePath) != null) count++
+        if (hiddenContainerBboxStorage.remove(basePath) != null) count++
         if (iconStorage.remove(basePath) != null) count++
         if (imageStorage.remove(basePath) != null) count++
         if (cleanedHtmlStorage.remove(basePath) != null) count++
         if (semanticElementsStorage.remove(basePath) != null) count++
         if (tableIdentificationsStorage.remove(basePath) != null) count++
-        if (hiddenMobileLayoutsStorage.remove(basePath) != null) count++
         if (iconInterpretationsStorage.remove(basePath) != null) count++
         if (imageTextsStorage.remove(basePath) != null) count++
         if (tableMarkdownsStorage.remove(basePath) != null) count++
@@ -145,9 +150,9 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         var count = 0
         
         listOf(
-            htmlStorage, screenshotStorage, boundingBoxStorage, iconStorage, imageStorage,
-            cleanedHtmlStorage, semanticElementsStorage, tableIdentificationsStorage,
-            hiddenMobileLayoutsStorage, iconInterpretationsStorage, imageTextsStorage,
+            htmlStorage, screenshotStorage, boundingBoxStorage, hiddenContainerBboxStorage,
+            iconStorage, imageStorage, cleanedHtmlStorage, semanticElementsStorage, 
+            tableIdentificationsStorage, iconInterpretationsStorage, imageTextsStorage,
             tableMarkdownsStorage, kgExtractionStorage, metadataStorage
         ).forEach { storage ->
             val keysToRemove = storage.keys.filter { it.startsWith(prefix) }
@@ -166,12 +171,12 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         htmlStorage.clear()
         screenshotStorage.clear()
         boundingBoxStorage.clear()
+        hiddenContainerBboxStorage.clear()
         iconStorage.clear()
         imageStorage.clear()
         cleanedHtmlStorage.clear()
         semanticElementsStorage.clear()
         tableIdentificationsStorage.clear()
-        hiddenMobileLayoutsStorage.clear()
         iconInterpretationsStorage.clear()
         imageTextsStorage.clear()
         tableMarkdownsStorage.clear()

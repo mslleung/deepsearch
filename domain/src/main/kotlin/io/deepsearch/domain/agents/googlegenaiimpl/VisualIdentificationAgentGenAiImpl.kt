@@ -5,16 +5,9 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
-import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.IVisualIdentificationAgent
-import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.VisualIdentificationBatchRequest
-import io.deepsearch.domain.models.entities.CachedHiddenMobileLayout
-import io.deepsearch.domain.models.entities.CachedHiddenTable
-import io.deepsearch.domain.models.entities.HiddenContainerTableCache
-import io.deepsearch.domain.repositories.IHiddenContainerTableCacheRepository
-import java.security.MessageDigest
 import io.deepsearch.domain.agents.VisualIdentificationInput
 import io.deepsearch.domain.agents.VisualIdentificationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -27,8 +20,6 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.services.BatchContentRequest
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IImageDimensionService
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -42,6 +33,10 @@ import org.slf4j.LoggerFactory
  * Combined visual identification agent that detects both semantic elements and tables
  * in a single vision-based LLM call.
  * 
+ * This agent only handles visible content detection. Hidden container analysis is now
+ * done server-side using TableGridDetector with bounding box data from 
+ * captureHiddenContainerBoundingBoxes().
+ * 
  * This reduces latency by ~30-50% and token usage by ~40% compared to running
  * SemanticIdentificationAgent and TableIdentificationAgent separately.
  */
@@ -49,8 +44,7 @@ class VisualIdentificationAgentGenAiImpl(
     private val client: com.google.genai.Client,
     private val cssSelectorConstructionService: ICssSelectorConstructionService,
     private val imageDimensionService: IImageDimensionService,
-    private val dispatcherProvider: IDispatcherProvider,
-    private val hiddenContainerCacheRepository: IHiddenContainerTableCacheRepository
+    private val dispatcherProvider: IDispatcherProvider
 ) : IVisualIdentificationAgent {
 
     companion object {
@@ -196,119 +190,6 @@ class VisualIdentificationAgentGenAiImpl(
         val tables: List<VisionTableElement> = emptyList()
     )
 
-    // ========== HTML-Based Hidden Container Analysis Schema ==========
-    // For detecting tables and navigation menus in hidden containers (accordions, tabs, mobile menus, etc.)
-
-    private val hiddenContainerAnalysisSchema: Schema = Schema.builder()
-        .type("OBJECT")
-        .description("Analysis of hidden container content - tables and mobile layouts")
-        .properties(
-            mapOf(
-                "tables" to Schema.builder()
-                    .type("ARRAY")
-                    .description("Array of table/grid structures identified")
-                    .items(
-                        Schema.builder()
-                            .type("OBJECT")
-                            .properties(
-                                mapOf(
-                                    "id" to Schema.builder().type("STRING")
-                                        .description("The data-ds-id value of the table root element")
-                                        .build(),
-                                    "specialConsideration" to Schema.builder().type("STRING")
-                                        .description("Notes about non-standard table structure or styling that may affect interpretation (e.g., nested rows, colspan issues, CSS-grid layout)")
-                                        .nullable(true)
-                                        .build()
-                                )
-                            )
-                            .required(listOf("id"))
-                            .build()
-                    )
-                                        .build(),
-                "mobileLayouts" to Schema.builder()
-                    .type("ARRAY")
-                    .description("Array of mobile layout structures")
-                    .items(
-                        Schema.builder()
-                            .type("OBJECT")
-                            .properties(
-                                mapOf(
-                                    "id" to Schema.builder().type("STRING")
-                                        .description("The data-ds-id value of the mobile layout root element")
-                                        .build(),
-                                    "description" to Schema.builder().type("STRING")
-                                        .description("Brief description (e.g., 'Mobile navigation layout', 'Hamburger menu content')")
-                                        .build()
-                                )
-                            )
-                            .required(listOf("id", "description"))
-                            .build()
-                    )
-                    .build()
-            )
-        )
-        .required(listOf("tables", "mobileLayouts"))
-        .build()
-
-    private val hiddenContainerAnalysisInstruction = """
-        Your task is to analyze the provided HTML snippet from a hidden container and identify:
-        1. CSS-styled table structures
-        2. Mobile layout structures
-
-        Inputs:
-        - Cleaned HTML structure with data-ds-id attributes on container elements
-
-        === TABLE IDENTIFICATION ===
-        Identify the ROOT container of table/grid structures:
-        - CSS Grid layouts displaying tabular data (pricing tables, feature comparisons)
-        - Flexbox-based data grids
-        - Div-based tables with row/column patterns
-        
-        CRITICAL RULES:
-        - Return ONLY the OUTERMOST container that encompasses the entire table structure
-        - Do NOT identify individual rows as separate tables
-        - If you see multiple sibling elements with identical grid layouts (e.g., all using grid-cols-4), 
-          these are ROWS of a single table - identify their PARENT container instead
-        - A table has MULTIPLE rows; a single grid row is NOT a table by itself
-        
-        Return the data-ds-id of the ROOT container. Note any complex styling in specialConsideration.
-
-        === MOBILE LAYOUT IDENTIFICATION ===
-        Identify mobile UI structures:
-        - Mobile layout
-        Return the data-ds-id of the ROOT container.
-
-        Return empty array if no table/mobile layout is identified.
-
-        Expected output:
-        {
-            "tables": [
-                {"id": "ds-element-123", "specialConsideration": "The "Pro" column is most popular."}
-            ],
-            "mobileLayouts": [
-                {"id": "ds-element-456", "description": "Mobile navigation layout"}
-            ]
-        }
-    """.trimIndent()
-
-    @Serializable
-    private data class HiddenContainerAnalysisResponse(
-        val tables: List<HiddenTableResult>,
-        val mobileLayouts: List<HiddenMobileLayoutResult>
-    )
-
-    @Serializable
-    private data class HiddenTableResult(
-        val id: String,
-        val specialConsideration: String? = null
-    )
-
-    @Serializable
-    private data class HiddenMobileLayoutResult(
-        val id: String,
-        val description: String
-    )
-
     // Internal result after IoU mapping
     private data class MappedElement(
         val dataId: String,
@@ -323,25 +204,17 @@ class VisualIdentificationAgentGenAiImpl(
         val containsMedia: Boolean
     )
 
-    /** Result from analyzing a hidden container - contains both tables and mobile layouts */
-    private data class HiddenContainerAnalysisResult(
-        val containerId: String,
-        val tables: List<HiddenTableResult>,
-        val mobileLayouts: List<HiddenMobileLayoutResult>
-    )
-
     // ========== Main Generate Method ==========
 
     override suspend fun generate(input: VisualIdentificationInput): VisualIdentificationOutput = coroutineScope {
         // HTML already has data-ds-id attributes from browser's injectStableIds()
         val htmlWithIds = input.pageSnapshot.html
         val boundingBoxes = input.pageSnapshot.boundingBoxes
-        val hiddenContainers = input.pageSnapshot.hiddenContainers
         val screenshot = input.screenshot
 
         logger.debug(
-            "Visual identification: HTML={} bytes, screenshot={} bytes, {} bounding boxes, {} hidden containers",
-            htmlWithIds.length, screenshot.bytes.size, boundingBoxes.size, hiddenContainers.size
+            "Visual identification: HTML={} bytes, screenshot={} bytes, {} bounding boxes",
+            htmlWithIds.length, screenshot.bytes.size, boundingBoxes.size
         )
 
         // Get image dimensions for coordinate mapping (Gemini uses normalized [0, 1000] coords)
@@ -349,66 +222,46 @@ class VisualIdentificationAgentGenAiImpl(
             imageDimensionService.getImageDimensions(screenshot.bytes)
         }
 
-        // ========== Parallel Detection ==========
-        // 1. Vision detection for visible semantic elements and tables (single call)
-        // 2. HTML detection for each hidden container (in parallel)
-
-        val visionDeferred = async {
-            var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
-            val response = withContext(dispatcherProvider.io) {
-                retryLlmCall<CombinedVisionResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_vision") {
-                    val result = client.models.generateContent(
-                        ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
-                        listOf(
-                            Content.fromParts(
-                                Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
-                                Part.fromText("Analyze this webpage screenshot for semantic elements and tables.")
-                            )
-                        ),
-                        GenerateContentConfig.builder()
-                            .temperature(0F)
-                            .responseSchema(combinedOutputSchema)
-                            .responseMimeType("application/json")
-                            .thinkingConfig(
-                                ThinkingConfig.builder()
-                                    .thinkingBudget(0)
-                                    .build()
-                            )
-                            .systemInstruction(Content.fromParts(Part.fromText(combinedSystemInstruction)))
-                            .build()
-                    )
-
-                    result.checkFinishReason()
-
-                    result.usageMetadata().ifPresent { metadata ->
-                        tokenUsage = TokenUsageMetrics(
-                            modelName = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
-                            promptTokens = metadata.promptTokenCount().orElse(0),
-                            outputTokens = metadata.candidatesTokenCount().orElse(0),
-                            totalTokens = metadata.totalTokenCount().orElse(0)
+        // ========== Vision Detection ==========
+        // Single LLM call for visible semantic elements and tables
+        var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+        val visionResponse = withContext(dispatcherProvider.io) {
+            retryLlmCall<CombinedVisionResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_vision") {
+                val result = client.models.generateContent(
+                    ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                    listOf(
+                        Content.fromParts(
+                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
+                            Part.fromText("Analyze this webpage screenshot for semantic elements and tables.")
                         )
-                    }
+                    ),
+                    GenerateContentConfig.builder()
+                        .temperature(0F)
+                        .responseSchema(combinedOutputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingBudget(0)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(combinedSystemInstruction)))
+                        .build()
+                )
 
-                    result.text() ?: throw RuntimeException("No text response from model")
+                result.checkFinishReason()
+
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
                 }
+
+                result.text() ?: throw RuntimeException("No text response from model")
             }
-            response to tokenUsage
         }
-
-        // Hidden container analysis with caching
-        val (hiddenTables, hiddenMobileLayouts, hiddenUsage) = analyzeHiddenContainersWithCache(
-            hiddenContainers, htmlWithIds, ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
-        )
-
-        // Await vision results
-        val (visionResponse, visionUsage) = visionDeferred.await()
-
-        logger.debug(
-            "Hidden container analysis: {} tables, {} mobile layouts found across {} containers",
-            hiddenTables.size, hiddenMobileLayouts.size, hiddenContainers.size
-        )
-
-        val tokenUsage = visionUsage + hiddenUsage
 
         // Use ORIGINAL screenshot dimensions for coordinate mapping
         // The Gemini response uses normalized [0, 1000] coordinates, so we map to original dimensions
@@ -435,116 +288,27 @@ class VisualIdentificationAgentGenAiImpl(
         val finalSemantic = applySemanticOverrides(mappedSemantic, doc)
         val programmaticTables = extractSemanticTables(htmlWithIds)
 
-        // ========== Merge all tables and deduplicate ==========
-        val visionAndProgrammaticTables = mergeTables(visionMappedTables, programmaticTables, doc)
-        val visionIds = visionAndProgrammaticTables.map { it.dataId }.toSet()
-
-        // ========== Step 1: Deduplicate hidden tables against each other ==========
-        // If a table is a child of another table, keep only the parent (prevents individual rows
-        // from being treated as separate tables when they are part of a larger table structure)
-        val hiddenTableIds = hiddenTables.map { it.id }.toSet()
-        val tablesAfterSelfDedup = hiddenTables.filter { hiddenTable ->
-            val hiddenElement = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull()
-                ?: return@filter true
-
-            // Check if this table is a child of another hidden table
-            val isChildOfAnotherTable = hiddenTableIds.any { otherId ->
-                if (otherId == hiddenTable.id) return@any false
-                val otherElement = doc.select("[data-ds-id=\"$otherId\"]").firstOrNull()
-                    ?: return@any false
-                hiddenElement.parents().contains(otherElement)
-            }
-
-            if (isChildOfAnotherTable) {
-                logger.debug("Removing hidden table '{}' - it's a child of another hidden table", hiddenTable.id)
-            }
-            !isChildOfAnotherTable
-        }
-
-        // ========== Step 2: Deduplicate hidden tables against mobile layouts ==========
-        // Tables inside mobile layouts will be removed anyway when the mobile layout is removed
-        val mobileLayoutIds = hiddenMobileLayouts.map { it.id }.toSet()
-        val tablesAfterMobileDedup = tablesAfterSelfDedup.filter { hiddenTable ->
-            val hiddenElement = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull()
-                ?: return@filter true
-
-            // Check if this table is inside a mobile layout
-            val isInsideMobileLayout = mobileLayoutIds.any { layoutId ->
-                val layoutElement = doc.select("[data-ds-id=\"$layoutId\"]").firstOrNull()
-                    ?: return@any false
-                hiddenElement.parents().contains(layoutElement) || hiddenElement == layoutElement
-            }
-
-            if (isInsideMobileLayout) {
-                logger.debug("Removing hidden table '{}' - it's inside a mobile layout that will be removed", hiddenTable.id)
-            }
-            !isInsideMobileLayout
-        }
-
-        // ========== Step 3: Deduplicate hidden tables against vision-detected tables ==========
-        val deduplicatedHiddenTables = tablesAfterMobileDedup.filter { hiddenTable ->
-            val hiddenElement = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull()
-                ?: return@filter true
-
-            val isOverlapping = visionIds.any { visionId ->
-                val visionElement = doc.select("[data-ds-id=\"$visionId\"]").firstOrNull()
-                    ?: return@any false
-                hiddenElement.parents().contains(visionElement) ||
-                        visionElement.parents().contains(hiddenElement) ||
-                        hiddenElement == visionElement
-            }
-
-            if (isOverlapping) {
-                logger.debug("Deduplicating hidden table '{}' - overlaps with vision-detected table", hiddenTable.id)
-            }
-            !isOverlapping
-        }
-
-        // Convert hidden tables to MappedTable and add to final list
-        val hiddenMappedTables = deduplicatedHiddenTables.mapNotNull { hiddenTable ->
-            val element = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull() ?: return@mapNotNull null
-            val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
-            val containsMedia = detectMediaInTable(hiddenTable.id, doc)
-            MappedTable(
-                dataId = hiddenTable.id,
-                cssSelector = cssSelector,
-                label = hiddenTable.specialConsideration ?: "",
-                containsMedia = containsMedia
-            )
-        }
-
-        val finalTables = visionAndProgrammaticTables + hiddenMappedTables
+        // ========== Merge visible tables ==========
+        val finalTables = mergeTables(visionMappedTables, programmaticTables, doc)
 
         logger.debug(
-            "Total tables: {} ({} vision/programmatic, {} hidden after dedup: {} raw -> {} after self-dedup -> {} after mobile-dedup -> {} after vision-dedup)",
-            finalTables.size, visionAndProgrammaticTables.size,
-            hiddenMappedTables.size, hiddenTables.size, tablesAfterSelfDedup.size,
-            tablesAfterMobileDedup.size, deduplicatedHiddenTables.size
+            "Total visible tables: {} ({} vision, {} programmatic <table>)",
+            finalTables.size, visionMappedTables.size, programmaticTables.size
         )
-
-        // ========== Build mobile layout identifications from hidden containers ==========
-        val mobileLayoutIdentifications = hiddenMobileLayouts.map { mobileLayout ->
-            MobileLayoutIdentification(
-                dataId = mobileLayout.id,
-                description = mobileLayout.description
-            )
-        }
 
         // ========== Build output ==========
         val semanticElements = buildSemanticElements(finalSemantic)
         val tableIdentifications = buildTableIdentifications(finalTables)
 
         logger.debug(
-            "Visual identification complete: {} semantic elements, {} tables, {} hidden mobile layouts",
+            "Visual identification complete: {} semantic elements, {} tables",
             countSemanticElements(semanticElements),
-            tableIdentifications.size,
-            mobileLayoutIdentifications.size
+            tableIdentifications.size
         )
 
         VisualIdentificationOutput(
             semanticElements = semanticElements,
             tables = tableIdentifications,
-            hiddenMobileLayouts = mobileLayoutIdentifications,
             tokenUsage = tokenUsage
         )
     }
@@ -1095,314 +859,6 @@ class VisualIdentificationAgentGenAiImpl(
         count += elements.adBanners.size
         count += elements.popups.size
         return count
-    }
-
-    // ========== Hidden Container Analysis with Caching ==========
-
-    private val cacheJson = Json { 
-        ignoreUnknownKeys = true 
-        encodeDefaults = true
-    }
-
-    /**
-     * Analyze hidden containers with caching.
-     * 
-     * Caching is based on structural HTML hash (with data-ds-id stripped).
-     * Cached results store CSS selectors which are stable across page loads.
-     * 
-     * @return Triple of (tables, mobileLayouts, token usage)
-     */
-    private suspend fun analyzeHiddenContainersWithCache(
-        hiddenContainers: List<IBrowserPage.HiddenContainer>,
-        fullHtmlWithIds: String,
-        modelId: String
-    ): Triple<List<HiddenTableResult>, List<HiddenMobileLayoutResult>, TokenUsageMetrics> = coroutineScope {
-        if (hiddenContainers.isEmpty()) {
-            return@coroutineScope Triple(emptyList(), emptyList(), TokenUsageMetrics.empty(modelId))
-        }
-
-        val doc = Jsoup.parse(fullHtmlWithIds)
-
-        // Step 1: Compute structural hashes for all containers
-        val containerWithHashes = hiddenContainers.map { container ->
-            val structuralHash = computeStructuralHash(container.html)
-            container to structuralHash
-        }
-
-        // Step 2: Batch lookup in cache
-        val allHashes = containerWithHashes.map { it.second }
-        val cachedResults = hiddenContainerCacheRepository.findByHashes(allHashes)
-        val cachedByHash = cachedResults.associateBy { it.structuralHtmlHash.toList() }
-
-        // Step 3: Split into cached and uncached
-        val (cached, uncached) = containerWithHashes.partition { (_, hash) ->
-            cachedByHash.containsKey(hash.toList())
-        }
-
-        logger.debug(
-            "Hidden container cache: {} hits, {} misses out of {} containers",
-            cached.size, uncached.size, hiddenContainers.size
-        )
-
-        // Step 4: Process cached results - convert CSS selectors back to data-ds-id
-        val cachedTables = mutableListOf<HiddenTableResult>()
-        val cachedMobileLayouts = mutableListOf<HiddenMobileLayoutResult>()
-
-        for ((container, hash) in cached) {
-            val cacheEntry = cachedByHash[hash.toList()] ?: continue
-
-            // Parse cached tables and map CSS selectors to current data-ds-id
-            val tables = cacheJson.decodeFromString<List<CachedHiddenTable>>(cacheEntry.tablesJson)
-            for (table in tables) {
-                val element = doc.select(table.cssSelector).firstOrNull()
-                val dataId = element?.attr("data-ds-id")
-                if (dataId != null && dataId.isNotEmpty()) {
-                    cachedTables.add(HiddenTableResult(dataId, table.specialConsideration))
-                }
-            }
-
-            // Parse cached mobile layouts and map CSS selectors to current data-ds-id
-            val mobileLayouts = cacheJson.decodeFromString<List<CachedHiddenMobileLayout>>(cacheEntry.mobileLayoutsJson)
-            for (layout in mobileLayouts) {
-                val element = doc.select(layout.cssSelector).firstOrNull()
-                val dataId = element?.attr("data-ds-id")
-                if (dataId != null && dataId.isNotEmpty()) {
-                    cachedMobileLayouts.add(HiddenMobileLayoutResult(dataId, layout.description))
-                }
-            }
-        }
-
-        // Step 5: Analyze uncached containers via LLM in parallel
-        val uncachedDeferreds = uncached.map { (container, hash) ->
-            async {
-                val (result, usage) = analyzeHiddenContainer(container, fullHtmlWithIds, modelId)
-                Triple(container, hash, result) to usage
-            }
-        }
-
-        val uncachedResults = uncachedDeferreds.awaitAll()
-
-        // Collect fresh tables and mobile layouts
-        val freshTables = mutableListOf<HiddenTableResult>()
-        val freshMobileLayouts = mutableListOf<HiddenMobileLayoutResult>()
-        var totalUsage = TokenUsageMetrics.empty(modelId)
-
-        val cachesToSave = mutableListOf<HiddenContainerTableCache>()
-
-        for ((triple, usage) in uncachedResults) {
-            val (container, hash, result) = triple
-            totalUsage += usage
-
-            freshTables.addAll(result.tables)
-            freshMobileLayouts.addAll(result.mobileLayouts)
-
-            // Convert data-ds-id to CSS selectors for caching
-            val tablesToCache = result.tables.mapNotNull { table ->
-                val element = doc.select("[data-ds-id=\"${table.id}\"]").firstOrNull()
-                    ?: return@mapNotNull null
-                val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
-                CachedHiddenTable(cssSelector, table.specialConsideration)
-            }
-
-            val mobileLayoutsToCache = result.mobileLayouts.mapNotNull { layout ->
-                val element = doc.select("[data-ds-id=\"${layout.id}\"]").firstOrNull()
-                    ?: return@mapNotNull null
-                val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
-                CachedHiddenMobileLayout(cssSelector, layout.description)
-            }
-
-            cachesToSave.add(
-                HiddenContainerTableCache(
-                    structuralHtmlHash = hash,
-                    hasTables = tablesToCache.isNotEmpty(),
-                    tablesJson = cacheJson.encodeToString(tablesToCache),
-                    hasMobileLayouts = mobileLayoutsToCache.isNotEmpty(),
-                    mobileLayoutsJson = cacheJson.encodeToString(mobileLayoutsToCache)
-                )
-            )
-        }
-
-        // Step 6: Save new cache entries
-        if (cachesToSave.isNotEmpty()) {
-            try {
-                hiddenContainerCacheRepository.batchUpsert(cachesToSave)
-                logger.debug("Cached {} hidden container analysis results", cachesToSave.size)
-            } catch (e: Exception) {
-                logger.warn("Failed to cache hidden container results: {}", e.message)
-            }
-        }
-
-        // Combine cached + fresh results
-        Triple(
-            cachedTables + freshTables,
-            cachedMobileLayouts + freshMobileLayouts,
-            totalUsage
-        )
-    }
-
-    /**
-     * Compute SHA-256 hash of structural HTML (with data-ds-id stripped).
-     * This creates a stable key for caching that works across page loads.
-     */
-    private fun computeStructuralHash(html: String): ByteArray {
-        // Strip data-ds-id attributes which change on every page load
-        val structuralHtml = html.replace(Regex("""data-ds-id="[^"]*""""), "")
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(structuralHtml.toByteArray(Charsets.UTF_8))
-    }
-
-    /**
-     * Analyze a hidden container for tables and navigation using HTML-based LLM detection.
-     * Hidden containers (accordion panels, collapsed sections, mobile menus, etc.) are not visible in screenshots.
-     * 
-     * Returns both table identifications and navigation identifications.
-     * 
-     * Note: container.html already has data-ds-id attributes from the browser's injectStableIds()
-     */
-    private suspend fun analyzeHiddenContainer(
-        container: IBrowserPage.HiddenContainer,
-        fullHtmlWithIds: String,
-        modelId: String
-    ): Pair<HiddenContainerAnalysisResult, TokenUsageMetrics> {
-        // Step 1: Extract semantic <table> elements programmatically (no LLM needed)
-        val (semanticTables, htmlWithoutTables) = extractSemanticTablesFromHiddenContainer(container.html)
-        
-        if (semanticTables.isNotEmpty()) {
-            logger.debug(
-                "Hidden container '{}': extracted {} semantic <table> elements programmatically",
-                container.id, semanticTables.size
-            )
-        }
-        
-        // Step 2: Clean remaining HTML for LLM analysis (CSS tables + navigations only)
-        val cleanedSnippet = cleanHtml(htmlWithoutTables)
-
-        var tokenUsage = TokenUsageMetrics.empty(modelId)
-
-        val response = withContext(dispatcherProvider.io) {
-            retryLlmCall<HiddenContainerAnalysisResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_hidden") {
-                val result = client.models.generateContent(
-                    modelId,
-                    listOf(Content.fromParts(Part.fromText(cleanedSnippet))),
-                    GenerateContentConfig.builder()
-                        .temperature(0F)
-                        .responseSchema(hiddenContainerAnalysisSchema)
-                        .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingBudget(0)
-                                .build()
-                        )
-                        .systemInstruction(Content.fromParts(Part.fromText(hiddenContainerAnalysisInstruction)))
-                        .build()
-                )
-
-                result.checkFinishReason()
-
-                result.usageMetadata().ifPresent { metadata ->
-                    tokenUsage = TokenUsageMetrics(
-                        modelName = modelId,
-                        promptTokens = metadata.promptTokenCount().orElse(0),
-                        outputTokens = metadata.candidatesTokenCount().orElse(0),
-                        totalTokens = metadata.totalTokenCount().orElse(0)
-                    )
-                }
-
-                result.text() ?: throw RuntimeException("No text response from model")
-            }
-        }
-
-        logger.debug(
-            "Hidden container '{}' LLM analysis: {} CSS tables, {} mobile layouts",
-            container.id, response.tables.size, response.mobileLayouts.size
-        )
-
-        // Validate that IDs exist in the full HTML
-        val doc = Jsoup.parse(fullHtmlWithIds)
-        val validatedLlmTables = response.tables.filter { table ->
-            doc.select("[data-ds-id=\"${table.id}\"]").isNotEmpty()
-        }
-        val validatedMobileLayouts = response.mobileLayouts.filter { layout ->
-            doc.select("[data-ds-id=\"${layout.id}\"]").isNotEmpty()
-        }
-        
-        // Step 3: Merge semantic tables (programmatic) with CSS tables (LLM-detected)
-        val allTables = semanticTables + validatedLlmTables
-
-        val analysisResult = HiddenContainerAnalysisResult(
-            containerId = container.id,
-            tables = allTables,
-            mobileLayouts = validatedMobileLayouts
-        )
-
-        return analysisResult to tokenUsage
-    }
-
-    /**
-     * Extract semantic <table> elements from hidden container HTML.
-     * Returns the table IDs and the modified HTML with tables removed.
-     * 
-     * Semantic tables are handled programmatically - no need for LLM analysis.
-     */
-    private fun extractSemanticTablesFromHiddenContainer(html: String): Pair<List<HiddenTableResult>, String> {
-        val doc = Jsoup.parse(html)
-        val tables = mutableListOf<HiddenTableResult>()
-        
-        doc.select("table[data-ds-id]").forEach { element ->
-            val dataId = element.attr("data-ds-id")
-            tables.add(HiddenTableResult(dataId, "Semantic <table> element"))
-            element.remove()
-        }
-        
-        return tables to doc.outerHtml()
-    }
-
-    private fun cleanHtml(rawHtml: String): String {
-        val doc: Document = Jsoup.parse(rawHtml)
-
-        // Remove noise elements (note: <table> already removed by extractSemanticTablesFromHiddenContainer)
-        doc.select(
-            "script, style, noscript, template, svg, canvas, meta, link, iframe, object, embed, " +
-                    "head, title, base, form, input, button, select, textarea, label, fieldset, legend, " +
-                    "nav, header, footer, aside, img, video, audio, source, track, picture"
-        ).remove()
-
-        // Remove comments
-        doc.select("*").forEach { element ->
-            element.childNodes().filter { it.nodeName() == "#comment" }.forEach { it.remove() }
-        }
-
-        // Strip attributes
-        doc.select("*").forEach { element ->
-            val essentialAttrs = setOf("id", "class", "role", "colspan", "rowspan", "scope", "data-testid", "data-ds-id")
-            val attrsToKeep = element.attributes().filter { it.key in essentialAttrs }
-            element.clearAttributes()
-            attrsToKeep.forEach { element.attr(it.key, it.value) }
-        }
-
-        // Truncate text content
-        doc.select("*").forEach { element ->
-            element.textNodes().forEach { textNode ->
-                val text = textNode.text().replace("\\s+".toRegex(), " ").trim()
-                if (text.isNotEmpty()) {
-                    val shortened = if (text.length > 20) text.take(20) + "..." else text
-                    textNode.text(shortened)
-                }
-            }
-        }
-
-        // Remove empty elements
-        doc.select("*").filter { element ->
-            element.children().isEmpty() &&
-                    element.ownText().isBlank() &&
-                    element.attr("role").isEmpty() &&
-                    element.attr("colspan").isEmpty() &&
-                    element.attr("rowspan").isEmpty()
-        }.forEach { it.remove() }
-
-        val cleanedHtml = doc.outerHtml()
-        logger.debug("Cleaned HTML: {} chars (original: ~{} chars)", cleanedHtml.length, rawHtml.length)
-        return cleanedHtml
     }
 
     // ========== Batch Processing Methods ==========

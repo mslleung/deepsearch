@@ -1,19 +1,15 @@
 package io.deepsearch.domain.agents.googlegenaiimpl
 
-import com.google.genai.Client
-import com.google.genai.types.Content
-import com.google.genai.types.GenerateContentConfig
-import com.google.genai.types.Part
-import com.google.genai.types.Schema
-import com.google.genai.types.ThinkingConfig
+import io.deepsearch.domain.agents.ITableInterpretationAgent
+import io.deepsearch.domain.agents.TableIdentification
+import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
-import io.deepsearch.domain.detection.TableGridDetector
-import io.deepsearch.domain.detection.BoundingBox as DetectionBoundingBox
+import io.deepsearch.domain.services.ITableGridDetectorService
+import io.deepsearch.domain.services.TableDetectionBoundingBox
+import io.deepsearch.domain.services.TableGridResult
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.test.KoinTest
 import org.koin.test.inject
@@ -44,24 +40,8 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
 
     private val testCoroutineDispatcher by inject<kotlinx.coroutines.CoroutineDispatcher>()
     private val browserPool by inject<IBrowserPool>()
-    private val client by inject<Client>()
-
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
-
-    private val tableGridDetector = TableGridDetector()
-
-    @Serializable
-    data class TableVerificationResult(
-        val is_table: Boolean,
-        val table_type: String?, // "comparison", "pricing", "data", "schedule", etc.
-        val description: String,
-        val headers: List<String>,
-        val row_count: Int,
-        val column_count: Int
-    )
+    private val tableGridDetectorService by inject<ITableGridDetectorService>()
+    private val tableInterpretationAgent by inject<ITableInterpretationAgent>()
 
     // ==================== Tests ====================
 
@@ -105,7 +85,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             
             data class DetectedTable(
                 val containerId: String,
-                val gridResult: io.deepsearch.domain.detection.TableGridResult,
+                val gridResult: TableGridResult,
                 val wasHidden: Boolean
             )
             
@@ -116,7 +96,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 
                 // Convert to detection bounding boxes
                 val boxes = container.elements.mapValues { (_, box) ->
-                    DetectionBoundingBox(
+                    TableDetectionBoundingBox(
                         left = box.left,
                         top = box.top,
                         right = box.right,
@@ -147,7 +127,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                     continue
                 }
                 
-                val gridResult = tableGridDetector.detectTable(boxes)
+                val gridResult = tableGridDetectorService.detectTable(boxes)
                 
                 if (gridResult.isTable && gridResult.confidence >= 0.5) {
                     println("    ✅ Table detected: ${gridResult.rowCount}×${gridResult.colCount} grid (confidence: ${String.format("%.2f", gridResult.confidence)})")
@@ -166,7 +146,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             println("\n  Analyzing visible page content...")
             val pageSnapshot = page.capturePageSnapshot()
             val visibleBoxes = pageSnapshot.boundingBoxes.mapValues { (_, box) ->
-                DetectionBoundingBox(
+                TableDetectionBoundingBox(
                     left = box.left,
                     top = box.top,
                     right = box.right,
@@ -177,7 +157,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             // For visible content, we need to find container elements and analyze their children
             // For now, let's also run the detector on the full page
             if (visibleBoxes.size >= 4) {
-                val fullPageResult = tableGridDetector.detectTable(visibleBoxes)
+                val fullPageResult = tableGridDetectorService.detectTable(visibleBoxes)
                 if (fullPageResult.isTable && fullPageResult.confidence >= 0.5) {
                     println("    ✅ Page-level table pattern detected")
                 }
@@ -200,23 +180,27 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 }
             }
 
-            // Step 5: Get HTML and verify with LLM for detected tables
+            // Step 5: Process detected tables with TableInterpretationAgent
             if (detectedTables.isNotEmpty()) {
-                println("\n>>> Step 5: Verifying detected tables with LLM...")
+                println("\n>>> Step 5: Processing detected tables with TableInterpretationAgent...")
                 
                 // Re-inject IDs before fetching HTML
                 // (captureHiddenContainerBoundingBoxes may trigger React re-renders that remove our IDs)
                 println("  Re-injecting stable IDs (in case React removed them)...")
                 page.injectStableIds()
                 
-                data class VerifiedTable(
+                // Get a fresh page snapshot for bounding boxes
+                val freshSnapshot = page.capturePageSnapshot()
+                
+                data class InterpretedTable(
                     val containerId: String,
-                    val gridResult: io.deepsearch.domain.detection.TableGridResult,
+                    val gridResult: TableGridResult,
                     val html: String,
-                    val verification: TableVerificationResult
+                    val classification: String,
+                    val markdown: String
                 )
                 
-                val verifiedTables = mutableListOf<VerifiedTable>()
+                val interpretedTables = mutableListOf<InterpretedTable>()
                 
                 for (table in detectedTables) {
                     val selector = "[data-ds-id=\"${table.containerId}\"]"
@@ -227,46 +211,66 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         continue
                     }
                     
-                    val truncatedHtml = if (html.length > 15000) {
-                        html.take(15000) + "\n<!-- truncated -->"
-                    } else {
-                        html
+                    println("\n  Processing ${table.containerId}...")
+                    
+                    // Create TableIdentification for the input
+                    val tableIdentification = TableIdentification(
+                        cssSelector = selector,
+                        dataId = table.containerId,
+                        auxiliaryInfo = "Spatially detected table: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols, confidence: ${String.format("%.2f", table.gridResult.confidence)}. Reason: ${table.gridResult.reason}",
+                        containsMedia = false
+                    )
+                    
+                    // Get bounding boxes for elements within this table
+                    // Filter to only include bounding boxes for elements within the table container
+                    val tableBoundingBoxes = freshSnapshot.boundingBoxes.filterKeys { dsId ->
+                        // Include bounding boxes that are part of this table's subtree
+                        // This is a simplified approach - we include all bounding boxes
+                        // In production, we'd filter to only descendants of the table element
+                        true
                     }
                     
-                    println("\n  Verifying ${table.containerId}...")
-                    val verification = verifyTableWithLlm(truncatedHtml)
+                    val input = TableInterpretationInput(
+                        tableIdentification = tableIdentification,
+                        tableHtml = html,
+                        boundingBoxes = tableBoundingBoxes
+                    )
                     
-                    if (verification.is_table) {
-                        verifiedTables.add(VerifiedTable(
+                    try {
+                        val output = tableInterpretationAgent.generate(input)
+                        
+                        interpretedTables.add(InterpretedTable(
                             containerId = table.containerId,
                             gridResult = table.gridResult,
                             html = html,
-                            verification = verification
+                            classification = output.classification.name,
+                            markdown = output.markdown
                         ))
-                        println("    ✅ LLM confirmed: ${verification.table_type} table")
-                        println("       ${verification.description}")
-                    } else {
-                        println("    ❌ LLM rejected: ${verification.description}")
+                        
+                        println("    ✅ Classification: ${output.classification}")
+                        println("    Token usage: ${output.tokenUsage.totalTokens} tokens")
+                    } catch (e: Exception) {
+                        println("    ❌ Error processing table: ${e.message}")
                     }
                 }
 
                 // Final results
                 println("\n" + "=".repeat(80))
-                println("FINAL VERIFIED TABLES")
+                println("TABLE INTERPRETATION RESULTS")
                 println("=".repeat(80))
                 
-                if (verifiedTables.isEmpty()) {
-                    println("\nNo tables verified by LLM.")
+                if (interpretedTables.isEmpty()) {
+                    println("\nNo tables successfully interpreted.")
                 } else {
-                    verifiedTables.forEachIndexed { idx, table ->
+                    interpretedTables.forEachIndexed { idx, table ->
                         println("\n${"─".repeat(70)}")
-                        println("TABLE ${idx + 1}: ${table.verification.table_type}")
+                        println("TABLE ${idx + 1}: ${table.classification}")
                         println("${"─".repeat(70)}")
                         println("Container ID: ${table.containerId}")
-                        println("Spatial: ${table.gridResult.rowCount}×${table.gridResult.colCount} (confidence: ${String.format("%.2f", table.gridResult.confidence)})")
-                        println("LLM: ${table.verification.row_count}×${table.verification.column_count}")
-                        println("Description: ${table.verification.description}")
-                        println("Headers: ${table.verification.headers.joinToString(", ")}")
+                        println("Spatial: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols (confidence: ${String.format("%.2f", table.gridResult.confidence)})")
+                        println("Classification: ${table.classification}")
+                        println("\nMarkdown output:")
+                        println(table.markdown)
                         println("\nHTML (first 500 chars):")
                         println(table.html.take(500))
                     }
@@ -282,120 +286,4 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
         }
     }
 
-    // ==================== LLM Verification ====================
-
-    private val verificationSchema = Schema.builder()
-        .type("OBJECT")
-        .properties(mapOf(
-            "is_table" to Schema.builder()
-                .type("BOOLEAN")
-                .description("Whether this HTML represents a data table")
-                .build(),
-            "table_type" to Schema.builder()
-                .type("STRING")
-                .description("Type of table: comparison, pricing, data, schedule, specification, feature, or null if not a table")
-                .build(),
-            "description" to Schema.builder()
-                .type("STRING")
-                .description("Brief description of what the table contains or why it's not a table")
-                .build(),
-            "headers" to Schema.builder()
-                .type("ARRAY")
-                .items(Schema.builder().type("STRING").build())
-                .description("Column headers if identified")
-                .build(),
-            "row_count" to Schema.builder()
-                .type("INTEGER")
-                .description("Estimated number of data rows")
-                .build(),
-            "column_count" to Schema.builder()
-                .type("INTEGER")
-                .description("Number of columns")
-                .build()
-        ))
-        .required(listOf("is_table", "description", "headers", "row_count", "column_count"))
-        .build()
-
-    private val verificationSystemPrompt = """
-        You are analyzing an HTML snippet to determine if it represents a DATA TABLE.
-        
-        A DATA TABLE has:
-        - Multiple rows of similar structure with comparable data
-        - Clear columns (either via <table> elements, CSS grid, or repeating div patterns)
-        - Data that can be compared across rows
-        - Examples: pricing tables, feature comparisons, specifications, schedules, test results
-        
-        NOT a table:
-        - Navigation menus or link lists
-        - Simple bulleted lists without columnar structure
-        - FAQ sections (Q&A pairs)
-        - Card layouts with unstructured content
-        - Forms with input fields
-        - Single items or hero sections
-        
-        Analyze the HTML structure and content to determine if it's a table.
-        Look at:
-        - Class names that suggest table/grid/row/column structure
-        - Repeating patterns of similar elements
-        - Text content that appears to be data values
-        
-        Be conservative - only confirm as a table if it clearly has a grid/tabular structure with multiple comparable rows.
-    """.trimIndent()
-
-    private suspend fun verifyTableWithLlm(html: String): TableVerificationResult {
-        val config = GenerateContentConfig.builder()
-            .temperature(0f)
-            .responseSchema(verificationSchema)
-            .responseMimeType("application/json")
-            .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0).build())
-            .systemInstruction(Content.fromParts(Part.fromText(verificationSystemPrompt)))
-            .build()
-
-        val prompt = """
-            Analyze this HTML snippet and determine if it represents a data table.
-            
-            HTML:
-            ```html
-            $html
-            ```
-            
-            Determine if this is a data table and provide details.
-        """.trimIndent()
-
-        val contents = listOf(
-            Content.builder()
-                .role("user")
-                .parts(listOf(Part.fromText(prompt)))
-                .build()
-        )
-
-        return try {
-            val response = client.models.generateContent(
-                "gemini-2.0-flash",
-                contents,
-                config
-            )
-            
-            val responseText = response.text() ?: return TableVerificationResult(
-                is_table = false,
-                table_type = null,
-                description = "LLM returned no response",
-                headers = emptyList(),
-                row_count = 0,
-                column_count = 0
-            )
-            
-            json.decodeFromString<TableVerificationResult>(responseText)
-        } catch (e: Exception) {
-            println("    LLM error: ${e.message}")
-            TableVerificationResult(
-                is_table = false,
-                table_type = null,
-                description = "LLM verification failed: ${e.message}",
-                headers = emptyList(),
-                row_count = 0,
-                column_count = 0
-            )
-        }
-    }
 }

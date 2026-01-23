@@ -14,43 +14,31 @@ import kotlinx.serialization.Serializable
  * Uses vision-based detection for both semantic elements (headers, nav, footer, etc.)
  * and tables/grids in a single LLM call, reducing latency and token usage.
  * 
+ * Note: This only handles visible content. Hidden container analysis is done separately
+ * using TableGridDetector with bounding box data from captureHiddenContainerBoundingBoxes().
+ * 
  * The browser can be released before visual identification begins.
  */
 data class VisualIdentificationInput(
-    /** Pre-captured page snapshot containing HTML, bounding boxes, and hidden containers. */
+    /** Pre-captured page snapshot containing HTML and bounding boxes. */
     val pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
     /** Full-page screenshot for vision-based detection (required). */
     val screenshot: IBrowserPage.Screenshot
 ) : IAgent.IAgentInput
 
 /**
- * Identification of a navigation menu found in hidden containers (mobile menus, etc.).
- * These are typically duplicate navigation structures that should be removed from the output.
- */
-/**
- * Represents a hidden mobile layout structure detected in a hidden container.
- * Mobile layouts are duplicate UI structures that should be removed from extraction output.
- */
-@Serializable
-data class MobileLayoutIdentification(
-    /** Stable data-ds-id value for removal (e.g., "ds-element-456") */
-    val dataId: String,
-    /** Description of the mobile layout (e.g., "Mobile navigation menu", "Hamburger menu content") */
-    val description: String
-)
-
-/**
  * Combined output containing both semantic elements and table identifications.
- * This is the result of a single vision-based LLM call that detects both types.
+ * This is the result of a single vision-based LLM call that detects visible content only.
+ * 
+ * Hidden container tables are detected separately using TableGridDetector and merged
+ * in the application layer.
  */
 @Serializable
 data class VisualIdentificationOutput(
     /** Semantic/navigation elements identified on the page */
     val semanticElements: SemanticElements,
-    /** Tables/grids identified on the page (includes both vision-detected and hidden container tables) */
+    /** Tables/grids identified on the visible page (vision-detected and programmatic <table> elements) */
     val tables: List<TableIdentification>,
-    /** Mobile layouts found in hidden containers (duplicate UI structures to be removed) */
-    val hiddenMobileLayouts: List<MobileLayoutIdentification> = emptyList(),
     /** Token usage for the combined call */
     @Contextual val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput

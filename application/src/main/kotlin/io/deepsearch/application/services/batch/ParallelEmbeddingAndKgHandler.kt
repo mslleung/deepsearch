@@ -489,19 +489,6 @@ class ParallelEmbeddingAndKgHandler(
             jsoupDomService.removeElements(doc, semanticSelectors)
         }
 
-        // ===== Step 3.5: Remove hidden mobile layout elements =====
-        cachingData.hiddenMobileLayouts?.let { layouts ->
-            if (layouts.isNotEmpty()) {
-                val layoutSelectors = layouts.map { "[data-ds-id=\"${it.dataId}\"]" }
-                jsoupDomService.removeElements(doc, layoutSelectors)
-                logger.debug(
-                    "Removed {} hidden mobile layout elements: {}",
-                    layouts.size,
-                    layouts.map { it.description }
-                )
-            }
-        }
-
         // ===== Step 4: Replace tables with markdown (using placeholders) =====
         val tableReplacements = cachingData.tableMarkdowns?.map { (dataId, markdown) ->
             CssSelectorReplacement("[data-ds-id=\"$dataId\"]", markdown)

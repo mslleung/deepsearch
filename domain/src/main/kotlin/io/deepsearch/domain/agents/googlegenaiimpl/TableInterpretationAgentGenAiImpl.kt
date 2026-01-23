@@ -6,6 +6,7 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import io.deepsearch.domain.agents.ITableInterpretationAgent
+import io.deepsearch.domain.agents.SnippetClassification
 import io.deepsearch.domain.agents.TableInterpretationBatchResult
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.agents.TableInterpretationOutput
@@ -32,28 +33,57 @@ class TableInterpretationAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Markdown representation of a tabular element with optional additional context")
+        .description("Classification and markdown representation of an HTML snippet")
         .properties(
             mapOf(
+                "classification" to Schema.builder()
+                    .type("STRING")
+                    .enum_(listOf("TABLE", "CARD", "LIST", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT", "OTHERS"))
+                    .description("Content type classification: TABLE (pricing, comparison tables), CARD (card-like structures), LIST (bullet points), COOKIE_DECLARATION_TABLE (cookie consent tables), HIDDEN_MOBILE_LAYOUT (hidden mobile-specific content), OTHERS (non-tabular content)")
+                    .build(),
                 "additionalInfo" to Schema.builder()
                     .type("STRING")
-                    .description("Optional additional context, notes, or clarifications about the table that cannot be represented in the markdown structure (e.g., badges, labels, footnotes, ambiguities).")
+                    .description("Optional additional context, notes, or clarifications that cannot be represented in the markdown structure (e.g., badges, labels, footnotes, ambiguities).")
                     .build(),
                 "markdown" to Schema.builder()
                     .type("STRING")
-                    .description("The table expressed in GitHub-flavored Markdown. Contains ONLY the markdown table itself, without any additional commentary or notes.")
+                    .description("The content expressed in GitHub-flavored Markdown. For COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT, leave empty.")
                     .build(),
             )
         )
-        .required(listOf("additionalInfo", "markdown"))
+        .required(listOf("classification", "additionalInfo", "markdown"))
         .build()
 
     private val systemInstruction = """
-        Convert the HTML table into GitHub-flavored Markdown.
-        
+        You are given a HTML snippet that most likely contains a table.
+        Your task is to convert it to GitHub-flavored Markdown.
+
         Use ds-bounding-box="left top right bottom" attributes to understand spatial layout when HTML structure is ambiguous.
-    
-        Rules:
+
+        Content classification:
+        - The snippet is determined to follow a grid-like structure based on spatial analysis
+        - You should determine the content type based on HTML structure and content
+        - Classify into:
+          -- TABLE: Tabular data with rows and columns (e.g. pricing, comparison, specification tables)
+          -- CARD: Card-like structures with repeated similar items
+          -- LIST: Bullet points or numbered lists
+          -- COOKIE_DECLARATION_TABLE: Cookie consent/declaration tables (legal boilerplate listing cookies, their purposes, providers, and expiry). These are typically found in privacy/cookie policies.
+          -- HIDDEN_MOBILE_LAYOUT: Hidden mobile-specific layouts that duplicate visible desktop content. Look for CSS classes like "mobile", "sm:", "hidden", "collapsed" combined with duplicate content patterns.
+          -- OTHERS: Navigation menus, form layouts, or other non-tabular content
+
+        Special handling for removable content:
+        - COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT will be removed from the document
+        - For these classifications, set markdown to empty string ""
+        - Set additionalInfo to briefly describe what was detected (e.g., "Cookie declaration table with 15 cookies listed")
+
+        Markdown conversion rules:
+        - For TABLE/CARD: Convert to markdown table preserving row/column structure
+        - For LIST: Convert to markdown bullet/numbered list
+        - For OTHERS: Structure into well-formatted markdown
+        - For COOKIE_DECLARATION_TABLE/HIDDEN_MOBILE_LAYOUT: Leave markdown empty
+        - If the snippet contains mixed content, identify the primary type and convert accordingly
+        
+        Table/Card conversion rules:
         - Preserve row/column structure accurately
         - Include header row if exists
         - Adjust rows/columns if needed to fit markdown format while preserving meaning
@@ -61,16 +91,16 @@ class TableInterpretationAgentGenAiImpl(
         - Capture ALL text with no information loss
         - Use emojis (✅ ❌) instead of HTML entities
         - For merged cells, duplicate values to corresponding cells
-        - Coerce non-table HTML into tabular format if needed
 
-        Output JSON with 2 fields:
-        - "additionalInfo": ONLY for critical clarifications that CANNOT fit in the table. 
-          Format: "Note: [fact]"
-          Don't explain what the table shows or repeat table data.
-        - "markdown": The markdown table.
+        Output JSON with 3 fields:
+        - "classification": string - one of "TABLE", "CARD", "LIST", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT", "OTHERS"
+        - "additionalInfo": ONLY for critical clarifications that CANNOT fit in markdown.
+          Format: "Note: [fact]" - Empty string if not needed.
+        - "markdown": The content expressed in GitHub-flavored Markdown. Empty for COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT.
 
         Output structure:
         {
+          "classification": string,
           "additionalInfo": string,
           "markdown": string
         }
@@ -78,6 +108,7 @@ class TableInterpretationAgentGenAiImpl(
 
     @Serializable
     private data class TableInterpretationResponse(
+        val classification: String,
         val additionalInfo: String,
         val markdown: String,
     )
@@ -141,12 +172,14 @@ class TableInterpretationAgentGenAiImpl(
             }
         }
 
+        val classification = SnippetClassification.fromString(response.classification)
         val combinedMarkdown = combineMarkdownWithAdditionalInfo(response.markdown, response.additionalInfo)
         
-        logger.debug("Table interpretation complete: {} chars markdown, {} chars additionalInfo", 
-            response.markdown.length, response.additionalInfo.length
+        logger.debug("Table interpretation complete: classification={}, {} chars markdown, {} chars additionalInfo", 
+            classification, response.markdown.length, response.additionalInfo.length
         )
         return TableInterpretationOutput(
+            classification = classification,
             markdown = combinedMarkdown,
             tokenUsage = tokenUsage
         )
@@ -363,14 +396,17 @@ class TableInterpretationAgentGenAiImpl(
     override fun parseBatchResponse(responseText: String): TableInterpretationBatchResult {
         return try {
             val response = batchJson.decodeFromString<TableInterpretationResponse>(responseText)
+            val classification = SnippetClassification.fromString(response.classification)
             val combinedMarkdown = combineMarkdownWithAdditionalInfo(response.markdown, response.additionalInfo)
             TableInterpretationBatchResult(
+                classification = classification,
                 markdown = combinedMarkdown,
                 additionalInfo = response.additionalInfo
             )
         } catch (e: Exception) {
             logger.warn("Failed to parse batch response: {}", e.message)
             TableInterpretationBatchResult(
+                classification = SnippetClassification.OTHERS,
                 markdown = "",
                 additionalInfo = ""
             )

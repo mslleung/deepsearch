@@ -4,7 +4,6 @@ import com.google.cloud.storage.BlobId
 import com.google.cloud.storage.BlobInfo
 import com.google.cloud.storage.Storage
 import com.google.cloud.storage.StorageOptions
-import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.config.GcsConfig
@@ -75,6 +74,7 @@ class GcsBatchSnapshotStorageService(
         private const val METADATA_FILE = "metadata.json"
         private const val HTML_FILE = "html.txt"
         private const val BOUNDING_BOXES_FILE = "bounding-boxes.json"
+        private const val HIDDEN_CONTAINER_BBOXES_FILE = "hidden-container-bboxes.json"
         private const val SCREENSHOT_FILE = "screenshot"  // Extension added based on mime type
         private const val CLEANED_HTML_FILE = "cleaned-html.txt"
         private const val SEMANTIC_ELEMENTS_FILE = "semantic-elements.json"
@@ -149,9 +149,19 @@ class GcsBatchSnapshotStorageService(
             })
         }
         
+        // Store hidden container bounding boxes for spatial table detection
+        extraction.hiddenContainerBoundingBoxes?.let { hiddenBboxes ->
+            if (hiddenBboxes.hiddenContainers.isNotEmpty()) {
+                uploads.add(async {
+                    storeJson("$basePath/$HIDDEN_CONTAINER_BBOXES_FILE", hiddenBboxes.toSerializable())
+                })
+            }
+        }
+        
         uploads.awaitAll()
-        logger.info("Stored extraction data: {} ({} icons, {} images)", 
-            basePath, extraction.icons.size, extraction.images.size)
+        logger.info("Stored extraction data: {} ({} icons, {} images, {} hidden containers)", 
+            basePath, extraction.icons.size, extraction.images.size, 
+            extraction.hiddenContainerBoundingBoxes?.hiddenContainerCount ?: 0)
         
         basePath
     }
@@ -200,10 +210,6 @@ class GcsBatchSnapshotStorageService(
             uploads.add(async { storeJson("$basePath/$TABLE_IDENTIFICATIONS_FILE", tables) })
         }
         
-        results.hiddenMobileLayouts?.let { layouts ->
-            uploads.add(async { storeJson("$basePath/$HIDDEN_MOBILE_LAYOUTS_FILE", layouts) })
-        }
-        
         results.iconInterpretations?.let { interpretations ->
             uploads.add(async { storeJson("$basePath/$ICON_INTERPRETATIONS_FILE", interpretations) })
         }
@@ -228,6 +234,12 @@ class GcsBatchSnapshotStorageService(
             data?.mapValues { IBrowserPage.BoundingBox(it.value.left, it.value.top, it.value.right, it.value.bottom) }
         }
     
+    override suspend fun readHiddenContainerBoundingBoxes(basePath: String): IBrowserPage.HiddenContainerBoundingBoxes? =
+        withContext(dispatchers.io) {
+            val data = readJson<SerializableHiddenContainerBoundingBoxes>("$basePath/$HIDDEN_CONTAINER_BBOXES_FILE")
+            data?.toDomain()
+        }
+    
     override suspend fun readTableIdentifications(basePath: String): List<TableIdentification>? =
         withContext(dispatchers.io) {
             readJson("$basePath/$TABLE_IDENTIFICATIONS_FILE")
@@ -249,11 +261,11 @@ class GcsBatchSnapshotStorageService(
         val cleanedHtml = async { readText("$basePath/$CLEANED_HTML_FILE") }
         val semanticElements = async { readJson<SemanticElements>("$basePath/$SEMANTIC_ELEMENTS_FILE") }
         val tableIdentifications = async { readJson<List<TableIdentification>>("$basePath/$TABLE_IDENTIFICATIONS_FILE") }
-        val hiddenMobileLayouts = async { readJson<List<MobileLayoutIdentification>>("$basePath/$HIDDEN_MOBILE_LAYOUTS_FILE") }
         val tableMarkdowns = async { readJson<Map<String, String>>("$basePath/$TABLE_MARKDOWNS_FILE") }
         val iconInterpretations = async { readJson<Map<String, String?>>("$basePath/$ICON_INTERPRETATIONS_FILE") }
         val imageTexts = async { readJson<Map<String, String?>>("$basePath/$IMAGE_TEXTS_FILE") }
         val boundingBoxes = async { readBoundingBoxes(basePath) }
+        val hiddenBboxes = async { readHiddenContainerBoundingBoxes(basePath) }
         
         val htmlContent = html.await() ?: return@coroutineScope null
         
@@ -262,11 +274,11 @@ class GcsBatchSnapshotStorageService(
             cleanedHtml = cleanedHtml.await(),
             semanticElements = semanticElements.await(),
             tableIdentifications = tableIdentifications.await(),
-            hiddenMobileLayouts = hiddenMobileLayouts.await(),
             tableMarkdowns = tableMarkdowns.await(),
             iconInterpretations = iconInterpretations.await(),
             imageTexts = imageTexts.await(),
-            boundingBoxes = boundingBoxes.await()
+            boundingBoxes = boundingBoxes.await(),
+            hiddenContainerBoundingBoxes = hiddenBboxes.await()
         )
     }
     
@@ -505,4 +517,58 @@ private data class SerializableBoundingBox(
 private data class MediaManifestEntry(
     val mimeType: String,
     val cssSelectors: List<String>
+)
+
+// ==================== Hidden Container Bounding Boxes ====================
+
+@kotlinx.serialization.Serializable
+private data class SerializableHiddenContainerBoundingBoxes(
+    val hiddenContainers: List<SerializableHiddenContainerBoundingBoxData>,
+    val hiddenContainerCount: Int,
+    val totalElementsCaptured: Int
+)
+
+@kotlinx.serialization.Serializable
+private data class SerializableHiddenContainerBoundingBoxData(
+    val containerId: String,
+    val containerBox: SerializableBoundingBox,
+    val elements: Map<String, SerializableBoundingBox>
+)
+
+private fun IBrowserPage.HiddenContainerBoundingBoxes.toSerializable() = SerializableHiddenContainerBoundingBoxes(
+    hiddenContainers = hiddenContainers.map { container ->
+        SerializableHiddenContainerBoundingBoxData(
+            containerId = container.containerId,
+            containerBox = SerializableBoundingBox(
+                container.containerBox.left, 
+                container.containerBox.top, 
+                container.containerBox.right, 
+                container.containerBox.bottom
+            ),
+            elements = container.elements.mapValues { (_, bbox) ->
+                SerializableBoundingBox(bbox.left, bbox.top, bbox.right, bbox.bottom)
+            }
+        )
+    },
+    hiddenContainerCount = hiddenContainerCount,
+    totalElementsCaptured = totalElementsCaptured
+)
+
+private fun SerializableHiddenContainerBoundingBoxes.toDomain() = IBrowserPage.HiddenContainerBoundingBoxes(
+    hiddenContainers = hiddenContainers.map { container ->
+        IBrowserPage.HiddenContainerBoundingBoxData(
+            containerId = container.containerId,
+            containerBox = IBrowserPage.BoundingBox(
+                container.containerBox.left,
+                container.containerBox.top,
+                container.containerBox.right,
+                container.containerBox.bottom
+            ),
+            elements = container.elements.mapValues { (_, bbox) ->
+                IBrowserPage.BoundingBox(bbox.left, bbox.top, bbox.right, bbox.bottom)
+            }
+        )
+    },
+    hiddenContainerCount = hiddenContainerCount,
+    totalElementsCaptured = totalElementsCaptured
 )

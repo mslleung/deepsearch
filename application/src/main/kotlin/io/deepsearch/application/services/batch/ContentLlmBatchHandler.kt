@@ -154,7 +154,6 @@ class ContentLlmBatchHandler(
                             cleanedHtml = null,  // Don't overwrite existing
                             semanticElements = null,
                             tableIdentifications = null,
-                            hiddenMobileLayouts = null,  // Don't overwrite existing
                             iconInterpretations = urlIconInterpretations.takeIf { it.isNotEmpty() },
                             imageTexts = urlImageTexts.takeIf { it.isNotEmpty() }
                         )

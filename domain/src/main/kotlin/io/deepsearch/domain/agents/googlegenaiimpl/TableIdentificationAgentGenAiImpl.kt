@@ -204,12 +204,11 @@ class TableIdentificationAgentGenAiImpl(
         // HTML already has data-ds-id attributes from browser's injectStableIds()
         val htmlWithIds = input.pageSnapshot.html
         val boundingBoxes = input.pageSnapshot.boundingBoxes
-        val hiddenContainers = input.pageSnapshot.hiddenContainers
         val screenshot = input.screenshot
 
         logger.debug(
-            "Table identification: HTML={} bytes, screenshot={} bytes, {} hidden containers",
-            htmlWithIds.length, screenshot.bytes.size, hiddenContainers.size
+            "Table identification: HTML={} bytes, screenshot={} bytes",
+            htmlWithIds.length, screenshot.bytes.size
         )
 
         val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
@@ -218,10 +217,7 @@ class TableIdentificationAgentGenAiImpl(
         val (programmaticTables, _) = extractSemanticTables(htmlWithIds)
         logger.debug("Programmatically extracted {} semantic <table> elements", programmaticTables.size)
 
-        // ========== Parallel Detection ==========
-        // 1. Vision detection for visible content
-        // 2. HTML detection for each hidden container (in parallel)
-
+        // ========== Vision Detection ==========
         // Pre-compute image bounding boxes for filtering graphical tables
         val imageBoundingBoxes = extractImageBoundingBoxes(boundingBoxes)
         val (screenshotWidth, screenshotHeight) = imageDimensionService.getImageDimensions(screenshot.bytes)
@@ -230,48 +226,23 @@ class TableIdentificationAgentGenAiImpl(
         
         logger.debug("Found {} image bounding boxes for filtering", imageBoundingBoxes.size)
 
-        val visionDeferred = async {
-            val (tables, usage) = detectTablesWithVision(screenshot, modelId)
-            
-            // Filter out vision-detected tables that overlap with image elements
-            // (tables rendered as images can't be extracted from DOM)
-            val filteredTables = filterVisionTablesOverlappingImages(
-                tables, imageBoundingBoxes, pageWidth, pageHeight
-            )
-            
-            if (filteredTables.size < tables.size) {
-                logger.debug(
-                    "Vision detection: {} tables found, {} after image filtering",
-                    tables.size, filteredTables.size
-                )
-            }
-            
-            val mapped = mapVisionTablesToDomElements(filteredTables, boundingBoxes, htmlWithIds, screenshot.bytes)
-            logger.debug("Vision detection: {} mapped to DOM", mapped.size)
-            mapped to usage
-        }
-
-        val hiddenDeferreds = hiddenContainers.map { container ->
-            async {
-                detectTablesInHiddenContainer(container, htmlWithIds, modelId)
-            }
-        }
-
-        // Await all results
-        val (visionTables, visionUsage) = visionDeferred.await()
-        val hiddenResults = hiddenDeferreds.awaitAll()
-
-        val hiddenTables = hiddenResults.flatMap { it.first }
-        val hiddenUsage = hiddenResults.fold(TokenUsageMetrics.empty(modelId)) { acc, result ->
-            acc + result.second
-        }
-
-        logger.debug(
-            "Hidden container detection: {} tables found across {} containers",
-            hiddenTables.size, hiddenContainers.size
+        val (tables, tokenUsage) = detectTablesWithVision(screenshot, modelId)
+        
+        // Filter out vision-detected tables that overlap with image elements
+        // (tables rendered as images can't be extracted from DOM)
+        val filteredTables = filterVisionTablesOverlappingImages(
+            tables, imageBoundingBoxes, pageWidth, pageHeight
         )
-
-        val tokenUsage = visionUsage + hiddenUsage
+        
+        if (filteredTables.size < tables.size) {
+            logger.debug(
+                "Vision detection: {} tables found, {} after image filtering",
+                tables.size, filteredTables.size
+            )
+        }
+        
+        val visionTables = mapVisionTablesToDomElements(filteredTables, boundingBoxes, htmlWithIds, screenshot.bytes)
+        logger.debug("Vision detection: {} mapped to DOM", visionTables.size)
 
         // ========== Deduplicate: Remove vision tables that overlap with programmatic tables ==========
         // Vision detection may find the same <table> element that was already extracted programmatically
@@ -298,36 +269,11 @@ class TableIdentificationAgentGenAiImpl(
             !isOverlapping
         }
 
-        // ========== Deduplicate: Remove hidden tables that overlap with programmatic/vision tables ==========
-        // A hidden table might be a descendant or ancestor of a programmatic or vision-detected table
-        val combinedIds = (programmaticIds + deduplicatedVisionTables.map { it.id }).toSet()
-
-        val deduplicatedHiddenTables = hiddenTables.filter { hiddenTable ->
-            val hiddenElement = doc.select("[data-ds-id=\"${hiddenTable.id}\"]").firstOrNull()
-                ?: return@filter true // Keep if element not found (shouldn't happen)
-
-            // Check if this hidden table is a descendant or ancestor of any combined table
-            val isOverlapping = combinedIds.any { combinedId ->
-                val combinedElement = doc.select("[data-ds-id=\"$combinedId\"]").firstOrNull()
-                    ?: return@any false
-                // Skip if hidden is inside combined, or combined is inside hidden
-                hiddenElement.parents().contains(combinedElement) ||
-                        combinedElement.parents().contains(hiddenElement) ||
-                        hiddenElement == combinedElement
-            }
-
-            if (isOverlapping) {
-                logger.debug("Deduplicating hidden table '{}' - overlaps with programmatic/vision table", hiddenTable.id)
-            }
-            !isOverlapping
-        }
-
-        val allTableResults = programmaticTables + deduplicatedVisionTables + deduplicatedHiddenTables
+        val allTableResults = programmaticTables + deduplicatedVisionTables
 
         logger.debug(
-            "Total tables: {} ({} semantic, {} vision after dedup from {}, {} hidden after dedup from {})",
-            allTableResults.size, programmaticTables.size, deduplicatedVisionTables.size, visionTables.size,
-            deduplicatedHiddenTables.size, hiddenTables.size
+            "Total visible tables: {} ({} semantic, {} vision after dedup from {})",
+            allTableResults.size, programmaticTables.size, deduplicatedVisionTables.size, visionTables.size
         )
 
         // ========== Construct CSS Selectors ==========
@@ -858,68 +804,6 @@ class TableIdentificationAgentGenAiImpl(
         }
 
         return response.tables to tokenUsage
-    }
-
-    /**
-     * Detect tables in a hidden container using HTML-based LLM detection.
-     * 
-     * Hidden containers (accordion panels, collapsed sections, etc.) are not visible in screenshots,
-     * so we process their HTML snippets individually with higher fidelity since they are smaller.
-     * 
-     * Note: container.html already has data-ds-id attributes from the browser's injectStableIds()
-     */
-    private suspend fun detectTablesInHiddenContainer(
-        container: IBrowserPage.HiddenContainer,
-        fullHtmlWithIds: String,
-        modelId: String
-    ): Pair<List<LlmTableResult>, TokenUsageMetrics> {
-        // container.html already has data-ds-id attributes from browser injection
-        val cleanedSnippet = cleanHtml(container.html)
-
-        var tokenUsage = TokenUsageMetrics.empty(modelId)
-
-        val response = withContext(dispatcherProvider.io) {
-            retryLlmCall<TableIdentificationResponse>(this@TableIdentificationAgentGenAiImpl::class.simpleName!! + "_hidden") {
-                val result = client.models.generateContent(
-                    modelId,
-                    listOf(Content.fromParts(Part.fromText(cleanedSnippet))),
-                    GenerateContentConfig.builder()
-                        .temperature(0F)
-                        .responseSchema(outputSchema)
-                        .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingBudget(0)
-                                .build()
-                        )
-                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                        .build()
-                )
-
-                result.checkFinishReason()
-
-                result.usageMetadata().ifPresent { metadata ->
-                    tokenUsage = TokenUsageMetrics(
-                        modelName = modelId,
-                        promptTokens = metadata.promptTokenCount().orElse(0),
-                        outputTokens = metadata.candidatesTokenCount().orElse(0),
-                        totalTokens = metadata.totalTokenCount().orElse(0)
-                    )
-                }
-
-                result.text() ?: throw RuntimeException("No text response from model")
-            }
-        }
-
-        logger.debug("Hidden container '{}' detection found {} tables", container.id, response.tables.size)
-
-        // The IDs in response are relative to the snippet - need to verify they exist in the full HTML
-        val validatedTables = response.tables.filter { table ->
-            val doc = Jsoup.parse(fullHtmlWithIds)
-            doc.select("[data-ds-id=\"${table.id}\"]").isNotEmpty()
-        }
-
-        return validatedTables to tokenUsage
     }
 
     /**

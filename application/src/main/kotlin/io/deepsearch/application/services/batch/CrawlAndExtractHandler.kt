@@ -284,7 +284,8 @@ class CrawlAndExtractHandler(
                 val snapshot: IBrowserPage.PageSnapshotWithMetadata,
                 val icons: List<IBrowserPage.Icon>,
                 val images: List<IBrowserPage.WebImage>,
-                val screenshot: IBrowserPage.Screenshot
+                val screenshot: IBrowserPage.Screenshot,
+                val hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes
             )
             val captures = coroutineScope {
                 val snapshotDeferred = async { page.capturePageSnapshot() }
@@ -295,14 +296,23 @@ class CrawlAndExtractHandler(
                     val screenshot = screenshotDeferred.await()
                     page.extractImagesWithScreenshot(screenshot)
                 }
+                // Hidden container bounding boxes - captured LAST as it may trigger re-renders
+                val hiddenBboxDeferred = async {
+                    snapshotDeferred.await()
+                    screenshotDeferred.await()
+                    iconsDeferred.await()
+                    imagesDeferred.await()
+                    page.captureHiddenContainerBoundingBoxes()
+                }
                 BrowserCaptures(
                     snapshotDeferred.await(),
                     iconsDeferred.await(),
                     imagesDeferred.await(),
-                    screenshotDeferred.await()
+                    screenshotDeferred.await(),
+                    hiddenBboxDeferred.await()
                 )
             }
-            val (snapshot, icons, images, screenshot) = captures
+            val (snapshot, icons, images, screenshot, hiddenBboxData) = captures
 
             // Convert icons to storage format (binary, not Base64)
             val iconDataList = icons.map { icon ->
@@ -340,7 +350,8 @@ class CrawlAndExtractHandler(
                 boundingBoxes = snapshot.boundingBoxes,
                 screenshot = ScreenshotData(screenshot.bytes, screenshot.mimeType.value),
                 icons = iconDataList,
-                images = imageDataList
+                images = imageDataList,
+                hiddenContainerBoundingBoxes = hiddenBboxData
             )
             
             val basePath = snapshotStorage.storeExtraction(jobId, urlHash, extractionData)

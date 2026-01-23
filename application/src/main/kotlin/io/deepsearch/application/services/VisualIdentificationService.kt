@@ -2,10 +2,8 @@ package io.deepsearch.application.services
 
 import io.deepsearch.application.services.batch.PageHtmlWithBoundingBoxes
 import io.deepsearch.domain.agents.IVisualIdentificationAgent
-import io.deepsearch.domain.agents.MobileLayoutIdentification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.VisualIdentificationInput
-import io.deepsearch.domain.agents.VisualIdentificationOutput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.entities.VisionDetectionCache
 import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
@@ -20,13 +18,14 @@ import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 
 /**
- * Combined result of visual identification containing semantic elements, tables, and hidden mobile layouts.
+ * Combined result of visual identification containing semantic elements and visible tables.
+ * 
+ * Note: This only contains visible content. Hidden container tables are detected separately
+ * using TableGridDetectorService in WebpageExtractionService.
  */
 data class VisualIdentificationResult(
     val semanticElements: SemanticElements,
-    val tables: List<TableIdentification>,
-    /** Mobile layouts found in hidden containers (duplicate UI structures to be removed) */
-    val hiddenMobileLayouts: List<MobileLayoutIdentification> = emptyList()
+    val tables: List<TableIdentification>
 )
 
 /**
@@ -116,8 +115,7 @@ interface IVisualIdentificationService {
 @Serializable
 private data class CachedVisionResult(
     val semanticElements: CachedSemanticElements,
-    val tables: List<CachedTableIdentification>,
-    val hiddenMobileLayouts: List<CachedMobileLayoutIdentification> = emptyList()
+    val tables: List<CachedTableIdentification>
 )
 
 @Serializable
@@ -140,12 +138,6 @@ private data class CachedTableIdentification(
     val dataId: String,
     val auxiliaryInfo: String,
     val containsMedia: Boolean
-)
-
-@Serializable
-private data class CachedMobileLayoutIdentification(
-    val dataId: String,
-    val description: String
 )
 
 /**
@@ -190,7 +182,7 @@ class VisualIdentificationService(
         return digest.digest()
     }
 
-    private fun agentOutputToCached(output: VisualIdentificationOutput): CachedVisionResult {
+    private fun agentOutputToCached(output: io.deepsearch.domain.agents.VisualIdentificationOutput): CachedVisionResult {
         return CachedVisionResult(
             semanticElements = CachedSemanticElements(
                 headerDataId = output.semanticElements.header?.dataId,
@@ -210,12 +202,6 @@ class VisualIdentificationService(
                     dataId = table.dataId,
                     auxiliaryInfo = table.auxiliaryInfo,
                     containsMedia = table.containsMedia
-                )
-            },
-            hiddenMobileLayouts = output.hiddenMobileLayouts.map { layout ->
-                CachedMobileLayoutIdentification(
-                    dataId = layout.dataId,
-                    description = layout.description
                 )
             }
         )
@@ -248,12 +234,6 @@ class VisualIdentificationService(
                     dataId = table.dataId,
                     auxiliaryInfo = table.auxiliaryInfo,
                     containsMedia = table.containsMedia
-                )
-            },
-            hiddenMobileLayouts = cached.hiddenMobileLayouts.map { layout ->
-                MobileLayoutIdentification(
-                    dataId = layout.dataId,
-                    description = layout.description
                 )
             }
         )
@@ -310,17 +290,15 @@ class VisualIdentificationService(
         )
 
         logger.debug(
-            "Visual identification complete: {} semantic elements, {} tables, {} hidden navigations, {} tokens",
+            "Visual identification complete: {} semantic elements, {} tables, {} tokens",
             countSemanticElements(agentOutput.semanticElements),
             agentOutput.tables.size,
-            agentOutput.hiddenMobileLayouts.size,
             agentOutput.tokenUsage.totalTokens
         )
 
         return VisualIdentificationResult(
             semanticElements = agentOutput.semanticElements,
-            tables = agentOutput.tables,
-            hiddenMobileLayouts = agentOutput.hiddenMobileLayouts
+            tables = agentOutput.tables
         )
     }
 
@@ -389,8 +367,7 @@ class VisualIdentificationService(
         )
         return VisualIdentificationResult(
             semanticElements = output.semanticElements,
-            tables = output.tables,
-            hiddenMobileLayouts = output.hiddenMobileLayouts
+            tables = output.tables
         )
     }
 

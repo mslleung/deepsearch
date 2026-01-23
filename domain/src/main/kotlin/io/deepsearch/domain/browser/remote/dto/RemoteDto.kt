@@ -208,14 +208,6 @@ data class FullPageSnapshotResponse(
 )
 
 @Serializable
-data class HiddenContainerResponse(
-    /** The data-ds-id of the hidden container element */
-    val id: String,
-    /** The outer HTML of the hidden container */
-    val html: String
-)
-
-@Serializable
 data class StableIdInjectionResponse(
     /** Number of structural/semantic elements injected (ds-element-N) */
     val elements: Int,
@@ -231,8 +223,7 @@ data class PageSnapshotWithMetadataResponse(
     val description: String?,
     val url: String,
     val html: String,
-    val boundingBoxes: Map<String, BoundingBoxResponse>,
-    val hiddenContainers: List<HiddenContainerResponse> = emptyList()
+    val boundingBoxes: Map<String, BoundingBoxResponse>
 )
 
 @Serializable
