@@ -4,8 +4,8 @@ import io.deepsearch.domain.agents.SnippetClassification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
 import io.deepsearch.domain.browser.IBrowserPage
-import io.deepsearch.domain.services.ITableGridDetectorService
-import io.deepsearch.domain.services.TableDetectionBoundingBox
+import io.deepsearch.domain.services.DiscoveredTable
+import io.deepsearch.domain.services.IRecursiveTableDiscoveryService
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.models.valueobjects.SessionId
@@ -60,7 +60,7 @@ class WebpageExtractionService(
     private val jsoupDomService: IJsoupDomService,
     private val htmlToMarkdownService: IHtmlToMarkdownService,
     private val markdownFormattingService: IMarkdownFormattingService,
-    private val tableGridDetectorService: ITableGridDetectorService
+    private val recursiveTableDiscoveryService: IRecursiveTableDiscoveryService
 ) : IWebpageExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -77,12 +77,13 @@ class WebpageExtractionService(
         val imageMapping: Map<String, String>
     )
     
-    /** Table candidate detected from hidden container using spatial analysis */
+    /** Table candidate detected from hidden container using recursive spatial analysis */
     private data class HiddenTableCandidate(
-        val containerId: String,
+        val elementId: String,
         val confidence: Double,
         val rowCount: Int,
-        val colCount: Int
+        val colCount: Int,
+        val depth: Int
     )
 
     // ========== Pipeline Extension for Flow Composition ==========
@@ -106,14 +107,14 @@ class WebpageExtractionService(
      *   takeFullPageScreenshot()┘
      *   extractIcons() ────────────> interpretIcons()
      *   extractImages() ───────────> interpretImages()
-     *   captureHiddenContainerBoundingBoxes() ──> TableGridDetectorService (server-side)
+     *   captureHiddenContainerBoundingBoxes() ──> RecursiveTableDiscoveryService (server-side)
      *   
      * ID injection runs first (~10ms), then browser operations run in parallel.
      * captureHiddenContainerBoundingBoxes is called LAST as it may trigger re-renders.
      *   
      * >>> BROWSER RELEASED after captureHiddenContainerBoundingBoxes <<<
      *   
-     *   TableGridDetectorService identifies hidden table candidates
+     *   RecursiveTableDiscoveryService recursively discovers tables within hidden containers
      *   [All LLM results + hidden tables] ─────────> DOM processing (Jsoup)
      */
     override suspend fun extractWebpage(
@@ -182,9 +183,9 @@ class WebpageExtractionService(
             webpage.close()
             logger.debug("Browser released after {} ms total browser time", browserDuration)
 
-            // ===== Identify hidden table candidates using TableGridDetectorService (server-side) =====
-            val hiddenTableCandidates = identifyHiddenTableCandidates(hiddenBboxData)
-            logger.debug("TableGridDetectorService found {} hidden table candidates", hiddenTableCandidates.size)
+            // ===== Identify hidden table candidates using RecursiveTableDiscoveryService (server-side) =====
+            val hiddenTableCandidates = identifyHiddenTableCandidates(hiddenBboxData, snapshot.html)
+            logger.debug("RecursiveTableDiscoveryService found {} hidden table candidates", hiddenTableCandidates.size)
 
             // ===== Await LLM Results =====
             val llmDuration = measureTimeMillis { awaitAll(visualId, iconRepl, imageRepl) }
@@ -234,46 +235,33 @@ class WebpageExtractionService(
     // ========== Hidden Table Detection ==========
     
     /**
-     * Identify table candidates from hidden container bounding boxes using TableGridDetectorService.
-     * This is a server-side algorithm that detects grid patterns without LLM calls.
+     * Identify table candidates from hidden container bounding boxes using RecursiveTableDiscoveryService.
+     * This performs recursive DOM traversal to find tables at any depth within hidden containers.
      */
     private fun identifyHiddenTableCandidates(
-        hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes
+        hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes,
+        fullPageHtml: String
     ): List<HiddenTableCandidate> {
-        val candidates = mutableListOf<HiddenTableCandidate>()
+        val discoveredTables = recursiveTableDiscoveryService.discoverTablesFromHiddenContainers(
+            hiddenContainerData = hiddenBboxData,
+            fullPageHtml = fullPageHtml
+        )
         
-        for (container in hiddenBboxData.hiddenContainers) {
-            // Need at least 4 elements for a meaningful table
-            if (container.elements.size < 4) continue
-            
-            // Convert to detection bounding boxes
-            val boxes = container.elements.mapValues { (_, box) ->
-                TableDetectionBoundingBox(
-                    left = box.left,
-                    top = box.top,
-                    right = box.right,
-                    bottom = box.bottom
-                )
-            }
-            
-            val gridResult = tableGridDetectorService.detectTable(boxes)
-            
-            if (gridResult.isTable && gridResult.confidence >= 0.5) {
-                logger.debug(
-                    "Hidden container {} detected as table: {}x{} grid (confidence: {})",
-                    container.containerId, gridResult.rowCount, gridResult.colCount,
-                    "%.2f".format(gridResult.confidence)
-                )
-                candidates.add(HiddenTableCandidate(
-                    containerId = container.containerId,
-                    confidence = gridResult.confidence,
-                    rowCount = gridResult.rowCount,
-                    colCount = gridResult.colCount
-                ))
-            }
+        return discoveredTables.map { table ->
+            logger.debug(
+                "Hidden table {} (depth={}) detected: {}x{} grid (confidence: {})",
+                table.elementId, table.depth,
+                table.gridResult.rowCount, table.gridResult.colCount,
+                "%.2f".format(table.gridResult.confidence)
+            )
+            HiddenTableCandidate(
+                elementId = table.elementId,
+                confidence = table.gridResult.confidence,
+                rowCount = table.gridResult.rowCount,
+                colCount = table.gridResult.colCount,
+                depth = table.depth
+            )
         }
-        
-        return candidates
     }
     
     /**
@@ -295,13 +283,13 @@ class WebpageExtractionService(
         // Deduplicate hidden candidates against visible tables
         val newHiddenTables = hiddenCandidates.mapNotNull { candidate ->
             // Skip if already detected as visible table
-            if (candidate.containerId in visibleIds) {
-                logger.debug("Skipping hidden candidate {} - already in visible tables", candidate.containerId)
+            if (candidate.elementId in visibleIds) {
+                logger.debug("Skipping hidden candidate {} - already in visible tables", candidate.elementId)
                 return@mapNotNull null
             }
             
             // Check for parent/child relationship with visible tables
-            val hiddenElement = doc.select("[data-ds-id=\"${candidate.containerId}\"]").firstOrNull()
+            val hiddenElement = doc.select("[data-ds-id=\"${candidate.elementId}\"]").firstOrNull()
                 ?: return@mapNotNull null
             
             val isOverlapping = visibleIds.any { visionId ->
@@ -312,7 +300,7 @@ class WebpageExtractionService(
             }
             
             if (isOverlapping) {
-                logger.debug("Skipping hidden candidate {} - overlaps with visible table", candidate.containerId)
+                logger.debug("Skipping hidden candidate {} - overlaps with visible table", candidate.elementId)
                 return@mapNotNull null
             }
             
@@ -324,8 +312,8 @@ class WebpageExtractionService(
             
             TableIdentification(
                 cssSelector = cssSelector,
-                dataId = candidate.containerId,
-                auxiliaryInfo = "Hidden table: ${candidate.rowCount}x${candidate.colCount} grid (confidence: ${"%.0f".format(candidate.confidence * 100)}%)",
+                dataId = candidate.elementId,
+                auxiliaryInfo = "Hidden table (depth=${candidate.depth}): ${candidate.rowCount}x${candidate.colCount} grid (confidence: ${"%.0f".format(candidate.confidence * 100)}%)",
                 containsMedia = containsMedia
             )
         }

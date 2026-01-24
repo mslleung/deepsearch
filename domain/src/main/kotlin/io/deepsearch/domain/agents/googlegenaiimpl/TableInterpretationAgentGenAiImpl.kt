@@ -77,9 +77,10 @@ class TableInterpretationAgentGenAiImpl(
         Markdown conversion rules:
         - For TABLE/CARD: Convert to markdown table preserving row/column structure
         - For LIST: Convert to markdown bullet/numbered list
-        - For OTHERS: Structure into well-formatted markdown
+        - For OTHERS: Structure into well-formatted markdown (headers, paragraphs, lists)
         - For COOKIE_DECLARATION_TABLE/HIDDEN_MOBILE_LAYOUT: Leave markdown empty
-        - If the snippet contains mixed content, identify the primary type and convert accordingly
+        - If the snippet contains mixed content, convert each relevant section accordingly to generate a well-structured markdown
+        - Never return raw HTML tags in the markdown field. Always convert to proper markdown syntax.
         
         Table/Card conversion rules:
         - Preserve row/column structure accurately

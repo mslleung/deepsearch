@@ -21,7 +21,7 @@ import java.security.MessageDigest
  * Combined result of visual identification containing semantic elements and visible tables.
  * 
  * Note: This only contains visible content. Hidden container tables are detected separately
- * using TableGridDetectorService in WebpageExtractionService.
+ * using RecursiveTableDiscoveryService in WebpageExtractionService.
  */
 data class VisualIdentificationResult(
     val semanticElements: SemanticElements,
