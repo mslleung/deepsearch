@@ -80,7 +80,6 @@ class ExposedApiKeyRepository(
         apiKeyTable.selectAll()
             .where { (apiKeyTable.userId eq userId.value) and (apiKeyTable.type eq type.name) and apiKeyTable.deletedAtEpochMs.isNull() }
             .count()
-            .toLong()
     }
 
     override suspend fun delete(id: ApiKeyId): Boolean = transactionService.withTransaction {

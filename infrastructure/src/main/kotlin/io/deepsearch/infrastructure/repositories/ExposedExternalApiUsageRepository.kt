@@ -111,7 +111,6 @@ class ExposedExternalApiUsageRepository(
         externalApiUsageTable.selectAll()
             .where { externalApiUsageTable.sessionId eq sessionId.toStorageString() }
             .count()
-            .toLong()
     }
 
     override suspend fun deleteBySessionId(sessionId: SessionId): Long = transactionService.withTransaction {
