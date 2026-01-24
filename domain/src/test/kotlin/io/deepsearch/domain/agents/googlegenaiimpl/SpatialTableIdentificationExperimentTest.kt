@@ -76,9 +76,18 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             val injectionResult = page.injectStableIds()
             println("Injected ${injectionResult.elements} element IDs, ${injectionResult.icons} icon IDs, ${injectionResult.images} image IDs")
 
-            // Step 3: Capture bounding boxes from hidden containers
-            // (This must run BEFORE page snapshot so any re-injected IDs are in the HTML)
-            println("\n>>> Step 3: Capturing bounding boxes from hidden containers...")
+            // Step 3: Capture page snapshot FIRST (for HTML)
+            // This must run BEFORE hidden container capture because:
+            // - Hidden container capture reveals/restores containers which may trigger React re-renders
+            // - The capture script re-injects IDs at the end to ensure consistency
+            // - But we want the snapshot to have stable IDs before any reveal/restore cycles
+            println("\n>>> Step 3: Capturing page snapshot...")
+            val pageSnapshot = page.capturePageSnapshot()
+            println("Captured page HTML: ${pageSnapshot.html.length} chars")
+
+            // Step 4: Capture bounding boxes from hidden containers
+            // This reveals containers, re-injects IDs, captures bboxes, restores, and re-injects again
+            println("\n>>> Step 4: Capturing bounding boxes from hidden containers...")
             val hiddenContainerData = page.captureHiddenContainerBoundingBoxes()
             
             println("\nHidden Container Data:")
@@ -89,12 +98,6 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             for (container in hiddenContainerData.hiddenContainers) {
                 println("  - Container ${container.containerId}: ${container.elements.size} elements")
             }
-
-            // Step 4: Capture page snapshot (for HTML)
-            // (After hidden container processing so HTML has same IDs as bounding boxes)
-            println("\n>>> Step 4: Capturing page snapshot...")
-            val pageSnapshot = page.capturePageSnapshot()
-            println("Captured page HTML: ${pageSnapshot.html.length} chars")
 
             // Step 5: Recursive table discovery (Kotlin-side DOM traversal + spatial analysis)
             println("\n>>> Step 5: Running recursive table discovery (Kotlin-side)...")
