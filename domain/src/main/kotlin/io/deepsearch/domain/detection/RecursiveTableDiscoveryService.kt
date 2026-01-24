@@ -36,10 +36,11 @@ data class TableDiscoveryConfig(
  */
 class RecursiveTableDiscoveryService(
     private val tableGridDetectorService: ITableGridDetectorService,
-    private val config: TableDiscoveryConfig = TableDiscoveryConfig()
 ) : IRecursiveTableDiscoveryService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
+
+    private val config: TableDiscoveryConfig = TableDiscoveryConfig()
 
     override fun discoverTables(
         containerHtml: String,
