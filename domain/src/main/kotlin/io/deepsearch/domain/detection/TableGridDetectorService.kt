@@ -6,22 +6,42 @@ import io.deepsearch.domain.services.TableDetectionBoundingBox
 import io.deepsearch.domain.services.TableGridResult
 
 /**
- * Robust table grid detection using adaptive gap-based clustering.
+ * Robust table grid detection using edge clustering.
  * 
  * This service analyzes bounding boxes of elements to identify table structures.
  * It handles:
- * - Variable cell sizes
+ * - Variable cell sizes (rows can have different heights)
  * - Merged cells (spanning multiple rows/columns)
  * - Sparse tables
- * - No hardcoded thresholds (adapts to the data)
+ * - Uniform spacing (where gap-based analysis fails)
  * 
- * The algorithm uses projection-based gap analysis:
- * 1. Project all box edges onto Y-axis to find row boundaries
- * 2. Project all box edges onto X-axis to find column boundaries
- * 3. Assign each box to grid cells (handling spans)
- * 4. Validate the grid structure
+ * The algorithm uses edge clustering (not gap thresholding):
+ * 1. Collect all edges (top/bottom for rows, left/right for columns)
+ * 2. Cluster edges that are close together (aligned elements)
+ * 3. Each cluster represents a boundary zone
+ * 4. Detect table if EITHER axis shows structure (high recall)
+ * 
+ * Design principle: Prioritize recall over precision.
+ * False positives are acceptable; missing tables is not.
  */
 class TableGridDetectorService : ITableGridDetectorService {
+    
+    companion object {
+        // Minimum clustering tolerance (pixels)
+        private const val MIN_CLUSTER_TOLERANCE = 15.0
+        
+        // Maximum clustering tolerance (pixels) 
+        private const val MAX_CLUSTER_TOLERANCE = 50.0
+        
+        // Tolerance as fraction of median element size
+        private const val TOLERANCE_SIZE_FACTOR = 0.6
+        
+        // Minimum confidence to accept as table (lowered for high recall)
+        private const val MIN_CONFIDENCE = 0.35
+        
+        // Minimum fill ratio (lowered for sparse tables)
+        private const val MIN_FILL_RATIO = 0.15
+    }
     
     /**
      * Detect if the given bounding boxes form a table grid.
@@ -37,34 +57,54 @@ class TableGridDetectorService : ITableGridDetectorService {
         val boxList = boxes.entries.toList()
         val boundingBoxes = boxList.map { it.value }
         
-        // Step 1: Find row boundaries using horizontal edges (tops and bottoms)
+        // Compute element size statistics for adaptive tolerance
+        val heights = boundingBoxes.map { it.bottom - it.top }.filter { it > 0 }
+        val widths = boundingBoxes.map { it.right - it.left }.filter { it > 0 }
+        val medianHeight = heights.sorted().getOrNull(heights.size / 2) ?: 20.0
+        val medianWidth = widths.sorted().getOrNull(widths.size / 2) ?: 50.0
+        
+        // Step 1: Find row boundaries using edge clustering on horizontal edges
         val horizontalEdges = boundingBoxes.flatMap { listOf(it.top, it.bottom) }
-        val rowBoundaries = findBoundaries(horizontalEdges)
-
-        if (rowBoundaries.size < 2) {
-            return TableGridResult.NO_TABLE.copy(reason = "Could not find row structure")
-        }
-
-        // Step 2: Find column boundaries using vertical edges (lefts and rights)
+        val rowTolerance = computeClusterTolerance(medianHeight)
+        val rowBoundaries = findBoundariesByEdgeClustering(horizontalEdges, rowTolerance)
+        
+        // Step 2: Find column boundaries using edge clustering on vertical edges
         val verticalEdges = boundingBoxes.flatMap { listOf(it.left, it.right) }
-        val colBoundaries = findBoundaries(verticalEdges)
-
-        if (colBoundaries.size < 2) {
-            return TableGridResult.NO_TABLE.copy(reason = "Could not find column structure")
+        val colTolerance = computeClusterTolerance(medianWidth)
+        val colBoundaries = findBoundariesByEdgeClustering(verticalEdges, colTolerance)
+        
+        val rowCount = maxOf(0, rowBoundaries.size - 1)
+        val colCount = maxOf(0, colBoundaries.size - 1)
+        
+        // Either axis showing structure is enough (high recall)
+        val hasRowStructure = rowCount >= 2
+        val hasColStructure = colCount >= 2
+        
+        if (!hasRowStructure && !hasColStructure) {
+            return TableGridResult.NO_TABLE.copy(
+                reason = "No structure found: ${rowCount} rows, ${colCount} cols"
+            )
         }
-
-        val rowCount = rowBoundaries.size - 1
-        val colCount = colBoundaries.size - 1
-
-        if (rowCount < 2 || colCount < 2) {
-            return TableGridResult.NO_TABLE.copy(reason = "Grid too small: ${rowCount}×${colCount}")
+        
+        // If only one axis has structure, ensure minimum grid size
+        if (rowCount * colCount < 2) {
+            return TableGridResult.NO_TABLE.copy(
+                reason = "Grid too small: ${rowCount}×${colCount}"
+            )
         }
 
         // Step 3: Assign each box to grid cells (handling merged cells)
         val cells = assignBoxesToGrid(boxList, rowBoundaries, colBoundaries)
 
-        // Step 4: Validate the grid and calculate confidence
-        val validation = validateGrid(cells, rowCount, colCount, boxes.size)
+        // Step 4: Validate the grid and calculate confidence (relaxed for high recall)
+        val validation = validateGrid(
+            cells = cells, 
+            rowCount = rowCount, 
+            colCount = colCount, 
+            totalBoxes = boxes.size,
+            hasRowStructure = hasRowStructure,
+            hasColStructure = hasColStructure
+        )
 
         return TableGridResult(
             isTable = validation.isValid,
@@ -77,129 +117,60 @@ class TableGridDetectorService : ITableGridDetectorService {
             reason = validation.reason
         )
     }
+    
+    /**
+     * Compute adaptive clustering tolerance based on element size.
+     * Larger elements get larger tolerance.
+     */
+    private fun computeClusterTolerance(medianSize: Double): Double {
+        val computed = medianSize * TOLERANCE_SIZE_FACTOR
+        return maxOf(MIN_CLUSTER_TOLERANCE, minOf(MAX_CLUSTER_TOLERANCE, computed))
+    }
 
     /**
-     * Find grid boundaries using adaptive gap clustering.
+     * Find grid boundaries using edge clustering.
      * 
-     * The key insight: grid lines occur where many box edges align.
-     * We cluster edge positions and use cluster centers as boundaries.
+     * Key insight: Elements in the same row/column have edges that cluster together.
+     * Instead of looking for "big gaps", we cluster aligned edges.
+     * 
+     * This works even for uniform spacing where all gaps are similar.
      */
-    private fun findBoundaries(edges: List<Double>): List<Double> {
+    private fun findBoundariesByEdgeClustering(edges: List<Double>, tolerance: Double): List<Double> {
         if (edges.size < 2) return emptyList()
 
-        // Sort edges
+        // Sort all edges
         val sorted = edges.sorted()
-
-        // Remove near-duplicates (edges within small tolerance are the same line)
-        val tolerance = computeAdaptiveTolerance(sorted)
-        val dedupedEdges = deduplicateValues(sorted, tolerance)
-
-        if (dedupedEdges.size < 2) return dedupedEdges
-
-        // Find gaps between consecutive unique edges
-        val gaps = mutableListOf<GapInfo>()
-        for (i in 0 until dedupedEdges.size - 1) {
-            gaps.add(GapInfo(
-                gap = dedupedEdges[i + 1] - dedupedEdges[i],
-                position = (dedupedEdges[i] + dedupedEdges[i + 1]) / 2,
-                afterIndex = i
-            ))
-        }
-
-        if (gaps.isEmpty()) return dedupedEdges
-
-        // Classify gaps: "within-cell" gaps are small, "between-cell" gaps are large
-        val gapThreshold = computeGapThreshold(gaps.map { it.gap })
-
-        // Boundaries are at: start, each significant gap, end
-        val boundaries = mutableListOf(dedupedEdges.first())
         
-        for (g in gaps) {
-            if (g.gap >= gapThreshold) {
-                // This is a significant gap - add boundary at the edge after the gap
-                boundaries.add(dedupedEdges[g.afterIndex + 1])
-            }
-        }
-
-        // Ensure we have the last edge
-        val lastEdge = dedupedEdges.last()
-        if (boundaries.last() != lastEdge) {
-            boundaries.add(lastEdge)
-        }
-
-        return boundaries
-    }
-
-    /**
-     * Compute adaptive tolerance based on the data spread.
-     * Small tolerance for tightly packed data, larger for spread out.
-     */
-    private fun computeAdaptiveTolerance(sortedValues: List<Double>): Double {
-        if (sortedValues.size < 2) return 5.0
+        // Cluster edges that are within tolerance of each other
+        val clusters = mutableListOf<MutableList<Double>>()
+        var currentCluster = mutableListOf(sorted[0])
         
-        val range = sortedValues.last() - sortedValues.first()
-        // Tolerance is ~1% of range, but at least 3px and at most 20px
-        return maxOf(3.0, minOf(20.0, range * 0.01))
-    }
-
-    /**
-     * Remove near-duplicate values within tolerance.
-     * Returns representative values (cluster centers).
-     */
-    private fun deduplicateValues(sorted: List<Double>, tolerance: Double): List<Double> {
-        if (sorted.isEmpty()) return emptyList()
-
-        val result = mutableListOf<Double>()
-        var clusterStart = 0
-        var clusterSum = sorted[0]
-        var clusterCount = 1
-
         for (i in 1 until sorted.size) {
-            if (sorted[i] - sorted[clusterStart] <= tolerance) {
-                // Same cluster
-                clusterSum += sorted[i]
-                clusterCount++
+            val edge = sorted[i]
+            // Check if this edge is close to any edge in the current cluster
+            // We use the cluster's min value as reference to ensure cluster cohesion
+            val clusterMin = currentCluster.first()
+            val clusterMax = currentCluster.last()
+            
+            // Edge belongs to current cluster if it's within tolerance of the cluster range
+            if (edge - clusterMin <= tolerance * 2 && edge - clusterMax <= tolerance) {
+                currentCluster.add(edge)
             } else {
-                // New cluster - save previous cluster's center
-                result.add(clusterSum / clusterCount)
-                clusterStart = i
-                clusterSum = sorted[i]
-                clusterCount = 1
+                // Start new cluster
+                clusters.add(currentCluster)
+                currentCluster = mutableListOf(edge)
             }
         }
         // Don't forget last cluster
-        result.add(clusterSum / clusterCount)
-
-        return result
-    }
-
-    /**
-     * Compute gap threshold to separate within-cell gaps from between-cell gaps.
-     * Uses a simple approach: significant gaps are > 2× median gap.
-     * For robustness, also considers the gap distribution.
-     */
-    private fun computeGapThreshold(gaps: List<Double>): Double {
-        if (gaps.isEmpty()) return Double.MAX_VALUE
-        if (gaps.size == 1) return gaps[0] * 1.5
-
-        val sorted = gaps.sorted()
-        val median = sorted[sorted.size / 2]
+        clusters.add(currentCluster)
         
-        // Also compute the "natural break" - largest jump in sorted gaps
-        var maxJump = 0.0
-        var jumpThreshold = median * 2
-
-        for (i in 0 until sorted.size - 1) {
-            val jump = sorted[i + 1] - sorted[i]
-            if (jump > maxJump) {
-                maxJump = jump
-                // Threshold is just above where the jump occurs
-                jumpThreshold = sorted[i] + jump * 0.1
-            }
+        // Each cluster represents a boundary zone
+        // Return the center of each cluster as the boundary
+        val boundaries = clusters.map { cluster ->
+            cluster.average()
         }
-
-        // Use the more conservative (higher) threshold
-        return maxOf(median * 1.5, jumpThreshold)
+        
+        return boundaries
     }
 
     /**
@@ -211,8 +182,13 @@ class TableGridDetectorService : ITableGridDetectorService {
         rowBoundaries: List<Double>,
         colBoundaries: List<Double>
     ): List<GridCell> {
+        if (rowBoundaries.size < 2 || colBoundaries.size < 2) {
+            return emptyList()
+        }
+        
         val cells = mutableListOf<GridCell>()
-        val tolerance = 5.0 // Small tolerance for edge alignment
+        // Use larger tolerance for assignment to handle edge cases
+        val tolerance = 10.0
 
         for ((elementId, box) in boxList) {
             // Find which rows this box spans
@@ -239,8 +215,6 @@ class TableGridDetectorService : ITableGridDetectorService {
 
     /**
      * Find which grid cell index a coordinate falls into.
-     * For 'start' positions (top, left): find the cell that starts at or before this position.
-     * For 'end' positions (bottom, right): find the cell that ends at or after this position.
      */
     private fun findBoundaryIndex(
         value: Double,
@@ -248,6 +222,8 @@ class TableGridDetectorService : ITableGridDetectorService {
         tolerance: Double,
         type: BoundaryType
     ): Int {
+        if (boundaries.size < 2) return -1
+        
         for (i in 0 until boundaries.size - 1) {
             val cellStart = boundaries[i]
             val cellEnd = boundaries[i + 1]
@@ -272,23 +248,25 @@ class TableGridDetectorService : ITableGridDetectorService {
 
     /**
      * Validate that the detected grid looks like a real table.
+     * Relaxed thresholds for high recall - prefer false positives over missed tables.
      */
     private fun validateGrid(
         cells: List<GridCell>,
         rowCount: Int,
         colCount: Int,
-        totalBoxes: Int
+        totalBoxes: Int,
+        hasRowStructure: Boolean,
+        hasColStructure: Boolean
     ): ValidationResult {
-        // Check: Do we have enough cells assigned?
-        if (cells.size < 4) {
+        // Very relaxed minimum cells check
+        if (cells.size < 2) {
             return ValidationResult(
                 isValid = false,
                 confidence = 0.0,
-                reason = "Too few cells assigned to grid"
+                reason = "Too few cells assigned to grid (${cells.size})"
             )
         }
 
-        // Check: Is the grid reasonably filled?
         // Create occupancy grid
         val occupied = Array(rowCount) { BooleanArray(colCount) }
 
@@ -311,57 +289,63 @@ class TableGridDetectorService : ITableGridDetectorService {
         }
 
         val totalCells = rowCount * colCount
-        val fillRatio = filledCount.toDouble() / totalCells
+        val fillRatio = if (totalCells > 0) filledCount.toDouble() / totalCells else 0.0
 
-        // Check row consistency - each row should have similar fill
+        // Check row consistency
         val rowFills = occupied.map { row -> row.count { it } }
-        val avgRowFill = rowFills.average()
-        val rowVariance = if (rowFills.isNotEmpty()) {
+        val avgRowFill = if (rowFills.isNotEmpty()) rowFills.average() else 0.0
+        val rowVariance = if (rowFills.isNotEmpty() && avgRowFill > 0) {
             rowFills.map { (it - avgRowFill).let { diff -> diff * diff } }.average()
         } else 0.0
         val rowConsistency = 1.0 / (1.0 + rowVariance / maxOf(1.0, avgRowFill * avgRowFill))
 
-        // Calculate confidence
+        // Calculate confidence (relaxed scoring for high recall)
         var confidence = 0.0
 
-        // Base confidence from fill ratio (tables should be >50% filled)
+        // Base confidence from having structure on either axis
+        if (hasRowStructure && hasColStructure) {
+            confidence += 0.3  // Both axes have structure - strong signal
+        } else if (hasRowStructure || hasColStructure) {
+            confidence += 0.2  // One axis has structure - still valid
+        }
+
+        // Confidence from fill ratio (relaxed thresholds)
         confidence += when {
-            fillRatio >= 0.5 -> 0.3
-            fillRatio >= 0.3 -> 0.15
+            fillRatio >= 0.5 -> 0.25
+            fillRatio >= 0.3 -> 0.2
+            fillRatio >= 0.15 -> 0.1
             else -> 0.0
         }
 
         // Confidence from row consistency
-        confidence += rowConsistency * 0.4
+        confidence += rowConsistency * 0.25
 
         // Bonus for reasonable table size
-        if (rowCount >= 3 && colCount >= 2) confidence += 0.15
-        if (rowCount >= 5) confidence += 0.1
-        if (colCount >= 3) confidence += 0.05
+        if (rowCount >= 3) confidence += 0.1
+        if (colCount >= 2) confidence += 0.05
+        if (rowCount >= 5) confidence += 0.05
 
-        // Penalty for very sparse tables
-        if (fillRatio < 0.3) confidence *= 0.5
+        // Small penalty for very sparse tables, but don't reject them
+        if (fillRatio < MIN_FILL_RATIO) {
+            confidence *= 0.7
+        }
 
         confidence = minOf(1.0, maxOf(0.0, confidence))
 
-        val isValid = confidence >= 0.5 && fillRatio >= 0.3 && rowCount >= 2 && colCount >= 2
+        // Relaxed validation - accept if confidence meets threshold OR if we have good structure
+        val hasMinimumGrid = (rowCount >= 2 && colCount >= 1) || (rowCount >= 1 && colCount >= 2)
+        val isValid = hasMinimumGrid && (confidence >= MIN_CONFIDENCE || fillRatio >= 0.4)
 
         return ValidationResult(
             isValid = isValid,
             confidence = confidence,
             reason = if (isValid) {
-                "Grid ${rowCount}×${colCount}, ${(fillRatio * 100).toInt()}% filled"
+                "Grid ${rowCount}×${colCount}, ${(fillRatio * 100).toInt()}% filled, conf=${String.format("%.2f", confidence)}"
             } else {
-                "Low confidence: fill=${(fillRatio * 100).toInt()}%, consistency=${(rowConsistency * 100).toInt()}%"
+                "Low confidence: fill=${(fillRatio * 100).toInt()}%, conf=${String.format("%.2f", confidence)}, rows=$rowCount, cols=$colCount"
             }
         )
     }
-
-    private data class GapInfo(
-        val gap: Double,
-        val position: Double,
-        val afterIndex: Int
-    )
 
     private enum class BoundaryType {
         START, END

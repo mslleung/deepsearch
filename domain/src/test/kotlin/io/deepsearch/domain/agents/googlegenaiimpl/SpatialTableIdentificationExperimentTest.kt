@@ -95,8 +95,29 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             println("  - Total elements captured: ${hiddenContainerData.totalElementsCaptured}")
             
             // Debug: Print container info
-            for (container in hiddenContainerData.hiddenContainers) {
+            for ((idx, container) in hiddenContainerData.hiddenContainers.withIndex()) {
                 println("  - Container [${container.containerLocator.take(50)}...]: ${container.elements.size} elements")
+                
+                // Debug: For containers 9-13 (the 5 accordion sections), print bounding box stats
+                if (idx in 8..12) {
+                    val nonZeroBoxes = container.elements.count { (_, box) -> 
+                        (box.right - box.left) > 0 && (box.bottom - box.top) > 0 
+                    }
+                    val zeroSizeBoxes = container.elements.count { (_, box) ->
+                        (box.right - box.left) == 0.0 || (box.bottom - box.top) == 0.0
+                    }
+                    println("      [DEBUG Container ${idx + 1}] Non-zero boxes: $nonZeroBoxes, Zero-size boxes: $zeroSizeBoxes")
+                    
+                    // Print first few element bounding boxes
+                    if (container.elements.isNotEmpty()) {
+                        println("      [DEBUG] Sample bounding boxes:")
+                        container.elements.entries.take(5).forEach { (localId, box) ->
+                            val w = box.right - box.left
+                            val h = box.bottom - box.top
+                            println("        $localId: (${box.left}, ${box.top}) ${w}x${h}")
+                        }
+                    }
+                }
             }
             
             // Verify accordion sections are captured (for Sleekflow pricing page)
@@ -263,13 +284,14 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                     }
                 }
                 
-                // Output tables grouped by accordion section (for Sleekflow pricing page)
+                // Output tables grouped by section (using table's own HTML, not containerHtml)
+                // This is a generic approach that works for any page structure
                 if (url.contains("sleekflow.io/pricing")) {
                     println("\n" + "=".repeat(80))
-                    println("TABLES BY ACCORDION SECTION")
+                    println("TABLES BY SECTION (Generic Grouping)")
                     println("=".repeat(80))
                     
-                    val expectedAccordionSections = listOf(
+                    val sectionKeywords = listOf(
                         "SleekFlow AI",
                         "Omnichannel engagement",
                         "Integrations",
@@ -277,31 +299,32 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         "Support and service"
                     )
                     
-                    for (accordionName in expectedAccordionSections) {
+                    for (sectionName in sectionKeywords) {
                         println("\n" + "━".repeat(70))
-                        println("ACCORDION: $accordionName")
+                        println("SECTION: $sectionName")
                         println("━".repeat(70))
                         
-                        // Find tables that belong to this accordion
-                        // A table belongs to an accordion if its containerHtml contains the accordion name
-                        val tablesInAccordion = interpretedTables.filter { result ->
-                            result.table.containerHtml.contains(accordionName, ignoreCase = true)
+                        // Generic approach: check if the TABLE'S OWN HTML contains the section name
+                        // This uses the element's outerHtml (scoped to just that table), not containerHtml
+                        val tablesInSection = interpretedTables.filter { result ->
+                            result.html.contains(sectionName, ignoreCase = true)
                         }
                         
-                        if (tablesInAccordion.isEmpty()) {
-                            println("  No tables detected in this accordion.")
+                        if (tablesInSection.isEmpty()) {
+                            println("  No tables with '$sectionName' in their content.")
                         } else {
-                            println("  Tables found: ${tablesInAccordion.size}")
+                            println("  Tables found: ${tablesInSection.size}")
                             
-                            tablesInAccordion.forEachIndexed { idx, result ->
+                            tablesInSection.forEachIndexed { idx, result ->
                                 println("\n  ${"─".repeat(60)}")
-                                println("  TABLE ${idx + 1} in '$accordionName'")
+                                println("  TABLE ${idx + 1} containing '$sectionName'")
                                 println("  ${"─".repeat(60)}")
                                 println("  Local Element ID: ${result.table.localElementId}")
+                                println("  Depth: ${result.table.depth}")
                                 println("  Grid: ${result.table.gridResult.rowCount} rows × ${result.table.gridResult.colCount} cols")
+                                println("  Confidence: ${String.format("%.2f", result.table.gridResult.confidence)}")
                                 println("  Classification: ${result.classification}")
                                 println("\n  MARKDOWN OUTPUT:")
-                                // Indent the markdown for better readability
                                 result.markdown.lines().forEach { line ->
                                     println("    $line")
                                 }
@@ -309,18 +332,18 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         }
                     }
                     
-                    // Summary of accordion tables
+                    // Summary
                     println("\n" + "=".repeat(80))
-                    println("ACCORDION TABLES SUMMARY")
+                    println("SECTION TABLES SUMMARY (by table content)")
                     println("=".repeat(80))
                     
-                    for (accordionName in expectedAccordionSections) {
-                        val tablesInAccordion = interpretedTables.filter { result ->
-                            result.table.containerHtml.contains(accordionName, ignoreCase = true)
+                    for (sectionName in sectionKeywords) {
+                        val tablesInSection = interpretedTables.filter { result ->
+                            result.html.contains(sectionName, ignoreCase = true)
                         }
-                        val tableCount = tablesInAccordion.size
+                        val tableCount = tablesInSection.size
                         val status = if (tableCount > 0) "✅" else "⚠️"
-                        println("  $status $accordionName: $tableCount table(s)")
+                        println("  $status $sectionName: $tableCount table(s)")
                     }
                 }
             }

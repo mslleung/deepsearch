@@ -530,7 +530,8 @@ private data class SerializableHiddenContainerBoundingBoxes(
 
 @kotlinx.serialization.Serializable
 private data class SerializableHiddenContainerBoundingBoxData(
-    val containerId: String,
+    val containerLocator: String,
+    val containerHtml: String,
     val containerBox: SerializableBoundingBox,
     val elements: Map<String, SerializableBoundingBox>
 )
@@ -538,7 +539,8 @@ private data class SerializableHiddenContainerBoundingBoxData(
 private fun IBrowserPage.HiddenContainerBoundingBoxes.toSerializable() = SerializableHiddenContainerBoundingBoxes(
     hiddenContainers = hiddenContainers.map { container ->
         SerializableHiddenContainerBoundingBoxData(
-            containerId = container.containerId,
+            containerLocator = container.containerLocator,
+            containerHtml = container.containerHtml,
             containerBox = SerializableBoundingBox(
                 container.containerBox.left, 
                 container.containerBox.top, 
@@ -557,7 +559,8 @@ private fun IBrowserPage.HiddenContainerBoundingBoxes.toSerializable() = Seriali
 private fun SerializableHiddenContainerBoundingBoxes.toDomain() = IBrowserPage.HiddenContainerBoundingBoxes(
     hiddenContainers = hiddenContainers.map { container ->
         IBrowserPage.HiddenContainerBoundingBoxData(
-            containerId = container.containerId,
+            containerLocator = container.containerLocator,
+            containerHtml = container.containerHtml,
             containerBox = IBrowserPage.BoundingBox(
                 container.containerBox.left,
                 container.containerBox.top,
