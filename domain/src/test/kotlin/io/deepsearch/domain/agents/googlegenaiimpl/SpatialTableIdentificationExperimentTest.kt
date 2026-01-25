@@ -96,14 +96,64 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             
             // Debug: Print container info
             for (container in hiddenContainerData.hiddenContainers) {
-                println("  - Container ${container.containerId}: ${container.elements.size} elements")
+                println("  - Container [${container.containerLocator.take(50)}...]: ${container.elements.size} elements")
+            }
+            
+            // Verify accordion sections are captured (for Sleekflow pricing page)
+            if (url.contains("sleekflow.io/pricing")) {
+                val expectedAccordionSections = listOf(
+                    "SleekFlow AI",
+                    "Omnichannel engagement",
+                    "Integrations",
+                    "Security",
+                    "Support and service"
+                )
+                
+                val allHiddenHtml = hiddenContainerData.hiddenContainers.joinToString("\n") { it.containerHtml }
+                
+                println("\n" + "=".repeat(40))
+                println("ACCORDION VERIFICATION:")
+                println("=".repeat(40))
+                
+                val foundSections = mutableListOf<String>()
+                val missingSections = mutableListOf<String>()
+                
+                for (section in expectedAccordionSections) {
+                    val found = allHiddenHtml.contains(section, ignoreCase = true)
+                    if (found) {
+                        foundSections.add(section)
+                        println("  [FOUND] $section")
+                    } else {
+                        missingSections.add(section)
+                        println("  [MISSING] $section")
+                    }
+                }
+                
+                // Count <details> containers
+                val detailsContainers = hiddenContainerData.hiddenContainers.filter { 
+                    it.containerLocator.contains("details") 
+                }
+                println("\n  Total <details> containers: ${detailsContainers.size}")
+                
+                println("\n" + "=".repeat(40))
+                println("SUMMARY:")
+                println("  Found ${foundSections.size}/${expectedAccordionSections.size} accordion sections")
+                if (missingSections.isNotEmpty()) {
+                    println("  MISSING: $missingSections")
+                }
+                println("=".repeat(40))
+                
+                // Assert all 5 accordions are found
+                require(foundSections.size >= 5) {
+                    "Expected to find all 5 accordion sections but found only ${foundSections.size}. Missing: $missingSections"
+                }
             }
 
             // Step 5: Recursive table discovery (Kotlin-side DOM traversal + spatial analysis)
+            // Uses containerHtml with local IDs (data-ds-local), independent of main page snapshot
             println("\n>>> Step 5: Running recursive table discovery (Kotlin-side)...")
             val discoveredTables = recursiveTableDiscoveryService.discoverTablesFromHiddenContainers(
-                hiddenContainerData = hiddenContainerData,
-                fullPageHtml = pageSnapshot.html
+                hiddenContainerData = hiddenContainerData
             )
 
             println("\n" + "=".repeat(80))
@@ -116,7 +166,8 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             } else {
                 println("\nDiscovered tables (${discoveredTables.size}):")
                 discoveredTables.forEachIndexed { idx, table ->
-                    println("\n  ${idx + 1}. Element: ${table.elementId} (depth=${table.depth})")
+                    println("\n  ${idx + 1}. Element: ${table.localElementId} (depth=${table.depth})")
+                    println("     Container locator: ${table.containerLocator.take(60)}...")
                     println("     Grid: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols")
                     println("     Confidence: ${String.format("%.2f", table.gridResult.confidence)}")
                     println("     Leaf elements: ${table.elementBoundingBoxes.size}")
@@ -125,15 +176,9 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             }
 
             // Step 6: Process detected tables with TableInterpretationAgent
+            // Hidden tables use containerHtml with local IDs (data-ds-local)
             if (discoveredTables.isNotEmpty()) {
                 println("\n>>> Step 6: Processing detected tables with TableInterpretationAgent...")
-                
-                // Re-inject IDs before fetching HTML
-                println("  Re-injecting stable IDs (in case React removed them)...")
-                page.injectStableIds()
-                
-                // Get a fresh page snapshot for bounding boxes
-                val freshSnapshot = page.capturePageSnapshot()
                 
                 data class InterpretedTable(
                     val table: DiscoveredTable,
@@ -145,28 +190,36 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 val interpretedTables = mutableListOf<InterpretedTable>()
                 
                 for (table in discoveredTables) {
-                    val selector = "[data-ds-id=\"${table.elementId}\"]"
-                    val html = page.getElementHtmlByCssSelector(selector)
+                    // Parse the container HTML (contains data-ds-local attributes)
+                    val containerDoc = org.jsoup.Jsoup.parse(table.containerHtml)
                     
-                    if (html.isBlank()) {
-                        println("  ❌ Could not get HTML for ${table.elementId}")
+                    // Find the table element using local ID
+                    val selector = "[data-ds-local=\"${table.localElementId}\"]"
+                    val tableElement = containerDoc.selectFirst(selector)
+                    
+                    if (tableElement == null) {
+                        println("  ❌ Could not find element for ${table.localElementId}")
                         continue
                     }
                     
-                    println("\n  Processing ${table.elementId} (depth=${table.depth})...")
+                    val html = tableElement.outerHtml()
+                    
+                    println("\n  Processing ${table.localElementId} (depth=${table.depth})...")
+                    println("    Container locator: ${table.containerLocator.take(50)}...")
                     
                     // Create TableIdentification for the input
                     val tableIdentification = TableIdentification(
                         cssSelector = selector,
-                        dataId = table.elementId,
+                        dataId = table.localElementId,
                         auxiliaryInfo = "Recursively discovered table at depth ${table.depth}: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols, confidence: ${String.format("%.2f", table.gridResult.confidence)}. Reason: ${table.gridResult.reason}",
-                        containsMedia = false
+                        containsMedia = tableElement.select("img, svg").isNotEmpty()
                     )
                     
+                    // For hidden tables, bounding boxes are local to containerHtml
                     val input = TableInterpretationInput(
                         tableIdentification = tableIdentification,
                         tableHtml = html,
-                        boundingBoxes = freshSnapshot.boundingBoxes
+                        boundingBoxes = emptyMap() // Hidden tables don't have bboxes in main snapshot
                     )
                     
                     try {
@@ -198,7 +251,8 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         println("\n${"─".repeat(70)}")
                         println("TABLE ${idx + 1}: ${result.classification}")
                         println("${"─".repeat(70)}")
-                        println("Element ID: ${result.table.elementId}")
+                        println("Local Element ID: ${result.table.localElementId}")
+                        println("Container Locator: ${result.table.containerLocator}")
                         println("Depth: ${result.table.depth}")
                         println("Spatial: ${result.table.gridResult.rowCount} rows × ${result.table.gridResult.colCount} cols (confidence: ${String.format("%.2f", result.table.gridResult.confidence)})")
                         println("Classification: ${result.classification}")
@@ -206,6 +260,67 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         println(result.markdown)
                         println("\nHTML (first 500 chars):")
                         println(result.html.take(500))
+                    }
+                }
+                
+                // Output tables grouped by accordion section (for Sleekflow pricing page)
+                if (url.contains("sleekflow.io/pricing")) {
+                    println("\n" + "=".repeat(80))
+                    println("TABLES BY ACCORDION SECTION")
+                    println("=".repeat(80))
+                    
+                    val expectedAccordionSections = listOf(
+                        "SleekFlow AI",
+                        "Omnichannel engagement",
+                        "Integrations",
+                        "Security",
+                        "Support and service"
+                    )
+                    
+                    for (accordionName in expectedAccordionSections) {
+                        println("\n" + "━".repeat(70))
+                        println("ACCORDION: $accordionName")
+                        println("━".repeat(70))
+                        
+                        // Find tables that belong to this accordion
+                        // A table belongs to an accordion if its containerHtml contains the accordion name
+                        val tablesInAccordion = interpretedTables.filter { result ->
+                            result.table.containerHtml.contains(accordionName, ignoreCase = true)
+                        }
+                        
+                        if (tablesInAccordion.isEmpty()) {
+                            println("  No tables detected in this accordion.")
+                        } else {
+                            println("  Tables found: ${tablesInAccordion.size}")
+                            
+                            tablesInAccordion.forEachIndexed { idx, result ->
+                                println("\n  ${"─".repeat(60)}")
+                                println("  TABLE ${idx + 1} in '$accordionName'")
+                                println("  ${"─".repeat(60)}")
+                                println("  Local Element ID: ${result.table.localElementId}")
+                                println("  Grid: ${result.table.gridResult.rowCount} rows × ${result.table.gridResult.colCount} cols")
+                                println("  Classification: ${result.classification}")
+                                println("\n  MARKDOWN OUTPUT:")
+                                // Indent the markdown for better readability
+                                result.markdown.lines().forEach { line ->
+                                    println("    $line")
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Summary of accordion tables
+                    println("\n" + "=".repeat(80))
+                    println("ACCORDION TABLES SUMMARY")
+                    println("=".repeat(80))
+                    
+                    for (accordionName in expectedAccordionSections) {
+                        val tablesInAccordion = interpretedTables.filter { result ->
+                            result.table.containerHtml.contains(accordionName, ignoreCase = true)
+                        }
+                        val tableCount = tablesInAccordion.size
+                        val status = if (tableCount > 0) "✅" else "⚠️"
+                        println("  $status $accordionName: $tableCount table(s)")
                     }
                 }
             }

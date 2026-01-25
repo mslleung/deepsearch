@@ -476,13 +476,19 @@ interface IBrowserPage {
 
     /**
      * Bounding box data for a single hidden container.
+     * 
+     * Uses LOCAL IDs (data-ds-local) instead of global data-ds-id to avoid
+     * React re-render issues. The containerHtml contains the full subtree
+     * with embedded local IDs for server-side parsing.
      */
     data class HiddenContainerBoundingBoxData(
-        /** The data-ds-id of the hidden container */
-        val containerId: String,
+        /** Stable CSS selector to find this container in the original snapshot HTML */
+        val containerLocator: String,
+        /** Container outerHTML with data-ds-local attributes (for server-side parsing) */
+        val containerHtml: String,
         /** Bounding box of the container itself */
         val containerBox: BoundingBox,
-        /** Map of element ds-id to bounding box for all elements inside */
+        /** Map of local element ID (ds-local-N) to bounding box */
         val elements: Map<String, BoundingBox>
     )
 

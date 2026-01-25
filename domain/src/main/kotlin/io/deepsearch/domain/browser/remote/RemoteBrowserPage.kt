@@ -334,7 +334,8 @@ class RemoteBrowserPage(
         return IBrowserPage.HiddenContainerBoundingBoxes(
             hiddenContainers = r.hiddenContainers.map { c ->
                 IBrowserPage.HiddenContainerBoundingBoxData(
-                    containerId = c.containerId,
+                    containerLocator = c.containerLocator,
+                    containerHtml = c.containerHtml,
                     containerBox = IBrowserPage.BoundingBox(
                         left = c.containerBox.left,
                         top = c.containerBox.top,

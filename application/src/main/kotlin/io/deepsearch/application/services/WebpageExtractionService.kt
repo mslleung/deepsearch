@@ -79,7 +79,12 @@ class WebpageExtractionService(
     
     /** Table candidate detected from hidden container using recursive spatial analysis */
     private data class HiddenTableCandidate(
-        val elementId: String,
+        /** Local element ID (data-ds-local) within the container HTML */
+        val localElementId: String,
+        /** Stable CSS selector to find the container in the original snapshot HTML */
+        val containerLocator: String,
+        /** Container HTML with data-ds-local attributes (for element lookup) */
+        val containerHtml: String,
         val confidence: Double,
         val rowCount: Int,
         val colCount: Int,
@@ -184,7 +189,8 @@ class WebpageExtractionService(
             logger.debug("Browser released after {} ms total browser time", browserDuration)
 
             // ===== Identify hidden table candidates using RecursiveTableDiscoveryService (server-side) =====
-            val hiddenTableCandidates = identifyHiddenTableCandidates(hiddenBboxData, snapshot.html)
+            // Hidden tables use containerHtml + local IDs, independent of main page snapshot
+            val hiddenTableCandidates = identifyHiddenTableCandidates(hiddenBboxData)
             logger.debug("RecursiveTableDiscoveryService found {} hidden table candidates", hiddenTableCandidates.size)
 
             // ===== Await LLM Results =====
@@ -192,26 +198,20 @@ class WebpageExtractionService(
             val visualResult = visualId.await()
             val imageResult = imageRepl.await()
             
-            // Merge visible tables with hidden table candidates
-            val allTables = mergeVisibleAndHiddenTables(
-                visualResult.tables,
-                hiddenTableCandidates,
-                snapshot.html
-            )
-            
+            // Visible tables use the main page snapshot (data-ds-id)
+            // Hidden tables are processed separately using their containerHtml (data-ds-local)
             val llmResults = LlmResults(
                 semanticElements = visualResult.semanticElements,
-                tableIdentifications = allTables,
+                tableIdentifications = visualResult.tables, // Only visible tables here
                 iconReplacements = iconRepl.await().replacements,
                 imageReplacements = imageResult.replacements,
                 imageHashes = imageResult.hashes,
                 imageMapping = imageResult.imageMapping
             )
             logger.debug(
-                "LLM operations complete in {} ms: {} semantic, {} tables ({} visible + {} hidden candidates), {} icons, {} images",
+                "LLM operations complete in {} ms: {} semantic, {} visible tables, {} hidden tables, {} icons, {} images",
                 llmDuration,
                 countSemanticElements(llmResults.semanticElements),
-                llmResults.tableIdentifications.size,
                 visualResult.tables.size,
                 hiddenTableCandidates.size,
                 llmResults.iconReplacements.size,
@@ -221,7 +221,7 @@ class WebpageExtractionService(
             // ===== DOM Processing (Jsoup) + table interpretation =====
             val domResult: WebpageExtractionResult
             val jsoupDuration = measureTimeMillis {
-                domResult = processDom(snapshot, llmResults, sessionId)
+                domResult = processDom(snapshot, llmResults, hiddenTableCandidates, sessionId)
             }
             logger.debug("Table interpretation complete in {} ms", jsoupDuration)
 
@@ -237,25 +237,28 @@ class WebpageExtractionService(
     /**
      * Identify table candidates from hidden container bounding boxes using RecursiveTableDiscoveryService.
      * This performs recursive DOM traversal to find tables at any depth within hidden containers.
+     * 
+     * Each discovered table carries its containerHtml (with local IDs) for interpretation,
+     * independent of the main page snapshot HTML.
      */
     private fun identifyHiddenTableCandidates(
-        hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes,
-        fullPageHtml: String
+        hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes
     ): List<HiddenTableCandidate> {
         val discoveredTables = recursiveTableDiscoveryService.discoverTablesFromHiddenContainers(
-            hiddenContainerData = hiddenBboxData,
-            fullPageHtml = fullPageHtml
+            hiddenContainerData = hiddenBboxData
         )
         
         return discoveredTables.map { table ->
             logger.debug(
                 "Hidden table {} (depth={}) detected: {}x{} grid (confidence: {})",
-                table.elementId, table.depth,
+                table.localElementId, table.depth,
                 table.gridResult.rowCount, table.gridResult.colCount,
                 "%.2f".format(table.gridResult.confidence)
             )
             HiddenTableCandidate(
-                elementId = table.elementId,
+                localElementId = table.localElementId,
+                containerLocator = table.containerLocator,
+                containerHtml = table.containerHtml,
                 confidence = table.gridResult.confidence,
                 rowCount = table.gridResult.rowCount,
                 colCount = table.gridResult.colCount,
@@ -264,66 +267,6 @@ class WebpageExtractionService(
         }
     }
     
-    /**
-     * Merge visible tables (from vision detection) with hidden table candidates.
-     * Deduplicates tables that might overlap between visible and hidden detection.
-     */
-    private fun mergeVisibleAndHiddenTables(
-        visibleTables: List<TableIdentification>,
-        hiddenCandidates: List<HiddenTableCandidate>,
-        html: String
-    ): List<TableIdentification> {
-        if (hiddenCandidates.isEmpty()) {
-            return visibleTables
-        }
-        
-        val doc = Jsoup.parse(html)
-        val visibleIds = visibleTables.map { it.dataId }.toSet()
-        
-        // Deduplicate hidden candidates against visible tables
-        val newHiddenTables = hiddenCandidates.mapNotNull { candidate ->
-            // Skip if already detected as visible table
-            if (candidate.elementId in visibleIds) {
-                logger.debug("Skipping hidden candidate {} - already in visible tables", candidate.elementId)
-                return@mapNotNull null
-            }
-            
-            // Check for parent/child relationship with visible tables
-            val hiddenElement = doc.select("[data-ds-id=\"${candidate.elementId}\"]").firstOrNull()
-                ?: return@mapNotNull null
-            
-            val isOverlapping = visibleIds.any { visionId ->
-                val visionElement = doc.select("[data-ds-id=\"$visionId\"]").firstOrNull()
-                    ?: return@any false
-                hiddenElement.parents().contains(visionElement) ||
-                        visionElement.parents().contains(hiddenElement)
-            }
-            
-            if (isOverlapping) {
-                logger.debug("Skipping hidden candidate {} - overlaps with visible table", candidate.elementId)
-                return@mapNotNull null
-            }
-            
-            // Construct CSS selector for the hidden table
-            val cssSelector = cssSelectorConstructionService.constructCssSelector(hiddenElement)
-            
-            // Check if table contains media
-            val containsMedia = hiddenElement.select("img, svg, i.fa, i.fas, i.far, i.fab").isNotEmpty()
-            
-            TableIdentification(
-                cssSelector = cssSelector,
-                dataId = candidate.elementId,
-                auxiliaryInfo = "Hidden table (depth=${candidate.depth}): ${candidate.rowCount}x${candidate.colCount} grid (confidence: ${"%.0f".format(candidate.confidence * 100)}%)",
-                containsMedia = containsMedia
-            )
-        }
-        
-        logger.debug("Merged {} visible + {} hidden = {} total tables", 
-            visibleTables.size, newHiddenTables.size, visibleTables.size + newHiddenTables.size)
-        
-        return visibleTables + newHiddenTables
-    }
-
     // ========== Browser Capture Operations ==========
 
     private suspend fun doIdentifyVisualElements(
@@ -427,6 +370,7 @@ class WebpageExtractionService(
     private suspend fun processDom(
         snapshot: IBrowserPage.PageSnapshotWithMetadata,
         llmResults: LlmResults,
+        hiddenTableCandidates: List<HiddenTableCandidate>,
         sessionId: SessionId
     ): WebpageExtractionResult {
         val imageMapping = llmResults.imageMapping
@@ -454,10 +398,10 @@ class WebpageExtractionService(
         // Use stable data-ds-id selectors instead of position-based CSS selectors
         jsoupDomService.removeElements(jsoupDoc, collectSemanticDataIdSelectors(llmResults.semanticElements))
 
-        // ===== Step 4: Interpret and replace tables =====
-        // Tables use data-ds-id selectors which remain stable after semantic removal
+        // ===== Step 4: Interpret and replace VISIBLE tables =====
+        // Visible tables use data-ds-id selectors which remain stable after semantic removal
         // Pass placeholderMap so table snippets can have placeholders resolved before LLM interpretation
-        val tableReplacements = interpretTablesWithDerivedData(
+        val visibleTableReplacements = interpretTablesWithDerivedData(
             llmResults.tableIdentifications,
             snapshot.html,
             snapshot.boundingBoxes,
@@ -468,7 +412,7 @@ class WebpageExtractionService(
         // Use placeholders for tables too - this prevents markdown newlines from being escaped
         // during HTML-to-Markdown conversion. Use TABLE prefix to avoid ID collisions with media placeholders.
         val tablePlaceholders = jsoupDomService.replaceElementsWithPlaceholders(
-            jsoupDoc, tableReplacements, PlaceholderPrefix.TABLE
+            jsoupDoc, visibleTableReplacements, PlaceholderPrefix.TABLE
         )
         placeholderMap.putAll(tablePlaceholders)
 
@@ -494,7 +438,15 @@ class WebpageExtractionService(
             finalMarkdown = finalMarkdown.replace(mapping.placeholder, mapping.text)
         }
 
-        // ===== Step 8: Add metadata header and popup content =====
+        // ===== Step 8: Process HIDDEN tables =====
+        // Hidden tables use containerHtml with local IDs (data-ds-local), independent of main snapshot
+        val hiddenTablesMarkdown = if (hiddenTableCandidates.isNotEmpty()) {
+            interpretHiddenTables(hiddenTableCandidates, sessionId)
+        } else {
+            null
+        }
+
+        // ===== Step 9: Add metadata header, popup content, and hidden content =====
         val markdown = buildString {
             appendLine("URL: ${snapshot.url}")
             if (snapshot.title.isNotBlank()) {
@@ -505,13 +457,21 @@ class WebpageExtractionService(
             }
             appendLine()
             append(finalMarkdown)
-            // Append popup text at the end if present (dialogs, tooltips, etc.)
+            // Append popup text if present (dialogs, tooltips, etc.)
             if (!popupText.isNullOrBlank()) {
                 appendLine()
                 appendLine("---")
                 appendLine("## Popup Content")
                 appendLine()
                 append(popupText)
+            }
+            // Append hidden tables if present (accordions, collapsed sections, etc.)
+            if (!hiddenTablesMarkdown.isNullOrBlank()) {
+                appendLine()
+                appendLine("---")
+                appendLine("## Hidden Content")
+                appendLine()
+                append(hiddenTablesMarkdown)
             }
         }
 
@@ -522,6 +482,59 @@ class WebpageExtractionService(
             imageHashes = llmResults.imageHashes,
             imageMapping = imageMapping
         )
+    }
+    
+    /**
+     * Interpret hidden tables using their containerHtml (with local IDs).
+     * Hidden tables are processed independently of the main page snapshot.
+     */
+    private suspend fun interpretHiddenTables(
+        hiddenCandidates: List<HiddenTableCandidate>,
+        sessionId: SessionId
+    ): String {
+        val interpretedTables = mutableListOf<String>()
+        
+        for (candidate in hiddenCandidates) {
+            // Parse the container HTML (contains data-ds-local attributes)
+            val containerDoc = Jsoup.parse(candidate.containerHtml)
+            
+            // Find the table element using local ID
+            val tableElement = containerDoc.selectFirst("[data-ds-local=\"${candidate.localElementId}\"]")
+            if (tableElement == null) {
+                logger.debug("Hidden table element not found: {}", candidate.localElementId)
+                continue
+            }
+            
+            // Create TableIdentification for the hidden table
+            val tableIdentification = TableIdentification(
+                cssSelector = "[data-ds-local=\"${candidate.localElementId}\"]",
+                dataId = candidate.localElementId,
+                auxiliaryInfo = "Hidden table (depth=${candidate.depth}): ${candidate.rowCount}x${candidate.colCount} grid (confidence: ${"%.0f".format(candidate.confidence * 100)}%)",
+                containsMedia = tableElement.select("img, svg, i.fa, i.fas, i.far, i.fab").isNotEmpty()
+            )
+            
+            // Build input for table interpretation
+            // Note: For hidden tables, we don't have bounding boxes in the main snapshot,
+            // so we pass empty bounding boxes (LLM interprets from HTML structure)
+            val input = TableInterpretationInput(
+                tableIdentification = tableIdentification,
+                tableHtml = tableElement.outerHtml(),
+                boundingBoxes = emptyMap()
+            )
+
+            val results = tableInterpretationService.interpretTablesBatch(listOf(input), sessionId)
+            val result = results.firstOrNull()
+
+            if (result != null && !result.classification.shouldRemoveFromDom()) {
+                interpretedTables.add(result.markdown)
+                logger.debug(
+                    "Hidden table {} interpreted as {}: {}",
+                    candidate.localElementId, result.classification, result.markdown.take(100)
+                )
+            }
+        }
+        
+        return interpretedTables.joinToString("\n\n")
     }
 
     /**

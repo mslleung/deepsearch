@@ -6,8 +6,12 @@ import io.deepsearch.domain.browser.IBrowserPage
  * Result of recursive table discovery.
  */
 data class DiscoveredTable(
-    /** The data-ds-id of the element containing the table */
-    val elementId: String,
+    /** The local element ID (data-ds-local) within the container HTML */
+    val localElementId: String,
+    /** Stable CSS selector to find the container in the original snapshot HTML */
+    val containerLocator: String,
+    /** Container HTML with data-ds-local attributes (for element lookup) */
+    val containerHtml: String,
     /** Grid detection result */
     val gridResult: TableGridResult,
     /** Depth in the DOM tree where this table was found */
@@ -45,12 +49,13 @@ interface IRecursiveTableDiscoveryService {
     /**
      * Discover tables from hidden container data captured by the browser.
      * 
+     * Each container's HTML (with local IDs) is used directly for DOM traversal,
+     * avoiding dependence on global data-ds-id which may be unstable after React re-renders.
+     * 
      * @param hiddenContainerData Data from captureHiddenContainerBoundingBoxes()
-     * @param fullPageHtml Full page HTML with injected data-ds-id attributes
      * @return List of discovered tables across all hidden containers, deduplicated
      */
     fun discoverTablesFromHiddenContainers(
-        hiddenContainerData: IBrowserPage.HiddenContainerBoundingBoxes,
-        fullPageHtml: String
+        hiddenContainerData: IBrowserPage.HiddenContainerBoundingBoxes
     ): List<DiscoveredTable>
 }

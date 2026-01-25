@@ -59,36 +59,40 @@ class RecursiveTableDiscoveryService(
             )
         }
         
-        // Find the root container element (first element with data-ds-id)
-        val rootElement = body.selectFirst("[data-ds-id]") ?: return emptyList()
+        // Find the root container element (first element with data-ds-local)
+        val rootElement = body.selectFirst("[data-ds-local]") ?: return emptyList()
         
-        // Recursively discover tables
-        val discovered = discoverTablesRecursively(rootElement, detectionBoxes, 0)
+        // Recursively discover tables (using placeholder locator/html since this is legacy path)
+        val discovered = discoverTablesRecursively(rootElement, detectionBoxes, 0, "", containerHtml)
         
         // Deduplicate overlapping tables
         return deduplicateTables(discovered)
     }
 
     override fun discoverTablesFromHiddenContainers(
-        hiddenContainerData: IBrowserPage.HiddenContainerBoundingBoxes,
-        fullPageHtml: String
+        hiddenContainerData: IBrowserPage.HiddenContainerBoundingBoxes
     ): List<DiscoveredTable> {
-        val doc = Jsoup.parse(fullPageHtml)
         val allDiscovered = mutableListOf<DiscoveredTable>()
         
         logger.debug("Processing {} hidden containers", hiddenContainerData.hiddenContainers.size)
         
         for (container in hiddenContainerData.hiddenContainers) {
-            logger.debug("Processing container {} with {} elements", container.containerId, container.elements.size)
+            logger.debug("Processing container [{}] with {} elements", 
+                container.containerLocator.take(50), container.elements.size)
             
-            // Find the container element in the full page HTML
-            val containerElement = doc.selectFirst("[data-ds-id=\"${container.containerId}\"]")
+            // Parse the container HTML directly (no need to search in full page HTML)
+            val doc = Jsoup.parse(container.containerHtml)
+            val body = doc.body()
+            
+            // Find the root container element (first element with data-ds-local)
+            val containerElement = body.selectFirst("[data-ds-local]")
             if (containerElement == null) {
-                logger.debug("Container element not found in HTML: {}", container.containerId)
+                logger.debug("No data-ds-local element found in container HTML")
                 continue
             }
             
-            logger.debug("Found container element: {}, children: {}", containerElement.tagName(), containerElement.children().size)
+            logger.debug("Found container element: {}, children: {}", 
+                containerElement.tagName(), containerElement.children().size)
             
             // Convert bounding boxes to detection format
             val detectionBoxes = container.elements.mapValues { (_, box) ->
@@ -103,8 +107,14 @@ class RecursiveTableDiscoveryService(
             logger.debug("Converted {} bounding boxes", detectionBoxes.size)
             
             // Recursively discover tables within this container
-            val discovered = discoverTablesRecursively(containerElement, detectionBoxes, 0)
-            logger.debug("Discovered {} tables in container {}", discovered.size, container.containerId)
+            val discovered = discoverTablesRecursively(
+                containerElement, 
+                detectionBoxes, 
+                0,
+                container.containerLocator,
+                container.containerHtml
+            )
+            logger.debug("Discovered {} tables in container", discovered.size)
             allDiscovered.addAll(discovered)
         }
         
@@ -120,30 +130,39 @@ class RecursiveTableDiscoveryService(
      * Uses a HYBRID approach:
      * - DOM traversal for structure (which containers to check)
      * - Spatial containment to find descendant boxes (robust to ID mismatches from React re-renders)
+     * 
+     * @param element Current DOM element being analyzed
+     * @param allBoundingBoxes Map of local IDs to bounding boxes
+     * @param depth Current recursion depth
+     * @param containerLocator Stable locator for the root container (for merge-back)
+     * @param containerHtml Full container HTML (for element lookup during interpretation)
      */
     private fun discoverTablesRecursively(
         element: Element,
         allBoundingBoxes: Map<String, TableDetectionBoundingBox>,
-        depth: Int
+        depth: Int,
+        containerLocator: String,
+        containerHtml: String
     ): List<DiscoveredTable> {
         // Depth limit to prevent infinite recursion
         if (depth > config.maxDepth) {
             return emptyList()
         }
         
-        val elementId = element.attr("data-ds-id")
-        if (elementId.isBlank()) {
+        // Use data-ds-local (local IDs) instead of data-ds-id (global IDs)
+        val localId = element.attr("data-ds-local")
+        if (localId.isBlank()) {
             // No ID, recurse into children
             return element.children()
-                .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1) }
+                .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1, containerLocator, containerHtml) }
         }
         
         // Get this element's bounding box
-        val containerBox = allBoundingBoxes[elementId]
+        val containerBox = allBoundingBoxes[localId]
         
         // Find descendant boxes using SPATIAL containment (robust to ID mismatches)
         val descendantBoxes = if (containerBox != null) {
-            findContainedBoxes(containerBox, allBoundingBoxes, excludeId = elementId)
+            findContainedBoxes(containerBox, allBoundingBoxes, excludeId = localId)
         } else {
             // No container box, use empty map (will recurse into children)
             emptyMap()
@@ -153,7 +172,7 @@ class RecursiveTableDiscoveryService(
         if (descendantBoxes.size >= 20 || depth <= 2) {
             logger.debug(
                 "[depth={}] {} <{}> - descendantBoxes={}, containerBox={}",
-                depth, elementId, element.tagName(),
+                depth, localId, element.tagName(),
                 descendantBoxes.size, containerBox != null
             )
         }
@@ -162,7 +181,7 @@ class RecursiveTableDiscoveryService(
         if (descendantBoxes.size < config.minLeafElements) {
             // Recurse into children
             return element.children()
-                .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1) }
+                .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1, containerLocator, containerHtml) }
         }
         
         // Check container dimensions
@@ -170,7 +189,7 @@ class RecursiveTableDiscoveryService(
             if (containerBox.height < config.minHeight || containerBox.width < config.minWidth) {
                 // Too small, recurse into children
                 return element.children()
-                    .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1) }
+                    .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1, containerLocator, containerHtml) }
             }
         }
         
@@ -179,7 +198,7 @@ class RecursiveTableDiscoveryService(
         
         if (leafBoxes.size < config.minLeafElements) {
             return element.children()
-                .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1) }
+                .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1, containerLocator, containerHtml) }
         }
         
         // Run grid detection on leaf boxes
@@ -187,7 +206,7 @@ class RecursiveTableDiscoveryService(
         
         logger.debug(
             "[depth={}] {} grid detection: isTable={}, conf={}, grid={}x{}, reason={}",
-            depth, elementId, gridResult.isTable, "%.2f".format(gridResult.confidence),
+            depth, localId, gridResult.isTable, "%.2f".format(gridResult.confidence),
             gridResult.rowCount, gridResult.colCount, gridResult.reason
         )
         
@@ -198,13 +217,15 @@ class RecursiveTableDiscoveryService(
             // Found a table at this level!
             logger.debug(
                 "[depth={}] ✅ Found table at {}: {}x{} (confidence={}, boxes={})",
-                depth, elementId, gridResult.rowCount, gridResult.colCount,
+                depth, localId, gridResult.rowCount, gridResult.colCount,
                 "%.2f".format(gridResult.confidence), leafBoxes.size
             )
             
             // Return this table, but also check children for nested tables
             val thisTable = DiscoveredTable(
-                elementId = elementId,
+                localElementId = localId,
+                containerLocator = containerLocator,
+                containerHtml = containerHtml,
                 gridResult = gridResult,
                 depth = depth,
                 elementBoundingBoxes = leafBoxes
@@ -212,14 +233,14 @@ class RecursiveTableDiscoveryService(
             
             // Also recurse into children to find more specific nested tables
             val childTables = element.children()
-                .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1) }
+                .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1, containerLocator, containerHtml) }
             
             return listOf(thisTable) + childTables
         }
         
         // Not a table at this level, recurse into children
         return element.children()
-            .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1) }
+            .flatMap { discoverTablesRecursively(it, allBoundingBoxes, depth + 1, containerLocator, containerHtml) }
     }
 
     /**
@@ -276,8 +297,8 @@ class RecursiveTableDiscoveryService(
     private fun deduplicateTables(tables: List<DiscoveredTable>): List<DiscoveredTable> {
         if (tables.size <= 1) return tables
         
-        // Group by element ID to handle exact duplicates
-        val byId = tables.groupBy { it.elementId }
+        // Group by local element ID to handle exact duplicates
+        val byId = tables.groupBy { it.localElementId }
         val uniqueTables = byId.map { (_, group) ->
             // If multiple entries for same ID, take the one with highest confidence
             group.maxByOrNull { it.gridResult.confidence }!!
@@ -290,7 +311,7 @@ class RecursiveTableDiscoveryService(
         val excludedIds = mutableSetOf<String>()
         
         for (table in sortedByDepth) {
-            if (table.elementId in excludedIds) continue
+            if (table.localElementId in excludedIds) continue
             
             // Check if this table's elements are a subset of any existing result
             val tableElementIds = table.elementBoundingBoxes.keys
@@ -310,9 +331,9 @@ class RecursiveTableDiscoveryService(
                     isSubsetOfExisting = true
                     logger.debug(
                         "Skipping {} (depth={}) - {}% overlap with {} (depth={})",
-                        table.elementId, table.depth,
+                        table.localElementId, table.depth,
                         "%.0f".format(overlapRatio * 100),
-                        existing.elementId, existing.depth
+                        existing.localElementId, existing.depth
                     )
                     break
                 }

@@ -251,10 +251,12 @@ data class HiddenContainerBoundingBoxesResponse(
 
 @Serializable
 data class HiddenContainerBoundingBoxDataResponse(
-    /** The data-ds-id of the hidden container */
-    val containerId: String,
+    /** Stable CSS selector to find this container in the original snapshot HTML */
+    val containerLocator: String,
+    /** Container outerHTML with data-ds-local attributes (for server-side parsing) */
+    val containerHtml: String,
     /** Bounding box of the container itself */
     val containerBox: BoundingBoxResponse,
-    /** Map of element ds-id to bounding box for all elements inside */
+    /** Map of local element ID (ds-local-N) to bounding box */
     val elements: Map<String, BoundingBoxResponse>
 )
