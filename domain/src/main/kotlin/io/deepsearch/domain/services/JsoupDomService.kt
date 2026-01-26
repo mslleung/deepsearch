@@ -35,7 +35,9 @@ enum class PlaceholderPrefix(val prefix: String) {
     /** For icons and images */
     MEDIA("MEDIA"),
     /** For table markdown */
-    TABLE("TABLE")
+    TABLE("TABLE"),
+    /** For list markdown */
+    LIST("LIST")
 }
 
 /**

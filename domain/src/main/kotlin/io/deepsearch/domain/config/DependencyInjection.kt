@@ -13,7 +13,9 @@ import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.BoundingBoxDerivationService
 import io.deepsearch.domain.services.CssSelectorConstructionService
+import io.deepsearch.domain.services.ISemanticListConverter
 import io.deepsearch.domain.services.ISemanticTableConverter
+import io.deepsearch.domain.services.SemanticListConverter
 import io.deepsearch.domain.services.SemanticTableConverter
 import io.deepsearch.domain.services.GeminiFileSearchService
 import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
@@ -80,6 +82,7 @@ val domainModule = module {
     singleOf(::TableGridDetectorService) bind ITableGridDetectorService::class
     singleOf(::RecursiveTableDiscoveryService) bind IRecursiveTableDiscoveryService::class
     singleOf(::SemanticTableConverter) bind ISemanticTableConverter::class
+    singleOf(::SemanticListConverter) bind ISemanticListConverter::class
 
     // Gemini Batch API service for cost-effective large-scale processing
     // Uses inline requests for batches under 20MB, 50% cost savings

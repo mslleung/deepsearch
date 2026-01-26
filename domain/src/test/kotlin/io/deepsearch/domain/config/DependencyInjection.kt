@@ -45,7 +45,9 @@ import io.deepsearch.domain.services.IImageDimensionService
 import io.deepsearch.domain.services.ImageDimensionService
 import io.deepsearch.domain.services.ITableGridDetectorService
 import io.deepsearch.domain.services.IRecursiveTableDiscoveryService
+import io.deepsearch.domain.services.ISemanticListConverter
 import io.deepsearch.domain.services.ISemanticTableConverter
+import io.deepsearch.domain.services.SemanticListConverter
 import io.deepsearch.domain.services.SemanticTableConverter
 import io.deepsearch.domain.detection.TableGridDetectorService
 import io.deepsearch.domain.detection.RecursiveTableDiscoveryService
@@ -150,6 +152,7 @@ private val domainCommonTestModule = module {
     singleOf(::TableGridDetectorService) bind ITableGridDetectorService::class
     singleOf(::RecursiveTableDiscoveryService) bind IRecursiveTableDiscoveryService::class
     singleOf(::SemanticTableConverter) bind ISemanticTableConverter::class
+    singleOf(::SemanticListConverter) bind ISemanticListConverter::class
     singleOf(::ProxyAwareHttpClientFactory) bind IProxyAwareHttpClientFactory::class
     singleOf(::ProxyTestService) bind IProxyTestService::class
     singleOf(::FreeProxySyncService)

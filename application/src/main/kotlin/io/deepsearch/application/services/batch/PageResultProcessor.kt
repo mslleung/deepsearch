@@ -12,6 +12,7 @@ import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.domain.services.IJsoupDomService
 import io.deepsearch.domain.services.ITableGridDetectorService
+import io.deepsearch.domain.services.SemanticListData
 import io.deepsearch.domain.services.SemanticTableData
 import io.deepsearch.domain.services.TableDetectionBoundingBox
 import org.jsoup.Jsoup
@@ -96,8 +97,9 @@ class PageResultProcessor(
                     emptyList()
                 }
 
-                // Extract semantic <table> elements (static analysis, no LLM)
+                // Extract semantic <table> and <ul>/<ol> elements (static analysis, no LLM)
                 val semanticTables = extractSemanticTables(pending.htmlWithIds)
+                val semanticLists = extractSemanticLists(pending.htmlWithIds)
                 
                 // Collect all table data-ds-ids for overlap detection
                 val visualTableDataIds = visualResult.tables.map { it.dataId }.toSet()
@@ -129,6 +131,7 @@ class PageResultProcessor(
                         semanticElements = visualResult.semanticElements,
                         tableIdentifications = allVisualTables,
                         semanticTableData = semanticTables,
+                        semanticListData = semanticLists,
                         iconInterpretations = null,
                         imageTexts = null
                     )
@@ -142,11 +145,12 @@ class PageResultProcessor(
                 }
 
                 logger.debug(
-                    "[{}] Processed visual ID for {}: {} semantic elements, {} visual tables, {} semantic tables, {} hidden tables",
+                    "[{}] Processed visual ID for {}: {} semantic elements, {} visual tables, {} semantic tables, {} semantic lists, {} hidden tables",
                     jobId, urlState.url,
                     countSemanticElements(visualResult.semanticElements),
                     visualResult.tables.size,
                     semanticTables.size,
+                    semanticLists.size,
                     hiddenTableCount
                 )
             } catch (e: Exception) {
@@ -180,8 +184,9 @@ class PageResultProcessor(
                 emptyList()
             }
 
-            // Extract semantic <table> elements (static analysis, no LLM)
+            // Extract semantic <table> and <ul>/<ol> elements (static analysis, no LLM)
             val semanticTables = extractSemanticTables(pageData.html)
+            val semanticLists = extractSemanticLists(pageData.html)
             
             // Collect all table data-ds-ids for overlap detection
             val visualTableDataIds = visualResult.tables.map { it.dataId }.toSet()
@@ -210,6 +215,7 @@ class PageResultProcessor(
                     semanticElements = visualResult.semanticElements,
                     tableIdentifications = allVisualTables,
                     semanticTableData = semanticTables,
+                    semanticListData = semanticLists,
                     iconInterpretations = null,
                     imageTexts = null
                 )
@@ -341,6 +347,29 @@ class PageResultProcessor(
                 tableHtml = element.outerHtml()
             )
         }
+    }
+    
+    // ==================== Semantic List Extraction ====================
+    
+    /**
+     * Extract semantic HTML lists from HTML using static analysis.
+     * This is a pure Jsoup operation - no LLM needed for identification.
+     * Only extracts top-level lists (nested lists are part of their parent).
+     */
+    private fun extractSemanticLists(html: String): List<SemanticListData> {
+        val doc = Jsoup.parse(html)
+        return doc.select("ul[data-ds-id], ol[data-ds-id]")
+            // Filter out nested lists - only process top-level lists
+            .filter { element -> element.parents().none { it.tagName() in listOf("ul", "ol") } }
+            .map { element ->
+                val dataId = element.attr("data-ds-id")
+                SemanticListData(
+                    dataId = dataId,
+                    cssSelector = "[data-ds-id=\"$dataId\"]",
+                    listHtml = element.outerHtml(),
+                    isOrdered = element.tagName() == "ol"
+                )
+            }
     }
     
     // ==================== Overlap Detection ====================

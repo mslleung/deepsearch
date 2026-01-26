@@ -273,6 +273,21 @@ data class SemanticTableData(
 )
 
 /**
+ * Semantic HTML list data extracted via static analysis.
+ * Includes both <ul> and <ol> elements.
+ */
+data class SemanticListData(
+    /** Stable element ID (data-ds-id) */
+    val dataId: String,
+    /** CSS selector using data-ds-id */
+    val cssSelector: String,
+    /** Outer HTML of the <ul> or <ol> element */
+    val listHtml: String,
+    /** Whether this is an ordered list (<ol>) or unordered (<ul>) */
+    val isOrdered: Boolean
+)
+
+/**
  * Stage 2 content LLM processing results.
  */
 data class ContentLlmResults(
@@ -282,6 +297,8 @@ data class ContentLlmResults(
     val tableIdentifications: List<TableIdentification>?,
     /** Semantic HTML tables extracted via static analysis (programmatic conversion + LLM classification) */
     val semanticTableData: List<SemanticTableData>? = null,
+    /** Semantic HTML lists extracted via static analysis (programmatic conversion, no LLM) */
+    val semanticListData: List<SemanticListData>? = null,
     val iconInterpretations: Map<String, String?>?,
     val imageTexts: Map<String, String?>?
 )
@@ -297,6 +314,8 @@ data class CachingData(
     val tableIdentifications: List<TableIdentification>?,
     /** Semantic HTML tables from static analysis */
     val semanticTableData: List<SemanticTableData>? = null,
+    /** Semantic HTML lists from static analysis */
+    val semanticListData: List<SemanticListData>? = null,
     val tableMarkdowns: Map<String, String>?,
     val iconInterpretations: Map<String, String?>?,
     val imageTexts: Map<String, String?>?,
