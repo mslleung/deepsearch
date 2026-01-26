@@ -13,6 +13,8 @@ import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.services.ApiKeyCryptoService
 import io.deepsearch.domain.services.BoundingBoxDerivationService
 import io.deepsearch.domain.services.CssSelectorConstructionService
+import io.deepsearch.domain.services.ISemanticTableConverter
+import io.deepsearch.domain.services.SemanticTableConverter
 import io.deepsearch.domain.services.GeminiFileSearchService
 import io.deepsearch.domain.services.GeminiTextEmbeddingServiceImpl
 import io.deepsearch.domain.services.IApiKeyCryptoService
@@ -77,6 +79,7 @@ val domainModule = module {
     singleOf(::ImageDimensionService) bind IImageDimensionService::class
     singleOf(::TableGridDetectorService) bind ITableGridDetectorService::class
     singleOf(::RecursiveTableDiscoveryService) bind IRecursiveTableDiscoveryService::class
+    singleOf(::SemanticTableConverter) bind ISemanticTableConverter::class
 
     // Gemini Batch API service for cost-effective large-scale processing
     // Uses inline requests for batches under 20MB, 50% cost savings
@@ -107,9 +110,9 @@ val domainModule = module {
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
-    singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
     singleOf(::VisualIdentificationAgentGenAiImpl) bind IVisualIdentificationAgent::class
+    singleOf(::SemanticTableClassificationAgentGenAiImpl) bind ISemanticTableClassificationAgent::class
     
     // Markdown formatting agent (singleton for MarkdownFormattingService)
     singleOf(::MarkdownFormattingAgentGenAiImpl) bind IMarkdownFormattingAgent::class

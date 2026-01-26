@@ -286,19 +286,15 @@ class VisualIdentificationAgentGenAiImpl(
         // ========== Apply semantic HTML overrides ==========
         // Semantic <header>/<footer> tags take priority over vision detection
         val finalSemantic = applySemanticOverrides(mappedSemantic, doc)
-        val programmaticTables = extractSemanticTables(htmlWithIds)
-
-        // ========== Merge visible tables ==========
-        val finalTables = mergeTables(visionMappedTables, programmaticTables, doc)
 
         logger.debug(
-            "Total visible tables: {} ({} vision, {} programmatic <table>)",
-            finalTables.size, visionMappedTables.size, programmaticTables.size
+            "Vision-detected tables: {} (CSS/div-based only, semantic <table> handled separately)",
+            visionMappedTables.size
         )
 
         // ========== Build output ==========
         val semanticElements = buildSemanticElements(finalSemantic)
-        val tableIdentifications = buildTableIdentifications(finalTables)
+        val tableIdentifications = buildTableIdentifications(visionMappedTables)
 
         logger.debug(
             "Visual identification complete: {} semantic elements, {} tables",
@@ -706,56 +702,6 @@ class VisualIdentificationAgentGenAiImpl(
         return result
     }
 
-    private data class ProgrammaticTable(
-        val dataId: String,
-        val description: String
-    )
-
-    private fun extractSemanticTables(htmlWithIds: String): List<ProgrammaticTable> {
-        val doc = Jsoup.parse(htmlWithIds)
-        val tables = mutableListOf<ProgrammaticTable>()
-
-        doc.select("table[data-ds-id]").forEach { element ->
-            val id = element.attr("data-ds-id")
-            val caption = element.select("caption").text()
-            val summary = element.attr("summary")
-            val description = when {
-                caption.isNotBlank() -> caption
-                summary.isNotBlank() -> summary
-                else -> ""
-            }
-
-            tables.add(ProgrammaticTable(id, description))
-        }
-
-        return tables
-    }
-
-    private fun mergeTables(
-        visionMapped: List<MappedTable>,
-        programmatic: List<ProgrammaticTable>,
-        doc: Document
-    ): List<MappedTable> {
-        val visionIds = visionMapped.map { it.dataId }.toSet()
-
-        // Add programmatic tables that weren't detected by vision
-        val additionalTables = programmatic
-            .filter { it.dataId !in visionIds }
-            .mapNotNull { prog ->
-                val element = doc.select("[data-ds-id=\"${prog.dataId}\"]").firstOrNull() ?: return@mapNotNull null
-                val cssSelector = cssSelectorConstructionService.constructCssSelector(element)
-                val containsMedia = detectMediaInTable(prog.dataId, doc)
-                MappedTable(
-                    dataId = prog.dataId,
-                    cssSelector = cssSelector,
-                    label = prog.description,
-                    containsMedia = containsMedia
-                )
-            }
-
-        return visionMapped + additionalTables
-    }
-
     // ========== Output Building ==========
 
     private fun buildSemanticElements(mapped: Map<String, MappedElement?>): SemanticElements {
@@ -925,12 +871,10 @@ class VisualIdentificationAgentGenAiImpl(
 
         // Apply semantic HTML overrides (header/footer take priority over vision)
         val finalSemantic = applySemanticOverrides(mappedSemantic, doc)
-        val programmaticTables = extractSemanticTables(htmlWithIds)
-        val finalTables = mergeTables(mappedTables, programmaticTables, doc)
 
         // Build output
         val semanticElements = buildSemanticElements(finalSemantic)
-        val tableIdentifications = buildTableIdentifications(finalTables)
+        val tableIdentifications = buildTableIdentifications(mappedTables)
 
         return VisualIdentificationOutput(
             semanticElements = semanticElements,

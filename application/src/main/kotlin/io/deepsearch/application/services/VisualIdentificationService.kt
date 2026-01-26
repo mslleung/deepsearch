@@ -50,11 +50,11 @@ data class PendingVisualBatchRequest(
 /**
  * Service interface for combined visual identification (semantic elements + tables).
  * 
- * This service merges the functionality of ISemanticIdentificationService and 
- * ITableIdentificationService for vision-based detection, reducing LLM calls from 2 to 1.
+ * This service handles vision-based detection of both semantic elements (header, footer, etc.)
+ * and CSS/div-based tables in a single LLM call, reducing latency and token usage.
  * 
- * Note: This service only handles vision-based detection. Hidden container table detection
- * still requires separate processing via ITableIdentificationService.
+ * Note: Semantic HTML `<table>` elements are extracted separately via static analysis,
+ * not through this vision-based service.
  */
 interface IVisualIdentificationService {
     /**

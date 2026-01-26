@@ -4,6 +4,24 @@ import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.services.BatchContentRequest
+import kotlinx.serialization.Serializable
+
+/**
+ * Table identified on a webpage for interpretation.
+ * 
+ * Contains the location (CSS selector, data-ds-id) and metadata about the table.
+ */
+@Serializable
+data class TableIdentification(
+    /** CSS selector to locate the table element */
+    val cssSelector: String,
+    /** Stable element ID (data-ds-id) for consistent identification */
+    val dataId: String,
+    /** Description or auxiliary information about the table */
+    val auxiliaryInfo: String = "",
+    /** Whether the table contains media elements (images, icons) */
+    val containsMedia: Boolean = false
+)
 
 /**
  * Classification of HTML snippet content type.

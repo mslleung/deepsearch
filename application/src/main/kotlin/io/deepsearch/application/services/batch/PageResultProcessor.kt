@@ -12,6 +12,7 @@ import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IGeminiBatchService
 import io.deepsearch.domain.services.IJsoupDomService
 import io.deepsearch.domain.services.ITableGridDetectorService
+import io.deepsearch.domain.services.SemanticTableData
 import io.deepsearch.domain.services.TableDetectionBoundingBox
 import org.jsoup.Jsoup
 import org.slf4j.Logger
@@ -95,14 +96,30 @@ class PageResultProcessor(
                     emptyList()
                 }
 
-                // Merge visible tables with hidden table candidates
-                val allTables = mergeVisibleAndHiddenTables(
-                    visualResult.tables,
+                // Extract semantic <table> elements (static analysis, no LLM)
+                val semanticTables = extractSemanticTables(pending.htmlWithIds)
+                
+                // Collect all table data-ds-ids for overlap detection
+                val visualTableDataIds = visualResult.tables.map { it.dataId }.toSet()
+                val semanticTableDataIds = semanticTables.map { it.dataId }.toSet()
+                val allTableDataIds = visualTableDataIds + semanticTableDataIds
+                
+                // Filter hidden tables that overlap with visible/semantic tables
+                val filteredHiddenCandidates = filterHiddenCandidatesOverlapping(
                     hiddenTableCandidates,
+                    allTableDataIds,
                     pending.htmlWithIds
                 )
 
-                val hiddenTableCount = allTables.size - visualResult.tables.size
+                // Merge visible tables with filtered hidden table candidates
+                val allVisualTables = mergeVisibleAndHiddenTables(
+                    visualResult.tables,
+                    filteredHiddenCandidates,
+                    pending.htmlWithIds
+                )
+
+                val hiddenTableCount = filteredHiddenCandidates.size
+                val filteredCount = hiddenTableCandidates.size - filteredHiddenCandidates.size
 
                 // Store results to GCS
                 snapshotStorage.storeContentLlmResults(
@@ -110,17 +127,26 @@ class PageResultProcessor(
                     ContentLlmResults(
                         cleanedHtml = doc.html(),
                         semanticElements = visualResult.semanticElements,
-                        tableIdentifications = allTables,
+                        tableIdentifications = allVisualTables,
+                        semanticTableData = semanticTables,
                         iconInterpretations = null,
                         imageTexts = null
                     )
                 )
 
+                if (filteredCount > 0) {
+                    logger.debug(
+                        "[{}] Overlap detection: filtered {} hidden tables inside visible/semantic tables",
+                        jobId, filteredCount
+                    )
+                }
+
                 logger.debug(
-                    "[{}] Processed visual ID for {}: {} semantic, {} visible tables, {} hidden tables",
+                    "[{}] Processed visual ID for {}: {} semantic elements, {} visual tables, {} semantic tables, {} hidden tables",
                     jobId, urlState.url,
                     countSemanticElements(visualResult.semanticElements),
                     visualResult.tables.size,
+                    semanticTables.size,
                     hiddenTableCount
                 )
             } catch (e: Exception) {
@@ -154,10 +180,25 @@ class PageResultProcessor(
                 emptyList()
             }
 
-            // Merge visible tables with hidden table candidates
-            val allTables = mergeVisibleAndHiddenTables(
-                visualResult.tables,
+            // Extract semantic <table> elements (static analysis, no LLM)
+            val semanticTables = extractSemanticTables(pageData.html)
+            
+            // Collect all table data-ds-ids for overlap detection
+            val visualTableDataIds = visualResult.tables.map { it.dataId }.toSet()
+            val semanticTableDataIds = semanticTables.map { it.dataId }.toSet()
+            val allTableDataIds = visualTableDataIds + semanticTableDataIds
+            
+            // Filter hidden tables that overlap with visible/semantic tables
+            val filteredHiddenCandidates = filterHiddenCandidatesOverlapping(
                 hiddenTableCandidates,
+                allTableDataIds,
+                pageData.html
+            )
+
+            // Merge visible tables with filtered hidden table candidates
+            val allVisualTables = mergeVisibleAndHiddenTables(
+                visualResult.tables,
+                filteredHiddenCandidates,
                 pageData.html
             )
 
@@ -167,7 +208,8 @@ class PageResultProcessor(
                 ContentLlmResults(
                     cleanedHtml = doc.html(),
                     semanticElements = visualResult.semanticElements,
-                    tableIdentifications = allTables,
+                    tableIdentifications = allVisualTables,
+                    semanticTableData = semanticTables,
                     iconInterpretations = null,
                     imageTexts = null
                 )
@@ -213,12 +255,12 @@ class PageResultProcessor(
             if (gridResult.isTable && gridResult.confidence >= 0.5) {
                 logger.debug(
                     "Hidden container {} detected as table: {}x{} grid (confidence: {})",
-                    container.containerId, gridResult.rowCount, gridResult.colCount,
+                    container.containerLocator, gridResult.rowCount, gridResult.colCount,
                     "%.2f".format(gridResult.confidence)
                 )
                 candidates.add(
                     HiddenTableCandidate(
-                        containerId = container.containerId,
+                        containerId = container.containerLocator,
                         confidence = gridResult.confidence,
                         rowCount = gridResult.rowCount,
                         colCount = gridResult.colCount
@@ -281,5 +323,68 @@ class PageResultProcessor(
         count += elements.adBanners.size
         count += elements.popups.size
         return count
+    }
+    
+    // ==================== Semantic Table Extraction ====================
+    
+    /**
+     * Extract semantic HTML tables from HTML using static analysis.
+     * This is a pure Jsoup operation - no LLM needed for identification.
+     */
+    private fun extractSemanticTables(html: String): List<SemanticTableData> {
+        val doc = Jsoup.parse(html)
+        return doc.select("table[data-ds-id]").map { element ->
+            val dataId = element.attr("data-ds-id")
+            SemanticTableData(
+                dataId = dataId,
+                cssSelector = "[data-ds-id=\"$dataId\"]",
+                tableHtml = element.outerHtml()
+            )
+        }
+    }
+    
+    // ==================== Overlap Detection ====================
+    
+    /**
+     * Filter hidden table candidates that are inside visible or semantic tables.
+     * This prevents duplicate interpretation when a hidden container is nested inside a visible table.
+     */
+    private fun filterHiddenCandidatesOverlapping(
+        hiddenCandidates: List<HiddenTableCandidate>,
+        tableDataIds: Set<String>,
+        snapshotHtml: String
+    ): List<HiddenTableCandidate> {
+        if (tableDataIds.isEmpty()) {
+            return hiddenCandidates
+        }
+        
+        val doc = Jsoup.parse(snapshotHtml)
+        val tableElements = tableDataIds.mapNotNull { dataId ->
+            doc.selectFirst("[data-ds-id=\"$dataId\"]")
+        }
+        
+        return hiddenCandidates.filter { hidden ->
+            // Try to find the hidden container in the main snapshot
+            val hiddenElement = doc.selectFirst("[data-ds-id=\"${hidden.containerId}\"]")
+            if (hiddenElement == null) {
+                // Can't find it in main snapshot, keep it
+                return@filter true
+            }
+            
+            // Check if this hidden element is inside any visible/semantic table
+            val isInsideTable = tableElements.any { tableElement ->
+                tableElement.getAllElements().contains(hiddenElement) ||
+                    hiddenElement.parents().any { it == tableElement }
+            }
+            
+            if (isInsideTable) {
+                logger.debug(
+                    "Filtering hidden table {} - nested inside visible/semantic table",
+                    hidden.containerId
+                )
+            }
+            
+            !isInsideTable
+        }
     }
 }

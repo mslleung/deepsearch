@@ -284,11 +284,12 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                     }
                 }
                 
-                // Output tables grouped by section (using table's own HTML, not containerHtml)
-                // This is a generic approach that works for any page structure
+                // Output tables grouped by section
+                // Use containerHtml to find section names (includes accordion headers)
+                // The table's own HTML (result.html) only contains the content rows, not the section header
                 if (url.contains("sleekflow.io/pricing")) {
                     println("\n" + "=".repeat(80))
-                    println("TABLES BY SECTION (Generic Grouping)")
+                    println("TABLES BY ACCORDION SECTION")
                     println("=".repeat(80))
                     
                     val sectionKeywords = listOf(
@@ -299,27 +300,30 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         "Support and service"
                     )
                     
+                    // Group tables by which section their container belongs to
+                    // Check containerHtml (full accordion content) for section names
                     for (sectionName in sectionKeywords) {
                         println("\n" + "━".repeat(70))
                         println("SECTION: $sectionName")
                         println("━".repeat(70))
                         
-                        // Generic approach: check if the TABLE'S OWN HTML contains the section name
-                        // This uses the element's outerHtml (scoped to just that table), not containerHtml
+                        // Check if the CONTAINER'S HTML contains the section name
+                        // This captures tables even when the section header isn't in the table element itself
                         val tablesInSection = interpretedTables.filter { result ->
-                            result.html.contains(sectionName, ignoreCase = true)
+                            result.table.containerHtml.contains(sectionName, ignoreCase = true)
                         }
                         
                         if (tablesInSection.isEmpty()) {
-                            println("  No tables with '$sectionName' in their content.")
+                            println("  No tables found in '$sectionName' section.")
                         } else {
                             println("  Tables found: ${tablesInSection.size}")
                             
                             tablesInSection.forEachIndexed { idx, result ->
                                 println("\n  ${"─".repeat(60)}")
-                                println("  TABLE ${idx + 1} containing '$sectionName'")
+                                println("  TABLE ${idx + 1} in '$sectionName' section")
                                 println("  ${"─".repeat(60)}")
                                 println("  Local Element ID: ${result.table.localElementId}")
+                                println("  Container: ${result.table.containerLocator.take(60)}...")
                                 println("  Depth: ${result.table.depth}")
                                 println("  Grid: ${result.table.gridResult.rowCount} rows × ${result.table.gridResult.colCount} cols")
                                 println("  Confidence: ${String.format("%.2f", result.table.gridResult.confidence)}")
@@ -334,16 +338,37 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                     
                     // Summary
                     println("\n" + "=".repeat(80))
-                    println("SECTION TABLES SUMMARY (by table content)")
+                    println("SECTION TABLES SUMMARY")
                     println("=".repeat(80))
                     
+                    var allSectionsFound = true
                     for (sectionName in sectionKeywords) {
                         val tablesInSection = interpretedTables.filter { result ->
-                            result.html.contains(sectionName, ignoreCase = true)
+                            result.table.containerHtml.contains(sectionName, ignoreCase = true)
                         }
                         val tableCount = tablesInSection.size
                         val status = if (tableCount > 0) "✅" else "⚠️"
                         println("  $status $sectionName: $tableCount table(s)")
+                        if (tableCount == 0) allSectionsFound = false
+                    }
+                    
+                    // Verify all 5 sections have at least one table
+                    println("\n" + "─".repeat(40))
+                    if (allSectionsFound) {
+                        println("  ✅ All 5 accordion sections have detected tables!")
+                    } else {
+                        val missingSections = sectionKeywords.filter { sectionName ->
+                            interpretedTables.none { it.table.containerHtml.contains(sectionName, ignoreCase = true) }
+                        }
+                        println("  ⚠️ Some sections missing tables: $missingSections")
+                    }
+                    
+                    // Assert that all sections have tables
+                    require(allSectionsFound) {
+                        val missingSections = sectionKeywords.filter { sectionName ->
+                            interpretedTables.none { it.table.containerHtml.contains(sectionName, ignoreCase = true) }
+                        }
+                        "Expected all 5 accordion sections to have detected tables, but missing: $missingSections"
                     }
                 }
             }

@@ -261,12 +261,27 @@ data class MediaFileData(
 }
 
 /**
+ * Semantic HTML table data extracted via static analysis.
+ */
+data class SemanticTableData(
+    /** Stable element ID (data-ds-id) */
+    val dataId: String,
+    /** CSS selector using data-ds-id */
+    val cssSelector: String,
+    /** Outer HTML of the <table> element */
+    val tableHtml: String
+)
+
+/**
  * Stage 2 content LLM processing results.
  */
 data class ContentLlmResults(
     val cleanedHtml: String?,
     val semanticElements: SemanticElements?,
+    /** Vision-detected CSS/div-based tables (need LLM interpretation) */
     val tableIdentifications: List<TableIdentification>?,
+    /** Semantic HTML tables extracted via static analysis (programmatic conversion + LLM classification) */
+    val semanticTableData: List<SemanticTableData>? = null,
     val iconInterpretations: Map<String, String?>?,
     val imageTexts: Map<String, String?>?
 )
@@ -278,7 +293,10 @@ data class CachingData(
     val html: String,
     val cleanedHtml: String?,
     val semanticElements: SemanticElements?,
+    /** Vision-detected CSS/div-based tables */
     val tableIdentifications: List<TableIdentification>?,
+    /** Semantic HTML tables from static analysis */
+    val semanticTableData: List<SemanticTableData>? = null,
     val tableMarkdowns: Map<String, String>?,
     val iconInterpretations: Map<String, String?>?,
     val imageTexts: Map<String, String?>?,

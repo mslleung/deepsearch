@@ -45,6 +45,8 @@ import io.deepsearch.domain.services.IImageDimensionService
 import io.deepsearch.domain.services.ImageDimensionService
 import io.deepsearch.domain.services.ITableGridDetectorService
 import io.deepsearch.domain.services.IRecursiveTableDiscoveryService
+import io.deepsearch.domain.services.ISemanticTableConverter
+import io.deepsearch.domain.services.SemanticTableConverter
 import io.deepsearch.domain.detection.TableGridDetectorService
 import io.deepsearch.domain.detection.RecursiveTableDiscoveryService
 import kotlinx.coroutines.CoroutineDispatcher
@@ -116,9 +118,9 @@ private val domainCommonTestModule = module {
     singleOf(::HtmlSourceEvalAgentGenAiImpl) bind IHtmlSourceEvalAgent::class
     singleOf(::PdfSourceEvalAgentGenAiImpl) bind IPdfSourceEvalAgent::class
     singleOf(::MarkdownSourceEvalAgentGenAiImpl) bind IMarkdownSourceEvalAgent::class
-    singleOf(::TableIdentificationAgentGenAiImpl) bind ITableIdentificationAgent::class
     singleOf(::TableInterpretationAgentGenAiImpl) bind ITableInterpretationAgent::class
     singleOf(::VisualIdentificationAgentGenAiImpl) bind IVisualIdentificationAgent::class
+    singleOf(::SemanticTableClassificationAgentGenAiImpl) bind ISemanticTableClassificationAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class
     singleOf(::UrlContextExtractionAgentGenAiImpl) bind IUrlContextExtractionAgent::class
@@ -147,6 +149,7 @@ private val domainCommonTestModule = module {
     singleOf(::ImageDimensionService) bind IImageDimensionService::class
     singleOf(::TableGridDetectorService) bind ITableGridDetectorService::class
     singleOf(::RecursiveTableDiscoveryService) bind IRecursiveTableDiscoveryService::class
+    singleOf(::SemanticTableConverter) bind ISemanticTableConverter::class
     singleOf(::ProxyAwareHttpClientFactory) bind IProxyAwareHttpClientFactory::class
     singleOf(::ProxyTestService) bind IProxyTestService::class
     singleOf(::FreeProxySyncService)

@@ -1,9 +1,9 @@
 package io.deepsearch.domain.agents.googlegenaiimpl
 
-import io.deepsearch.domain.agents.ITableIdentificationAgent
+import io.deepsearch.domain.agents.IVisualIdentificationAgent
 import io.deepsearch.domain.agents.ITableInterpretationAgent
-import io.deepsearch.domain.agents.TableIdentificationInput
 import io.deepsearch.domain.agents.TableInterpretationInput
+import io.deepsearch.domain.agents.VisualIdentificationInput
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.services.IBoundingBoxDerivationService
@@ -25,7 +25,7 @@ class TableInterpretationAgentTest : KoinTest {
     }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
-    private val tableIdentificationAgent by inject<ITableIdentificationAgent>()
+    private val visualIdentificationAgent by inject<IVisualIdentificationAgent>()
     private val tableInterpretationAgent by inject<ITableInterpretationAgent>()
     private val boundingBoxDerivationService by inject<IBoundingBoxDerivationService>()
     private val browserPool by inject<IBrowserPool>()
@@ -43,15 +43,15 @@ class TableInterpretationAgentTest : KoinTest {
             val pageSnapshot = page.capturePageSnapshot()
             val screenshot = page.takeFullPageScreenshot()
 
-            // Identify tables using vision + hidden container detection
-            val idOutput = tableIdentificationAgent.generate(
-                TableIdentificationInput(
+            // Identify tables using combined visual identification
+            val visualOutput = visualIdentificationAgent.generate(
+                VisualIdentificationInput(
                     pageSnapshot = pageSnapshot,
                     screenshot = screenshot
                 )
             )
 
-            idOutput.tables.forEach { table ->
+            visualOutput.tables.forEach { table ->
                 // Derive bounding boxes from page snapshot
                 val derivedData = boundingBoxDerivationService.deriveElementBoundingBoxes(
                     cssSelector = table.cssSelector,

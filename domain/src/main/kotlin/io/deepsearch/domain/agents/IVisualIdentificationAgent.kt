@@ -53,14 +53,15 @@ data class VisualIdentificationBatchRequest(
 )
 
 /**
- * Combined visual identification agent that detects both semantic elements and tables
+ * Combined visual identification agent that detects both semantic elements and CSS/div-based tables
  * in a single vision-based LLM call.
  * 
- * This agent merges the functionality of ISemanticIdentificationAgent and 
- * ITableIdentificationAgent for vision-based detection, reducing:
- * - LLM calls from 2 to 1
- * - Total latency (single call instead of parallel calls with overhead)
- * - Token usage (image tokens sent only once)
+ * This agent handles vision-based detection of:
+ * - Semantic elements: header, footer, nav sidebar, breadcrumb, cookie banner, popups
+ * - CSS/div-based tables: grid layouts using CSS flexbox/grid, not semantic HTML `<table>`
+ * 
+ * Note: Semantic HTML `<table>` elements are extracted separately via static analysis
+ * in WebpageExtractionService, not through this vision-based agent.
  */
 interface IVisualIdentificationAgent : IAgent<VisualIdentificationInput, VisualIdentificationOutput> {
     override suspend fun generate(input: VisualIdentificationInput): VisualIdentificationOutput

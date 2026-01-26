@@ -1,5 +1,7 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.agents.ISemanticTableClassificationAgent
+import io.deepsearch.domain.agents.SemanticTableClassificationInput
 import io.deepsearch.domain.agents.SnippetClassification
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.TableInterpretationInput
@@ -14,6 +16,7 @@ import io.deepsearch.domain.services.IBoundingBoxDerivationService
 import io.deepsearch.domain.services.ICssSelectorConstructionService
 import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IJsoupDomService
+import io.deepsearch.domain.services.ISemanticTableConverter
 import io.deepsearch.domain.services.MediaPlaceholderMapping
 import io.deepsearch.domain.services.PlaceholderPrefix
 import kotlinx.coroutines.CoroutineScope
@@ -60,7 +63,9 @@ class WebpageExtractionService(
     private val jsoupDomService: IJsoupDomService,
     private val htmlToMarkdownService: IHtmlToMarkdownService,
     private val markdownFormattingService: IMarkdownFormattingService,
-    private val recursiveTableDiscoveryService: IRecursiveTableDiscoveryService
+    private val recursiveTableDiscoveryService: IRecursiveTableDiscoveryService,
+    private val semanticTableConverter: ISemanticTableConverter,
+    private val semanticTableClassificationAgent: ISemanticTableClassificationAgent
 ) : IWebpageExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -69,7 +74,8 @@ class WebpageExtractionService(
 
     private data class LlmResults(
         val semanticElements: SemanticElements,
-        val tableIdentifications: List<TableIdentification>,
+        /** Vision-detected CSS/div-based tables (need LLM interpretation) */
+        val visualTableIdentifications: List<TableIdentification>,
         val iconReplacements: List<CssSelectorReplacement>,
         val imageReplacements: List<CssSelectorReplacement>,
         val imageHashes: List<ByteArray>,
@@ -89,6 +95,16 @@ class WebpageExtractionService(
         val rowCount: Int,
         val colCount: Int,
         val depth: Int
+    )
+    
+    /** Semantic HTML table extracted via static analysis (no LLM needed for identification) */
+    data class SemanticTableData(
+        /** Stable element ID (data-ds-id) */
+        val dataId: String,
+        /** CSS selector using data-ds-id */
+        val cssSelector: String,
+        /** Outer HTML of the <table> element */
+        val tableHtml: String
     )
 
     // ========== Pipeline Extension for Flow Composition ==========
@@ -188,31 +204,60 @@ class WebpageExtractionService(
             webpage.close()
             logger.debug("Browser released after {} ms total browser time", browserDuration)
 
+            // ===== Extract semantic <table> elements (static analysis, no LLM) =====
+            // This is done early since it only needs the HTML snapshot
+            val semanticTables = extractSemanticTables(snapshot.html)
+            logger.debug("Static analysis: {} semantic <table> elements extracted", semanticTables.size)
+
             // ===== Identify hidden table candidates using RecursiveTableDiscoveryService (server-side) =====
             // Hidden tables use containerHtml + local IDs, independent of main page snapshot
-            val hiddenTableCandidates = identifyHiddenTableCandidates(hiddenBboxData)
-            logger.debug("RecursiveTableDiscoveryService found {} hidden table candidates", hiddenTableCandidates.size)
+            val allHiddenTableCandidates = identifyHiddenTableCandidates(hiddenBboxData)
+            logger.debug("RecursiveTableDiscoveryService found {} hidden table candidates", allHiddenTableCandidates.size)
 
             // ===== Await LLM Results =====
             val llmDuration = measureTimeMillis { awaitAll(visualId, iconRepl, imageRepl) }
             val visualResult = visualId.await()
             val imageResult = imageRepl.await()
             
-            // Visible tables use the main page snapshot (data-ds-id)
+            // ===== Overlap Detection =====
+            // Filter out hidden tables that are inside visible or semantic tables
+            // to prevent duplicate interpretation (must be done after visual results are ready)
+            val visualTableDataIds = visualResult.tables.map { it.dataId }.toSet()
+            val semanticTableDataIds = semanticTables.map { it.dataId }.toSet()
+            val allTableDataIds = visualTableDataIds + semanticTableDataIds
+            
+            val hiddenTableCandidates = filterHiddenCandidatesOverlapping(
+                allHiddenTableCandidates,
+                allTableDataIds,
+                snapshot.html
+            )
+            
+            if (hiddenTableCandidates.size < allHiddenTableCandidates.size) {
+                logger.debug(
+                    "Overlap detection: filtered {} hidden tables inside visible/semantic tables ({} -> {})",
+                    allHiddenTableCandidates.size - hiddenTableCandidates.size,
+                    allHiddenTableCandidates.size,
+                    hiddenTableCandidates.size
+                )
+            }
+            
+            // Visual tables are CSS/div-based tables detected by vision
+            // Semantic <table> elements are handled separately via programmatic conversion
             // Hidden tables are processed separately using their containerHtml (data-ds-local)
             val llmResults = LlmResults(
                 semanticElements = visualResult.semanticElements,
-                tableIdentifications = visualResult.tables, // Only visible tables here
+                visualTableIdentifications = visualResult.tables, // Vision-detected CSS/div tables
                 iconReplacements = iconRepl.await().replacements,
                 imageReplacements = imageResult.replacements,
                 imageHashes = imageResult.hashes,
                 imageMapping = imageResult.imageMapping
             )
             logger.debug(
-                "LLM operations complete in {} ms: {} semantic, {} visible tables, {} hidden tables, {} icons, {} images",
+                "LLM operations complete in {} ms: {} semantic elements, {} visual tables, {} semantic tables, {} hidden tables, {} icons, {} images",
                 llmDuration,
                 countSemanticElements(llmResults.semanticElements),
                 visualResult.tables.size,
+                semanticTables.size,
                 hiddenTableCandidates.size,
                 llmResults.iconReplacements.size,
                 llmResults.imageReplacements.size
@@ -221,7 +266,7 @@ class WebpageExtractionService(
             // ===== DOM Processing (Jsoup) + table interpretation =====
             val domResult: WebpageExtractionResult
             val jsoupDuration = measureTimeMillis {
-                domResult = processDom(snapshot, llmResults, hiddenTableCandidates, sessionId)
+                domResult = processDom(snapshot, llmResults, semanticTables, hiddenTableCandidates, sessionId)
             }
             logger.debug("Table interpretation complete in {} ms", jsoupDuration)
 
@@ -370,9 +415,10 @@ class WebpageExtractionService(
     private suspend fun processDom(
         snapshot: IBrowserPage.PageSnapshotWithMetadata,
         llmResults: LlmResults,
+        semanticTables: List<SemanticTableData>,
         hiddenTableCandidates: List<HiddenTableCandidate>,
         sessionId: SessionId
-    ): WebpageExtractionResult {
+    ): WebpageExtractionResult = coroutineScope {
         val imageMapping = llmResults.imageMapping
         // HTML already has data-ds-id attributes from browser's injectStableIds()
         val jsoupDoc = Jsoup.parse(snapshot.html)
@@ -398,21 +444,48 @@ class WebpageExtractionService(
         // Use stable data-ds-id selectors instead of position-based CSS selectors
         jsoupDomService.removeElements(jsoupDoc, collectSemanticDataIdSelectors(llmResults.semanticElements))
 
-        // ===== Step 4: Interpret and replace VISIBLE tables =====
-        // Visible tables use data-ds-id selectors which remain stable after semantic removal
-        // Pass placeholderMap so table snippets can have placeholders resolved before LLM interpretation
-        val visibleTableReplacements = interpretTablesWithDerivedData(
-            llmResults.tableIdentifications,
-            snapshot.html,
-            snapshot.boundingBoxes,
-            jsoupDoc,
-            sessionId,
-            placeholderMap
-        )
+        // ===== THREE PARALLEL TABLE INTERPRETATION PATHS =====
+        // Path 1: Visual/CSS tables - full LLM interpretation
+        // Path 2: Semantic <table> - programmatic markdown + LLM classification
+        // Path 3: Hidden tables - full LLM interpretation
+
+        // Path 1: Visual/CSS tables (need LLM for interpretation)
+        val visualTablesDeferred = async {
+            interpretTablesWithDerivedData(
+                llmResults.visualTableIdentifications,
+                snapshot.html,
+                snapshot.boundingBoxes,
+                jsoupDoc,
+                sessionId,
+                placeholderMap
+            )
+        }
+
+        // Path 2: Semantic <table> elements (programmatic conversion + LLM classification)
+        val semanticTablesDeferred = async {
+            interpretSemanticTables(semanticTables, jsoupDoc, placeholderMap)
+        }
+
+        // Path 3: Hidden tables (need LLM for interpretation)
+        val hiddenTablesDeferred = async {
+            if (hiddenTableCandidates.isNotEmpty()) {
+                interpretHiddenTables(hiddenTableCandidates, sessionId)
+            } else {
+                null
+            }
+        }
+
+        // Await all three paths
+        val visibleTableReplacements = visualTablesDeferred.await()
+        val semanticTableReplacements = semanticTablesDeferred.await()
+        val hiddenTablesMarkdown = hiddenTablesDeferred.await()
+
+        // ===== Apply table replacements to DOM =====
         // Use placeholders for tables too - this prevents markdown newlines from being escaped
         // during HTML-to-Markdown conversion. Use TABLE prefix to avoid ID collisions with media placeholders.
+        val allTableReplacements = visibleTableReplacements + semanticTableReplacements
         val tablePlaceholders = jsoupDomService.replaceElementsWithPlaceholders(
-            jsoupDoc, visibleTableReplacements, PlaceholderPrefix.TABLE
+            jsoupDoc, allTableReplacements, PlaceholderPrefix.TABLE
         )
         placeholderMap.putAll(tablePlaceholders)
 
@@ -438,15 +511,7 @@ class WebpageExtractionService(
             finalMarkdown = finalMarkdown.replace(mapping.placeholder, mapping.text)
         }
 
-        // ===== Step 8: Process HIDDEN tables =====
-        // Hidden tables use containerHtml with local IDs (data-ds-local), independent of main snapshot
-        val hiddenTablesMarkdown = if (hiddenTableCandidates.isNotEmpty()) {
-            interpretHiddenTables(hiddenTableCandidates, sessionId)
-        } else {
-            null
-        }
-
-        // ===== Step 9: Add metadata header, popup content, and hidden content =====
+        // ===== Step 8: Add metadata header, popup content, and hidden content =====
         val markdown = buildString {
             appendLine("URL: ${snapshot.url}")
             if (snapshot.title.isNotBlank()) {
@@ -475,7 +540,7 @@ class WebpageExtractionService(
             }
         }
 
-        return WebpageExtractionResult(
+        WebpageExtractionResult(
             markdown = markdown,
             title = snapshot.title,
             description = snapshot.description,
@@ -484,6 +549,67 @@ class WebpageExtractionService(
         )
     }
     
+    /**
+     * Interpret semantic HTML tables using programmatic conversion + LLM classification.
+     * 
+     * This is Path 2 of the three parallel interpretation paths:
+     * 1. Convert HTML <table> to markdown using SemanticTableConverter (fast, no LLM)
+     * 2. Classify markdown via SemanticTableClassificationAgent (lightweight LLM call)
+     * 3. Build replacements based on classification
+     * 
+     * @param semanticTables Semantic tables extracted via static analysis
+     * @param jsoupDoc The Jsoup document (for resolving placeholders)
+     * @param placeholderMap Media placeholders to resolve in table HTML
+     * @return CSS selector replacements for each table
+     */
+    private suspend fun interpretSemanticTables(
+        semanticTables: List<SemanticTableData>,
+        jsoupDoc: org.jsoup.nodes.Document,
+        placeholderMap: Map<String, MediaPlaceholderMapping>
+    ): List<CssSelectorReplacement> {
+        if (semanticTables.isEmpty()) {
+            return emptyList()
+        }
+
+        // Step 1: Convert all tables to markdown (fast, no LLM)
+        val markdowns = semanticTables.map { table ->
+            // Resolve placeholders in table HTML before conversion
+            val resolvedHtml = placeholderMap.values.fold(table.tableHtml) { html, mapping ->
+                html.replace(mapping.placeholder, mapping.text)
+            }
+            semanticTableConverter.convertToMarkdown(resolvedHtml)
+        }
+
+        // Step 2: Classify via LLM (single batch call for all tables)
+        val classificationInputs = markdowns.map { markdown ->
+            SemanticTableClassificationInput(markdownTable = markdown)
+        }
+        val classificationResult = semanticTableClassificationAgent.classifyTables(classificationInputs)
+        val classifications = classificationResult.classifications
+
+        logger.debug(
+            "Semantic table classification complete: {} tables, {} TABLE, {} COOKIE, {} HIDDEN, {} OTHERS",
+            semanticTables.size,
+            classifications.count { it == SnippetClassification.TABLE },
+            classifications.count { it == SnippetClassification.COOKIE_DECLARATION_TABLE },
+            classifications.count { it == SnippetClassification.HIDDEN_MOBILE_LAYOUT },
+            classifications.count { it == SnippetClassification.OTHERS }
+        )
+
+        // Step 3: Build replacements
+        return semanticTables.zip(markdowns).zip(classifications).map { (pair, classification) ->
+            val (table, markdown) = pair
+            val replacementText = if (classification.shouldRemoveFromDom()) {
+                // Remove cookie declaration tables and hidden mobile layouts
+                null
+            } else {
+                // Keep the programmatically converted markdown
+                markdown
+            }
+            CssSelectorReplacement(table.cssSelector, replacementText)
+        }
+    }
+
     /**
      * Interpret hidden tables using their containerHtml (with local IDs).
      * Hidden tables are processed independently of the main page snapshot.
@@ -652,5 +778,82 @@ class WebpageExtractionService(
         count += elements.adBanners.size
         count += elements.popups.size
         return count
+    }
+    
+    // ========== Semantic Table Extraction (Static Analysis) ==========
+    
+    /**
+     * Extract semantic HTML tables from the page snapshot using static analysis.
+     * 
+     * This is a pure Jsoup operation - no LLM needed for identification.
+     * Semantic `<table>` elements have well-defined structure and can be
+     * converted to markdown programmatically.
+     * 
+     * @param html The page HTML with data-ds-id attributes injected
+     * @return List of semantic tables with their HTML and identifiers
+     */
+    private fun extractSemanticTables(html: String): List<SemanticTableData> {
+        val doc = Jsoup.parse(html)
+        return doc.select("table[data-ds-id]").map { element ->
+            val dataId = element.attr("data-ds-id")
+            SemanticTableData(
+                dataId = dataId,
+                cssSelector = "[data-ds-id=\"$dataId\"]",
+                tableHtml = element.outerHtml()
+            )
+        }
+    }
+    
+    // ========== Overlap Detection ==========
+    
+    /**
+     * Filter hidden table candidates that are inside visible or semantic tables.
+     * 
+     * This prevents duplicate interpretation when a hidden container (e.g., accordion)
+     * is nested inside a visible table.
+     * 
+     * @param hiddenCandidates All hidden table candidates
+     * @param tableDataIds Data-ds-id values of all visible and semantic tables
+     * @param snapshotHtml The page HTML for DOM traversal
+     * @return Hidden candidates that are NOT inside any visible/semantic table
+     */
+    private fun filterHiddenCandidatesOverlapping(
+        hiddenCandidates: List<HiddenTableCandidate>,
+        tableDataIds: Set<String>,
+        snapshotHtml: String
+    ): List<HiddenTableCandidate> {
+        if (tableDataIds.isEmpty()) {
+            return hiddenCandidates
+        }
+        
+        val doc = Jsoup.parse(snapshotHtml)
+        val tableElements = tableDataIds.mapNotNull { dataId ->
+            doc.selectFirst("[data-ds-id=\"$dataId\"]")
+        }
+        
+        return hiddenCandidates.filter { hidden ->
+            // Try to find the hidden container in the main snapshot using its locator
+            val hiddenElement = doc.selectFirst(hidden.containerLocator)
+            if (hiddenElement == null) {
+                // Can't find it in main snapshot, keep it (it's in a hidden container)
+                return@filter true
+            }
+            
+            // Check if this hidden element is inside any visible/semantic table
+            val isInsideTable = tableElements.any { tableElement ->
+                // Check if tableElement contains hiddenElement
+                tableElement.getAllElements().contains(hiddenElement) ||
+                    hiddenElement.parents().any { it == tableElement }
+            }
+            
+            if (isInsideTable) {
+                logger.debug(
+                    "Filtering hidden table {} - nested inside visible/semantic table",
+                    hidden.localElementId
+                )
+            }
+            
+            !isInsideTable
+        }
     }
 }

@@ -228,15 +228,14 @@ class RecursiveTableDiscoveryService(
         
         for (tws in tablesWithSignatures) {
             // Find an existing group with the same content signature
+            // NOTE: We ONLY use content signature for cross-container deduplication.
+            // Bounding box overlap is NOT reliable because hidden containers (like accordions)
+            // all expand to the same screen position, causing false-positive deduplication.
+            // Different accordion sections would have overlapping bounds but different content.
             val matchingGroup = groups.find { group ->
                 group.any { existing -> 
-                    // Primary: same content signature = definitely duplicate
-                    existing.contentSignature == tws.contentSignature ||
-                    // Secondary: if content differs but bounds are VERY similar AND 
-                    // leaf boxes significantly overlap, they might be the same table
-                    (existing.bounds != null && tws.bounds != null && 
-                     boundsAreSimilar(existing.bounds, tws.bounds) &&
-                     leafBoxesOverlap(existing.table.elementBoundingBoxes, tws.table.elementBoundingBoxes))
+                    // Content signature match = definitely duplicate
+                    existing.contentSignature == tws.contentSignature
                 }
             }
             
