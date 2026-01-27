@@ -509,11 +509,12 @@ class WebpageExtractionService(
         }
 
         // Path 4: Hidden content (LLM for complex tables, programmatic for lists)
+        // Returns CSS selector replacements to insert content at original DOM position
         val hiddenContentDeferred = async {
             if (hiddenTableCandidates.isNotEmpty()) {
                 interpretHiddenContent(hiddenTableCandidates, sessionId)
             } else {
-                null
+                emptyList()
             }
         }
 
@@ -521,7 +522,7 @@ class WebpageExtractionService(
         val visibleTableReplacements = visualTablesDeferred.await()
         val semanticTableReplacements = semanticTablesDeferred.await()
         val semanticListReplacements = semanticListsDeferred.await()
-        val hiddenContentMarkdown = hiddenContentDeferred.await()
+        val hiddenContentReplacements = hiddenContentDeferred.await()
 
         // ===== Apply table and list replacements to DOM =====
         // Use placeholders for tables and lists - this prevents markdown newlines from being escaped
@@ -537,6 +538,14 @@ class WebpageExtractionService(
             jsoupDoc, semanticListReplacements, PlaceholderPrefix.LIST
         )
         placeholderMap.putAll(listPlaceholders)
+        
+        // Apply hidden content replacements (accordion panels, collapsed sections)
+        // This replaces the hidden container elements in the DOM with their interpreted content,
+        // preserving the original DOM position rather than appending at the end.
+        val hiddenPlaceholders = jsoupDomService.replaceElementsWithPlaceholders(
+            jsoupDoc, hiddenContentReplacements, PlaceholderPrefix.HIDDEN
+        )
+        placeholderMap.putAll(hiddenPlaceholders)
 
         // ===== Step 5: Clean up DOM before markdown conversion =====
         // Remove empty elements that would produce markdown artifacts like orphan `>` or `* `
@@ -560,7 +569,9 @@ class WebpageExtractionService(
             finalMarkdown = finalMarkdown.replace(mapping.placeholder, mapping.text)
         }
 
-        // ===== Step 8: Add metadata header, popup content, and hidden content =====
+        // ===== Step 8: Add metadata header and popup content =====
+        // Note: Hidden content is now inserted at original DOM position via placeholders,
+        // so it no longer needs to be appended as a separate section.
         val markdown = buildString {
             appendLine("URL: ${snapshot.url}")
             if (snapshot.title.isNotBlank()) {
@@ -578,14 +589,6 @@ class WebpageExtractionService(
                 appendLine("## Popup Content")
                 appendLine()
                 append(popupText)
-            }
-            // Append hidden content if present (accordions, collapsed sections, etc.)
-            if (!hiddenContentMarkdown.isNullOrBlank()) {
-                appendLine()
-                appendLine("---")
-                appendLine("## Hidden Content")
-                appendLine()
-                append(hiddenContentMarkdown)
             }
         }
 
@@ -663,62 +666,75 @@ class WebpageExtractionService(
      * Interpret hidden content using their containerHtml (with local IDs).
      * Hidden content is processed independently of the main page snapshot.
      * 
+     * Returns CSS selector replacements that will replace the hidden container elements
+     * in the main DOM with their interpreted markdown content. This ensures hidden content
+     * (accordions, collapsed sections) appears in its original DOM position rather than
+     * being appended at the end.
+     * 
      * For semantic elements (<table>, <ul>, <ol>), uses programmatic conversion.
      * For non-semantic grid structures (CSS/div-based), uses LLM interpretation.
      */
     private suspend fun interpretHiddenContent(
         hiddenCandidates: List<HiddenTableCandidate>,
         sessionId: SessionId
-    ): String {
-        val interpretedContent = mutableListOf<String>()
-        val llmCandidates = mutableListOf<Pair<HiddenTableCandidate, org.jsoup.nodes.Element>>()
+    ): List<CssSelectorReplacement> {
+        // Group candidates by containerLocator - multiple tables/lists may come from the same hidden container
+        val byContainer = hiddenCandidates.groupBy { it.containerLocator }
         
-        for (candidate in hiddenCandidates) {
-            // Parse the container HTML (contains data-ds-local attributes)
-            val containerDoc = Jsoup.parse(candidate.containerHtml)
+        // Track interpreted content per container
+        val contentByContainer = mutableMapOf<String, MutableList<String>>()
+        val llmCandidates = mutableListOf<Triple<String, HiddenTableCandidate, org.jsoup.nodes.Element>>()
+        
+        for ((containerLocator, candidates) in byContainer) {
+            contentByContainer[containerLocator] = mutableListOf()
             
-            // Find the element using local ID
-            val element = containerDoc.selectFirst("[data-ds-local=\"${candidate.localElementId}\"]")
-            if (element == null) {
-                logger.debug("Hidden element not found: {}", candidate.localElementId)
-                continue
-            }
-            
-            val tagName = element.tagName().lowercase()
-            
-            when (tagName) {
-                // Semantic table - use programmatic conversion
-                "table" -> {
-                    val markdown = semanticTableConverter.convertToMarkdown(element.outerHtml())
-                    if (markdown.isNotBlank()) {
-                        interpretedContent.add(markdown)
-                        logger.debug(
-                            "Hidden semantic table {} converted programmatically: {}",
-                            candidate.localElementId, markdown.take(100)
-                        )
-                    }
+            for (candidate in candidates) {
+                // Parse the container HTML (contains data-ds-local attributes)
+                val containerDoc = Jsoup.parse(candidate.containerHtml)
+                
+                // Find the element using local ID
+                val element = containerDoc.selectFirst("[data-ds-local=\"${candidate.localElementId}\"]")
+                if (element == null) {
+                    logger.debug("Hidden element not found: {}", candidate.localElementId)
+                    continue
                 }
-                // Semantic list - use programmatic conversion
-                "ul", "ol" -> {
-                    val markdown = semanticListConverter.convertToMarkdown(element.outerHtml())
-                    if (markdown.isNotBlank()) {
-                        interpretedContent.add(markdown)
-                        logger.debug(
-                            "Hidden semantic list {} converted programmatically: {}",
-                            candidate.localElementId, markdown.take(100)
-                        )
+                
+                val tagName = element.tagName().lowercase()
+                
+                when (tagName) {
+                    // Semantic table - use programmatic conversion
+                    "table" -> {
+                        val markdown = semanticTableConverter.convertToMarkdown(element.outerHtml())
+                        if (markdown.isNotBlank()) {
+                            contentByContainer[containerLocator]!!.add(markdown)
+                            logger.debug(
+                                "Hidden semantic table {} converted programmatically: {}",
+                                candidate.localElementId, markdown.take(100)
+                            )
+                        }
                     }
-                }
-                // Non-semantic structure - queue for LLM interpretation
-                else -> {
-                    llmCandidates.add(candidate to element)
+                    // Semantic list - use programmatic conversion
+                    "ul", "ol" -> {
+                        val markdown = semanticListConverter.convertToMarkdown(element.outerHtml())
+                        if (markdown.isNotBlank()) {
+                            contentByContainer[containerLocator]!!.add(markdown)
+                            logger.debug(
+                                "Hidden semantic list {} converted programmatically: {}",
+                                candidate.localElementId, markdown.take(100)
+                            )
+                        }
+                    }
+                    // Non-semantic structure - queue for LLM interpretation
+                    else -> {
+                        llmCandidates.add(Triple(containerLocator, candidate, element))
+                    }
                 }
             }
         }
         
         // Process non-semantic candidates via LLM (batched)
         if (llmCandidates.isNotEmpty()) {
-            val inputs = llmCandidates.map { (candidate, element) ->
+            val inputs = llmCandidates.map { (_, candidate, element) ->
                 val tableIdentification = TableIdentification(
                     cssSelector = "[data-ds-local=\"${candidate.localElementId}\"]",
                     dataId = candidate.localElementId,
@@ -736,8 +752,8 @@ class WebpageExtractionService(
             
             results.forEachIndexed { index, result ->
                 if (!result.classification.shouldRemoveFromDom()) {
-                    interpretedContent.add(result.markdown)
-                    val candidate = llmCandidates[index].first
+                    val (containerLocator, candidate, _) = llmCandidates[index]
+                    contentByContainer[containerLocator]!!.add(result.markdown)
                     logger.debug(
                         "Hidden content {} interpreted as {}: {}",
                         candidate.localElementId, result.classification, result.markdown.take(100)
@@ -746,7 +762,19 @@ class WebpageExtractionService(
             }
         }
         
-        return interpretedContent.joinToString("\n\n")
+        // Build CSS selector replacements - one per container
+        return contentByContainer.mapNotNull { (containerLocator, contentList) ->
+            if (contentList.isNotEmpty()) {
+                val combinedMarkdown = contentList.joinToString("\n\n")
+                logger.debug(
+                    "Hidden container [{}] replacement: {} content items, {} chars",
+                    containerLocator.take(50), contentList.size, combinedMarkdown.length
+                )
+                CssSelectorReplacement(containerLocator, combinedMarkdown)
+            } else {
+                null
+            }
+        }
     }
 
     /**

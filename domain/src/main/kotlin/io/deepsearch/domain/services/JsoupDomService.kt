@@ -37,7 +37,9 @@ enum class PlaceholderPrefix(val prefix: String) {
     /** For table markdown */
     TABLE("TABLE"),
     /** For list markdown */
-    LIST("LIST")
+    LIST("LIST"),
+    /** For hidden container content (accordions, collapsed sections) */
+    HIDDEN("HIDDEN")
 }
 
 /**
