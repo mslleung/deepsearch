@@ -196,12 +196,13 @@ class SemanticTableClassificationAgentGenAiImpl(
         }
 
         logger.debug(
-            "Classified {} tables: {} TABLE, {} COOKIE, {} HIDDEN, {} OTHERS",
+            "Classified {} tables: {} TABLE, {} CARD, {} LIST, {} COOKIE, {} HIDDEN",
             finalClassifications.size,
             finalClassifications.count { it == SnippetClassification.TABLE },
+            finalClassifications.count { it == SnippetClassification.CARD },
+            finalClassifications.count { it == SnippetClassification.LIST },
             finalClassifications.count { it == SnippetClassification.COOKIE_DECLARATION_TABLE },
-            finalClassifications.count { it == SnippetClassification.HIDDEN_MOBILE_LAYOUT },
-            finalClassifications.count { it == SnippetClassification.OTHERS }
+            finalClassifications.count { it == SnippetClassification.HIDDEN_MOBILE_LAYOUT }
         )
 
         return SemanticTableClassificationBatchResult(

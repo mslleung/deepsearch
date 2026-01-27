@@ -27,24 +27,25 @@ data class TableIdentification(
  * Classification of HTML snippet content type.
  * 
  * The LLM classifies the snippet to determine how it should be processed:
- * - TABLE: Tabular data (pricing, comparison, specifications) - converted to markdown table
+ * - TABLE: Tabular data (pricing, comparison, specifications) - converted to markdown table. DEFAULT for grid-like content.
  * - CARD: Card-like structures - converted to markdown table for structured data
  * - LIST: Bullet point or numbered lists - converted to markdown list
  * - COOKIE_DECLARATION_TABLE: Cookie consent declaration tables (legal boilerplate) - logged and removed
  * - HIDDEN_MOBILE_LAYOUT: Hidden mobile-specific layouts (duplicate content) - logged and removed
- * - OTHERS: Non-tabular content - converted to well-formatted markdown
+ * 
+ * Note: OTHERS has been removed. Content detected as grid-like defaults to TABLE.
  */
 enum class SnippetClassification {
     TABLE,
     CARD,
     LIST,
     COOKIE_DECLARATION_TABLE,
-    HIDDEN_MOBILE_LAYOUT,
-    OTHERS;
+    HIDDEN_MOBILE_LAYOUT;
     
     companion object {
         fun fromString(value: String): SnippetClassification {
-            return entries.find { it.name.equals(value, ignoreCase = true) } ?: OTHERS
+            // Default to TABLE for unrecognized values (content has grid structure from spatial analysis)
+            return entries.find { it.name.equals(value, ignoreCase = true) } ?: TABLE
         }
     }
     

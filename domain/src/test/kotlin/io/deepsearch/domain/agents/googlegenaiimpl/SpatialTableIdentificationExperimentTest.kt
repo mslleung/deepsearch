@@ -285,8 +285,8 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 }
                 
                 // Output tables grouped by section
-                // Use containerHtml to find section names (includes accordion headers)
-                // The table's own HTML (result.html) only contains the content rows, not the section header
+                // Use container-based assignment: each table belongs to the section defined by its container's header
+                // This prevents mis-assignment when LLM-generated markdown mentions other section names
                 if (url.contains("sleekflow.io/pricing")) {
                     println("\n" + "=".repeat(80))
                     println("TABLES BY ACCORDION SECTION")
@@ -300,18 +300,54 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         "Support and service"
                     )
                     
-                    // Group tables by which section their container belongs to
-                    // Check containerHtml (full accordion content) for section names
+                    // First, build a map of containerLocator -> section name
+                    // by looking at which section name appears in the container's header/summary
+                    val containerToSection = mutableMapOf<String, String>()
+                    
+                    for (result in interpretedTables) {
+                        val containerLocator = result.table.containerLocator
+                        if (containerLocator !in containerToSection) {
+                            // Parse container HTML and find section name in summary/header
+                            val containerDoc = org.jsoup.Jsoup.parse(result.table.containerHtml)
+                            val summaryElements = containerDoc.select("summary, h1, h2, h3, h4, h5, h6, [class*=title], [class*=header]")
+                            val summaryText = summaryElements.joinToString(" ") { it.text() }
+                            
+                            // Find which section this container belongs to
+                            for (sectionName in sectionKeywords) {
+                                if (summaryText.contains(sectionName, ignoreCase = true)) {
+                                    containerToSection[containerLocator] = sectionName
+                                    break
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Debug: print container to section mapping
+                    println("\nContainer to Section Mapping:")
+                    containerToSection.entries.forEach { (locator, section) ->
+                        println("  ${locator.take(50)}... -> $section")
+                    }
+                    
+                    // Assign each table to its container's section
+                    val sectionToTables = sectionKeywords.associateWith { mutableListOf<InterpretedTable>() }
+                    val unassignedTables = mutableListOf<InterpretedTable>()
+                    
+                    for (result in interpretedTables) {
+                        val section = containerToSection[result.table.containerLocator]
+                        if (section != null) {
+                            sectionToTables[section]!!.add(result)
+                        } else {
+                            unassignedTables.add(result)
+                        }
+                    }
+                    
+                    // Print results by section
                     for (sectionName in sectionKeywords) {
                         println("\n" + "━".repeat(70))
                         println("SECTION: $sectionName")
                         println("━".repeat(70))
                         
-                        // Check if the CONTAINER'S HTML contains the section name
-                        // This captures tables even when the section header isn't in the table element itself
-                        val tablesInSection = interpretedTables.filter { result ->
-                            result.table.containerHtml.contains(sectionName, ignoreCase = true)
-                        }
+                        val tablesInSection = sectionToTables[sectionName]!!
                         
                         if (tablesInSection.isEmpty()) {
                             println("  No tables found in '$sectionName' section.")
@@ -336,20 +372,38 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         }
                     }
                     
+                    // Print unassigned tables if any
+                    if (unassignedTables.isNotEmpty()) {
+                        println("\n" + "━".repeat(70))
+                        println("UNASSIGNED TABLES (${unassignedTables.size})")
+                        println("━".repeat(70))
+                        unassignedTables.forEachIndexed { idx, result ->
+                            println("  ${idx + 1}. ${result.table.localElementId}: ${result.classification}")
+                        }
+                    }
+                    
                     // Summary
                     println("\n" + "=".repeat(80))
                     println("SECTION TABLES SUMMARY")
                     println("=".repeat(80))
                     
+                    var totalAssigned = 0
                     var allSectionsFound = true
                     for (sectionName in sectionKeywords) {
-                        val tablesInSection = interpretedTables.filter { result ->
-                            result.table.containerHtml.contains(sectionName, ignoreCase = true)
-                        }
-                        val tableCount = tablesInSection.size
+                        val tableCount = sectionToTables[sectionName]!!.size
+                        totalAssigned += tableCount
                         val status = if (tableCount > 0) "✅" else "⚠️"
                         println("  $status $sectionName: $tableCount table(s)")
                         if (tableCount == 0) allSectionsFound = false
+                    }
+                    
+                    println("\n  Total assigned: $totalAssigned")
+                    println("  Unassigned: ${unassignedTables.size}")
+                    println("  Total interpreted: ${interpretedTables.size}")
+                    
+                    // Verify no duplicates: total assigned + unassigned should equal total interpreted
+                    require(totalAssigned + unassignedTables.size == interpretedTables.size) {
+                        "Duplicate detection error: assigned=$totalAssigned + unassigned=${unassignedTables.size} != total=${interpretedTables.size}"
                     }
                     
                     // Verify all 5 sections have at least one table
@@ -358,7 +412,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         println("  ✅ All 5 accordion sections have detected tables!")
                     } else {
                         val missingSections = sectionKeywords.filter { sectionName ->
-                            interpretedTables.none { it.table.containerHtml.contains(sectionName, ignoreCase = true) }
+                            sectionToTables[sectionName]!!.isEmpty()
                         }
                         println("  ⚠️ Some sections missing tables: $missingSections")
                     }
@@ -366,7 +420,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                     // Assert that all sections have tables
                     require(allSectionsFound) {
                         val missingSections = sectionKeywords.filter { sectionName ->
-                            interpretedTables.none { it.table.containerHtml.contains(sectionName, ignoreCase = true) }
+                            sectionToTables[sectionName]!!.isEmpty()
                         }
                         "Expected all 5 accordion sections to have detected tables, but missing: $missingSections"
                     }

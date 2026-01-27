@@ -38,8 +38,8 @@ class TableInterpretationAgentGenAiImpl(
             mapOf(
                 "classification" to Schema.builder()
                     .type("STRING")
-                    .enum_(listOf("TABLE", "CARD", "LIST", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT", "OTHERS"))
-                    .description("Content type classification: TABLE (pricing, comparison tables), CARD (card-like structures), LIST (bullet points), COOKIE_DECLARATION_TABLE (cookie consent tables), HIDDEN_MOBILE_LAYOUT (hidden mobile-specific content), OTHERS (non-tabular content)")
+                    .enum_(listOf("TABLE", "CARD", "LIST", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT"))
+                    .description("Content type classification: TABLE (pricing, comparison, feature tables with rows/columns), CARD (card-like structures), LIST (bullet points), COOKIE_DECLARATION_TABLE (cookie consent tables), HIDDEN_MOBILE_LAYOUT (hidden mobile-specific content)")
                     .build(),
                 "additionalInfo" to Schema.builder()
                     .type("STRING")
@@ -55,47 +55,45 @@ class TableInterpretationAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are given a HTML snippet that most likely contains a table.
-        Your task is to convert it to GitHub-flavored Markdown.
+        You are given a HTML snippet that has been detected as having a grid-like structure through spatial analysis.
+        Your task is to convert it to a GitHub-flavored Markdown TABLE.
+
+        IMPORTANT: This snippet has already been verified to have tabular structure (rows × columns) through bounding box analysis.
+        Default to TABLE classification unless it clearly matches one of the special categories below.
 
         Content classification:
-        - The snippet is determined to follow a grid-like structure based on spatial analysis
-        - You should determine the content type based on HTML structure and content
-        - Classify into:
-          -- TABLE: Tabular data with rows and columns (e.g. pricing, comparison, specification tables)
-          -- CARD: Card-like structures with repeated similar items
-          -- LIST: Bullet points or numbered lists
-          -- COOKIE_DECLARATION_TABLE: Cookie consent/declaration tables (legal boilerplate listing cookies, their purposes, providers, and expiry). These are typically found in privacy/cookie policies.
-          -- HIDDEN_MOBILE_LAYOUT: Hidden mobile-specific layouts that duplicate visible desktop content. Look for CSS classes like "mobile", "sm:", "hidden", "collapsed" combined with duplicate content patterns.
-          -- OTHERS: Navigation menus, form layouts, or other non-tabular content
+        - TABLE: DEFAULT. Any content with rows and columns (pricing tables, comparison tables, feature matrices, specification tables). CSS-based div layouts that form grids are TABLES.
+        - CARD: Card-like structures with repeated similar items (only if NOT grid-aligned)
+        - LIST: Bullet points or numbered lists (only if single column)
+        - COOKIE_DECLARATION_TABLE: Cookie consent/declaration tables (legal boilerplate listing cookies). Set markdown to empty string.
+        - HIDDEN_MOBILE_LAYOUT: Hidden mobile-specific layouts that duplicate desktop content. Set markdown to empty string.
 
         Special handling for removable content:
         - COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT will be removed from the document
         - For these classifications, set markdown to empty string ""
-        - Set additionalInfo to briefly describe what was detected (e.g., "Cookie declaration table with 15 cookies listed")
+        - Set additionalInfo to briefly describe what was detected
 
-        Markdown conversion rules:
-        - For TABLE/CARD: Convert to markdown table preserving row/column structure
-        - For LIST: Convert to markdown bullet/numbered list
-        - For OTHERS: Structure into well-formatted markdown (headers, paragraphs, lists)
-        - For COOKIE_DECLARATION_TABLE/HIDDEN_MOBILE_LAYOUT: Leave markdown empty
-        - If the snippet contains mixed content, convert each relevant section accordingly to generate a well-structured markdown
-        - Never return raw HTML tags in the markdown field. Always convert to proper markdown syntax.
-        
-        Table/Card conversion rules:
-        - Preserve row/column structure accurately
-        - Include header row if exists
-        - Adjust rows/columns if needed to fit markdown format while preserving meaning
+        Markdown conversion rules (for TABLE):
+        - ALWAYS convert to markdown table format with | column | separators |
+        - First row should be the header row
+        - Second row must be the separator row: | --- | --- | --- |
+        - Preserve row/column structure from the spatial analysis
         - Do not invent data - only use what's in the HTML
         - Capture ALL text with no information loss
-        - Use emojis (✅ ❌) instead of HTML entities
+        - Use emojis (✅ ❌) for checkmarks/crosses instead of HTML entities
         - For merged cells, duplicate values to corresponding cells
+        - Never return raw HTML tags in the markdown field
+        
+        Example output for a pricing table:
+        | Feature | Free | Pro | Enterprise |
+        | --- | --- | --- | --- |
+        | Users | 1 | 10 | Unlimited |
+        | Storage | 1GB | 10GB | Unlimited |
 
         Output JSON with 3 fields:
-        - "classification": string - one of "TABLE", "CARD", "LIST", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT", "OTHERS"
-        - "additionalInfo": ONLY for critical clarifications that CANNOT fit in markdown.
-          Format: "Note: [fact]" - Empty string if not needed.
-        - "markdown": The content expressed in GitHub-flavored Markdown. Empty for COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT.
+        - "classification": string - one of "TABLE", "CARD", "LIST", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT"
+        - "additionalInfo": ONLY for critical clarifications that CANNOT fit in markdown. Empty string if not needed.
+        - "markdown": The content expressed as a GitHub-flavored Markdown TABLE. Empty for COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT.
 
         Output structure:
         {
@@ -241,8 +239,8 @@ class TableInterpretationAgentGenAiImpl(
      * Combines markdown with additionalInfo based on classification type.
      * 
      * Rules:
-     * - TABLE/CARD: Append additionalInfo without newline (on same line)
-     * - LIST/OTHERS: Drop additionalInfo, return only markdown
+     * - TABLE/CARD: Append additionalInfo on new line
+     * - LIST: Drop additionalInfo, return only markdown
      * - COOKIE_DECLARATION_TABLE/HIDDEN_MOBILE_LAYOUT: Return markdown + additionalInfo (will be removed later)
      */
     private fun combineMarkdownWithAdditionalInfo(
@@ -258,10 +256,10 @@ class TableInterpretationAgentGenAiImpl(
         
         return when (classification) {
             SnippetClassification.TABLE, SnippetClassification.CARD -> {
-                // No newline between markdown and additionalInfo
+                // Append additionalInfo on new line
                 "$markdown\n$trimmedInfo"
             }
-            SnippetClassification.LIST, SnippetClassification.OTHERS -> {
+            SnippetClassification.LIST -> {
                 // Drop additionalInfo, just use markdown
                 markdown
             }
@@ -500,7 +498,7 @@ class TableInterpretationAgentGenAiImpl(
         } catch (e: Exception) {
             logger.warn("Failed to parse batch response: {}", e.message)
             TableInterpretationBatchResult(
-                classification = SnippetClassification.OTHERS,
+                classification = SnippetClassification.TABLE,
                 markdown = "",
                 additionalInfo = ""
             )
