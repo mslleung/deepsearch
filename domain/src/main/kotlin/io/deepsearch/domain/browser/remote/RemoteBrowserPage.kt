@@ -353,7 +353,20 @@ class RemoteBrowserPage(
                 )
             },
             hiddenContainerCount = r.hiddenContainerCount,
-            totalElementsCaptured = r.totalElementsCaptured
+            totalElementsCaptured = r.totalElementsCaptured,
+            hiddenIcons = r.hiddenIcons.map { icon ->
+                IBrowserPage.HiddenIcon(
+                    base64 = icon.base64,
+                    cssSelector = icon.cssSelector
+                )
+            },
+            hiddenImages = r.hiddenImages.map { image ->
+                IBrowserPage.HiddenImage(
+                    base64 = image.base64,
+                    mimeType = image.mimeType,
+                    cssSelector = image.cssSelector
+                )
+            }
         )
     }
 

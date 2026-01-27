@@ -204,15 +204,35 @@ class WebpageExtractionService(
             
             // ===== Phase 3: Capture hidden container bounding boxes (LAST browser op) =====
             // This must be last as it temporarily reveals hidden containers which may trigger re-renders
+            // Also extracts icons from hidden containers that were skipped by extractIcons (zero dimensions)
             val hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes
             val hiddenBboxDuration = measureTimeMillis {
                 hiddenBboxData = webpage.captureHiddenContainerBoundingBoxes()
             }
             browserDuration += hiddenBboxDuration
             logger.debug(
-                "Hidden container bbox capture: {} ms, {} containers, {} elements",
-                hiddenBboxDuration, hiddenBboxData.hiddenContainerCount, hiddenBboxData.totalElementsCaptured
+                "Hidden container bbox capture: {} ms, {} containers, {} elements, {} hidden icons, {} hidden images",
+                hiddenBboxDuration, hiddenBboxData.hiddenContainerCount, hiddenBboxData.totalElementsCaptured,
+                hiddenBboxData.hiddenIcons.size, hiddenBboxData.hiddenImages.size
             )
+            
+            // Convert hidden icons to Icon format and start interpretation in parallel
+            val hiddenIconRepl = async {
+                if (hiddenBboxData.hiddenIcons.isNotEmpty()) {
+                    doInterpretHiddenIcons(hiddenBboxData.hiddenIcons, sessionId)
+                } else {
+                    IconInterpretationResult(emptyList())
+                }
+            }
+            
+            // Process hidden images (convert to Image format for consistent handling)
+            val hiddenImageRepl = async {
+                if (hiddenBboxData.hiddenImages.isNotEmpty()) {
+                    doInterpretHiddenImages(hiddenBboxData.hiddenImages, sessionId, ocrLanguage)
+                } else {
+                    ImageInterpretationResult(emptyList(), emptyList(), emptyMap())
+                }
+            }
             
             // ===== Browser Released =====
             webpage.close()
@@ -233,9 +253,28 @@ class WebpageExtractionService(
             logger.debug("RecursiveTableDiscoveryService found {} hidden table candidates", allHiddenTableCandidates.size)
 
             // ===== Await LLM Results =====
-            val llmDuration = measureTimeMillis { awaitAll(visualId, iconRepl, imageRepl) }
+            val llmDuration = measureTimeMillis { awaitAll(visualId, iconRepl, imageRepl, hiddenIconRepl, hiddenImageRepl) }
             val visualResult = visualId.await()
             val imageResult = imageRepl.await()
+            val hiddenImageResult = hiddenImageRepl.await()
+            
+            // Merge visible and hidden icon replacements
+            val visibleIconReplacements = iconRepl.await().replacements
+            val hiddenIconReplacements = hiddenIconRepl.await().replacements
+            val allIconReplacements = visibleIconReplacements + hiddenIconReplacements
+            logger.debug(
+                "Icons: {} visible + {} from hidden containers = {} total",
+                visibleIconReplacements.size, hiddenIconReplacements.size, allIconReplacements.size
+            )
+            
+            // Merge visible and hidden image replacements
+            val allImageReplacements = imageResult.replacements + hiddenImageResult.replacements
+            val allImageHashes = imageResult.hashes + hiddenImageResult.hashes
+            val allImageMapping = imageResult.imageMapping + hiddenImageResult.imageMapping
+            logger.debug(
+                "Images: {} visible + {} from hidden containers = {} total",
+                imageResult.replacements.size, hiddenImageResult.replacements.size, allImageReplacements.size
+            )
             
             // ===== Overlap Detection =====
             // Filter out hidden content that is inside:
@@ -278,10 +317,10 @@ class WebpageExtractionService(
             val llmResults = LlmResults(
                 semanticElements = visualResult.semanticElements,
                 visualTableIdentifications = visualResult.tables, // Vision-detected CSS/div tables
-                iconReplacements = iconRepl.await().replacements,
-                imageReplacements = imageResult.replacements,
-                imageHashes = imageResult.hashes,
-                imageMapping = imageResult.imageMapping
+                iconReplacements = allIconReplacements,  // Merged visible + hidden icons
+                imageReplacements = allImageReplacements,  // Merged visible + hidden images
+                imageHashes = allImageHashes,
+                imageMapping = allImageMapping
             )
             logger.debug(
                 "LLM operations complete in {} ms: {} semantic elements, {} visual tables, {} semantic tables, {} semantic lists, {} hidden tables, {} icons, {} images",
@@ -392,6 +431,65 @@ class WebpageExtractionService(
      */
     private fun wrapIconTextAsMarkdown(label: String?): String? {
         return label?.let { "{$it icon}" }
+    }
+    
+    /**
+     * Interpret icons extracted from hidden containers.
+     * Converts HiddenIcon (single cssSelector) to Icon format (list of selectors) for unified processing.
+     */
+    private suspend fun doInterpretHiddenIcons(
+        hiddenIcons: List<IBrowserPage.HiddenIcon>,
+        sessionId: SessionId
+    ): IconInterpretationResult {
+        if (hiddenIcons.isEmpty()) {
+            return IconInterpretationResult(emptyList())
+        }
+        
+        // Convert HiddenIcon to Icon format (base64 -> bytes)
+        val icons = hiddenIcons.map { hidden ->
+            IBrowserPage.Icon(
+                bytes = java.util.Base64.getDecoder().decode(hidden.base64),
+                mimeType = io.deepsearch.domain.constants.ImageMimeType.PNG,  // Hidden icons are rendered as PNG
+                cssSelectors = listOf(hidden.cssSelector)
+            )
+        }
+        
+        val result: IconInterpretationResult
+        val duration = measureTimeMillis {
+            val interpretedTexts = webpageIconInterpretationService.interpretIcons(icons, sessionId)
+            val replacements = icons.zip(interpretedTexts).flatMap { (icon, text) ->
+                icon.cssSelectors.map { CssSelectorReplacement(it, wrapIconTextAsMarkdown(text)) }
+            }
+            result = IconInterpretationResult(replacements)
+        }
+        logger.debug("Hidden icon interpretation took {} ms, {} replacements", duration, result.replacements.size)
+        return result
+    }
+    
+    /**
+     * Interpret images extracted from hidden containers.
+     * Converts HiddenImage to WebImage format for unified processing.
+     */
+    private suspend fun doInterpretHiddenImages(
+        hiddenImages: List<IBrowserPage.HiddenImage>,
+        sessionId: SessionId,
+        ocrLanguage: OcrLanguage
+    ): ImageInterpretationResult {
+        if (hiddenImages.isEmpty()) {
+            return ImageInterpretationResult(emptyList(), emptyList(), emptyMap())
+        }
+        
+        // Convert HiddenImage to WebImage format (base64 -> bytes)
+        val webImages = hiddenImages.map { hidden ->
+            IBrowserPage.WebImage(
+                bytes = java.util.Base64.getDecoder().decode(hidden.base64),
+                mimeType = io.deepsearch.domain.constants.ImageMimeType.fromValue(hidden.mimeType),
+                cssSelectors = listOf(hidden.cssSelector)
+            )
+        }
+        
+        // Reuse the existing image interpretation logic
+        return doInterpretImages(webImages, sessionId, ocrLanguage)
     }
 
     private data class ImageInterpretationResult(
@@ -510,9 +608,11 @@ class WebpageExtractionService(
 
         // Path 4: Hidden content (LLM for complex tables, programmatic for lists)
         // Returns CSS selector replacements to insert content at original DOM position
+        // Pass media replacements so icons/images inside hidden containers get resolved
+        val mediaReplacementsForHidden = llmResults.iconReplacements + llmResults.imageReplacements
         val hiddenContentDeferred = async {
             if (hiddenTableCandidates.isNotEmpty()) {
-                interpretHiddenContent(hiddenTableCandidates, sessionId)
+                interpretHiddenContent(hiddenTableCandidates, sessionId, mediaReplacementsForHidden)
             } else {
                 emptyList()
             }
@@ -673,38 +773,96 @@ class WebpageExtractionService(
      * 
      * For semantic elements (<table>, <ul>, <ol>), uses programmatic conversion.
      * For non-semantic grid structures (CSS/div-based), uses LLM interpretation.
+     * 
+     * @param hiddenCandidates Hidden content candidates to interpret
+     * @param sessionId Session ID for LLM calls
+     * @param mediaReplacements Icon and image replacements to apply to hidden content HTML
+     *        before conversion. Hidden containers may contain icons (e.g., checkmarks in
+     *        pricing tables) that need to be resolved to text like "{checkmark icon}".
      */
     private suspend fun interpretHiddenContent(
         hiddenCandidates: List<HiddenTableCandidate>,
-        sessionId: SessionId
+        sessionId: SessionId,
+        mediaReplacements: List<CssSelectorReplacement>
     ): List<CssSelectorReplacement> {
         // Group candidates by containerLocator - multiple tables/lists may come from the same hidden container
         val byContainer = hiddenCandidates.groupBy { it.containerLocator }
         
         // Track interpreted content per container
         val contentByContainer = mutableMapOf<String, MutableList<String>>()
-        val llmCandidates = mutableListOf<Triple<String, HiddenTableCandidate, org.jsoup.nodes.Element>>()
+        
+        // LLM candidates need resolved HTML string (not element) because we resolve placeholders to text
+        data class LlmCandidate(
+            val containerLocator: String,
+            val candidate: HiddenTableCandidate,
+            val resolvedHtml: String,
+            val containsMedia: Boolean
+        )
+        val llmCandidates = mutableListOf<LlmCandidate>()
         
         for ((containerLocator, candidates) in byContainer) {
             contentByContainer[containerLocator] = mutableListOf()
             
             for (candidate in candidates) {
-                // Parse the container HTML (contains data-ds-local attributes)
+                // Parse the container HTML (contains data-ds-local AND data-ds-id attributes)
+                // The data-ds-id attributes allow us to apply icon/image replacements
                 val containerDoc = Jsoup.parse(candidate.containerHtml)
                 
-                // Find the element using local ID
+                // Check for media elements BEFORE replacement (to set containsMedia flag for LLM)
+                val originalElement = containerDoc.selectFirst("[data-ds-local=\"${candidate.localElementId}\"]")
+                if (originalElement == null) {
+                    logger.debug("Hidden element not found: {}", candidate.localElementId)
+                    continue
+                }
+                val containsMedia = originalElement.select("img, svg, i.fa, i.fas, i.far, i.fab").isNotEmpty()
+                
+                // Apply media replacements to resolve icons/images inside the hidden container.
+                // Icons use [data-ds-id="icon-X"] selectors which are present in the container HTML.
+                // This converts <svg data-ds-id="icon-123">...</svg> to placeholders like {{MEDIA_0}}
+                val placeholderMap = jsoupDomService.replaceElementsWithPlaceholders(
+                    containerDoc, mediaReplacements, PlaceholderPrefix.MEDIA
+                )
+                
+                // Handle any remaining SVG elements not replaced by mediaReplacements.
+                // With the new hidden icon extraction (captured when containers are revealed),
+                // most icons should now be in mediaReplacements. This fallback handles edge cases
+                // like dynamically rendered icons or icons without data-ds-id.
+                containerDoc.select("svg").forEach { svg ->
+                    val altText = svg.attr("aria-label").ifBlank { 
+                        svg.selectFirst("title")?.text() ?: ""
+                    }
+                    if (altText.isNotBlank()) {
+                        svg.replaceWith(org.jsoup.nodes.TextNode("{$altText icon}"))
+                    } else {
+                        // No label found - remove the SVG to avoid [icon] fallback
+                        svg.remove()
+                    }
+                }
+                
+                // Re-select the element after replacement (the DOM was modified)
                 val element = containerDoc.selectFirst("[data-ds-local=\"${candidate.localElementId}\"]")
                 if (element == null) {
-                    logger.debug("Hidden element not found: {}", candidate.localElementId)
+                    logger.debug("Hidden element not found after media replacement: {}", candidate.localElementId)
                     continue
                 }
                 
                 val tagName = element.tagName().lowercase()
                 
+                // Helper to resolve placeholders in markdown
+                fun resolveMediaPlaceholders(markdown: String): String {
+                    var resolved = markdown
+                    placeholderMap.values.forEach { mapping ->
+                        resolved = resolved.replace(mapping.placeholder, mapping.text)
+                    }
+                    return resolved
+                }
+                
                 when (tagName) {
                     // Semantic table - use programmatic conversion
                     "table" -> {
-                        val markdown = semanticTableConverter.convertToMarkdown(element.outerHtml())
+                        val markdown = resolveMediaPlaceholders(
+                            semanticTableConverter.convertToMarkdown(element.outerHtml())
+                        )
                         if (markdown.isNotBlank()) {
                             contentByContainer[containerLocator]!!.add(markdown)
                             logger.debug(
@@ -715,7 +873,9 @@ class WebpageExtractionService(
                     }
                     // Semantic list - use programmatic conversion
                     "ul", "ol" -> {
-                        val markdown = semanticListConverter.convertToMarkdown(element.outerHtml())
+                        val markdown = resolveMediaPlaceholders(
+                            semanticListConverter.convertToMarkdown(element.outerHtml())
+                        )
                         if (markdown.isNotBlank()) {
                             contentByContainer[containerLocator]!!.add(markdown)
                             logger.debug(
@@ -726,7 +886,9 @@ class WebpageExtractionService(
                     }
                     // Non-semantic structure - queue for LLM interpretation
                     else -> {
-                        llmCandidates.add(Triple(containerLocator, candidate, element))
+                        // Resolve placeholders in HTML so LLM sees "{checkmark icon}" instead of {{MEDIA_0}}
+                        val resolvedHtml = resolveMediaPlaceholders(element.outerHtml())
+                        llmCandidates.add(LlmCandidate(containerLocator, candidate, resolvedHtml, containsMedia))
                     }
                 }
             }
@@ -734,16 +896,16 @@ class WebpageExtractionService(
         
         // Process non-semantic candidates via LLM (batched)
         if (llmCandidates.isNotEmpty()) {
-            val inputs = llmCandidates.map { (_, candidate, element) ->
+            val inputs = llmCandidates.map { llmCandidate ->
                 val tableIdentification = TableIdentification(
-                    cssSelector = "[data-ds-local=\"${candidate.localElementId}\"]",
-                    dataId = candidate.localElementId,
-                    auxiliaryInfo = "Hidden content (depth=${candidate.depth}): ${candidate.rowCount}x${candidate.colCount} grid (confidence: ${"%.0f".format(candidate.confidence * 100)}%)",
-                    containsMedia = element.select("img, svg, i.fa, i.fas, i.far, i.fab").isNotEmpty()
+                    cssSelector = "[data-ds-local=\"${llmCandidate.candidate.localElementId}\"]",
+                    dataId = llmCandidate.candidate.localElementId,
+                    auxiliaryInfo = "Hidden content (depth=${llmCandidate.candidate.depth}): ${llmCandidate.candidate.rowCount}x${llmCandidate.candidate.colCount} grid (confidence: ${"%.0f".format(llmCandidate.candidate.confidence * 100)}%)",
+                    containsMedia = llmCandidate.containsMedia
                 )
                 TableInterpretationInput(
                     tableIdentification = tableIdentification,
-                    tableHtml = element.outerHtml(),
+                    tableHtml = llmCandidate.resolvedHtml,  // Already has media placeholders resolved
                     boundingBoxes = emptyMap()
                 )
             }
@@ -752,20 +914,52 @@ class WebpageExtractionService(
             
             results.forEachIndexed { index, result ->
                 if (!result.classification.shouldRemoveFromDom()) {
-                    val (containerLocator, candidate, _) = llmCandidates[index]
-                    contentByContainer[containerLocator]!!.add(result.markdown)
+                    val llmCandidate = llmCandidates[index]
+                    contentByContainer[llmCandidate.containerLocator]!!.add(result.markdown)
                     logger.debug(
                         "Hidden content {} interpreted as {}: {}",
-                        candidate.localElementId, result.classification, result.markdown.take(100)
+                        llmCandidate.candidate.localElementId, result.classification, result.markdown.take(100)
                     )
                 }
             }
         }
         
         // Build CSS selector replacements - one per container
+        // Content-hash deduplication happens at browser level (captureHiddenContainerBoundingBoxes)
+        // This secondary deduplication catches any remaining duplicates after LLM interpretation
+        val seenContent = mutableSetOf<String>()
+        val seenContentSignatures = mutableSetOf<String>()
+        
         return contentByContainer.mapNotNull { (containerLocator, contentList) ->
             if (contentList.isNotEmpty()) {
                 val combinedMarkdown = contentList.joinToString("\n\n")
+                
+                // Normalize content for deduplication: strip whitespace differences
+                val normalizedContent = combinedMarkdown.replace("\\s+".toRegex(), " ").trim()
+                
+                // Skip if we've already seen this content (duplicate navigation menus, etc.)
+                if (seenContent.contains(normalizedContent)) {
+                    logger.debug(
+                        "Skipping duplicate hidden content [{}]: {} chars",
+                        containerLocator.take(50), combinedMarkdown.length
+                    )
+                    return@mapNotNull null
+                }
+                
+                // Also check for near-duplicates using a content signature
+                // (first 100 chars + length helps catch similar content with minor variations)
+                val contentSignature = "${normalizedContent.take(100)}|${normalizedContent.length}"
+                if (seenContentSignatures.contains(contentSignature)) {
+                    logger.debug(
+                        "Skipping near-duplicate hidden content [{}]: {} chars (signature match)",
+                        containerLocator.take(50), combinedMarkdown.length
+                    )
+                    return@mapNotNull null
+                }
+                
+                seenContent.add(normalizedContent)
+                seenContentSignatures.add(contentSignature)
+                
                 logger.debug(
                     "Hidden container [{}] replacement: {} content items, {} chars",
                     containerLocator.take(50), contentList.size, combinedMarkdown.length

@@ -493,6 +493,32 @@ interface IBrowserPage {
     )
 
     /**
+     * Icon extracted from hidden containers (visible after reveal).
+     * These icons have data-ds-id from initial injection but were skipped
+     * by extractIcons because they had zero dimensions when hidden.
+     */
+    data class HiddenIcon(
+        /** Base64-encoded PNG of the icon */
+        val base64: String,
+        /** CSS selector using data-ds-id (same as main icon extraction) */
+        val cssSelector: String
+    )
+
+    /**
+     * Image extracted from hidden containers (visible after reveal).
+     * These images have data-ds-id from initial injection but may have been
+     * skipped by extractImages because they had zero dimensions or weren't loaded.
+     */
+    data class HiddenImage(
+        /** Base64-encoded image data */
+        val base64: String,
+        /** MIME type of the image */
+        val mimeType: String,
+        /** CSS selector using data-ds-id (same as main image extraction) */
+        val cssSelector: String
+    )
+
+    /**
      * Result of capturing bounding boxes for elements inside hidden containers.
      * Used for server-side table detection algorithm.
      */
@@ -502,7 +528,11 @@ interface IBrowserPage {
         /** Number of hidden containers found */
         val hiddenContainerCount: Int,
         /** Total elements captured across all containers */
-        val totalElementsCaptured: Int
+        val totalElementsCaptured: Int,
+        /** Icons extracted from hidden containers (now visible after reveal) */
+        val hiddenIcons: List<HiddenIcon> = emptyList(),
+        /** Images extracted from hidden containers (now visible after reveal) */
+        val hiddenImages: List<HiddenImage> = emptyList()
     )
 
     /**
