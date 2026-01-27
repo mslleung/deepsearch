@@ -238,21 +238,34 @@ class WebpageExtractionService(
             val imageResult = imageRepl.await()
             
             // ===== Overlap Detection =====
-            // Filter out hidden tables that are inside visible or semantic tables
-            // to prevent duplicate interpretation (must be done after visual results are ready)
+            // Filter out hidden content that is inside:
+            // 1. Visible or semantic tables (to prevent duplicate interpretation)
+            // 2. Semantic elements like footer, header, nav (to prevent extracting navigation menus)
             val visualTableDataIds = visualResult.tables.map { it.dataId }.toSet()
             val semanticTableDataIds = semanticTables.map { it.dataId }.toSet()
-            val allTableDataIds = visualTableDataIds + semanticTableDataIds
+            
+            // Collect semantic element IDs (footer, header, nav, etc.) to exclude their hidden content
+            val semanticElementDataIds = buildSet {
+                visualResult.semanticElements.header?.let { add(it.dataId) }
+                visualResult.semanticElements.footer?.let { add(it.dataId) }
+                visualResult.semanticElements.navSidebar?.let { add(it.dataId) }
+                visualResult.semanticElements.breadcrumb?.let { add(it.dataId) }
+                visualResult.semanticElements.cookieBanner?.let { add(it.dataId) }
+                addAll(visualResult.semanticElements.adBanners.map { it.dataId })
+                addAll(visualResult.semanticElements.popups.map { it.dataId })
+            }
+            
+            val allExcludeDataIds = visualTableDataIds + semanticTableDataIds + semanticElementDataIds
             
             val hiddenTableCandidates = filterHiddenCandidatesOverlapping(
                 allHiddenTableCandidates,
-                allTableDataIds,
+                allExcludeDataIds,
                 snapshot.html
             )
             
             if (hiddenTableCandidates.size < allHiddenTableCandidates.size) {
                 logger.debug(
-                    "Overlap detection: filtered {} hidden tables inside visible/semantic tables ({} -> {})",
+                    "Overlap detection: filtered {} hidden content inside tables/semantic elements ({} -> {})",
                     allHiddenTableCandidates.size - hiddenTableCandidates.size,
                     allHiddenTableCandidates.size,
                     hiddenTableCandidates.size
@@ -941,27 +954,28 @@ class WebpageExtractionService(
     // ========== Overlap Detection ==========
     
     /**
-     * Filter hidden table candidates that are inside visible or semantic tables.
+     * Filter hidden content candidates that are inside excluded elements.
      * 
-     * This prevents duplicate interpretation when a hidden container (e.g., accordion)
-     * is nested inside a visible table.
+     * This prevents:
+     * 1. Duplicate interpretation when a hidden container (e.g., accordion) is nested inside a visible table
+     * 2. Extracting navigation menus from footer, header, nav elements that will be removed anyway
      * 
-     * @param hiddenCandidates All hidden table candidates
-     * @param tableDataIds Data-ds-id values of all visible and semantic tables
+     * @param hiddenCandidates All hidden content candidates
+     * @param excludeDataIds Data-ds-id values of elements to exclude (tables + semantic elements like footer/header/nav)
      * @param snapshotHtml The page HTML for DOM traversal
-     * @return Hidden candidates that are NOT inside any visible/semantic table
+     * @return Hidden candidates that are NOT inside any excluded element
      */
     private fun filterHiddenCandidatesOverlapping(
         hiddenCandidates: List<HiddenTableCandidate>,
-        tableDataIds: Set<String>,
+        excludeDataIds: Set<String>,
         snapshotHtml: String
     ): List<HiddenTableCandidate> {
-        if (tableDataIds.isEmpty()) {
+        if (excludeDataIds.isEmpty()) {
             return hiddenCandidates
         }
         
         val doc = Jsoup.parse(snapshotHtml)
-        val tableElements = tableDataIds.mapNotNull { dataId ->
+        val excludeElements = excludeDataIds.mapNotNull { dataId ->
             doc.selectFirst("[data-ds-id=\"$dataId\"]")
         }
         
@@ -973,21 +987,21 @@ class WebpageExtractionService(
                 return@filter true
             }
             
-            // Check if this hidden element is inside any visible/semantic table
-            val isInsideTable = tableElements.any { tableElement ->
-                // Check if tableElement contains hiddenElement
-                tableElement.getAllElements().contains(hiddenElement) ||
-                    hiddenElement.parents().any { it == tableElement }
+            // Check if this hidden element is inside any excluded element (table or semantic element)
+            val isInsideExcluded = excludeElements.any { excludeElement ->
+                // Check if excludeElement contains hiddenElement
+                excludeElement.getAllElements().contains(hiddenElement) ||
+                    hiddenElement.parents().any { it == excludeElement }
             }
             
-            if (isInsideTable) {
+            if (isInsideExcluded) {
                 logger.debug(
-                    "Filtering hidden table {} - nested inside visible/semantic table",
+                    "Filtering hidden content {} - nested inside excluded element (table/semantic)",
                     hidden.localElementId
                 )
             }
             
-            !isInsideTable
+            !isInsideExcluded
         }
     }
 }
