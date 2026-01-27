@@ -24,10 +24,11 @@ import org.slf4j.LoggerFactory
  * 
  * This agent receives markdown tables that were programmatically converted from semantic
  * HTML `<table>` elements and classifies them to detect:
+ * - TABLE: Regular data tables (to be kept) - DEFAULT
+ * - CARD: Card-like structures (to be kept)
+ * - LIST: Single-column lists (to be kept)
  * - COOKIE_DECLARATION_TABLE: Cookie consent tables (to be removed)
  * - HIDDEN_MOBILE_LAYOUT: Duplicate mobile content (to be removed)
- * - TABLE: Regular data tables (to be kept)
- * - OTHERS: Non-tabular content (to be kept)
  * 
  * The classification is much faster than full table interpretation since:
  * 1. The markdown is already generated (no conversion needed)
@@ -51,7 +52,7 @@ class SemanticTableClassificationAgentGenAiImpl(
                     .items(
                         Schema.builder()
                             .type("STRING")
-                            .enum_(listOf("TABLE", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT", "OTHERS"))
+                            .enum_(listOf("TABLE", "CARD", "LIST", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT"))
                             .description("Classification for a single table")
                             .build()
                     )
@@ -67,11 +68,16 @@ class SemanticTableClassificationAgentGenAiImpl(
         
         Classify each table into one of these categories:
         
-        - TABLE: Regular data tables containing useful information such as:
+        - TABLE: DEFAULT. Regular data tables containing useful information such as:
           * Pricing tables, product comparisons, specification tables
           * Data tables with statistics, measurements, or records
           * Feature comparison tables, compatibility matrices
           * Schedule tables, timetables, calendars
+          * Navigation or layout tables (keep as TABLE)
+          
+        - CARD: Card-like repeated structures (not grid-aligned)
+        
+        - LIST: Single-column bullet or numbered lists
           
         - COOKIE_DECLARATION_TABLE: Cookie consent/declaration tables that are legal boilerplate:
           * Lists cookies with columns like: Name, Provider, Purpose, Expiry, Type
@@ -84,11 +90,8 @@ class SemanticTableClassificationAgentGenAiImpl(
           * Tables with responsive/mobile-specific data
           * Usually hidden via CSS but captured during extraction
           * These should be REMOVED from the output
-          
-        - OTHERS: Content that is not actually tabular:
-          * Navigation menus structured as tables
-          * Form layouts, UI component containers
-          * Tables used purely for visual layout (not data)
+        
+        IMPORTANT: Default to TABLE for any content that doesn't clearly match COOKIE_DECLARATION_TABLE or HIDDEN_MOBILE_LAYOUT.
         
         Output a JSON object with "classifications" array containing one classification
         per input table, in the exact same order as the input.

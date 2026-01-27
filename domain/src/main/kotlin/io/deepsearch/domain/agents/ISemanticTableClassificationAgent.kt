@@ -35,13 +35,11 @@ data class SemanticTableClassificationBatchResult(
  * 
  * This is a lightweight LLM classification that takes already-converted markdown
  * (from SemanticTableConverter) and determines if it's:
- * - TABLE: Regular data table (keep in output)
+ * - TABLE: Regular data table (keep in output) - DEFAULT
+ * - CARD: Card-like structures (keep in output)
+ * - LIST: Single-column lists (keep in output)
  * - COOKIE_DECLARATION_TABLE: Cookie consent table (remove from output)
  * - HIDDEN_MOBILE_LAYOUT: Duplicate mobile content (remove from output)
- * - OTHERS: Non-tabular content (keep in output)
- * 
- * The CARD and LIST classifications are not used here since we're classifying
- * semantic HTML tables which always have proper table structure.
  */
 interface ISemanticTableClassificationAgent {
     /**

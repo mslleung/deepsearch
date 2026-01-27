@@ -740,12 +740,13 @@ class WebpageExtractionService(
         val classifications = classificationResult.classifications
 
         logger.debug(
-            "Semantic table classification complete: {} tables, {} TABLE, {} COOKIE, {} HIDDEN, {} OTHERS",
+            "Semantic table classification complete: {} tables, {} TABLE, {} CARD, {} LIST, {} COOKIE, {} HIDDEN",
             semanticTables.size,
             classifications.count { it == SnippetClassification.TABLE },
+            classifications.count { it == SnippetClassification.CARD },
+            classifications.count { it == SnippetClassification.LIST },
             classifications.count { it == SnippetClassification.COOKIE_DECLARATION_TABLE },
-            classifications.count { it == SnippetClassification.HIDDEN_MOBILE_LAYOUT },
-            classifications.count { it == SnippetClassification.OTHERS }
+            classifications.count { it == SnippetClassification.HIDDEN_MOBILE_LAYOUT }
         )
 
         // Step 3: Build replacements
@@ -1053,7 +1054,7 @@ class WebpageExtractionService(
                 // Remove these elements entirely (pass null to cause removal)
                 null
             } else {
-                // Keep the interpreted markdown for TABLE, CARD, LIST, OTHERS
+                // Keep the interpreted markdown for TABLE, CARD, LIST
                 result.markdown
             }
             CssSelectorReplacement("[data-ds-id=\"${input.tableIdentification.dataId}\"]", replacementText)
