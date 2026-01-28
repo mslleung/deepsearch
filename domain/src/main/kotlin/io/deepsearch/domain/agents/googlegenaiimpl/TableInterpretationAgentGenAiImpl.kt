@@ -33,7 +33,7 @@ class TableInterpretationAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Classification and markdown representation of an HTML snippet")
+        .description("Classification and HTML table representation of an HTML snippet")
         .properties(
             mapOf(
                 "classification" to Schema.builder()
@@ -43,20 +43,20 @@ class TableInterpretationAgentGenAiImpl(
                     .build(),
                 "additionalInfo" to Schema.builder()
                     .type("STRING")
-                    .description("Optional additional context, notes, or clarifications that cannot be represented in the markdown structure (e.g., badges, labels, footnotes, ambiguities).")
+                    .description("Optional additional context, notes, or clarifications that cannot be represented in the table structure (e.g., badges, labels, footnotes, ambiguities).")
                     .build(),
-                "markdown" to Schema.builder()
+                "htmlTable" to Schema.builder()
                     .type("STRING")
-                    .description("The content expressed in GitHub-flavored Markdown. For COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT, leave empty.")
+                    .description("The content expressed as an HTML table using <table>, <tr>, <th>, <td> tags with colspan/rowspan for merged cells. For COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT, leave empty.")
                     .build(),
             )
         )
-        .required(listOf("classification", "additionalInfo", "markdown"))
+        .required(listOf("classification", "additionalInfo", "htmlTable"))
         .build()
 
     private val systemInstruction = """
         You are given a HTML snippet that has been detected as having a grid-like structure through spatial analysis.
-        Your task is to convert it to a GitHub-flavored Markdown TABLE.
+        Your task is to convert it to a clean HTML TABLE with proper structure.
 
         IMPORTANT: This snippet has already been verified to have tabular structure (rows × columns) through bounding box analysis.
         Default to TABLE classification unless it clearly matches one of the special categories below.
@@ -65,41 +65,66 @@ class TableInterpretationAgentGenAiImpl(
         - TABLE: DEFAULT. Any content with rows and columns (pricing tables, comparison tables, feature matrices, specification tables). CSS-based div layouts that form grids are TABLES.
         - CARD: Card-like structures with repeated similar items (only if NOT grid-aligned)
         - LIST: Bullet points or numbered lists (only if single column)
-        - COOKIE_DECLARATION_TABLE: Cookie consent/declaration tables (legal boilerplate listing cookies). Set markdown to empty string.
-        - HIDDEN_MOBILE_LAYOUT: Hidden mobile-specific layouts that duplicate desktop content. Set markdown to empty string.
+        - COOKIE_DECLARATION_TABLE: Cookie consent/declaration tables (legal boilerplate listing cookies). Set htmlTable to empty string.
+        - HIDDEN_MOBILE_LAYOUT: Hidden mobile-specific layouts that duplicate desktop content. Set htmlTable to empty string.
 
         Special handling for removable content:
         - COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT will be removed from the document
-        - For these classifications, set markdown to empty string ""
+        - For these classifications, set htmlTable to empty string ""
         - Set additionalInfo to briefly describe what was detected
 
-        Markdown conversion rules (for TABLE):
-        - ALWAYS convert to markdown table format with | column | separators |
-        - First row should be the header row
-        - Second row must be the separator row: | --- | --- | --- |
+        HTML table conversion rules (for TABLE):
+        - Convert the content to an HTML table using <table>, <thead>, <tbody>, <tr>, <th>, <td> tags
+        - Use <thead> for the header row and <tbody> for data rows
+        - For merged cells, use colspan and rowspan attributes (e.g., <td colspan="2">, <td rowspan="3">)
+        - Make sure the table dimensions correctly reflect the grid structure
         - Preserve row/column structure from the spatial analysis
         - Do not invent data - only use what's in the HTML
         - Capture ALL text with no information loss
         - Use emojis (✅ ❌) for checkmarks/crosses instead of HTML entities
-        - For merged cells, duplicate values to corresponding cells
-        - Never return raw HTML tags in the markdown field
+        - Output clean HTML without styling attributes (no class, style, etc.)
         
         Example output for a pricing table:
-        | Feature | Free | Pro | Enterprise |
-        | --- | --- | --- | --- |
-        | Users | 1 | 10 | Unlimited |
-        | Storage | 1GB | 10GB | Unlimited |
+        <table>
+            <thead>
+                <tr>
+                    <th>Feature</th>
+                    <th>Free</th>
+                    <th>Pro</th>
+                    <th>Enterprise</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Users</td>
+                    <td>1</td>
+                    <td>10</td>
+                    <td>Unlimited</td>
+                </tr>
+                <tr>
+                    <td>Storage</td>
+                    <td>1GB</td>
+                    <td>10GB</td>
+                    <td>Unlimited</td>
+                </tr>
+                <tr>
+                    <td>Support</td>
+                    <td colspan="2">Email only</td>
+                    <td>24/7 Priority</td>
+                </tr>
+            </tbody>
+        </table>
 
         Output JSON with 3 fields:
         - "classification": string - one of "TABLE", "CARD", "LIST", "COOKIE_DECLARATION_TABLE", "HIDDEN_MOBILE_LAYOUT"
-        - "additionalInfo": ONLY for critical clarifications that CANNOT fit in markdown. Empty string if not needed.
-        - "markdown": The content expressed as a GitHub-flavored Markdown TABLE. Empty for COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT.
+        - "additionalInfo": ONLY for critical clarifications that CANNOT fit in the table. Empty string if not needed.
+        - "htmlTable": The content expressed as a clean HTML table. Empty for COOKIE_DECLARATION_TABLE and HIDDEN_MOBILE_LAYOUT.
 
         Output structure:
         {
           "classification": string,
           "additionalInfo": string,
-          "markdown": string
+          "htmlTable": string
         }
     """.trimIndent()
 
@@ -107,7 +132,7 @@ class TableInterpretationAgentGenAiImpl(
     private data class TableInterpretationResponse(
         val classification: String,
         val additionalInfo: String,
-        val markdown: String,
+        val htmlTable: String,
     )
 
     override suspend fun generate(input: TableInterpretationInput): TableInterpretationOutput {
@@ -169,10 +194,18 @@ class TableInterpretationAgentGenAiImpl(
         }
 
         val classification = SnippetClassification.fromString(response.classification)
-        val combinedMarkdown = combineMarkdownWithAdditionalInfo(classification, response.markdown, response.additionalInfo)
         
-        logger.debug("Table interpretation complete: classification={}, {} chars markdown, {} chars additionalInfo", 
-            classification, response.markdown.length, response.additionalInfo.length
+        // Convert HTML table to markdown programmatically (handles rowspan/colspan properly)
+        val markdown = if (response.htmlTable.isNotBlank()) {
+            transformHTMLTablesToMarkdown(response.htmlTable)
+        } else {
+            ""
+        }
+        
+        val combinedMarkdown = combineMarkdownWithAdditionalInfo(classification, markdown, response.additionalInfo)
+        
+        logger.debug("Table interpretation complete: classification={}, {} chars htmlTable -> {} chars markdown, {} chars additionalInfo", 
+            classification, response.htmlTable.length, markdown.length, response.additionalInfo.length
         )
         return TableInterpretationOutput(
             classification = classification,
@@ -456,6 +489,131 @@ class TableInterpretationAgentGenAiImpl(
         return removedCount
     }
 
+    // ========== HTML Table to Markdown Conversion ==========
+
+    /**
+     * Transforms HTML tables in the text to markdown format.
+     * Handles both rowspan and colspan by building a grid and duplicating values.
+     */
+    private fun transformHTMLTablesToMarkdown(text: String): String {
+        // Replace only <table>...</table> blocks and leave the rest of the string untouched
+        val pattern = Regex("(?is)<table\\b[\\s\\S]*?</table>")
+        return pattern.replace(text) { match ->
+            val tableHtml = match.value
+            val doc = Jsoup.parseBodyFragment(tableHtml)
+            val table = doc.selectFirst("table")
+            if (table != null) {
+                val mdBlock = buildString {
+                    val caption = table.selectFirst("caption")?.text()?.trim()
+                    if (!caption.isNullOrBlank()) {
+                        appendLine(caption)
+                    }
+                    appendLine(tableToMarkdown(table))
+                }.trimEnd()
+                "\n$mdBlock\n"
+            } else {
+                tableHtml
+            }
+        }.trim()
+    }
+
+    /**
+     * Converts an HTML table element to markdown format.
+     * Builds a full grid handling both colspan and rowspan by duplicating values.
+     */
+    private fun tableToMarkdown(table: org.jsoup.nodes.Element): String {
+        // Build a full grid handling both colspan and rowspan by duplicating values
+        val grid: MutableList<MutableList<String>> = mutableListOf()
+        var currentRowIndex = 0
+
+        val tableRows = table.select("tr")
+        if (tableRows.isEmpty()) return ""
+
+        tableRows.forEach { tr ->
+            // Ensure current row exists
+            if (grid.size <= currentRowIndex) {
+                grid.add(mutableListOf())
+            }
+
+            var colIndex = 0
+
+            // Advance past any pre-filled cells from prior rowspans
+            fun nextFreeCol(): Int {
+                var idx = colIndex
+                val row = grid[currentRowIndex]
+                while (idx < row.size && row[idx].isNotEmpty()) {
+                    idx++
+                }
+                return idx
+            }
+
+            tr.select("th, td").forEach { cell ->
+                colIndex = nextFreeCol()
+                val text = cell.text().trim()
+                val colSpan = cell.attr("colspan").toIntOrNull() ?: 1
+                val rowSpan = cell.attr("rowspan").toIntOrNull() ?: 1
+
+                val endColExclusive = colIndex + colSpan
+                val endRowExclusive = currentRowIndex + rowSpan
+
+                for (r in currentRowIndex until endRowExclusive) {
+                    while (grid.size <= r) grid.add(mutableListOf())
+                    val rowList = grid[r]
+                    if (rowList.size < endColExclusive) {
+                        repeat(endColExclusive - rowList.size) { rowList.add("") }
+                    }
+                    for (c in colIndex until endColExclusive) {
+                        rowList[c] = text
+                    }
+                }
+
+                colIndex = endColExclusive
+            }
+
+            currentRowIndex++
+        }
+
+        val numCols = grid.maxOfOrNull { it.size } ?: 0
+        if (numCols == 0) return ""
+
+        grid.forEach { r ->
+            if (r.size < numCols) {
+                repeat(numCols - r.size) { r.add("") }
+            }
+        }
+
+        // Determine header row: prefer last thead row, else a row containing <th>, else first row
+        val allTrs = table.select("tr").toList()
+        val theadTrs = table.select("thead tr").toList()
+        val headerIndex = when {
+            theadTrs.isNotEmpty() -> allTrs.indexOf(theadTrs.last()).coerceAtLeast(0)
+            allTrs.firstOrNull { it.select("th").isNotEmpty() } != null ->
+                allTrs.indexOfFirst { it.select("th").isNotEmpty() }.coerceAtLeast(0)
+
+            else -> 0
+        }
+
+        val header = grid.getOrNull(headerIndex) ?: MutableList(numCols) { "" }
+        val dataRows = grid.filterIndexed { idx, _ -> idx != headerIndex }
+
+        fun escapeMd(text: String): String =
+            text.replace("|", "\\|")
+                .replace('\n', ' ')
+                .trim()
+
+        fun renderLine(cells: List<String>): String =
+            "| " + cells.map { escapeMd(it) }.joinToString(" | ") + " |"
+
+        val separator = "| " + List(numCols) { "---" }.joinToString(" | ") + " |"
+
+        val sb = StringBuilder()
+        sb.appendLine(renderLine(header))
+        sb.appendLine(separator)
+        dataRows.forEach { row -> sb.appendLine(renderLine(row)) }
+
+        return sb.toString().trimEnd()
+    }
+
     // ========== Batch Processing Methods ==========
 
     private val batchJson = Json { ignoreUnknownKeys = true }
@@ -489,7 +647,15 @@ class TableInterpretationAgentGenAiImpl(
         return try {
             val response = batchJson.decodeFromString<TableInterpretationResponse>(responseText)
             val classification = SnippetClassification.fromString(response.classification)
-            val combinedMarkdown = combineMarkdownWithAdditionalInfo(classification, response.markdown, response.additionalInfo)
+            
+            // Convert HTML table to markdown programmatically (handles rowspan/colspan properly)
+            val markdown = if (response.htmlTable.isNotBlank()) {
+                transformHTMLTablesToMarkdown(response.htmlTable)
+            } else {
+                ""
+            }
+            
+            val combinedMarkdown = combineMarkdownWithAdditionalInfo(classification, markdown, response.additionalInfo)
             TableInterpretationBatchResult(
                 classification = classification,
                 markdown = combinedMarkdown,
