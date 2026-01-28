@@ -132,6 +132,19 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 
                 val allHiddenHtml = hiddenContainerData.hiddenContainers.joinToString("\n") { it.containerHtml }
                 
+                // Debug: Check for toggle-hidden markers
+                val toggleHiddenCount = "data-ds-toggle-hidden".toRegex().findAll(allHiddenHtml).count()
+                println("\n>>> Toggle-hidden markers found: $toggleHiddenCount")
+                if (toggleHiddenCount > 0) {
+                    // Show a sample of elements with toggle-hidden
+                    val doc = org.jsoup.Jsoup.parse(allHiddenHtml)
+                    val toggleHiddenElements = doc.select("[data-ds-toggle-hidden]")
+                    println("    Sample toggle-hidden elements:")
+                    toggleHiddenElements.take(5).forEach { el ->
+                        println("      - ${el.tagName()}: ${el.className().take(100)}...")
+                    }
+                }
+                
                 println("\n" + "=".repeat(40))
                 println("ACCORDION VERIFICATION:")
                 println("=".repeat(40))
@@ -300,44 +313,73 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         "Support and service"
                     )
                     
-                    // First, build a map of containerLocator -> section name
-                    // by looking at which section name appears in the container's header/summary
-                    val containerToSection = mutableMapOf<String, String>()
+                    // Build a map of table -> section name by looking at each table's immediate parent <details> element
+                    // This handles cases where a single container has multiple <details> sections inside it
+                    val tableToSection = mutableMapOf<InterpretedTable, String?>()
                     
                     for (result in interpretedTables) {
-                        val containerLocator = result.table.containerLocator
-                        if (containerLocator !in containerToSection) {
-                            // Parse container HTML and find section name in summary/header
-                            val containerDoc = org.jsoup.Jsoup.parse(result.table.containerHtml)
-                            val summaryElements = containerDoc.select("summary, h1, h2, h3, h4, h5, h6, [class*=title], [class*=header]")
-                            val summaryText = summaryElements.joinToString(" ") { it.text() }
+                        var assignedSection: String? = null
+                        
+                        // Parse container HTML and find the specific table element
+                        val containerDoc = org.jsoup.Jsoup.parse(result.table.containerHtml)
+                        val tableElement = containerDoc.selectFirst("[data-ds-local=\"${result.table.localElementId}\"]")
+                        
+                        if (tableElement != null) {
+                            // Strategy 1: Check if the table element itself is a <details> (accordion section)
+                            // or find the closest ancestor <details> element
+                            val detailsElement = if (tableElement.tagName() == "details") {
+                                tableElement
+                            } else {
+                                tableElement.parents().firstOrNull { it.tagName() == "details" }
+                            }
                             
-                            // Find which section this container belongs to
-                            for (sectionName in sectionKeywords) {
-                                if (summaryText.contains(sectionName, ignoreCase = true)) {
-                                    containerToSection[containerLocator] = sectionName
-                                    break
+                            if (detailsElement != null) {
+                                // Get the summary text from this specific details element
+                                val summary = detailsElement.selectFirst("summary")
+                                val summaryText = summary?.text() ?: ""
+                                
+                                // Match against section keywords
+                                for (sectionName in sectionKeywords) {
+                                    if (summaryText.contains(sectionName, ignoreCase = true)) {
+                                        assignedSection = sectionName
+                                        break
+                                    }
+                                }
+                            }
+                            
+                            // Strategy 2: If still not assigned, fallback to container-level headers
+                            if (assignedSection == null) {
+                                val summaryElements = containerDoc.select("summary, h1, h2, h3, h4, h5, h6, [class*=title], [class*=header]")
+                                val summaryText = summaryElements.joinToString(" ") { it.text() }
+                                
+                                for (sectionName in sectionKeywords) {
+                                    if (summaryText.contains(sectionName, ignoreCase = true)) {
+                                        assignedSection = sectionName
+                                        break
+                                    }
                                 }
                             }
                         }
+                        
+                        // Add ALL tables to the map, even if section is null
+                        tableToSection[result] = assignedSection
                     }
                     
-                    // Debug: print container to section mapping
-                    println("\nContainer to Section Mapping:")
-                    containerToSection.entries.forEach { (locator, section) ->
-                        println("  ${locator.take(50)}... -> $section")
+                    // Debug: print table to section mapping
+                    println("\nTable to Section Mapping:")
+                    tableToSection.entries.forEach { (table, section) ->
+                        println("  ${table.table.localElementId} [${table.table.containerLocator.take(40)}...] -> ${section ?: "UNASSIGNED"}")
                     }
                     
-                    // Assign each table to its container's section
+                    // Assign each table to its section
                     val sectionToTables = sectionKeywords.associateWith { mutableListOf<InterpretedTable>() }
                     val unassignedTables = mutableListOf<InterpretedTable>()
                     
-                    for (result in interpretedTables) {
-                        val section = containerToSection[result.table.containerLocator]
+                    for ((table, section) in tableToSection) {
                         if (section != null) {
-                            sectionToTables[section]!!.add(result)
+                            sectionToTables[section]!!.add(table)
                         } else {
-                            unassignedTables.add(result)
+                            unassignedTables.add(table)
                         }
                     }
                     
