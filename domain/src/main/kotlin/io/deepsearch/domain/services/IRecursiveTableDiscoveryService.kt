@@ -8,8 +8,8 @@ import io.deepsearch.domain.browser.IBrowserPage
 data class DiscoveredTable(
     /** The local element ID (data-ds-local) within the container HTML */
     val localElementId: String,
-    /** Stable CSS selector to find the container in the original snapshot HTML */
-    val containerLocator: String,
+    /** The data-ds-id of the container element (for mapping to snapshot DOM) */
+    val containerDataId: String,
     /** Container HTML with data-ds-local attributes (for element lookup) */
     val containerHtml: String,
     /** Grid detection result */

@@ -43,7 +43,7 @@ data class TableDiscoveryConfig(
  */
 private data class TableCandidate(
     val localElementId: String,
-    val containerLocator: String,
+    val containerDataId: String,
     val containerHtml: String,
     val depth: Int,
     val leafElementIds: Set<String>,
@@ -117,7 +117,9 @@ class RecursiveTableDiscoveryService(
         val allLeafBoxes = filterToLeafBoxes(detectionBoxes)
         
         // Run the multi-phase algorithm
-        return runMultiPhaseDiscovery(rootElement, detectionBoxes, allLeafBoxes, "", containerHtml)
+        // Note: For direct discoverTables call, we use the root element's data-ds-local as a fallback ID
+        val rootLocalId = rootElement.attr("data-ds-local")
+        return runMultiPhaseDiscovery(rootElement, detectionBoxes, allLeafBoxes, rootLocalId, containerHtml)
     }
 
     override fun discoverTablesFromHiddenContainers(
@@ -133,7 +135,7 @@ class RecursiveTableDiscoveryService(
         for ((containerIndex, container) in hiddenContainerData.hiddenContainers.withIndex()) {
             logger.debug("Processing container {}/{}: [{}] with {} elements", 
                 containerIndex + 1, hiddenContainerData.hiddenContainers.size,
-                container.containerLocator.take(50), container.elements.size)
+                container.containerDataId, container.elements.size)
             
             // Parse the container HTML directly
             val doc = Jsoup.parse(container.containerHtml)
@@ -174,7 +176,7 @@ class RecursiveTableDiscoveryService(
                 containerElement, 
                 detectionBoxes, 
                 allLeafBoxes,
-                container.containerLocator,
+                container.containerDataId,
                 container.containerHtml
             )
             
@@ -392,7 +394,7 @@ class RecursiveTableDiscoveryService(
         rootElement: Element,
         allBoundingBoxes: Map<String, TableDetectionBoundingBox>,
         allLeafBoxes: Map<String, TableDetectionBoundingBox>,
-        containerLocator: String,
+        containerDataId: String,
         containerHtml: String
     ): List<DiscoveredTable> {
         
@@ -406,7 +408,7 @@ class RecursiveTableDiscoveryService(
             allBoundingBoxes, 
             allLeafBoxes,
             0, 
-            containerLocator, 
+            containerDataId, 
             containerHtml
         )
         
@@ -554,7 +556,7 @@ class RecursiveTableDiscoveryService(
                     if (newGridResult.isTable && isCompleteTable(newGridResult)) {
                         selected.add(DiscoveredTable(
                             localElementId = candidate.localElementId,
-                            containerLocator = candidate.containerLocator,
+                            containerDataId = candidate.containerDataId,
                             containerHtml = candidate.containerHtml,
                             gridResult = newGridResult,
                             depth = candidate.depth,
@@ -593,7 +595,7 @@ class RecursiveTableDiscoveryService(
         allBoundingBoxes: Map<String, TableDetectionBoundingBox>,
         allLeafBoxes: Map<String, TableDetectionBoundingBox>,
         depth: Int,
-        containerLocator: String,
+        containerDataId: String,
         containerHtml: String
     ): List<TableCandidate> {
         if (depth > config.maxDepth) {
@@ -622,7 +624,7 @@ class RecursiveTableDiscoveryService(
                     if (gridResult.isTable && gridResult.confidence >= config.minConfidence) {
                         candidates.add(TableCandidate(
                             localElementId = localId,
-                            containerLocator = containerLocator,
+                            containerDataId = containerDataId,
                             containerHtml = containerHtml,
                             depth = depth,
                             leafElementIds = containedLeafIds,
@@ -656,7 +658,7 @@ class RecursiveTableDiscoveryService(
         for (child in element.children()) {
             candidates.addAll(collectAllCandidates(
                 child, allBoundingBoxes, allLeafBoxes,
-                depth + 1, containerLocator, containerHtml
+                depth + 1, containerDataId, containerHtml
             ))
         }
         
@@ -844,7 +846,7 @@ class RecursiveTableDiscoveryService(
     private fun toDiscoveredTable(candidate: TableCandidate): DiscoveredTable {
         return DiscoveredTable(
             localElementId = candidate.localElementId,
-            containerLocator = candidate.containerLocator,
+            containerDataId = candidate.containerDataId,
             containerHtml = candidate.containerHtml,
             gridResult = candidate.gridResult,
             depth = candidate.depth,

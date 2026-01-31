@@ -255,8 +255,8 @@ data class HiddenContainerBoundingBoxesResponse(
 
 @Serializable
 data class HiddenContainerBoundingBoxDataResponse(
-    /** Stable CSS selector to find this container in the original snapshot HTML */
-    val containerLocator: String,
+    /** The container identifier - data-ds-id if available, otherwise CSS locator */
+    val containerDataId: String,
     /** Container outerHTML with data-ds-local attributes (for server-side parsing) */
     val containerHtml: String,
     /** Bounding box of the container itself */

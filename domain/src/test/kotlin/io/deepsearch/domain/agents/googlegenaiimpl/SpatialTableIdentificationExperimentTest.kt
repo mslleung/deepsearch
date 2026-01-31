@@ -96,7 +96,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
             
             // Debug: Print container info
             for ((idx, container) in hiddenContainerData.hiddenContainers.withIndex()) {
-                println("  - Container [${container.containerLocator.take(50)}...]: ${container.elements.size} elements")
+                println("  - Container [${container.containerDataId}]: ${container.elements.size} elements")
                 
                 // Debug: For containers 9-13 (the 5 accordion sections), print bounding box stats
                 if (idx in 8..12) {
@@ -165,7 +165,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 
                 // Count <details> containers
                 val detailsContainers = hiddenContainerData.hiddenContainers.filter { 
-                    it.containerLocator.contains("details") 
+                    it.containerDataId.contains("details") || it.containerHtml.startsWith("<details")
                 }
                 println("\n  Total <details> containers: ${detailsContainers.size}")
                 
@@ -201,7 +201,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                 println("\nDiscovered tables (${discoveredTables.size}):")
                 discoveredTables.forEachIndexed { idx, table ->
                     println("\n  ${idx + 1}. Element: ${table.localElementId} (depth=${table.depth})")
-                    println("     Container locator: ${table.containerLocator.take(60)}...")
+                    println("     Container data-ds-id: ${table.containerDataId}")
                     println("     Grid: ${table.gridResult.rowCount} rows × ${table.gridResult.colCount} cols")
                     println("     Confidence: ${String.format("%.2f", table.gridResult.confidence)}")
                     println("     Leaf elements: ${table.elementBoundingBoxes.size}")
@@ -239,7 +239,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                     val html = tableElement.outerHtml()
                     
                     println("\n  Processing ${table.localElementId} (depth=${table.depth})...")
-                    println("    Container locator: ${table.containerLocator.take(50)}...")
+                    println("    Container data-ds-id: ${table.containerDataId}")
                     
                     // Create TableIdentification for the input
                     val tableIdentification = TableIdentification(
@@ -286,7 +286,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                         println("TABLE ${idx + 1}: ${result.classification}")
                         println("${"─".repeat(70)}")
                         println("Local Element ID: ${result.table.localElementId}")
-                        println("Container Locator: ${result.table.containerLocator}")
+                        println("Container data-ds-id: ${result.table.containerDataId}")
                         println("Depth: ${result.table.depth}")
                         println("Spatial: ${result.table.gridResult.rowCount} rows × ${result.table.gridResult.colCount} cols (confidence: ${String.format("%.2f", result.table.gridResult.confidence)})")
                         println("Classification: ${result.classification}")
@@ -368,7 +368,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                     // Debug: print table to section mapping
                     println("\nTable to Section Mapping:")
                     tableToSection.entries.forEach { (table, section) ->
-                        println("  ${table.table.localElementId} [${table.table.containerLocator.take(40)}...] -> ${section ?: "UNASSIGNED"}")
+                        println("  ${table.table.localElementId} [${table.table.containerDataId}] -> ${section ?: "UNASSIGNED"}")
                     }
                     
                     // Assign each table to its section
@@ -401,7 +401,7 @@ class SpatialTableIdentificationExperimentTest : KoinTest {
                                 println("  TABLE ${idx + 1} in '$sectionName' section")
                                 println("  ${"─".repeat(60)}")
                                 println("  Local Element ID: ${result.table.localElementId}")
-                                println("  Container: ${result.table.containerLocator.take(60)}...")
+                                println("  Container data-ds-id: ${result.table.containerDataId}")
                                 println("  Depth: ${result.table.depth}")
                                 println("  Grid: ${result.table.gridResult.rowCount} rows × ${result.table.gridResult.colCount} cols")
                                 println("  Confidence: ${String.format("%.2f", result.table.gridResult.confidence)}")

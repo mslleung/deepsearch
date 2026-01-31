@@ -89,8 +89,8 @@ class WebpageExtractionService(
     private data class HiddenTableCandidate(
         /** Local element ID (data-ds-local) within the container HTML */
         val localElementId: String,
-        /** Stable CSS selector to find the container in the original snapshot HTML */
-        val containerLocator: String,
+        /** The data-ds-id of the container element (for mapping to snapshot DOM) */
+        val containerDataId: String,
         /** Container HTML with data-ds-local attributes (for element lookup) */
         val containerHtml: String,
         val confidence: Double,
@@ -373,7 +373,7 @@ class WebpageExtractionService(
             )
             HiddenTableCandidate(
                 localElementId = table.localElementId,
-                containerLocator = table.containerLocator,
+                containerDataId = table.containerDataId,
                 containerHtml = table.containerHtml,
                 confidence = table.gridResult.confidence,
                 rowCount = table.gridResult.rowCount,
@@ -786,23 +786,23 @@ class WebpageExtractionService(
         sessionId: SessionId,
         mediaReplacements: List<CssSelectorReplacement>
     ): List<CssSelectorReplacement> {
-        // Group candidates by containerLocator - multiple tables/lists may come from the same hidden container
-        val byContainer = hiddenCandidates.groupBy { it.containerLocator }
+        // Group candidates by containerDataId - multiple tables/lists may come from the same hidden container
+        val byContainer = hiddenCandidates.groupBy { it.containerDataId }
         
         // Track interpreted content per container
         val contentByContainer = mutableMapOf<String, MutableList<String>>()
         
         // LLM candidates need resolved HTML string (not element) because we resolve placeholders to text
         data class LlmCandidate(
-            val containerLocator: String,
+            val containerDataId: String,
             val candidate: HiddenTableCandidate,
             val resolvedHtml: String,
             val containsMedia: Boolean
         )
         val llmCandidates = mutableListOf<LlmCandidate>()
         
-        for ((containerLocator, candidates) in byContainer) {
-            contentByContainer[containerLocator] = mutableListOf()
+        for ((containerDataId, candidates) in byContainer) {
+            contentByContainer[containerDataId] = mutableListOf()
             
             for (candidate in candidates) {
                 // Parse the container HTML (contains data-ds-local AND data-ds-id attributes)
@@ -865,7 +865,7 @@ class WebpageExtractionService(
                             semanticTableConverter.convertToMarkdown(element.outerHtml())
                         )
                         if (markdown.isNotBlank()) {
-                            contentByContainer[containerLocator]!!.add(markdown)
+                            contentByContainer[containerDataId]!!.add(markdown)
                             logger.debug(
                                 "Hidden semantic table {} converted programmatically: {}",
                                 candidate.localElementId, markdown.take(100)
@@ -878,7 +878,7 @@ class WebpageExtractionService(
                             semanticListConverter.convertToMarkdown(element.outerHtml())
                         )
                         if (markdown.isNotBlank()) {
-                            contentByContainer[containerLocator]!!.add(markdown)
+                            contentByContainer[containerDataId]!!.add(markdown)
                             logger.debug(
                                 "Hidden semantic list {} converted programmatically: {}",
                                 candidate.localElementId, markdown.take(100)
@@ -889,7 +889,7 @@ class WebpageExtractionService(
                     else -> {
                         // Resolve placeholders in HTML so LLM sees "{checkmark icon}" instead of {{MEDIA_0}}
                         val resolvedHtml = resolveMediaPlaceholders(element.outerHtml())
-                        llmCandidates.add(LlmCandidate(containerLocator, candidate, resolvedHtml, containsMedia))
+                        llmCandidates.add(LlmCandidate(containerDataId, candidate, resolvedHtml, containsMedia))
                     }
                 }
             }
@@ -916,7 +916,7 @@ class WebpageExtractionService(
             results.forEachIndexed { index, result ->
                 if (!result.classification.shouldRemoveFromDom()) {
                     val llmCandidate = llmCandidates[index]
-                    contentByContainer[llmCandidate.containerLocator]!!.add(result.markdown)
+                    contentByContainer[llmCandidate.containerDataId]!!.add(result.markdown)
                     logger.debug(
                         "Hidden content {} interpreted as {}: {}",
                         llmCandidate.candidate.localElementId, result.classification, result.markdown.take(100)
@@ -926,12 +926,13 @@ class WebpageExtractionService(
         }
         
         // Build CSS selector replacements - one per container
+        // Use [data-ds-id="..."] selector for reliable mapping to snapshot DOM
         // Content-hash deduplication happens at browser level (captureHiddenContainerBoundingBoxes)
         // This secondary deduplication catches any remaining duplicates after LLM interpretation
         val seenContent = mutableSetOf<String>()
         val seenContentSignatures = mutableSetOf<String>()
         
-        return contentByContainer.mapNotNull { (containerLocator, contentList) ->
+        return contentByContainer.mapNotNull { (containerDataId, contentList) ->
             if (contentList.isNotEmpty()) {
                 val combinedMarkdown = contentList.joinToString("\n\n")
                 
@@ -942,7 +943,7 @@ class WebpageExtractionService(
                 if (seenContent.contains(normalizedContent)) {
                     logger.debug(
                         "Skipping duplicate hidden content [{}]: {} chars",
-                        containerLocator.take(50), combinedMarkdown.length
+                        containerDataId, combinedMarkdown.length
                     )
                     return@mapNotNull null
                 }
@@ -953,7 +954,7 @@ class WebpageExtractionService(
                 if (seenContentSignatures.contains(contentSignature)) {
                     logger.debug(
                         "Skipping near-duplicate hidden content [{}]: {} chars (signature match)",
-                        containerLocator.take(50), combinedMarkdown.length
+                        containerDataId, combinedMarkdown.length
                     )
                     return@mapNotNull null
                 }
@@ -963,9 +964,10 @@ class WebpageExtractionService(
                 
                 logger.debug(
                     "Hidden container [{}] replacement: {} content items, {} chars",
-                    containerLocator.take(50), contentList.size, combinedMarkdown.length
+                    containerDataId, contentList.size, combinedMarkdown.length
                 )
-                CssSelectorReplacement(containerLocator, combinedMarkdown)
+                // Use data-ds-id selector for reliable mapping to snapshot DOM
+                CssSelectorReplacement("[data-ds-id=\"$containerDataId\"]", combinedMarkdown)
             } else {
                 null
             }
@@ -1203,8 +1205,8 @@ class WebpageExtractionService(
         }
         
         return hiddenCandidates.filter { hidden ->
-            // Try to find the hidden container in the main snapshot using its locator
-            val hiddenElement = doc.selectFirst(hidden.containerLocator)
+            // Find the hidden container in the snapshot using data-ds-id selector
+            val hiddenElement = doc.selectFirst("[data-ds-id=\"${hidden.containerDataId}\"]")
             if (hiddenElement == null) {
                 // Can't find it in main snapshot, keep it (it's in a hidden container)
                 return@filter true

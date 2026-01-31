@@ -480,10 +480,13 @@ interface IBrowserPage {
      * Uses LOCAL IDs (data-ds-local) instead of global data-ds-id to avoid
      * React re-render issues. The containerHtml contains the full subtree
      * with embedded local IDs for server-side parsing.
+     * 
+     * The containerDataId (global data-ds-id) is used to map back to the 
+     * original snapshot DOM for replacement.
      */
     data class HiddenContainerBoundingBoxData(
-        /** Stable CSS selector to find this container in the original snapshot HTML */
-        val containerLocator: String,
+        /** The data-ds-id of the container element (for mapping to snapshot DOM) */
+        val containerDataId: String,
         /** Container outerHTML with data-ds-local attributes (for server-side parsing) */
         val containerHtml: String,
         /** Bounding box of the container itself */

@@ -261,12 +261,12 @@ class PageResultProcessor(
             if (gridResult.isTable && gridResult.confidence >= 0.5) {
                 logger.debug(
                     "Hidden container {} detected as table: {}x{} grid (confidence: {})",
-                    container.containerLocator, gridResult.rowCount, gridResult.colCount,
+                    container.containerDataId, gridResult.rowCount, gridResult.colCount,
                     "%.2f".format(gridResult.confidence)
                 )
                 candidates.add(
                     HiddenTableCandidate(
-                        containerId = container.containerLocator,
+                        containerId = container.containerDataId,
                         confidence = gridResult.confidence,
                         rowCount = gridResult.rowCount,
                         colCount = gridResult.colCount
