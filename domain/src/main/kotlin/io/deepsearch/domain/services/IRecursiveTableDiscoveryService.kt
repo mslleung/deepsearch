@@ -8,7 +8,7 @@ import io.deepsearch.domain.browser.IBrowserPage
 data class DiscoveredTable(
     /** The local element ID (data-ds-local) within the container HTML */
     val localElementId: String,
-    /** The data-ds-id of the container element (for mapping to snapshot DOM) */
+    /** The data-ds-id attribute value of the container element (always a stable injected ID, never a CSS path). Used for mapping to snapshot DOM. */
     val containerDataId: String,
     /** Container HTML with data-ds-local attributes (for element lookup) */
     val containerHtml: String,

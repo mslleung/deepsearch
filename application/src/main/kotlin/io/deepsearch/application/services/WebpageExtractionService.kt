@@ -1,5 +1,8 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.agents.ILinearizedContentConversionAgent
+import io.deepsearch.domain.agents.LinearizedContentConversionInput
+import io.deepsearch.domain.agents.LinearizedContentConversionOutput
 import io.deepsearch.domain.agents.ISemanticTableClassificationAgent
 import io.deepsearch.domain.agents.SemanticTableClassificationInput
 import io.deepsearch.domain.agents.SnippetClassification
@@ -67,7 +70,8 @@ class WebpageExtractionService(
     private val recursiveTableDiscoveryService: IRecursiveTableDiscoveryService,
     private val semanticTableConverter: ISemanticTableConverter,
     private val semanticListConverter: ISemanticListConverter,
-    private val semanticTableClassificationAgent: ISemanticTableClassificationAgent
+    private val semanticTableClassificationAgent: ISemanticTableClassificationAgent,
+    private val linearizedContentConversionAgent: ILinearizedContentConversionAgent
 ) : IWebpageExtractionService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -89,7 +93,7 @@ class WebpageExtractionService(
     private data class HiddenTableCandidate(
         /** Local element ID (data-ds-local) within the container HTML */
         val localElementId: String,
-        /** The data-ds-id of the container element (for mapping to snapshot DOM) */
+        /** The data-ds-id attribute value of the container element (always a stable injected ID, never a CSS path). Used for mapping to snapshot DOM. */
         val containerDataId: String,
         /** Container HTML with data-ds-local attributes (for element lookup) */
         val containerHtml: String,
@@ -640,12 +644,56 @@ class WebpageExtractionService(
         placeholderMap.putAll(listPlaceholders)
         
         // Apply hidden content replacements (accordion panels, collapsed sections)
-        // This replaces the hidden container elements in the DOM with their interpreted content,
-        // preserving the original DOM position rather than appending at the end.
-        val hiddenPlaceholders = jsoupDomService.replaceElementsWithPlaceholders(
-            jsoupDoc, hiddenContentReplacements, PlaceholderPrefix.HIDDEN
-        )
-        placeholderMap.putAll(hiddenPlaceholders)
+        // Split into two groups:
+        // 1. Elements that exist in jsoupDoc (from snapshot) → replace in-place at original position
+        // 2. Elements that DON'T exist in jsoupDoc (lazily-rendered by React after reveal) → append to body
+        // This handles the case where hidden containers use React conditional rendering:
+        // - injectStableIds runs → element doesn't exist yet (not rendered)
+        // - snapshot captured → element still doesn't exist
+        // - captureHiddenContainerBoundingBoxes reveals container → React renders element
+        // - safety-net ID (ds-hidden-container-N) is injected but isn't in snapshot HTML
+        if (hiddenContentReplacements.isNotEmpty()) {
+            val (foundReplacements, missingReplacements) = hiddenContentReplacements.partition { replacement ->
+                try {
+                    jsoupDoc.selectFirst(replacement.cssSelector) != null
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            
+            // Replace in-place for elements found in snapshot DOM
+            if (foundReplacements.isNotEmpty()) {
+                val hiddenPlaceholders = jsoupDomService.replaceElementsWithPlaceholders(
+                    jsoupDoc, foundReplacements, PlaceholderPrefix.HIDDEN
+                )
+                placeholderMap.putAll(hiddenPlaceholders)
+                logger.debug("Hidden content: {} replacements applied in-place", foundReplacements.size)
+            }
+            
+            // Append to body for lazily-rendered elements not in snapshot DOM
+            // This ensures the LLM's structured output is included in the final markdown,
+            // even though it can't be placed at the exact original DOM position.
+            if (missingReplacements.isNotEmpty()) {
+                logger.debug(
+                    "Hidden content: {} of {} replacements target lazily-rendered elements not in snapshot DOM. Appending to body.",
+                    missingReplacements.size, hiddenContentReplacements.size
+                )
+                var hiddenCounter = placeholderMap.size
+                for (replacement in missingReplacements) {
+                    val replacementText = replacement.text ?: continue
+                    val placeholderId = "${PlaceholderPrefix.HIDDEN.prefix}_fallback_${hiddenCounter++}"
+                    val placeholder = "{{$placeholderId}}"
+                    placeholderMap[placeholderId] = MediaPlaceholderMapping(
+                        placeholder = placeholder,
+                        text = replacementText
+                    )
+                    // Append as a div to preserve block-level structure in markdown
+                    val container = org.jsoup.nodes.Element(org.jsoup.parser.Tag.valueOf("div"), "")
+                    container.appendText(placeholder)
+                    jsoupDoc.body().appendChild(container)
+                }
+            }
+        }
 
         // ===== Step 5: Clean up DOM before markdown conversion =====
         // Remove empty elements that would produce markdown artifacts like orphan `>` or `* `
@@ -801,8 +849,29 @@ class WebpageExtractionService(
         )
         val llmCandidates = mutableListOf<LlmCandidate>()
         
-        for ((containerDataId, candidates) in byContainer) {
+        // Pre-index media replacement selectors by data-ds-id value for efficient per-container filtering.
+        // This avoids applying all 300+ page-wide media replacements to each small container HTML,
+        // which would produce noisy "N of N media replacements had no matching elements" warnings.
+        val mediaReplacementsByDsId = mediaReplacements.mapNotNull { replacement ->
+            // Extract data-ds-id value from selectors like [data-ds-id="ds-icon-36"]
+            val match = Regex("""\[data-ds-id="([^"]+)"\]""").find(replacement.cssSelector)
+            match?.groupValues?.get(1)?.let { dsId -> dsId to replacement }
+        }.toMap()
+        
+        for ((containerDataId, rawCandidates) in byContainer) {
             contentByContainer[containerDataId] = mutableListOf()
+            
+            // ===== Pre-LLM structural dedup: remove candidates that are DOM descendants of others =====
+            // Within the same container, spatial analysis may find overlapping candidates at different
+            // DOM depths (e.g., the full accordion table AND individual sub-sections within it).
+            // Keep only the shallowest ancestor that forms a complete table; discard nested fragments.
+            val candidates = deduplicateNestedCandidates(rawCandidates)
+            if (candidates.size < rawCandidates.size) {
+                logger.debug(
+                    "Pre-LLM dedup for container [{}]: {} -> {} candidates (removed {} nested fragments)",
+                    containerDataId, rawCandidates.size, candidates.size, rawCandidates.size - candidates.size
+                )
+            }
             
             for (candidate in candidates) {
                 // Parse the container HTML (contains data-ds-local AND data-ds-id attributes)
@@ -817,11 +886,23 @@ class WebpageExtractionService(
                 }
                 val containsMedia = originalElement.select("img, svg, i.fa, i.fas, i.far, i.fab").isNotEmpty()
                 
-                // Apply media replacements to resolve icons/images inside the hidden container.
-                // Icons use [data-ds-id="icon-X"] selectors which are present in the container HTML.
+                // Filter media replacements to only those whose data-ds-id exists in this container's HTML.
+                // This prevents applying all 300+ page-wide replacements to each small snippet,
+                // which causes "N of N media replacements had no matching elements" warnings.
+                val containerDsIds = containerDoc.select("[data-ds-id]").map { it.attr("data-ds-id") }.toSet()
+                val relevantReplacements = containerDsIds.mapNotNull { dsId -> mediaReplacementsByDsId[dsId] }
+                
+                if (relevantReplacements.size != containerDsIds.size) {
+                    logger.debug(
+                        "Container [{}] candidate [{}]: {} data-ds-id elements, {} have media replacements",
+                        containerDataId, candidate.localElementId, containerDsIds.size, relevantReplacements.size
+                    )
+                }
+                
+                // Apply only the relevant media replacements to resolve icons/images inside the hidden container.
                 // This converts <svg data-ds-id="icon-123">...</svg> to placeholders like {{MEDIA_0}}
                 val placeholderMap = jsoupDomService.replaceElementsWithPlaceholders(
-                    containerDoc, mediaReplacements, PlaceholderPrefix.MEDIA
+                    containerDoc, relevantReplacements, PlaceholderPrefix.MEDIA
                 )
                 
                 // Handle any remaining SVG elements not replaced by mediaReplacements.
@@ -895,31 +976,84 @@ class WebpageExtractionService(
             }
         }
         
-        // Process non-semantic candidates via LLM (batched)
+        // Process non-semantic candidates via linearized content conversion agent (batched)
+        // Outputs structured text (linearized rows) instead of markdown tables for better retrieval
         if (llmCandidates.isNotEmpty()) {
             val inputs = llmCandidates.map { llmCandidate ->
-                val tableIdentification = TableIdentification(
-                    cssSelector = "[data-ds-local=\"${llmCandidate.candidate.localElementId}\"]",
-                    dataId = llmCandidate.candidate.localElementId,
+                LinearizedContentConversionInput(
+                    html = llmCandidate.resolvedHtml,
                     auxiliaryInfo = "Hidden content (depth=${llmCandidate.candidate.depth}): ${llmCandidate.candidate.rowCount}x${llmCandidate.candidate.colCount} grid (confidence: ${"%.0f".format(llmCandidate.candidate.confidence * 100)}%)",
                     containsMedia = llmCandidate.containsMedia
                 )
-                TableInterpretationInput(
-                    tableIdentification = tableIdentification,
-                    tableHtml = llmCandidate.resolvedHtml,  // Already has media placeholders resolved
-                    boundingBoxes = emptyMap()
-                )
             }
+            val results = linearizedContentConversionAgent.generateBatch(inputs)
             
-            val results = tableInterpretationService.interpretTablesBatch(inputs, sessionId)
+            // ===== Post-LLM content dedup: remove outputs whose text is substantially contained in another =====
+            // Group results by container, then within each container check for content overlap.
+            // This catches cases where pre-LLM structural dedup missed overlaps (e.g., non-nested
+            // candidates from different DOM branches that produce similar linearized text).
+            data class AcceptedResult(
+                val llmCandidate: LlmCandidate,
+                val result: LinearizedContentConversionOutput,
+                val normalizedText: String
+            )
+            val acceptedByContainer = mutableMapOf<String, MutableList<AcceptedResult>>()
             
             results.forEachIndexed { index, result ->
-                if (!result.classification.shouldRemoveFromDom()) {
-                    val llmCandidate = llmCandidates[index]
-                    contentByContainer[llmCandidate.containerDataId]!!.add(result.markdown)
+                if (result.classification.shouldRemoveFromDom()) return@forEachIndexed
+                
+                val llmCandidate = llmCandidates[index]
+                val normalizedText = result.structuredText.lowercase().replace(Regex("\\s+"), " ").trim()
+                
+                if (normalizedText.isBlank()) return@forEachIndexed
+                
+                val containerAccepted = acceptedByContainer.getOrPut(llmCandidate.containerDataId) { mutableListOf() }
+                
+                // Check if this result is substantially contained within an already-accepted result
+                var isSubsumed = false
+                val toRemove = mutableListOf<Int>()
+                
+                for ((i, accepted) in containerAccepted.withIndex()) {
+                    val overlapRatio = computeTextOverlap(normalizedText, accepted.normalizedText)
+                    val reverseOverlapRatio = computeTextOverlap(accepted.normalizedText, normalizedText)
+                    
+                    if (overlapRatio > 0.80) {
+                        // This result's content is mostly contained in an existing one -- skip it
+                        isSubsumed = true
+                        logger.debug(
+                            "Post-LLM dedup: {} subsumed by {} ({:.0f}% overlap, {} vs {} chars)",
+                            llmCandidate.candidate.localElementId,
+                            accepted.llmCandidate.candidate.localElementId,
+                            overlapRatio * 100, normalizedText.length, accepted.normalizedText.length
+                        )
+                        break
+                    } else if (reverseOverlapRatio > 0.80) {
+                        // The existing result is mostly contained in this one -- replace it
+                        toRemove.add(i)
+                        logger.debug(
+                            "Post-LLM dedup: {} replaces {} ({:.0f}% reverse overlap, {} vs {} chars)",
+                            llmCandidate.candidate.localElementId,
+                            accepted.llmCandidate.candidate.localElementId,
+                            reverseOverlapRatio * 100, normalizedText.length, accepted.normalizedText.length
+                        )
+                    }
+                }
+                
+                if (!isSubsumed) {
+                    // Remove any results that this new one subsumes (iterate in reverse to preserve indices)
+                    toRemove.sortedDescending().forEach { containerAccepted.removeAt(it) }
+                    containerAccepted.add(AcceptedResult(llmCandidate, result, normalizedText))
+                }
+            }
+            
+            // Add accepted results to contentByContainer
+            for ((containerId, acceptedResults) in acceptedByContainer) {
+                for (accepted in acceptedResults) {
+                    contentByContainer[containerId]!!.add(accepted.result.structuredText)
                     logger.debug(
                         "Hidden content {} interpreted as {}: {}",
-                        llmCandidate.candidate.localElementId, result.classification, result.markdown.take(100)
+                        accepted.llmCandidate.candidate.localElementId, accepted.result.classification,
+                        accepted.result.structuredText.take(100)
                     )
                 }
             }
@@ -971,7 +1105,78 @@ class WebpageExtractionService(
             } else {
                 null
             }
+        }.also { replacements ->
+            logger.debug(
+                "interpretHiddenContent: {} candidates -> {} replacements (selectors: {})",
+                hiddenCandidates.size,
+                replacements.size,
+                replacements.joinToString(", ") { it.cssSelector }
+            )
         }
+    }
+
+    /**
+     * Deduplicate candidates within the same container by removing nested DOM descendants.
+     * 
+     * When spatial analysis finds overlapping candidates at different DOM depths (e.g., the
+     * full accordion table AND individual sub-sections within it), this keeps only the
+     * shallowest ancestor that covers the deeper fragments. This avoids sending redundant
+     * overlapping HTML snippets to the LLM.
+     * 
+     * For candidates that are not in an ancestor-descendant relationship, all are kept.
+     */
+    private fun deduplicateNestedCandidates(candidates: List<HiddenTableCandidate>): List<HiddenTableCandidate> {
+        if (candidates.size <= 1) return candidates
+        
+        // All candidates in this group share the same containerHtml, so parse once
+        val containerDoc = Jsoup.parse(candidates.first().containerHtml)
+        
+        // Resolve each candidate's DOM element
+        val candidateElements = candidates.mapNotNull { candidate ->
+            val element = containerDoc.selectFirst("[data-ds-local=\"${candidate.localElementId}\"]")
+            if (element != null) candidate to element else null
+        }
+        
+        if (candidateElements.size <= 1) return candidateElements.map { it.first }
+        
+        // Find candidates that are subsumed by a larger ancestor candidate
+        val subsumed = mutableSetOf<String>() // localElementIds to discard
+        
+        for ((candidateA, elemA) in candidateElements) {
+            for ((candidateB, elemB) in candidateElements) {
+                if (candidateA.localElementId == candidateB.localElementId) continue
+                if (candidateA.localElementId in subsumed || candidateB.localElementId in subsumed) continue
+                
+                // Check if elemA is an ancestor of elemB (elemB is nested inside elemA)
+                val bIsInsideA = elemA.selectFirst("[data-ds-local=\"${candidateB.localElementId}\"]") != null
+                if (bIsInsideA) {
+                    // A contains B -- keep A (the larger ancestor), discard B (the fragment)
+                    subsumed.add(candidateB.localElementId)
+                    logger.debug(
+                        "Pre-LLM dedup: {} (depth={}, {}x{}) subsumed by {} (depth={}, {}x{})",
+                        candidateB.localElementId, candidateB.depth, candidateB.rowCount, candidateB.colCount,
+                        candidateA.localElementId, candidateA.depth, candidateA.rowCount, candidateA.colCount
+                    )
+                }
+            }
+        }
+        
+        return candidates.filter { it.localElementId !in subsumed }
+    }
+
+    /**
+     * Compute what fraction of `a`'s words appear in `b`.
+     * Returns a value between 0.0 and 1.0. A value of 0.85 means 85% of a's words are in b.
+     * Used for post-LLM content deduplication to detect when one linearized output is a
+     * subset of another.
+     */
+    private fun computeTextOverlap(a: String, b: String): Double {
+        if (a.isBlank()) return 1.0  // empty is trivially contained
+        val wordsA = a.split(Regex("\\s+")).filter { it.length > 2 }.toSet()
+        if (wordsA.isEmpty()) return 1.0
+        val wordsB = b.split(Regex("\\s+")).filter { it.length > 2 }.toSet()
+        val overlap = wordsA.count { it in wordsB }
+        return overlap.toDouble() / wordsA.size
     }
 
     /**

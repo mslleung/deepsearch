@@ -389,10 +389,10 @@ class JsoupDomService : IJsoupDomService {
         }
         
         if (notFound > 0) {
-            logger.warn("{} of {} media replacements had no matching elements (CSS selector mismatch)", 
-                notFound, replacements.size)
+            logger.warn("{} of {} {} replacements had no matching elements (CSS selector mismatch)", 
+                notFound, replacements.size, placeholderPrefix.name)
         }
-        logger.debug("Replaced {} elements with placeholders, removed {} elements", replaced, removed)
+        logger.debug("Replaced {} elements with placeholders, removed {} elements ({} prefix)", replaced, removed, placeholderPrefix.name)
         
         return placeholderMap
     }

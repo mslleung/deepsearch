@@ -94,6 +94,40 @@ class WebpageExtractionServiceTest : KoinTest {
         }
     }
 
+    @Test
+    fun `extract OT&P body check for linearized row testing`() = runTest(testCoroutineDispatcher) {
+        val url = "https://www.otandp.com/body-check/"
+        browserPool.withPage { page ->
+            page.navigate(url)
+            page.waitForLoad()
+            val result = webpageExtractionService.extractWebpage(page, QuerySessionId("otp-linearized"))
+            println("=== OT&P BODY CHECK - FULL MARKDOWN ===")
+            println("Markdown length: ${result.markdown.length}")
+            println("Title: ${result.title}")
+            println("=== FULL MARKDOWN ===")
+            println(result.markdown)
+            println("=== END MARKDOWN ===")
+            assertTrue(result.markdown.length > 200, "Markdown should be longer than 200 chars")
+        }
+    }
+
+    @Test
+    fun `extract SleekFlow pricing for linearized row testing`() = runTest(testCoroutineDispatcher) {
+        val url = "https://sleekflow.io/pricing"
+        browserPool.withPage { page ->
+            page.navigate(url)
+            page.waitForLoad()
+            val result = webpageExtractionService.extractWebpage(page, QuerySessionId("sleekflow-linearized"))
+            println("=== SLEEKFLOW PRICING - FULL MARKDOWN ===")
+            println("Markdown length: ${result.markdown.length}")
+            println("Title: ${result.title}")
+            println("=== FULL MARKDOWN ===")
+            println(result.markdown)
+            println("=== END MARKDOWN ===")
+            assertTrue(result.markdown.length > 200, "Markdown should be longer than 200 chars")
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(
         strings = [

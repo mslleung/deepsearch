@@ -485,7 +485,7 @@ interface IBrowserPage {
      * original snapshot DOM for replacement.
      */
     data class HiddenContainerBoundingBoxData(
-        /** The data-ds-id of the container element (for mapping to snapshot DOM) */
+        /** The data-ds-id attribute value of the container element (always a stable injected ID, never a CSS path). Used for mapping to snapshot DOM. */
         val containerDataId: String,
         /** Container outerHTML with data-ds-local attributes (for server-side parsing) */
         val containerHtml: String,

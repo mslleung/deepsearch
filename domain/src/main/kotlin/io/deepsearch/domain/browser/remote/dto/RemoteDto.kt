@@ -255,7 +255,7 @@ data class HiddenContainerBoundingBoxesResponse(
 
 @Serializable
 data class HiddenContainerBoundingBoxDataResponse(
-    /** The container identifier - data-ds-id if available, otherwise CSS locator */
+    /** The data-ds-id attribute value of the container element (always a stable injected ID, never a CSS path) */
     val containerDataId: String,
     /** Container outerHTML with data-ds-local attributes (for server-side parsing) */
     val containerHtml: String,
