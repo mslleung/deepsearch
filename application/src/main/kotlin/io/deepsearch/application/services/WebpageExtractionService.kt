@@ -644,15 +644,12 @@ class WebpageExtractionService(
         placeholderMap.putAll(listPlaceholders)
         
         // Apply hidden content replacements (accordion panels, collapsed sections)
-        // Split into two groups:
-        // 1. Elements that exist in jsoupDoc (from snapshot) → replace in-place at original position
-        // 2. Elements that DON'T exist in jsoupDoc (lazily-rendered by React after reveal) → append to body
-        // This handles the case where hidden containers use React conditional rendering:
-        // - injectStableIds runs → element doesn't exist yet (not rendered)
-        // - snapshot captured → element still doesn't exist
-        // - captureHiddenContainerBoundingBoxes reveals container → React renders element
-        // - safety-net ID (ds-hidden-container-N) is injected but isn't in snapshot HTML
+        // injectStableIds stores a window.__dsHiddenIdMap so that
+        // captureHiddenContainerBoundingBoxes can recover original ds-element-* IDs
+        // even after React re-renders. This means replacement selectors should now
+        // match elements in the snapshot DOM directly.
         if (hiddenContentReplacements.isNotEmpty()) {
+            // Partition into found/missing for logging, but only apply found ones
             val (foundReplacements, missingReplacements) = hiddenContentReplacements.partition { replacement ->
                 try {
                     jsoupDoc.selectFirst(replacement.cssSelector) != null
@@ -661,7 +658,6 @@ class WebpageExtractionService(
                 }
             }
             
-            // Replace in-place for elements found in snapshot DOM
             if (foundReplacements.isNotEmpty()) {
                 val hiddenPlaceholders = jsoupDomService.replaceElementsWithPlaceholders(
                     jsoupDoc, foundReplacements, PlaceholderPrefix.HIDDEN
@@ -670,28 +666,15 @@ class WebpageExtractionService(
                 logger.debug("Hidden content: {} replacements applied in-place", foundReplacements.size)
             }
             
-            // Append to body for lazily-rendered elements not in snapshot DOM
-            // This ensures the LLM's structured output is included in the final markdown,
-            // even though it can't be placed at the exact original DOM position.
+            // Log any replacements that still couldn't match (edge case: element truly
+            // not in snapshot, or ID recovery failed). These are skipped — no body append.
             if (missingReplacements.isNotEmpty()) {
-                logger.debug(
-                    "Hidden content: {} of {} replacements target lazily-rendered elements not in snapshot DOM. Appending to body.",
-                    missingReplacements.size, hiddenContentReplacements.size
+                logger.warn(
+                    "Hidden content: {} of {} replacements could not match snapshot DOM (selectors: {}). " +
+                    "These hidden containers will not appear in the output.",
+                    missingReplacements.size, hiddenContentReplacements.size,
+                    missingReplacements.joinToString(", ") { it.cssSelector }
                 )
-                var hiddenCounter = placeholderMap.size
-                for (replacement in missingReplacements) {
-                    val replacementText = replacement.text ?: continue
-                    val placeholderId = "${PlaceholderPrefix.HIDDEN.prefix}_fallback_${hiddenCounter++}"
-                    val placeholder = "{{$placeholderId}}"
-                    placeholderMap[placeholderId] = MediaPlaceholderMapping(
-                        placeholder = placeholder,
-                        text = replacementText
-                    )
-                    // Append as a div to preserve block-level structure in markdown
-                    val container = org.jsoup.nodes.Element(org.jsoup.parser.Tag.valueOf("div"), "")
-                    container.appendText(placeholder)
-                    jsoupDoc.body().appendChild(container)
-                }
             }
         }
 
@@ -837,8 +820,11 @@ class WebpageExtractionService(
         // Group candidates by containerDataId - multiple tables/lists may come from the same hidden container
         val byContainer = hiddenCandidates.groupBy { it.containerDataId }
         
-        // Track interpreted content per container
-        val contentByContainer = mutableMapOf<String, MutableList<String>>()
+        // Track interpreted content per replacement target element.
+        // Key is a resolved data-ds-id: either the specific element's ID (when available) or
+        // the container-level ID as fallback. This allows multiple candidates from the same
+        // container to produce separate, precisely-targeted replacements.
+        val contentByTarget = mutableMapOf<String, MutableList<String>>()
         
         // LLM candidates need resolved HTML string (not element) because we resolve placeholders to text
         data class LlmCandidate(
@@ -859,7 +845,6 @@ class WebpageExtractionService(
         }.toMap()
         
         for ((containerDataId, rawCandidates) in byContainer) {
-            contentByContainer[containerDataId] = mutableListOf()
             
             // ===== Pre-LLM structural dedup: remove candidates that are DOM descendants of others =====
             // Within the same container, spatial analysis may find overlapping candidates at different
@@ -874,59 +859,64 @@ class WebpageExtractionService(
             }
             
             for (candidate in candidates) {
-                // Parse the container HTML (contains data-ds-local AND data-ds-id attributes)
-                // The data-ds-id attributes allow us to apply icon/image replacements
+                // Parse the container HTML to find the target element
                 val containerDoc = Jsoup.parse(candidate.containerHtml)
-                
-                // Check for media elements BEFORE replacement (to set containsMedia flag for LLM)
                 val originalElement = containerDoc.selectFirst("[data-ds-local=\"${candidate.localElementId}\"]")
                 if (originalElement == null) {
                     logger.debug("Hidden element not found: {}", candidate.localElementId)
                     continue
                 }
+                
+                // Check for media elements BEFORE replacement (to set containsMedia flag for LLM)
                 val containsMedia = originalElement.select("img, svg, i.fa, i.fas, i.far, i.fab").isNotEmpty()
                 
-                // Filter media replacements to only those whose data-ds-id exists in this container's HTML.
-                // This prevents applying all 300+ page-wide replacements to each small snippet,
-                // which causes "N of N media replacements had no matching elements" warnings.
-                val containerDsIds = containerDoc.select("[data-ds-id]").map { it.attr("data-ds-id") }.toSet()
-                val relevantReplacements = containerDsIds.mapNotNull { dsId -> mediaReplacementsByDsId[dsId] }
+                // Create a scoped mini-document from the element's HTML only.
+                // This prevents media replacements or SVG cleanup on ancestor/sibling elements
+                // from destroying the target element (which caused "Hidden element not found
+                // after media replacement" failures when modifying the full container document).
+                val elementDoc = Jsoup.parseBodyFragment(originalElement.outerHtml())
                 
-                if (relevantReplacements.size != containerDsIds.size) {
+                // Filter media replacements to only those whose data-ds-id exists within this element.
+                val elementDsIds = elementDoc.select("[data-ds-id]").map { it.attr("data-ds-id") }.toSet()
+                val relevantReplacements = elementDsIds.mapNotNull { dsId -> mediaReplacementsByDsId[dsId] }
+                
+                if (relevantReplacements.size != elementDsIds.size) {
                     logger.debug(
                         "Container [{}] candidate [{}]: {} data-ds-id elements, {} have media replacements",
-                        containerDataId, candidate.localElementId, containerDsIds.size, relevantReplacements.size
+                        containerDataId, candidate.localElementId, elementDsIds.size, relevantReplacements.size
                     )
                 }
                 
-                // Apply only the relevant media replacements to resolve icons/images inside the hidden container.
+                // Apply media replacements within the scoped mini-document.
                 // This converts <svg data-ds-id="icon-123">...</svg> to placeholders like {{MEDIA_0}}
                 val placeholderMap = jsoupDomService.replaceElementsWithPlaceholders(
-                    containerDoc, relevantReplacements, PlaceholderPrefix.MEDIA
+                    elementDoc, relevantReplacements, PlaceholderPrefix.MEDIA
                 )
                 
                 // Handle any remaining SVG elements not replaced by mediaReplacements.
-                // With the new hidden icon extraction (captured when containers are revealed),
-                // most icons should now be in mediaReplacements. This fallback handles edge cases
-                // like dynamically rendered icons or icons without data-ds-id.
-                containerDoc.select("svg").forEach { svg ->
+                // Scoped to the element's subtree only.
+                elementDoc.select("svg").forEach { svg ->
                     val altText = svg.attr("aria-label").ifBlank { 
                         svg.selectFirst("title")?.text() ?: ""
                     }
                     if (altText.isNotBlank()) {
                         svg.replaceWith(org.jsoup.nodes.TextNode("{$altText icon}"))
                     } else {
-                        // No label found - remove the SVG to avoid [icon] fallback
                         svg.remove()
                     }
                 }
                 
-                // Re-select the element after replacement (the DOM was modified)
-                val element = containerDoc.selectFirst("[data-ds-local=\"${candidate.localElementId}\"]")
+                // The element is the root of the mini-document body -- always present
+                val element = elementDoc.body().firstElementChild()
                 if (element == null) {
-                    logger.debug("Hidden element not found after media replacement: {}", candidate.localElementId)
+                    logger.debug("Empty element after media replacement: {}", candidate.localElementId)
                     continue
                 }
+                
+                // Resolve the specific data-ds-id of this candidate element.
+                // This allows us to target the replacement precisely (e.g. a specific accordion panel)
+                // instead of always targeting the container (which may be a large page wrapper).
+                val resolvedTargetId = element.attr("data-ds-id").takeIf { it.isNotBlank() } ?: containerDataId
                 
                 val tagName = element.tagName().lowercase()
                 
@@ -946,10 +936,10 @@ class WebpageExtractionService(
                             semanticTableConverter.convertToMarkdown(element.outerHtml())
                         )
                         if (markdown.isNotBlank()) {
-                            contentByContainer[containerDataId]!!.add(markdown)
+                            contentByTarget.getOrPut(resolvedTargetId) { mutableListOf() }.add(markdown)
                             logger.debug(
-                                "Hidden semantic table {} converted programmatically: {}",
-                                candidate.localElementId, markdown.take(100)
+                                "Hidden semantic table {} -> target [{}]: {}",
+                                candidate.localElementId, resolvedTargetId, markdown.take(100)
                             )
                         }
                     }
@@ -959,10 +949,10 @@ class WebpageExtractionService(
                             semanticListConverter.convertToMarkdown(element.outerHtml())
                         )
                         if (markdown.isNotBlank()) {
-                            contentByContainer[containerDataId]!!.add(markdown)
+                            contentByTarget.getOrPut(resolvedTargetId) { mutableListOf() }.add(markdown)
                             logger.debug(
-                                "Hidden semantic list {} converted programmatically: {}",
-                                candidate.localElementId, markdown.take(100)
+                                "Hidden semantic list {} -> target [{}]: {}",
+                                candidate.localElementId, resolvedTargetId, markdown.take(100)
                             )
                         }
                     }
@@ -970,7 +960,7 @@ class WebpageExtractionService(
                     else -> {
                         // Resolve placeholders in HTML so LLM sees "{checkmark icon}" instead of {{MEDIA_0}}
                         val resolvedHtml = resolveMediaPlaceholders(element.outerHtml())
-                        llmCandidates.add(LlmCandidate(containerDataId, candidate, resolvedHtml, containsMedia))
+                        llmCandidates.add(LlmCandidate(resolvedTargetId, candidate, resolvedHtml, containsMedia))
                     }
                 }
             }
@@ -1046,13 +1036,14 @@ class WebpageExtractionService(
                 }
             }
             
-            // Add accepted results to contentByContainer
-            for ((containerId, acceptedResults) in acceptedByContainer) {
+            // Add accepted results to contentByTarget
+            for ((targetId, acceptedResults) in acceptedByContainer) {
                 for (accepted in acceptedResults) {
-                    contentByContainer[containerId]!!.add(accepted.result.structuredText)
+                    contentByTarget.getOrPut(targetId) { mutableListOf() }.add(accepted.result.structuredText)
                     logger.debug(
-                        "Hidden content {} interpreted as {}: {}",
-                        accepted.llmCandidate.candidate.localElementId, accepted.result.classification,
+                        "Hidden content {} -> target [{}] interpreted as {}: {}",
+                        accepted.llmCandidate.candidate.localElementId, targetId,
+                        accepted.result.classification,
                         accepted.result.structuredText.take(100)
                     )
                 }
@@ -1066,7 +1057,7 @@ class WebpageExtractionService(
         val seenContent = mutableSetOf<String>()
         val seenContentSignatures = mutableSetOf<String>()
         
-        return contentByContainer.mapNotNull { (containerDataId, contentList) ->
+        return contentByTarget.mapNotNull { (targetId, contentList) ->
             if (contentList.isNotEmpty()) {
                 val combinedMarkdown = contentList.joinToString("\n\n")
                 
@@ -1077,7 +1068,7 @@ class WebpageExtractionService(
                 if (seenContent.contains(normalizedContent)) {
                     logger.debug(
                         "Skipping duplicate hidden content [{}]: {} chars",
-                        containerDataId, combinedMarkdown.length
+                        targetId, combinedMarkdown.length
                     )
                     return@mapNotNull null
                 }
@@ -1088,7 +1079,7 @@ class WebpageExtractionService(
                 if (seenContentSignatures.contains(contentSignature)) {
                     logger.debug(
                         "Skipping near-duplicate hidden content [{}]: {} chars (signature match)",
-                        containerDataId, combinedMarkdown.length
+                        targetId, combinedMarkdown.length
                     )
                     return@mapNotNull null
                 }
@@ -1097,11 +1088,11 @@ class WebpageExtractionService(
                 seenContentSignatures.add(contentSignature)
                 
                 logger.debug(
-                    "Hidden container [{}] replacement: {} content items, {} chars",
-                    containerDataId, contentList.size, combinedMarkdown.length
+                    "Hidden content [{}] replacement: {} content items, {} chars",
+                    targetId, contentList.size, combinedMarkdown.length
                 )
                 // Use data-ds-id selector for reliable mapping to snapshot DOM
-                CssSelectorReplacement("[data-ds-id=\"$containerDataId\"]", combinedMarkdown)
+                CssSelectorReplacement("[data-ds-id=\"$targetId\"]", combinedMarkdown)
             } else {
                 null
             }

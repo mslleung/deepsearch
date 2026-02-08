@@ -250,7 +250,9 @@ data class HiddenContainerBoundingBoxesResponse(
     /** Icons extracted from hidden containers (now visible after reveal) */
     val hiddenIcons: List<HiddenIconResponse> = emptyList(),
     /** Images extracted from hidden containers (now visible after reveal) */
-    val hiddenImages: List<HiddenImageResponse> = emptyList()
+    val hiddenImages: List<HiddenImageResponse> = emptyList(),
+    /** Browser-side debug log entries */
+    val debugLog: List<String>? = null
 )
 
 @Serializable
@@ -262,7 +264,11 @@ data class HiddenContainerBoundingBoxDataResponse(
     /** Bounding box of the container itself */
     val containerBox: BoundingBoxResponse,
     /** Map of local element ID (ds-local-N) to bounding box */
-    val elements: Map<String, BoundingBoxResponse>
+    val elements: Map<String, BoundingBoxResponse>,
+    /** Type of container: 'leaf', 'residual', or 'merged' */
+    val containerType: String = "leaf",
+    /** For 'residual'/'merged' containers: data-ds-id values of nested leaf children */
+    val nestedChildIds: List<String> = emptyList()
 )
 
 @Serializable

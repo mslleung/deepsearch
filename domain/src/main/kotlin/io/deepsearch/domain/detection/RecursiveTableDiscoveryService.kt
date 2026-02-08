@@ -119,7 +119,7 @@ class RecursiveTableDiscoveryService(
         // Run the multi-phase algorithm
         // Note: For direct discoverTables call, we use the root element's data-ds-local as a fallback ID
         val rootLocalId = rootElement.attr("data-ds-local")
-        return runMultiPhaseDiscovery(rootElement, detectionBoxes, allLeafBoxes, rootLocalId, containerHtml)
+        return runMultiPhaseDiscovery(rootElement, detectionBoxes, allLeafBoxes, emptySet(), rootLocalId, containerHtml)
     }
 
     override fun discoverTablesFromHiddenContainers(
@@ -127,15 +127,44 @@ class RecursiveTableDiscoveryService(
     ): List<DiscoveredTable> {
         val allSelected = mutableListOf<DiscoveredTable>()
         
+        // Sort containers: merged first, then leaf, then residual.
+        // Merged containers combine sibling leaves back into their parent, giving spatial
+        // analysis enough elements to detect grid patterns. Processing merged first allows
+        // us to "consume" their constituent leaves and skip them individually.
+        val sortedContainers = hiddenContainerData.hiddenContainers.sortedBy { container ->
+            when (container.containerType) {
+                "merged" -> 0
+                "leaf" -> 1
+                "residual" -> 2
+                else -> 3
+            }
+        }
+        
+        // Track leaf container IDs that have been consumed by successful merged containers.
+        // When a merged container produces table candidates, its constituent leaves should
+        // not be processed individually (to avoid double-processing the same content).
+        val consumedLeafIds = mutableSetOf<String>()
+        
         logger.info("=" .repeat(80))
         logger.info("STARTING TABLE DISCOVERY")
-        logger.info("Processing {} hidden containers", hiddenContainerData.hiddenContainers.size)
+        logger.info("Processing {} hidden containers (sorted: {} merged, {} leaf, {} residual)", 
+            sortedContainers.size,
+            sortedContainers.count { it.containerType == "merged" },
+            sortedContainers.count { it.containerType == "leaf" },
+            sortedContainers.count { it.containerType == "residual" })
         logger.info("=" .repeat(80))
         
-        for ((containerIndex, container) in hiddenContainerData.hiddenContainers.withIndex()) {
-            logger.debug("Processing container {}/{}: [{}] with {} elements", 
-                containerIndex + 1, hiddenContainerData.hiddenContainers.size,
-                container.containerDataId, container.elements.size)
+        for ((containerIndex, container) in sortedContainers.withIndex()) {
+            // Skip leaf/residual containers whose content is already consumed by a merged container
+            if (container.containerDataId in consumedLeafIds) {
+                logger.debug("Skipping container {}/{}: [{}] (consumed by merged parent)", 
+                    containerIndex + 1, sortedContainers.size, container.containerDataId)
+                continue
+            }
+            
+            logger.debug("Processing container {}/{}: [{}] type={} with {} elements", 
+                containerIndex + 1, sortedContainers.size,
+                container.containerDataId, container.containerType, container.elements.size)
             
             // Parse the container HTML directly
             val doc = Jsoup.parse(container.containerHtml)
@@ -162,23 +191,44 @@ class RecursiveTableDiscoveryService(
             val allLeafBoxes = filterToLeafBoxes(detectionBoxes)
             
             // Debug: log leaf boxes count and non-zero boxes
+            val allLocalElements = containerElement.select("[data-ds-local]").size + 1 // +1 for container itself
             val nonZeroLeafBoxes = allLeafBoxes.filterValues { it.width > 0 && it.height > 0 }
-            logger.debug("[Container {}] Total boxes: {}, Leaf boxes: {}, Non-zero leaf boxes: {}", 
-                containerIndex + 1, detectionBoxes.size, allLeafBoxes.size, nonZeroLeafBoxes.size)
+            logger.debug("[Container {}] type={}, HTML local elements: {}, Bbox entries: {}, Leaf boxes: {}, Non-zero leaf boxes: {}", 
+                containerIndex + 1, container.containerType, allLocalElements, detectionBoxes.size, allLeafBoxes.size, nonZeroLeafBoxes.size)
             
             if (nonZeroLeafBoxes.size < 6) {
                 logger.warn("[Container {}] INSUFFICIENT non-zero leaf boxes ({}) - likely bounding box capture issue", 
                     containerIndex + 1, nonZeroLeafBoxes.size)
             }
             
+            // Augment bounding boxes: synthesize missing container bboxes from DOM descendants.
+            // The sandbox often fails to capture wrapper/container element bboxes (they collapse
+            // to zero height when children use position:absolute or CSS context is missing).
+            // By computing the encompassing rectangle of descendant leaf boxes, we restore the
+            // container hierarchy that Phase 1 needs for isContainedIn checks.
+            val (augmentedBoxes, synthesizedIds) = augmentBoundingBoxesFromDom(containerElement, detectionBoxes, allLeafBoxes)
+            if (synthesizedIds.isNotEmpty()) {
+                logger.debug("[Container {}] Synthesized {} bounding boxes from DOM descendants",
+                    containerIndex + 1, synthesizedIds.size)
+            }
+            
             // Run the multi-phase algorithm
             val selected = runMultiPhaseDiscovery(
                 containerElement, 
-                detectionBoxes, 
+                augmentedBoxes, 
                 allLeafBoxes,
+                synthesizedIds,
                 container.containerDataId,
                 container.containerHtml
             )
+            
+            // If a merged container produced table candidates, consume its constituent leaves
+            if (selected.isNotEmpty() && container.containerType == "merged" && container.nestedChildIds.isNotEmpty()) {
+                consumedLeafIds.addAll(container.nestedChildIds)
+                logger.info("[Merged container {}] Found {} tables, consuming {} leaf children: {}", 
+                    container.containerDataId, selected.size, container.nestedChildIds.size,
+                    container.nestedChildIds.joinToString(", "))
+            }
             
             allSelected.addAll(selected)
         }
@@ -394,6 +444,7 @@ class RecursiveTableDiscoveryService(
         rootElement: Element,
         allBoundingBoxes: Map<String, TableDetectionBoundingBox>,
         allLeafBoxes: Map<String, TableDetectionBoundingBox>,
+        synthesizedIds: Set<String>,
         containerDataId: String,
         containerHtml: String
     ): List<DiscoveredTable> {
@@ -407,6 +458,7 @@ class RecursiveTableDiscoveryService(
             rootElement, 
             allBoundingBoxes, 
             allLeafBoxes,
+            synthesizedIds,
             0, 
             containerDataId, 
             containerHtml
@@ -457,6 +509,25 @@ class RecursiveTableDiscoveryService(
         // Build a map of localId -> candidate for quick lookup
         val candidateById = candidates.associateBy { it.localElementId }
         
+        // ---- Anti-mega-merge pre-pass ----
+        // Count how many groups each potential LCA would cover.
+        // If the same candidate is the LCA for 3+ groups, it is a "section container"
+        // (e.g. a wrapper that contains multiple accordion tables) not a single table.
+        // Exclude such mega-LCAs from merging so each group is processed individually.
+        val lcaUsageCount = mutableMapOf<String, Int>()
+        for (group in spatialGroups) {
+            if (group.candidates.size <= 1) continue
+            val lca = findLCACandidate(group, candidateById)
+            if (lca != null) {
+                lcaUsageCount[lca.localElementId] = (lcaUsageCount[lca.localElementId] ?: 0) + 1
+            }
+        }
+        val megaLCAs = lcaUsageCount.filterValues { it >= 3 }.keys
+        if (megaLCAs.isNotEmpty()) {
+            logger.info("[Phase3] Detected {} mega-LCA(s) (section containers, not tables): {}",
+                megaLCAs.size, megaLCAs.joinToString(", "))
+        }
+        
         for ((groupIndex, group) in spatialGroups.withIndex()) {
             if (group.candidates.size <= 1) {
                 // Single candidate, no LCA needed - will be handled in Phase 4
@@ -468,6 +539,14 @@ class RecursiveTableDiscoveryService(
             val lcaCandidate = findLCACandidate(group, candidateById)
             
             if (lcaCandidate != null) {
+                // Check if this LCA is a mega-LCA (section container covering 3+ groups)
+                if (lcaCandidate.localElementId in megaLCAs) {
+                    logger.debug("[Phase3] Group {} LCA {} is a mega-LCA (covers {} groups) - skipping merge, deferring to Phase 4",
+                        groupIndex + 1, lcaCandidate.localElementId,
+                        lcaUsageCount[lcaCandidate.localElementId])
+                    continue
+                }
+                
                 // LCA was already detected as a valid table in Phase 1
                 // Trust the grid detector - if it passed detection, the spatial structure is coherent
                 val lcaRowCount = lcaCandidate.gridResult.rowCount
@@ -514,10 +593,14 @@ class RecursiveTableDiscoveryService(
         logger.debug("PHASE 4: Leaf Claiming for Remaining Candidates")
         logger.debug("-".repeat(60))
         
-        // Get unprocessed candidates, sorted by depth (deepest first)
+        // Get unprocessed candidates, sorted by depth (shallowest first).
+        // Shallowest-first ensures that complete tables (accordion sections, etc.)
+        // are selected before their sub-fragments claim their leaves.
+        // Also exclude mega-LCA candidates (section containers, not tables).
         val remainingCandidates = candidates
             .filter { it.localElementId !in processedCandidateIds }
-            .sortedByDescending { it.depth }
+            .filter { it.localElementId !in megaLCAs }
+            .sortedBy { it.depth }
         
         logger.debug("[Phase4] Processing {} remaining candidates", remainingCandidates.size)
         
@@ -594,6 +677,7 @@ class RecursiveTableDiscoveryService(
         element: Element,
         allBoundingBoxes: Map<String, TableDetectionBoundingBox>,
         allLeafBoxes: Map<String, TableDetectionBoundingBox>,
+        synthesizedIds: Set<String>,
         depth: Int,
         containerDataId: String,
         containerHtml: String
@@ -607,15 +691,34 @@ class RecursiveTableDiscoveryService(
         
         if (localId.isNotBlank()) {
             val containerBox = allBoundingBoxes[localId]
+            val isSynthesized = localId in synthesizedIds
             
-            if (containerBox != null && 
+            // For real (browser-measured) bboxes: require minimum size to avoid false positives.
+            // For synthesized bboxes: skip size check because the sandbox layout often squishes
+            // elements vertically (accordion children with position:absolute, missing CSS context).
+            // The synthesized bbox represents the DOM hierarchy, not the actual rendered size.
+            val meetsMinSize = containerBox != null && 
                 containerBox.height >= config.minHeight && 
-                containerBox.width >= config.minWidth) {
+                containerBox.width >= config.minWidth
+            
+            if (containerBox != null && (meetsMinSize || isSynthesized)) {
                 
-                // Find leaf boxes contained within this element
-                val containedLeafIds = allLeafBoxes.filterKeys { leafId ->
-                    leafId != localId && isContainedIn(allLeafBoxes[leafId]!!, containerBox)
-                }.keys
+                // Find leaf boxes associated with this element.
+                // For real bboxes: use spatial containment (leaf box within container box).
+                // For synthesized bboxes: use DOM descendant lookup, since spatial positions
+                // in the sandbox are distorted (elements squished into narrow bands).
+                val containedLeafIds = if (meetsMinSize) {
+                    allLeafBoxes.filterKeys { leafId ->
+                        leafId != localId && isContainedIn(allLeafBoxes[leafId]!!, containerBox)
+                    }.keys
+                } else {
+                    // DOM-based leaf lookup for synthesized containers
+                    element.select("[data-ds-local]").mapNotNull { descendant ->
+                        descendant.attr("data-ds-local").takeIf { id -> 
+                            id.isNotBlank() && id != localId && id in allLeafBoxes 
+                        }
+                    }.toSet()
+                }
                 
                 if (containedLeafIds.size >= config.minLeafElements) {
                     val leafBoxesForDetection = containedLeafIds.associateWith { allLeafBoxes[it]!! }
@@ -633,21 +736,19 @@ class RecursiveTableDiscoveryService(
                             boundingBox = containerBox
                         ))
                         
-                        logger.debug("[Phase1] depth={} {} candidate: {}x{}, {} leaves, conf={:.2f}",
-                            depth, localId, gridResult.rowCount, gridResult.colCount,
+                        logger.debug("[Phase1] depth={} {} candidate{}: {}x{}, {} leaves, conf={:.2f}",
+                            depth, localId, if (isSynthesized) " (synthesized)" else "",
+                            gridResult.rowCount, gridResult.colCount,
                             containedLeafIds.size, gridResult.confidence)
-                    } else if (depth == 0 && containedLeafIds.size >= 20) {
-                        // Debug: log root-level elements with many leaves that failed grid detection
+                    } else if (containedLeafIds.size >= 20) {
                         logger.debug("[Phase1] depth={} {} FAILED grid detection: {} leaves, isTable={}, conf={:.2f}, reason={}",
                             depth, localId, containedLeafIds.size, gridResult.isTable, gridResult.confidence, gridResult.reason)
                     }
                 } else if (depth == 0 && localId == "ds-local-0") {
-                    // Debug: log root element leaf count
                     logger.debug("[Phase1] depth=0 {} has only {} contained leaf boxes (need {})",
                         localId, containedLeafIds.size, config.minLeafElements)
                 }
             } else if (depth == 0 && localId == "ds-local-0") {
-                // Debug: log root element size issues
                 val boxInfo = containerBox?.let { "size=${it.width}x${it.height}" } ?: "null"
                 logger.debug("[Phase1] depth=0 {} container box issue: {} (need {}x{})",
                     localId, boxInfo, config.minWidth, config.minHeight)
@@ -658,6 +759,7 @@ class RecursiveTableDiscoveryService(
         for (child in element.children()) {
             candidates.addAll(collectAllCandidates(
                 child, allBoundingBoxes, allLeafBoxes,
+                synthesizedIds,
                 depth + 1, containerDataId, containerHtml
             ))
         }
@@ -854,6 +956,57 @@ class RecursiveTableDiscoveryService(
         )
     }
 
+    /**
+     * Augment bounding boxes by synthesizing missing container bboxes from DOM descendants.
+     * 
+     * The browser sandbox often fails to capture bounding boxes for container/wrapper elements
+     * because they collapse to zero height (e.g., accordion containers with position:absolute
+     * children, or elements depending on external CSS for sizing). This leaves gaps in the
+     * container hierarchy that Phase 1 needs.
+     * 
+     * This function walks the DOM tree bottom-up in a single O(n) pass. For each element with
+     * data-ds-local that is NOT in existingBoxes, it computes the union bounding box of all
+     * its descendant boxes (both real and previously synthesized). The result fills in the
+     * container hierarchy while preserving the original leaf box positions.
+     */
+    /**
+     * @return Pair of (augmented bounding boxes map, set of synthesized local IDs)
+     */
+    private fun augmentBoundingBoxesFromDom(
+        element: Element,
+        existingBoxes: Map<String, TableDetectionBoundingBox>,
+        leafBoxes: Map<String, TableDetectionBoundingBox>
+    ): Pair<Map<String, TableDetectionBoundingBox>, Set<String>> {
+        val result = existingBoxes.toMutableMap()
+        val synthesized = mutableSetOf<String>()
+        
+        fun computeBox(el: Element): TableDetectionBoundingBox? {
+            val localId = el.attr("data-ds-local").takeIf { it.isNotBlank() } ?: return null
+            
+            // If already measured by the browser, use that
+            if (localId in existingBoxes) return existingBoxes[localId]
+            
+            // Compute from children (recursive, bottom-up)
+            val childBoxes = el.children().mapNotNull { computeBox(it) }
+            val selfBox = leafBoxes[localId]
+            val allBoxes = if (selfBox != null) childBoxes + selfBox else childBoxes
+            if (allBoxes.isEmpty()) return null
+            
+            val box = TableDetectionBoundingBox(
+                left = allBoxes.minOf { it.left },
+                top = allBoxes.minOf { it.top },
+                right = allBoxes.maxOf { it.right },
+                bottom = allBoxes.maxOf { it.bottom }
+            )
+            result[localId] = box
+            synthesized.add(localId)
+            return box
+        }
+        
+        computeBox(element)
+        return Pair(result, synthesized)
+    }
+    
     /**
      * Filter to only leaf boxes (boxes that don't contain other boxes).
      */

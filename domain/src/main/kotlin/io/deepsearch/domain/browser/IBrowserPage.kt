@@ -492,7 +492,11 @@ interface IBrowserPage {
         /** Bounding box of the container itself */
         val containerBox: BoundingBox,
         /** Map of local element ID (ds-local-N) to bounding box */
-        val elements: Map<String, BoundingBox>
+        val elements: Map<String, BoundingBox>,
+        /** Type of container: 'leaf', 'residual', or 'merged' (parent with all children for grouped spatial analysis) */
+        val containerType: String = "leaf",
+        /** For 'residual'/'merged' containers: data-ds-id values of nested leaf children */
+        val nestedChildIds: List<String> = emptyList()
     )
 
     /**

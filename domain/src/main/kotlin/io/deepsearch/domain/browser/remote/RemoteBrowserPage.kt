@@ -331,6 +331,12 @@ class RemoteBrowserPage(
 
     override suspend fun captureHiddenContainerBoundingBoxes(): IBrowserPage.HiddenContainerBoundingBoxes {
         val r = pageCmdParse<HiddenContainerBoundingBoxesResponse>(PageCommand.CaptureHiddenContainerBoundingBoxes)
+        if (!r.debugLog.isNullOrEmpty()) {
+            logger.info("Browser hidden container debug log ({} entries):", r.debugLog.size)
+            for (entry in r.debugLog) {
+                logger.info("  [browser] {}", entry)
+            }
+        }
         return IBrowserPage.HiddenContainerBoundingBoxes(
             hiddenContainers = r.hiddenContainers.map { c ->
                 IBrowserPage.HiddenContainerBoundingBoxData(
@@ -349,7 +355,9 @@ class RemoteBrowserPage(
                             right = b.right,
                             bottom = b.bottom
                         )
-                    }
+                    },
+                    containerType = c.containerType,
+                    nestedChildIds = c.nestedChildIds
                 )
             },
             hiddenContainerCount = r.hiddenContainerCount,
