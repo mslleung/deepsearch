@@ -9,6 +9,7 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
@@ -112,7 +113,7 @@ class WebpageExtractionServiceTest : KoinTest {
     }
 
     @Test
-    fun `extract SleekFlow pricing for linearized row testing`() = runTest(testCoroutineDispatcher) {
+    fun `extract SleekFlow pricing for linearized row testing`() = runTest(testCoroutineDispatcher, timeout = 300.seconds) {
         val url = "https://sleekflow.io/pricing"
         browserPool.withPage { page ->
             page.navigate(url)

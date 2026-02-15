@@ -71,9 +71,27 @@ class LinearizedContentConversionAgentGenAiImpl(
 
         LINEARIZED OUTPUT RULES (for TABLE and CARD):
         - Do NOT use markdown table syntax: no pipe characters (|), no --- separators.
-        - Represent each logical row as a block: start with the row label (e.g. plan name, product name), then list each column value with its header label.
-        - COLUMN HEADERS: If the HTML contains column or row headers, use them as labels. If NO headers are present in the HTML, output the content values directly WITHOUT fabricating generic placeholder labels like "Column 1", "Column 2", "Plan 1", "Plan 2", "Status 1", etc. Instead, just list the values in order separated by commas or as bullet points. The surrounding page context will supply the column headers when this content is placed back into the document.
-        - Use clear labels so each value is self-describing when headers ARE present. Example format:
+        - Output each content row EXACTLY ONCE. Do NOT repeat the same data in multiple formats. Do NOT add section headers, summaries, or alternative layouts.
+        - Represent each logical row as a block: start with the row label, then list each column value with its header label.
+        - COLUMN HEADERS (priority order):
+          1. If the HTML itself contains column or row headers, use them.
+          2. If the Auxiliary Info contains "Visible content above", look for short plan/tier/column names (e.g., "Free", "Pro AI", "Premium AI", "Enterprise AI"). Ignore any pricing text, descriptions, URLs, or other noise. Use only the short names as column labels, matching left-to-right.
+          3. If NEITHER source provides clearly identifiable column headers, list values in order separated by commas. Do NOT fabricate or guess labels like "Column 1", "Plan 1", etc. It is better to have no labels than wrong labels.
+        - CRITICAL: When column headers ARE clearly available, you MUST label EVERY column value with its header — including checkmarks, ticks, crosses, and icons. Never leave values unlabeled when headers are known.
+        - Icon handling: Convert "{tick icon}", "{cross icon}", "[icon]", or similar icon markers to ✅ or ❌ based on context (tick/check = ✅, cross/x = ❌). If an icon's meaning is unclear, use ✅ for positive/present markers and ❌ for negative/absent markers within comparison tables.
+        - Example output with column headers from visible content above:
+          Shopify:
+          - Free: ✅
+          - Pro AI: ✅
+          - Premium AI: ✅
+          - Enterprise AI: ✅
+
+          Facebook Lead Ads:
+          - Free: ❌
+          - Pro AI: ✅
+          - Premium AI: ✅
+          - Enterprise AI: ✅
+        - Example output with headers from the HTML itself:
           Basic Plan:
           - Price: $10/month
           - Users: Up to 5
@@ -83,11 +101,7 @@ class LinearizedContentConversionAgentGenAiImpl(
           - Price: $30/month
           - Users: Unlimited
           - Storage: 100 GB
-        - When headers are NOT present, use this format instead:
-          Help center documentation: ✅, ✅, ✅, ✅
-          Email support: ❌, ✅, ✅, ✅
-          Chat support: ❌, ✅, ✅, ✅
-        - Preserve ALL text with no information loss.
+        - Preserve ALL text content with no information loss.
         - Use emojis (✅ ❌) for checkmarks/crosses instead of HTML entities.
         - For LIST classification, output as bullet points or numbered list as appropriate.
 

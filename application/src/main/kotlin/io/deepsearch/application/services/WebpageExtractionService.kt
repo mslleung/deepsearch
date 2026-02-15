@@ -341,7 +341,7 @@ class WebpageExtractionService(
             // ===== DOM Processing (Jsoup) + table/list interpretation =====
             val domResult: WebpageExtractionResult
             val jsoupDuration = measureTimeMillis {
-                domResult = processDom(snapshot, llmResults, semanticTables, semanticLists, hiddenTableCandidates, sessionId)
+                domResult = processDom(snapshot, llmResults, semanticTables, semanticLists, hiddenTableCandidates, hiddenBboxData, sessionId)
             }
             logger.debug("Table/list interpretation complete in {} ms", jsoupDuration)
 
@@ -355,20 +355,25 @@ class WebpageExtractionService(
     // ========== Hidden Table Detection ==========
     
     /**
-     * Identify table candidates from hidden container bounding boxes using RecursiveTableDiscoveryService.
-     * This performs recursive DOM traversal to find tables at any depth within hidden containers.
+     * Identify table candidates from hidden container bounding boxes using RecursiveTableDiscoveryService,
+     * with an HTML-based fallback for containers where spatial analysis fails.
      * 
-     * Each discovered table carries its containerHtml (with local IDs) for interpretation,
-     * independent of the main page snapshot HTML.
+     * The two-phase approach:
+     * 1. **Spatial analysis** (RecursiveTableDiscoveryService): Uses bounding boxes to detect grid patterns.
+     *    This is the primary detection method and works well when bounding boxes are reliable.
+     * 2. **DOM pattern fallback**: For containers where spatial analysis found nothing, scans the HTML
+     *    for repeating icon patterns (e.g., rows of checkmark/cross SVGs) that indicate comparison tables.
+     *    This catches cases where bounding boxes are unreliable (animations, lazy rendering).
      */
     private fun identifyHiddenTableCandidates(
         hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes
     ): List<HiddenTableCandidate> {
+        // Phase 1: Spatial analysis
         val discoveredTables = recursiveTableDiscoveryService.discoverTablesFromHiddenContainers(
             hiddenContainerData = hiddenBboxData
         )
         
-        return discoveredTables.map { table ->
+        val spatialCandidates = discoveredTables.map { table ->
             logger.debug(
                 "Hidden table {} (depth={}) detected: {}x{} grid (confidence: {})",
                 table.localElementId, table.depth,
@@ -385,6 +390,184 @@ class WebpageExtractionService(
                 depth = table.depth
             )
         }
+        
+        // Phase 2: DOM pattern fallback for ALL containers (including those with spatial candidates).
+        // A container may have some sections detected spatially and others missed. The pre-LLM
+        // structural dedup step (deduplicateNestedCandidates) will remove overlapping candidates later.
+        val spatialElementIds = spatialCandidates.map { "${it.containerDataId}::${it.localElementId}" }.toSet()
+        val fallbackCandidates = hiddenBboxData.hiddenContainers
+            .flatMap { container -> detectComparisonTablesFromDom(container) }
+            .filter { candidate ->
+                // Skip if spatial analysis already detected a candidate for this exact element
+                "${candidate.containerDataId}::${candidate.localElementId}" !in spatialElementIds
+            }
+        
+        if (fallbackCandidates.isNotEmpty()) {
+            logger.debug(
+                "DOM fallback detected {} additional comparison table(s) from containers missed by spatial analysis",
+                fallbackCandidates.size
+            )
+        }
+        
+        return spatialCandidates + fallbackCandidates
+    }
+    
+    /**
+     * Fallback detection: scans container HTML for repeating icon patterns that indicate comparison tables.
+     * 
+     * Looks for consistent patterns of SVG/icon elements per row (e.g., each feature row having
+     * exactly 4 checkmark/cross icons corresponding to 4 pricing tiers). Returns ALL detected
+     * comparison tables within a container (a single container may hold multiple accordion sections).
+     * 
+     * @return List of HiddenTableCandidates for detected comparison table patterns
+     */
+    private fun detectComparisonTablesFromDom(
+        container: IBrowserPage.HiddenContainerBoundingBoxData
+    ): List<HiddenTableCandidate> {
+        val doc = Jsoup.parse(container.containerHtml)
+        val body = doc.body()
+        
+        val detectedPatterns = mutableListOf<DetectedTablePattern>()
+        val usedLocalIds = mutableSetOf<String>()
+        
+        val candidates = body.select("[data-ds-local]")
+        // Also count total SVGs to determine if this container has icon content at all
+        val totalSvgs = body.select("svg").size
+        if (totalSvgs < 4) return emptyList()  // Quick skip: not enough icons for a comparison table
+        
+        for (candidate in candidates) {
+            val localId = candidate.attr("data-ds-local")
+            
+            // Skip elements that are descendants of already-detected table patterns
+            if (usedLocalIds.any { parentId ->
+                val parentEl = body.selectFirst("[data-ds-local=\"$parentId\"]")
+                parentEl != null && isDescendantOf(candidate, parentEl)
+            }) continue
+            
+            val children = candidate.children()
+            if (children.size < 3) continue
+            
+            // Detect comparison table using TWO strategies:
+            // Strategy 1: Nested SVGs - each row is a div containing multiple SVGs
+            //   <div>Feature <svg>tick</svg><svg>tick</svg><svg>tick</svg><svg>tick</svg></div>
+            // Strategy 2: Flat SVGs - SVGs are direct children, interspersed with text-divs
+            //   <div>Feature</div><svg>tick</svg><svg>tick</svg><svg>tick</svg><svg>tick</svg>
+            val pattern = detectNestedSvgPattern(children, localId)
+                ?: detectFlatSvgPattern(children, localId)
+            
+            if (pattern != null) {
+                detectedPatterns.add(pattern)
+                usedLocalIds.add(localId)
+            }
+        }
+        
+        // Log containers with many SVGs but no detected patterns for debugging
+        if (detectedPatterns.isEmpty() && totalSvgs >= 8) {
+            val localIdCount = candidates.size
+            logger.debug(
+                "DOM fallback [{}]: {} SVGs but no comparison pattern detected ({} data-ds-local elements)",
+                container.containerDataId, totalSvgs, localIdCount
+            )
+        }
+        
+        return detectedPatterns.map { pattern ->
+            logger.debug(
+                "DOM fallback [{}]: detected comparison table pattern - {} rows x {} icon columns in element [{}]",
+                container.containerDataId, pattern.rowCount, pattern.colCount, pattern.localId
+            )
+            HiddenTableCandidate(
+                localElementId = pattern.localId,
+                containerDataId = container.containerDataId,
+                containerHtml = container.containerHtml,
+                confidence = 0.70,
+                rowCount = pattern.rowCount,
+                colCount = pattern.colCount,
+                depth = 0
+            )
+        }
+    }
+    
+    /**
+     * Strategy 1: Each direct child of the parent contains multiple SVG icons.
+     * E.g., `<div>Feature <svg/><svg/><svg/><svg/></div>`
+     */
+    private fun detectNestedSvgPattern(
+        children: org.jsoup.select.Elements,
+        localId: String
+    ): DetectedTablePattern? {
+        val iconCountsPerChild = children.map { child -> child.select("svg").size }
+        val nonZeroCounts = iconCountsPerChild.filter { it >= 2 }
+        if (nonZeroCounts.isEmpty()) return null
+        
+        val mostCommonCount = nonZeroCounts.groupingBy { it }.eachCount().maxByOrNull { it.value } ?: return null
+        val colCount = mostCommonCount.key
+        val matchingRows = mostCommonCount.value
+        
+        if (matchingRows < 3 || matchingRows.toDouble() / children.size < 0.50) return null
+        return DetectedTablePattern(localId, matchingRows, colCount)
+    }
+    
+    /**
+     * Strategy 2: SVGs are flat siblings interspersed with non-SVG elements (feature name divs).
+     * Detects patterns like: `<div>Name</div><svg/><svg/><svg/><svg/><div>Name2</div><svg/><svg/><svg/><svg/>`
+     * Groups children into logical "rows" bounded by non-SVG elements and counts SVGs per group.
+     */
+    private fun detectFlatSvgPattern(
+        children: org.jsoup.select.Elements,
+        localId: String
+    ): DetectedTablePattern? {
+        // Group children into rows: a row starts with a non-SVG element, followed by SVG elements
+        val svgCountsPerRow = mutableListOf<Int>()
+        var currentSvgCount = 0
+        var inRow = false
+        
+        for (child in children) {
+            val isSvg = child.tagName().equals("svg", ignoreCase = true)
+            if (isSvg) {
+                currentSvgCount++
+                inRow = true
+            } else {
+                // Non-SVG element starts a new row
+                if (inRow && currentSvgCount > 0) {
+                    svgCountsPerRow.add(currentSvgCount)
+                }
+                currentSvgCount = 0
+                inRow = true  // This non-SVG element starts the next row's context
+            }
+        }
+        // Don't forget the last row
+        if (inRow && currentSvgCount > 0) {
+            svgCountsPerRow.add(currentSvgCount)
+        }
+        
+        if (svgCountsPerRow.size < 3) return null
+        
+        // Find the most common SVG count per row (ignoring rows with < 2 SVGs)
+        val validCounts = svgCountsPerRow.filter { it >= 2 }
+        if (validCounts.isEmpty()) return null
+        
+        val mostCommon = validCounts.groupingBy { it }.eachCount().maxByOrNull { it.value } ?: return null
+        val colCount = mostCommon.key
+        val matchingRows = mostCommon.value
+        
+        if (matchingRows < 3 || matchingRows.toDouble() / svgCountsPerRow.size < 0.50) return null
+        return DetectedTablePattern(localId, matchingRows, colCount)
+    }
+    
+    private data class DetectedTablePattern(
+        val localId: String,
+        val rowCount: Int,
+        val colCount: Int
+    )
+    
+    /** Check if [element] is a descendant of [ancestor] in the DOM tree. */
+    private fun isDescendantOf(element: org.jsoup.nodes.Element, ancestor: org.jsoup.nodes.Element): Boolean {
+        var parent = element.parent()
+        while (parent != null) {
+            if (parent === ancestor) return true
+            parent = parent.parent()
+        }
+        return false
     }
     
     // ========== Browser Capture Operations ==========
@@ -552,6 +735,7 @@ class WebpageExtractionService(
         semanticTables: List<SemanticTableData>,
         semanticLists: List<SemanticListData>,
         hiddenTableCandidates: List<HiddenTableCandidate>,
+        hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes,
         sessionId: SessionId
     ): WebpageExtractionResult = coroutineScope {
         val imageMapping = llmResults.imageMapping
@@ -616,7 +800,7 @@ class WebpageExtractionService(
         val mediaReplacementsForHidden = llmResults.iconReplacements + llmResults.imageReplacements
         val hiddenContentDeferred = async {
             if (hiddenTableCandidates.isNotEmpty()) {
-                interpretHiddenContent(hiddenTableCandidates, sessionId, mediaReplacementsForHidden)
+                interpretHiddenContent(hiddenTableCandidates, sessionId, mediaReplacementsForHidden, snapshot.html, snapshot.boundingBoxes, hiddenBboxData)
             } else {
                 emptyList()
             }
@@ -699,6 +883,13 @@ class WebpageExtractionService(
         placeholderMap.values.forEach { mapping ->
             finalMarkdown = finalMarkdown.replace(mapping.placeholder, mapping.text)
         }
+        
+        // ===== Step 7b: Linearize remaining comparison patterns =====
+        // Some accordion content may be in the DOM (visually hidden via CSS) but NOT captured as
+        // hidden containers (e.g., content panels hidden via max-height:0 instead of display:none).
+        // These appear as raw "{tick icon}" / "{cross icon}" patterns in the markdown.
+        // Apply column headers from nearby linearized sections to make them meaningful for RAG.
+        finalMarkdown = linearizeRemainingComparisonPatterns(finalMarkdown)
 
         // ===== Step 8: Add metadata header and popup content =====
         // Note: Hidden content is now inserted at original DOM position via placeholders,
@@ -815,8 +1006,17 @@ class WebpageExtractionService(
     private suspend fun interpretHiddenContent(
         hiddenCandidates: List<HiddenTableCandidate>,
         sessionId: SessionId,
-        mediaReplacements: List<CssSelectorReplacement>
+        mediaReplacements: List<CssSelectorReplacement>,
+        snapshotHtml: String,
+        snapshotBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
+        hiddenBboxData: IBrowserPage.HiddenContainerBoundingBoxes
     ): List<CssSelectorReplacement> {
+        // Parse snapshot DOM once for context text extraction
+        val snapshotDoc = Jsoup.parse(snapshotHtml)
+        
+        // Build lookup from containerDataId -> containerBox for spatial context extraction
+        val containerBoxLookup = hiddenBboxData.hiddenContainers.associate { it.containerDataId to it.containerBox }
+        
         // Group candidates by containerDataId - multiple tables/lists may come from the same hidden container
         val byContainer = hiddenCandidates.groupBy { it.containerDataId }
         
@@ -895,6 +1095,8 @@ class WebpageExtractionService(
                 
                 // Handle any remaining SVG elements not replaced by mediaReplacements.
                 // Scoped to the element's subtree only.
+                // Use "[icon]" fallback for SVGs without alt text to preserve their semantic presence
+                // (e.g., checkmark/cross icons in comparison tables that weren't captured as hidden icons)
                 elementDoc.select("svg").forEach { svg ->
                     val altText = svg.attr("aria-label").ifBlank { 
                         svg.selectFirst("title")?.text() ?: ""
@@ -902,7 +1104,7 @@ class WebpageExtractionService(
                     if (altText.isNotBlank()) {
                         svg.replaceWith(org.jsoup.nodes.TextNode("{$altText icon}"))
                     } else {
-                        svg.remove()
+                        svg.replaceWith(org.jsoup.nodes.TextNode("[icon]"))
                     }
                 }
                 
@@ -969,10 +1171,31 @@ class WebpageExtractionService(
         // Process non-semantic candidates via linearized content conversion agent (batched)
         // Outputs structured text (linearized rows) instead of markdown tables for better retrieval
         if (llmCandidates.isNotEmpty()) {
+            // Cache visual context per container to avoid redundant spatial lookups
+            val contextCache = mutableMapOf<String, String?>()
+            
             val inputs = llmCandidates.map { llmCandidate ->
+                // Use the actual hidden container's data-ds-id for context extraction
+                // (not llmCandidate.containerDataId which is the resolved TARGET element ID)
+                val actualContainerDataId = llmCandidate.candidate.containerDataId
+                val visualContext = contextCache.getOrPut(actualContainerDataId) {
+                    val box = containerBoxLookup[actualContainerDataId]
+                    if (box != null) {
+                        extractVisualContext(actualContainerDataId, box, snapshotBoundingBoxes, snapshotDoc)
+                    } else {
+                        logger.debug("No bounding box found for container [{}], skipping visual context", actualContainerDataId)
+                        null
+                    }
+                }
+                val auxiliaryInfo = buildString {
+                    append("Hidden content (depth=${llmCandidate.candidate.depth}): ${llmCandidate.candidate.rowCount}x${llmCandidate.candidate.colCount} grid (confidence: ${"%.0f".format(llmCandidate.candidate.confidence * 100)}%)")
+                    if (!visualContext.isNullOrBlank()) {
+                        append("\nVisible content above: $visualContext")
+                    }
+                }
                 LinearizedContentConversionInput(
                     html = llmCandidate.resolvedHtml,
-                    auxiliaryInfo = "Hidden content (depth=${llmCandidate.candidate.depth}): ${llmCandidate.candidate.rowCount}x${llmCandidate.candidate.colCount} grid (confidence: ${"%.0f".format(llmCandidate.candidate.confidence * 100)}%)",
+                    auxiliaryInfo = auxiliaryInfo,
                     containsMedia = llmCandidate.containsMedia
                 )
             }
@@ -1424,5 +1647,362 @@ class WebpageExtractionService(
             
             !isInsideExcluded
         }
+    }
+    
+    // ========== Spatial Context Extraction ==========
+    
+    /**
+     * Use spatial analysis (bounding boxes) to find visible content positioned directly above
+     * a hidden container on the rendered page. This is more robust than DOM-tree walking because
+     * it reflects actual visual layout regardless of CSS Grid, flexbox reordering, or sticky
+     * positioning.
+     *
+     * The returned text is passed as context to the LLM, which decides whether it contains
+     * column headers. If no headers are found, the LLM outputs unlabeled values.
+     *
+     * @param containerDataId The data-ds-id of the hidden container
+     * @param containerBox Bounding box of the container (from revealed-state capture)
+     * @param snapshotBoundingBoxes Bounding boxes of all visible elements (from pre-reveal capture)
+     * @param snapshotDoc Parsed snapshot HTML for text extraction
+     * @return Text of visible elements above the container, or null if nothing found
+     */
+    private fun extractVisualContext(
+        containerDataId: String,
+        containerBox: IBrowserPage.BoundingBox,
+        snapshotBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
+        snapshotDoc: org.jsoup.nodes.Document
+    ): String? {
+        // Determine a spatial reference point for finding visible content above the container.
+        //
+        // Strategy (in priority order):
+        // 1. Pre-reveal container position (from snapshotBoundingBoxes) -- same coordinate space as all visible elements
+        // 2. Nearest visible ancestor in the DOM that has a valid bounding box -- for display:none containers
+        //    whose own box is {0,0,0,0} but whose parent (e.g., accordion wrapper) is visible
+        // 3. Revealed-state containerBox -- last resort, may have coordinate offset from container expansion
+        val referenceBox = resolveReferenceBox(containerDataId, containerBox, snapshotBoundingBoxes, snapshotDoc)
+        if (referenceBox == null) {
+            logger.debug("Spatial context [{}]: could not resolve a reference position, skipping", containerDataId)
+            return null
+        }
+        
+        val referenceTop = referenceBox.top
+        val referenceLeft = referenceBox.left
+        val referenceRight = referenceBox.right
+        val containerWidth = referenceRight - referenceLeft
+        if (containerWidth <= 0) {
+            logger.debug("Spatial context [{}]: reference has zero width, skipping", containerDataId)
+            return null
+        }
+        
+        val minElementHeight = 15.0
+        val maxElementHeight = 200.0
+        // Low width ratio to catch individual column header elements (e.g., "Free", "Pro AI")
+        // which are narrow (~200px) relative to the full section width (~1200px)
+        val minElementWidthRatio = 0.10
+        val minHorizontalOverlapRatio = 0.0  // Any horizontal overlap is fine for individual headers
+        val maxResults = 10
+        val maxTextLength = 800
+        
+        // Search zone: elements near the TOP of the reference box and slightly above it.
+        // For display:none containers, the reference is the nearest visible ancestor (e.g., the
+        // pricing section wrapper). Column headers are typically near the top of that section
+        // or in a sticky header just above it.
+        val searchDepth = 200.0
+        val aboveTolerance = 100.0  // Also look slightly above the reference (sticky headers)
+        val searchTop = referenceTop - aboveTolerance
+        val searchBottom = referenceTop + searchDepth
+        
+        data class SpatialMatch(val dsId: String, val distanceFromTop: Double)
+        val matches = mutableListOf<SpatialMatch>()
+        
+        for ((dsId, box) in snapshotBoundingBoxes) {
+            if (dsId == containerDataId) continue
+            
+            // Element must overlap with the search zone vertically
+            val elementTop = box.top
+            if (elementTop < searchTop || elementTop > searchBottom) continue
+            
+            // Element must have reasonable height (filters page wrappers and tiny icons)
+            val elementHeight = box.bottom - box.top
+            if (elementHeight < minElementHeight || elementHeight > maxElementHeight) continue
+            
+            // Element must have reasonable width (absolute minimum to filter out tiny icons)
+            val elementWidth = box.right - box.left
+            if (elementWidth < containerWidth * minElementWidthRatio) continue
+            
+            // Horizontal overlap: element must be within or overlapping the container's horizontal bounds
+            // Column header elements (e.g., "Free", "Pro AI") are individually narrow and spread across
+            // the container width, so we only require that the element is within the container's bounds
+            val overlapLeft = maxOf(box.left, referenceLeft)
+            val overlapRight = minOf(box.right, referenceRight)
+            val overlapWidth = maxOf(0.0, overlapRight - overlapLeft)
+            if (overlapWidth <= 0) continue  // No horizontal overlap at all
+            
+            matches.add(SpatialMatch(dsId, elementTop - searchTop))
+        }
+        
+        if (matches.isEmpty()) {
+            logger.debug(
+                "Spatial context [{}]: no elements found near top (searchZone=[{}, {}], {} candidates scanned)",
+                containerDataId, searchTop, searchBottom, snapshotBoundingBoxes.size
+            )
+            return null
+        }
+        
+        // Sort by distance from top of search zone (closest to top first)
+        val sorted = matches.sortedBy { it.distanceFromTop }
+        
+        // Extract text from the closest matches
+        val texts = sorted.take(maxResults).mapNotNull { match ->
+            val element = snapshotDoc.selectFirst("[data-ds-id=\"${match.dsId}\"]") ?: return@mapNotNull null
+            val text = element.text().trim()
+            text.takeIf { it.length >= 3 }
+        }
+        
+        if (texts.isEmpty()) {
+            logger.debug(
+                "Spatial context [{}]: {} spatial matches but no text content extracted",
+                containerDataId, matches.size
+            )
+            return null
+        }
+        
+        val combined = texts.joinToString(" | ")
+        val result = if (combined.length > maxTextLength) combined.take(maxTextLength) else combined
+        
+        logger.debug(
+            "Spatial context for container [{}]: found {} elements above, text ({} chars): {}",
+            containerDataId, matches.size, result.length, result.take(200)
+        )
+        
+        return result
+    }
+    
+    /**
+     * Resolve a spatial reference bounding box for the given hidden container.
+     *
+     * Hidden containers are often `display:none`, making their own bounding box `{0,0,0,0}`.
+     * This method tries multiple strategies to find a valid reference position:
+     *
+     * 1. Pre-reveal box: the container's own box from snapshotBoundingBoxes (same coordinate space)
+     * 2. Visible ancestor: walk up the DOM to find the nearest ancestor with a valid bounding box
+     * 3. Revealed-state box: the containerBox from the hidden capture (different coordinate space)
+     */
+    private fun resolveReferenceBox(
+        containerDataId: String,
+        containerBox: IBrowserPage.BoundingBox,
+        snapshotBoundingBoxes: Map<String, IBrowserPage.BoundingBox>,
+        snapshotDoc: org.jsoup.nodes.Document
+    ): IBrowserPage.BoundingBox? {
+        // Strategy 1: Pre-reveal container position
+        val preRevealBox = snapshotBoundingBoxes[containerDataId]
+        if (preRevealBox != null && (preRevealBox.bottom - preRevealBox.top) > 0) {
+            logger.debug(
+                "Spatial context [{}]: using pre-reveal position (top={}, w={})",
+                containerDataId, preRevealBox.top, preRevealBox.right - preRevealBox.left
+            )
+            return preRevealBox
+        }
+        
+        // Strategy 2: Walk up the DOM to find nearest visible ancestor with a valid bounding box.
+        // This handles display:none containers inside visible accordion/tab wrappers.
+        val containerElement = snapshotDoc.selectFirst("[data-ds-id=\"$containerDataId\"]")
+        if (containerElement != null) {
+            var ancestor = containerElement.parent()
+            while (ancestor != null) {
+                val ancestorId = ancestor.attr("data-ds-id")
+                if (ancestorId.isNotBlank()) {
+                    val ancestorBox = snapshotBoundingBoxes[ancestorId]
+                    if (ancestorBox != null && (ancestorBox.bottom - ancestorBox.top) > 0
+                        && (ancestorBox.right - ancestorBox.left) > 0) {
+                        logger.debug(
+                            "Spatial context [{}]: using visible ancestor [{}] (top={}, w={})",
+                            containerDataId, ancestorId, ancestorBox.top, ancestorBox.right - ancestorBox.left
+                        )
+                        return ancestorBox
+                    }
+                }
+                ancestor = ancestor.parent()
+            }
+        }
+        
+        // Strategy 3: Revealed-state container box (may have coordinate offset)
+        if ((containerBox.bottom - containerBox.top) > 0 && (containerBox.right - containerBox.left) > 0) {
+            logger.debug(
+                "Spatial context [{}]: using revealed-state box (top={}, w={})",
+                containerDataId, containerBox.top, containerBox.right - containerBox.left
+            )
+            return containerBox
+        }
+        
+        logger.debug(
+            "Spatial context [{}]: no valid reference position found (preReveal={}, revealedBox={})",
+            containerDataId,
+            if (preRevealBox != null) "top=${preRevealBox.top},h=${preRevealBox.bottom - preRevealBox.top}" else "null",
+            "top=${containerBox.top},h=${containerBox.bottom - containerBox.top}"
+        )
+        return null
+    }
+    
+    // ========== Post-processing: Linearize Remaining Comparison Patterns ==========
+    
+    /**
+     * Detects raw comparison patterns in the markdown (e.g., repeated "{tick icon}" / "{cross icon}"
+     * lines without column headers) and applies tier labels from nearby linearized sections.
+     * 
+     * This catches content that was in the DOM but not captured as hidden containers (e.g., accordion
+     * panels hidden via CSS max-height:0 instead of display:none).
+     * 
+     * Pattern detected:
+     * ```
+     * FeatureName
+     * {information icon}  (optional)
+     * {tick icon}  
+     * {tick icon}  
+     * {cross icon}  
+     * {tick icon}
+     * ```
+     * 
+     * Transformed to:
+     * ```
+     * FeatureName: Free: ✅ - Pro AI: ✅ - Premium AI: ❌ - Enterprise AI: ✅
+     * ```
+     */
+    private fun linearizeRemainingComparisonPatterns(markdown: String): String {
+        // First, extract column headers from existing linearized content.
+        // Look for patterns like "Free: ... - Pro AI: ... - Premium AI: ... - Enterprise AI: ..."
+        val columnHeaders = extractColumnHeadersFromLinearizedContent(markdown) ?: return markdown
+        
+        // Pattern: a text line (feature name), optionally followed by {information icon},
+        // then exactly N lines of {tick icon} or {cross icon} (matching the column count)
+        val iconPattern = Regex("""\{(tick|cross|checkmark|check mark) icon\}""")
+        val infoIconPattern = Regex("""\{information icon\}""")
+        
+        val lines = markdown.lines().toMutableList()
+        val resultLines = mutableListOf<String>()
+        var i = 0
+        var patternsFixed = 0
+        
+        while (i < lines.size) {
+            val line = lines[i].trim()
+            
+            // Check if this line starts a comparison pattern:
+            // It should be a non-empty text line that doesn't contain icons and isn't already linearized
+            if (line.isNotBlank() && 
+                !iconPattern.containsMatchIn(line) &&
+                !infoIconPattern.containsMatchIn(line) &&
+                !line.contains("Free:") && !line.contains("Pro AI:") &&
+                !line.startsWith("- ") && !line.startsWith("URL:") && !line.startsWith("Title:") &&
+                !line.startsWith("#") && !line.startsWith("|") && !line.startsWith("```") &&
+                !line.startsWith("[") && !line.startsWith("!") &&
+                line.length > 1 && line.length < 200) {
+                
+                // Look ahead for icon lines
+                var j = i + 1
+                // Skip optional {information icon} line
+                if (j < lines.size && infoIconPattern.containsMatchIn(lines[j].trim())) {
+                    j++
+                }
+                
+                // Count consecutive icon lines
+                val icons = mutableListOf<String>()
+                while (j < lines.size && iconPattern.containsMatchIn(lines[j].trim())) {
+                    val match = iconPattern.find(lines[j].trim())
+                    if (match != null) {
+                        val iconType = match.groupValues[1]
+                        icons.add(if (iconType == "tick" || iconType == "checkmark" || iconType == "check mark") "✅" else "❌")
+                    }
+                    j++
+                }
+                
+                // If we found exactly the right number of icons, linearize
+                if (icons.size == columnHeaders.size) {
+                    val linearized = "$line: ${columnHeaders.zip(icons).joinToString(" - ") { (header, icon) -> "$header: $icon" }}"
+                    resultLines.add(linearized)
+                    i = j  // Skip past the icon lines
+                    patternsFixed++
+                    continue
+                }
+            }
+            
+            resultLines.add(lines[i])
+            i++
+        }
+        
+        if (patternsFixed > 0) {
+            logger.debug("Post-processing: linearized {} remaining comparison patterns with headers: {}", 
+                patternsFixed, columnHeaders.joinToString(", "))
+        }
+        
+        return resultLines.joinToString("\n")
+    }
+    
+    /**
+     * Extract column headers from the markdown content using multiple strategies.
+     * Tries in order:
+     * 1. Markdown table headers (e.g., "| | Free | Pro AI | Premium AI | Enterprise AI |")
+     * 2. Linearized content patterns (e.g., "Free: ✅ - Pro AI: ✅ - ...")
+     */
+    private fun extractColumnHeadersFromLinearizedContent(markdown: String): List<String>? {
+        return extractHeadersFromMarkdownTable(markdown)
+            ?: extractHeadersFromLinearizedRows(markdown)
+    }
+    
+    /**
+     * Strategy 1: Extract column headers from markdown table header rows.
+     * Looks for table rows like "| | Free | Pro | Premium | Enterprise |" that define pricing tiers.
+     */
+    private fun extractHeadersFromMarkdownTable(markdown: String): List<String>? {
+        // Look for markdown table header rows with 3+ columns
+        val tableRowPattern = Regex("""\|([^|]+\|){3,}""")
+        
+        for (line in markdown.lines()) {
+            if (!tableRowPattern.containsMatchIn(line)) continue
+            
+            val cells = line.split("|")
+                .map { it.trim() }
+                .filter { it.isNotBlank() && !it.all { c -> c == '-' } }
+            
+            if (cells.size < 3) continue
+            
+            // Check if this looks like a plan tier header row (contains keywords like Free, Pro, Premium, etc.)
+            val tierKeywords = setOf("free", "pro", "premium", "enterprise", "basic", "starter", "business", "team", "plus")
+            val matchCount = cells.count { cell -> tierKeywords.any { keyword -> cell.lowercase().contains(keyword) } }
+            
+            // At least 3 cells should match tier keywords, excluding the first cell (usually "Plan Name" or empty)
+            if (matchCount >= 3) {
+                // Skip the first cell if it's a row label (e.g., "Plan Name")
+                val headers = if (cells.first().lowercase().let { it.contains("plan") || it.contains("feature") || it.contains("name") || it.isBlank() }) {
+                    cells.drop(1)
+                } else {
+                    cells
+                }
+                logger.debug("Extracted column headers from markdown table: {}", headers)
+                return headers
+            }
+        }
+        return null
+    }
+    
+    /**
+     * Strategy 2: Extract column headers from linearized content rows.
+     * Looks for repeated "Label: Value - Label: Value" patterns.
+     */
+    private fun extractHeadersFromLinearizedRows(markdown: String): List<String>? {
+        val headerExtractor = Regex("""(\w[\w\s]*?):\s""")
+        val headerCounts = mutableMapOf<List<String>, Int>()
+        
+        for (line in markdown.lines()) {
+            if (!line.contains(" - ") || !line.contains(":")) continue
+            val headers = headerExtractor.findAll(line).map { it.groupValues[1].trim() }.toList()
+            if (headers.size >= 3) {
+                headerCounts[headers] = (headerCounts[headers] ?: 0) + 1
+            }
+        }
+        
+        val bestHeaders = headerCounts.maxByOrNull { it.value }
+        if (bestHeaders == null || bestHeaders.value < 2) return null
+        
+        return bestHeaders.key
     }
 }
