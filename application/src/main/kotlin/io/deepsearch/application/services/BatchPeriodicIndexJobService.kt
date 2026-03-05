@@ -3,6 +3,7 @@ package io.deepsearch.application.services
 import io.deepsearch.application.services.batch.IBatchPeriodicIndexOrchestrator
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
+import io.deepsearch.domain.models.entities.BatchPipelineMode
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
@@ -33,7 +34,8 @@ interface IBatchPeriodicIndexJobService {
         sitemapUrl: String? = null,
         languagePattern: String? = null,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
-        userId: UserId
+        userId: UserId,
+        pipelineMode: BatchPipelineMode = BatchPipelineMode.LIGHTWEIGHT
     ): BatchPeriodicIndexJob
 
     /**
@@ -111,7 +113,8 @@ class BatchPeriodicIndexJobService(
         sitemapUrl: String?,
         languagePattern: String?,
         ocrLanguage: OcrLanguage,
-        userId: UserId
+        userId: UserId,
+        pipelineMode: BatchPipelineMode
     ): BatchPeriodicIndexJob {
         val normalizedBase = normalizeUrlService.normalize(baseUrl) ?: baseUrl
         val now = Clock.System.now()
@@ -127,6 +130,7 @@ class BatchPeriodicIndexJobService(
             createdAt = now,
             updatedAt = now,
             state = BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT,
+            pipelineMode = pipelineMode,
             languagePattern = languagePattern,
             ocrLanguage = ocrLanguage
         )

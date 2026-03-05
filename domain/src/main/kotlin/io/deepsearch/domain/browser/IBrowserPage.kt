@@ -89,10 +89,61 @@ interface IBrowserPage {
     suspend fun getElementHtmlByCssSelector(cssSelector: String): String
 
     /**
+     * Visible interactive element on the page with its bounding box.
+     * Re-evaluated each call to handle dynamic DOM changes (React re-renders, etc.).
+     */
+    data class InteractiveElementInfo(
+        val tag: String,
+        val text: String,
+        val role: String?,
+        val ariaLabel: String?,
+        val states: List<String> = emptyList(),
+        val boundingBox: BoundingBox,
+        val index: Int
+    ) {
+        val centerX: Int get() = ((boundingBox.left + boundingBox.right) / 2).toInt()
+        val centerY: Int get() = ((boundingBox.top + boundingBox.bottom) / 2).toInt()
+    }
+
+    /**
+     * Enumerate all visible interactive elements on the page with their bounding boxes.
+     * Re-evaluated each call to handle dynamic DOM changes (React re-renders, etc.).
+     */
+    suspend fun getInteractiveElements(): List<InteractiveElementInfo>
+
+    /**
+     * Click at absolute viewport coordinates using low-level mouse events.
+     * Immune to DOM changes since it doesn't rely on selectors.
+     */
+    suspend fun clickAtCoordinates(x: Int, y: Int)
+
+    /**
      * Click the first element matching the provided XPath selector.
      * Returns true if a matching element was found and clicked; false otherwise.
      */
     suspend fun clickByXPathSelector(xpath: String)
+
+    /**
+     * Click the first element matching the provided CSS selector.
+     * @throws ElementOperationException if no element matches
+     */
+    suspend fun clickByCssSelector(cssSelector: String)
+
+    /**
+     * Scroll the first element matching the provided CSS selector into the viewport center.
+     * @throws ElementOperationException if no element matches
+     */
+    suspend fun scrollToElementByCssSelector(cssSelector: String)
+
+    /**
+     * Scroll the page to a percentage of total page height (0 = top, 100 = bottom).
+     */
+    suspend fun scrollToPercentage(percent: Int)
+
+    /**
+     * Scroll the page by a pixel delta. Positive values scroll down, negative scroll up.
+     */
+    suspend fun scrollPage(deltaY: Int)
 
     /**
      * Remove the DOM element matched by the provided XPath selector from the document.
@@ -387,6 +438,18 @@ interface IBrowserPage {
      * @return Extracted text with one text node per line
      */
     suspend fun extractTextContent(): String
+
+    /**
+     * Search for a text fragment on the page and scroll the containing element into view.
+     *
+     * Uses case-insensitive text search to find the element whose text
+     * contains [searchText], then scrolls it to the viewport center.
+     *
+     * @param searchText The text fragment to search for (case-insensitive)
+     * @param occurrence Which match to scroll to (1-based). Defaults to 1 (first match).
+     * @return true if the text was found and scrolled into view; false if not found
+     */
+    suspend fun scrollToTextContent(searchText: String, occurrence: Int = 1): Boolean
 
     /**
      * Extract text content from specific element, identified by their XPath.

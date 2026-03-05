@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.HtmlSourceEvalInput
 import io.deepsearch.domain.agents.HtmlSourceEvalOutput
 import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
@@ -126,7 +127,7 @@ class HtmlSourceEvalAgentGenAiImpl(
             source.url
         )
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val userPrompt = buildUserPrompt(input)
@@ -137,12 +138,12 @@ class HtmlSourceEvalAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(0F)
+                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
@@ -192,8 +193,7 @@ class HtmlSourceEvalAgentGenAiImpl(
             relevantFacts = facts,
             contentDate = response.contentDate,
             intention = response.intention,
-            relevantImageIds = emptyList(), // Preview path doesn't handle images
-            isPreview = true
+            relevantImageIds = emptyList()
         )
 
         logger.debug(

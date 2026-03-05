@@ -11,19 +11,18 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import kotlin.test.assertFailsWith
 
 @OptIn(ExperimentalTime::class)
-class ExposedUserRepositoryTest : KoinTest {
+class ExposedUserRepositoryTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinExtension = KoinTestExtension.create {
+    val koinExtension = IsolatedKoinExtension.create {
         modules(infrastructureTestModule)
     }
 

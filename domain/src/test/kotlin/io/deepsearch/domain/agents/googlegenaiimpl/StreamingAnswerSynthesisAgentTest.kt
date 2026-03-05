@@ -14,19 +14,18 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-class StreamingAnswerSynthesisAgentTest : KoinTest {
+class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koin = KoinTestExtension.create { modules(domainTestModule) }
+    val koin = IsolatedKoinExtension.create { modules(domainTestModule) }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IStreamingAnswerSynthesisAgent>()

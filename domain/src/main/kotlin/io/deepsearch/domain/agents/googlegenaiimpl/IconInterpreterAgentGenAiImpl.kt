@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.IIconInterpreterAgent
 import io.deepsearch.domain.agents.IconInterpreterInput
 import io.deepsearch.domain.agents.IconInterpreterOutput
@@ -77,7 +78,7 @@ class IconInterpreterAgentGenAiImpl(
 
         // Plain colour icons carry no semantic meaning (they are just uniform background blocks).
         // Catch these early to reduce token usage.
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
         if (isPlainColorIcon(input.bytes, input.mimeType)) {
@@ -94,12 +95,12 @@ class IconInterpreterAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(Part.fromBytes(input.bytes, input.mimeType.value))),
                     GenerateContentConfig.builder()
-                        .temperature(0.0F)
+                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))

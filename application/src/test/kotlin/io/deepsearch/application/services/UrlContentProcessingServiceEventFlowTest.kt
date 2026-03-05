@@ -10,15 +10,14 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
+import io.deepsearch.domain.testing.IsolatedKoinExtension
 
-class UrlContentProcessingServiceEventFlowTest : KoinTest {
+class UrlContentProcessingServiceEventFlowTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(applicationTestModule)
     }
 
@@ -26,36 +25,23 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
     private val urlContentProcessingService by inject<IUrlContentProcessingService>()
 
     @Test
-    fun `processUrlAsFlow emits LinkDiscoveryComplete before MarkdownExtractionComplete`() = runTest(testCoroutineDispatcher) {
+    fun `processUrlAsFlow for periodic indexing emits LinkDiscoveryComplete before MarkdownExtractionComplete`() = runTest(testCoroutineDispatcher) {
         // Given
         val url = "https://www.example.com/"
 
-        // When - using PeriodicIndexSessionId for the non-query version
+        // When - using PeriodicIndexSessionId for the indexing version
         val events = urlContentProcessingService.processUrlAsFlow(url, sessionId = PeriodicIndexSessionId(1L)).toList()
 
         // Then
         assertTrue(events.isNotEmpty(), "Should emit at least one event")
         
-        // Find event indices
-        val htmlPreviewEventIndex = events.indexOfFirst { it is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady }
         val linkEventIndex = events.indexOfFirst { it is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete }
         val markdownEventIndex = events.indexOfFirst { it is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete }
         
-        // For uncached HTML URLs, HtmlPreviewReady should be emitted first
-        if (htmlPreviewEventIndex >= 0) {
-            val htmlPreviewEvent = events[htmlPreviewEventIndex] as IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady
-            assertEquals(url, htmlPreviewEvent.url)
-            assertTrue(htmlPreviewEvent.cleanedHtml.isNotBlank(), "Cleaned HTML should not be blank")
-        }
-        
-        // Verify both required events are present
         assertTrue(linkEventIndex >= 0, "Should emit LinkDiscoveryComplete event")
         assertTrue(markdownEventIndex >= 0, "Should emit MarkdownExtractionComplete event")
-        
-        // Verify order: links come before markdown
         assertTrue(linkEventIndex < markdownEventIndex, "LinkDiscoveryComplete should be emitted before MarkdownExtractionComplete")
         
-        // Verify event data
         val linkEvent = events[linkEventIndex] as IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete
         val markdownEvent = events[markdownEventIndex] as IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
         
@@ -65,39 +51,25 @@ class UrlContentProcessingServiceEventFlowTest : KoinTest {
     }
 
     @Test
-    fun `processUrlAsFlow with query emits events in correct order`() = runTest(testCoroutineDispatcher) {
+    fun `processUrlAsFlow with query emits AgenticSearchComplete for HTML pages`() = runTest(testCoroutineDispatcher) {
         // Given
         val url = "https://www.example.com/"
         val query = "What is this page about?"
 
-        // When - using QuerySessionId for the query version
+        // When - using QuerySessionId triggers agentic search for HTML pages
         val events = urlContentProcessingService.processUrlAsFlow(url, query, sessionId = QuerySessionId("test-session-id")).toList()
 
         // Then
-        assertTrue(events.size >= 2, "Should emit at least two events")
+        assertTrue(events.isNotEmpty(), "Should emit at least one event")
         
-        // For uncached HTML URLs, first event should be HtmlPreviewReady
-        val firstEvent = events[0]
-        assertTrue(
-            firstEvent is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ||
-            firstEvent is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete,
-            "First event should be HtmlPreviewReady or LinkDiscoveryComplete"
-        )
+        val linkEvents = events.filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete>()
+        val agenticEvents = events.filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete>()
         
-        // Verify last event is MarkdownExtractionComplete
-        val lastEvent = events.last()
-        assertTrue(
-            lastEvent is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete,
-            "Last event should be MarkdownExtractionComplete"
-        )
+        assertTrue(linkEvents.isNotEmpty(), "Should emit LinkDiscoveryComplete event")
+        assertTrue(agenticEvents.isNotEmpty(), "Should emit AgenticSearchComplete event for query sessions")
         
-        // Verify HtmlPreviewReady is emitted for uncached URLs
-        val htmlPreviewEvents = events.filterIsInstance<IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady>()
-        if (htmlPreviewEvents.isNotEmpty()) {
-            val htmlPreviewEvent = htmlPreviewEvents.first()
-            assertEquals(url, htmlPreviewEvent.url)
-            assertTrue(htmlPreviewEvent.cleanedHtml.isNotBlank(), "Cleaned HTML should not be blank")
-        }
+        val agenticEvent = agenticEvents.first()
+        assertEquals(url, agenticEvent.url)
     }
 }
 

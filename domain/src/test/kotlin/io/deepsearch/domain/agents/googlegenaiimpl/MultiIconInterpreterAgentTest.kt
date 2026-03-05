@@ -10,17 +10,17 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertNotNull
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.koin.core.component.inject
-import org.koin.test.KoinTest
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.io.encoding.Base64
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-class MultiIconInterpreterAgentTest : KoinTest {
+class MultiIconInterpreterAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainTestModule)
     }
 

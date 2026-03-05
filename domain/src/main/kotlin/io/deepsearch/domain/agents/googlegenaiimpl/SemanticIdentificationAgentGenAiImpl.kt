@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.agents.ISemanticIdentificationAgent
@@ -227,7 +228,7 @@ class SemanticIdentificationAgentGenAiImpl(
             htmlWithIds.length, screenshot.bytes.size, boundingBoxes.size
         )
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Get image dimensions for coordinate mapping (Gemini uses normalized [0, 1000] coords)
@@ -247,12 +248,12 @@ class SemanticIdentificationAgentGenAiImpl(
                         )
                     ),
                     GenerateContentConfig.builder()
-                        .temperature(0F)
+                        .temperature(1.0F)
                         .responseSchema(visionOutputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(visionSystemInstruction)))
@@ -632,7 +633,7 @@ class SemanticIdentificationAgentGenAiImpl(
                 userPrompt = "Analyze this screenshot",
                 imageData = screenshotBase64,
                 imageMimeType = screenshotMimeType,
-                temperature = 0f,
+                temperature = 1.0f,
                 metadata = metadata
             ).withSchema(visionOutputSchema)
         } else {
@@ -640,10 +641,10 @@ class SemanticIdentificationAgentGenAiImpl(
             val cleanedHtml = cleanHtml(htmlWithIds)
             BatchContentRequest(
                 requestId = requestId,
-                modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
                 systemInstruction = systemInstruction,
                 userPrompt = cleanedHtml,
-                temperature = 0f,
+                temperature = 1.0f,
                 metadata = mapOf("useVision" to "false")
             ).withSchema(outputSchema)
         }

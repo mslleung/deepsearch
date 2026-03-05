@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.GenerateAnswerInput
 import io.deepsearch.domain.agents.GenerateAnswerOutput
 import io.deepsearch.domain.agents.IGenerateAnswerAgent
@@ -78,7 +79,7 @@ class GenerateAnswerAgentGenAiImpl(
             ${input.markdowns}
         """.trimIndent()
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
         val response = withContext(dispatcherProvider.io) {
@@ -87,12 +88,12 @@ class GenerateAnswerAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(0F)
+                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))

@@ -155,13 +155,6 @@ fun SearchFlowEvent.toDto(): SearchFlowEventDto {
         is SearchFlowEvent.UrlProcessingStarted -> {
             url = this.url
         }
-        is SearchFlowEvent.UrlHtmlPreviewReady -> {
-            url = this.url
-            title = this.title
-            description = this.description
-            metadata["accessType"] = this.accessType
-            this.markdownLength?.let { metadata["markdownLength"] = it.toString() }
-        }
         is SearchFlowEvent.UrlLinkDiscoveryComplete -> {
             url = this.url
         }

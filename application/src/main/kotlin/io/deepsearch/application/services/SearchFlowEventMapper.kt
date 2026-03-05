@@ -61,18 +61,6 @@ class SearchFlowEventMapper : ISearchFlowEventMapper {
             title = event.title,
             description = event.description,
             markdownLength = event.markdownLength,
-            isPreview = false,
-            timestampMs = event.timestampMs
-        )
-
-        is SearchFlowEvent.UrlHtmlPreviewReady -> SearchEvent.UrlProcessed(
-            sessionId = event.sessionId,
-            url = event.url,
-            accessType = event.accessType,
-            title = event.title,
-            description = event.description,
-            markdownLength = event.markdownLength,
-            isPreview = true,
             timestampMs = event.timestampMs
         )
 
@@ -154,7 +142,6 @@ class SearchFlowEventMapper : ISearchFlowEventMapper {
     override fun isStreamingSearchEndpointEvent(eventType: SearchFlowEventType): Boolean = when (eventType) {
         SearchFlowEventType.SESSION_STARTED,
         SearchFlowEventType.URL_PROCESSING_STARTED,
-        SearchFlowEventType.URL_HTML_PREVIEW_READY,
         SearchFlowEventType.URL_MARKDOWN_COMPLETE,
         SearchFlowEventType.URL_PROCESSING_FAILED,
         SearchFlowEventType.SOURCES_EVALUATED,

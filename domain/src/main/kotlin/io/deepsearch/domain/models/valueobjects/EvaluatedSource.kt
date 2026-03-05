@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 /**
  * Represents an evaluated source with extracted facts and descriptive metadata.
  * 
- * This is the output from individual source evaluation agents (HTML and Markdown)
+ * This is the output from individual source evaluation agents (HTML, Markdown, PDF)
  * and is used directly by the answer synthesis agent.
  * 
  * @property url The URL of the source
@@ -15,8 +15,6 @@ import kotlinx.serialization.Serializable
  * @property contentDate Date extracted from content (nullable if no date found)
  * @property intention Describes the purpose of the webpage (e.g., "Official pricing page showing subscription tiers")
  * @property relevantImageIds List of image IDs (format: "img-xxx") deemed relevant for this source
- * @property isPreview True if this source was evaluated from HTML preview (partial content),
- *           false if from full markdown. Preview sources may have incomplete facts.
  */
 @Serializable
 data class EvaluatedSource(
@@ -26,6 +24,5 @@ data class EvaluatedSource(
     val relevantFacts: List<RelevantFact>,
     val contentDate: String?,
     val intention: String,
-    val relevantImageIds: List<String> = emptyList(),
-    val isPreview: Boolean = false
+    val relevantImageIds: List<String> = emptyList()
 )

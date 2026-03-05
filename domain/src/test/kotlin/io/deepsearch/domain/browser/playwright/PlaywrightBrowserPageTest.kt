@@ -6,17 +6,16 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.getValue
 import kotlin.test.Test
 
-class PlaywrightBrowserPageTest : KoinTest {
+class PlaywrightBrowserPageTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainTestModule)
     }
 

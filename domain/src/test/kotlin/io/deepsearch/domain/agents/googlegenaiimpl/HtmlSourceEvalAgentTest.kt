@@ -8,25 +8,23 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Tests for the source evaluation agent (preview path).
+ * Tests for the HTML source evaluation agent.
  * 
- * Note: The input is now extracted sentences (plain text), not HTML.
- * The HtmlPreviewService extracts sentences using ICU4J before this agent is called,
- * which naturally filters out tabular data since table cells are fragments, not sentences.
+ * Note: The input is extracted sentences (plain text), not raw HTML.
+ * Tabular data is naturally filtered out since table cells are fragments, not sentences.
  */
-class HtmlSourceEvalAgentTest : KoinTest {
+class HtmlSourceEvalAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koin = KoinTestExtension.create { modules(domainTestModule) }
+    val koin = IsolatedKoinExtension.create { modules(domainTestModule) }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IHtmlSourceEvalAgent>()
@@ -73,9 +71,6 @@ class HtmlSourceEvalAgentTest : KoinTest {
             .filter { it.fact.contains("Henson", ignoreCase = true) || it.fact.contains("founder", ignoreCase = true) }
         
         assertTrue(ceoFacts.isNotEmpty(), "Should find facts about the founder/CEO")
-        
-        // Verify isPreview is set to true for preview sources
-        assertTrue(output.evaluatedSource.isPreview, "Preview sources should have isPreview=true")
     }
 
     /**
@@ -169,7 +164,7 @@ class HtmlSourceEvalAgentTest : KoinTest {
     @Test
     fun `should return null evaluatedSource for empty or minimal content`() = runTest(testCoroutineDispatcher) {
         // Minimal content - sentences are very short or empty
-        // (In practice, the HtmlPreviewService filters out short sentences)
+        // Minimal content - short sentences are filtered out upstream
         val extractedSentences = ""
         
         val source = UrlContentResult.HtmlPreview(

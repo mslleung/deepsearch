@@ -51,11 +51,11 @@ val applicationModule = module {
     singleOf(::VisualIdentificationService) bind IVisualIdentificationService::class
     singleOf(::TableInterpretationService) bind ITableInterpretationService::class
     singleOf(::MarkdownFormattingService) bind IMarkdownFormattingService::class
-    singleOf(::WebpageExtractionService) bind IWebpageExtractionService::class
+    singleOf(::WebpageIndexingService) bind IWebpageIndexingService::class
+    singleOf(::AgenticWebpageSearchService) bind IAgenticWebpageSearchService::class
     singleOf(::WebpageLinkDiscoveryService) bind IWebpageLinkDiscoveryService::class
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
-    singleOf(::HtmlPreviewService) bind IHtmlPreviewService::class
     singleOf(::PdfPreviewService) bind IPdfPreviewService::class
     singleOf(::LinkRelevanceHtmlService) bind ILinkRelevanceHtmlService::class
     singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
@@ -94,6 +94,7 @@ val applicationModule = module {
     singleOf(::TableInterpretationBatchHandler)
     singleOf(::ParallelEmbeddingAndKgHandler)
     singleOf(::KgEntityEmbeddingsHandler)
+    singleOf(::LightweightIndexHandler)
     singleOf(::FileUploadBackgroundWorker) // Background worker for file uploads to Gemini File Search
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class

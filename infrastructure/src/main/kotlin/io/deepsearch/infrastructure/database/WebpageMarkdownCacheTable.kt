@@ -14,17 +14,16 @@ class WebpageMarkdownCacheTable(
     val markdown = text("markdown").nullable()
     val markdownSanitized = text("markdown_sanitized").nullable() // Sanitized markdown for full-text search (no emoji/special chars)
     val cleanedLinkRelevanceHtml = text("link_relevance_cleaned_html").nullable() // Cleaned HTML for link discovery
-    val cleanedPreviewHtml = text("cleaned_preview_html").nullable() // Pre-cleaned HTML for preview path
     val httpStatus = integer("http_status").nullable()
     val httpReason = text("http_reason").nullable()
     val mimeType = varchar("mime_type", length = 256).nullable()
     val embedding = vector("embedding", dimensions = 1536).nullable() // gemini-embedding-001 produces 1536-dim vectors
     val markdownSearchVector = tsvector("markdown_search_vector").nullable() // tsvector for full-text search
-    val isPreview = bool("is_preview").default(false) // true if content is from simple text extraction (no LLM)
     /** For FILE type URLs: Gemini File Search document name for deletion */
     val fileSearchDocumentName = varchar("file_search_document_name", length = 512).nullable()
     /** Mapping of image numbers to original image hash IDs. JSON format: {"1": "img-abc123", "2": "img-def456"} */
     val imageMapping = text("image_mapping").nullable()
+    val contentMapJson = text("content_map_json").nullable()
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     val version = long("version").default(0)

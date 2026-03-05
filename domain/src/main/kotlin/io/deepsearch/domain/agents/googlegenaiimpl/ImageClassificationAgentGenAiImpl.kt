@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.IImageClassificationAgent
 import io.deepsearch.domain.agents.ImageClassificationInput
 import io.deepsearch.domain.agents.ImageClassificationOutput
@@ -131,7 +132,7 @@ class ImageClassificationAgentGenAiImpl(
             input.images.size
         )
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.images.isEmpty()) {
@@ -172,7 +173,7 @@ class ImageClassificationAgentGenAiImpl(
             // Combine results in order
             val allClassifications = results.map { it.first }
             val aggregatedTokenUsage =
-                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
+                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
                     TokenUsageMetrics(
                         modelName = acc.modelName,
                         promptTokens = acc.promptTokens + tokenUsage.promptTokens,
@@ -195,7 +196,7 @@ class ImageClassificationAgentGenAiImpl(
         image: ImageClassificationInput.ImageItem,
         imageIndex: Int
     ): Pair<ImageClassificationOutput.ImageClassification, TokenUsageMetrics> {
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Check if image is too large
@@ -229,7 +230,7 @@ class ImageClassificationAgentGenAiImpl(
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .maxOutputTokens(8192)
@@ -301,7 +302,7 @@ class ImageClassificationAgentGenAiImpl(
     ): BatchContentRequest {
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
             systemInstruction = systemInstruction,
             userPrompt = "Classify this image and provide a comprehensive description",
             imageData = Base64.encode(image.bytes),

@@ -5,6 +5,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.services.IImageDimensionService
@@ -13,9 +14,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import java.util.Base64
 import javax.imageio.ImageIO
 import java.io.ByteArrayInputStream
@@ -32,11 +32,11 @@ import kotlin.time.Duration.Companion.seconds
  * - Model returns markdown-fenced JSON list
  * - Parse JSON from ```json ... ``` blocks
  */
-class SegmentationApiExperimentTest : KoinTest {
+class SegmentationApiExperimentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainTestModule)
     }
 
@@ -110,10 +110,8 @@ class SegmentationApiExperimentTest : KoinTest {
                 Make sure the labels are one of header, footer, navSidebar, breadcrumb, cookieBanner, popup, table
             """.trimIndent()
 
-            // Config following Gemini docs - NO responseSchema, NO responseMimeType
-            // Only set thinkingBudget to 0 for better object detection results
             val config = GenerateContentConfig.builder()
-                .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0).build())
+                .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                 .build()
 
             val contents = listOf(

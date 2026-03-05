@@ -5,6 +5,7 @@ import io.deepsearch.application.services.IKnowledgeGraphIndexingService
 import io.deepsearch.application.services.IWebpageCacheService
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
+import io.deepsearch.domain.models.entities.BatchPipelineMode
 import io.deepsearch.domain.models.entities.BatchUrlState
 import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
@@ -81,7 +82,7 @@ class ParallelEmbeddingAndKgHandler(
         val sessionId = PeriodicIndexSessionId(jobId)
 
         // Step 1: Prepare markdown for each HTML URL (reading from GCS)
-        val urlDataMap = prepareUrlData(htmlUrlsNeedingCaching, jobId)
+        val urlDataMap = prepareUrlData(htmlUrlsNeedingCaching, jobId, job.pipelineMode)
 
         // Step 2: Prepare batch requests for both embeddings and KG extraction
         val (embeddingRequests, embeddingRequestMap) = prepareEmbeddingRequests(urlDataMap, jobId)
@@ -148,7 +149,8 @@ class ParallelEmbeddingAndKgHandler(
 
     private suspend fun prepareUrlData(
         htmlUrls: List<BatchUrlState>,
-        jobId: Long
+        jobId: Long,
+        pipelineMode: BatchPipelineMode
     ): Map<Long, UrlCacheData> {
         val urlDataMap = mutableMapOf<Long, UrlCacheData>()
 
@@ -156,21 +158,37 @@ class ParallelEmbeddingAndKgHandler(
             try {
                 val basePath = urlState.snapshotBasePath ?: return@forEach
 
-                // Read caching data from GCS
-                val cachingData = snapshotStorage.readForCaching(basePath)
-                val icons = snapshotStorage.readIcons(basePath)
-                val images = snapshotStorage.readImages(basePath)
+                if (pipelineMode == BatchPipelineMode.LIGHTWEIGHT) {
+                    val markdown = snapshotStorage.readLightweightMarkdown(basePath)
+                    if (markdown == null) {
+                        logger.warn("[{}] No lightweight markdown for {}", jobId, urlState.url)
+                        return@forEach
+                    }
+                    urlDataMap[urlState.id!!] = UrlCacheData(
+                        urlState = urlState,
+                        basePath = basePath,
+                        markdown = markdown,
+                        imageMapping = emptyMap(),
+                        cachingData = null,
+                        icons = emptyList(),
+                        images = emptyList()
+                    )
+                } else {
+                    val cachingData = snapshotStorage.readForCaching(basePath)
+                    val icons = snapshotStorage.readIcons(basePath)
+                    val images = snapshotStorage.readImages(basePath)
 
-                val markdownResult = buildFinalMarkdown(urlState, cachingData, icons, images)
-                urlDataMap[urlState.id!!] = UrlCacheData(
-                    urlState = urlState,
-                    basePath = basePath,
-                    markdown = markdownResult.markdown,
-                    imageMapping = markdownResult.imageMapping,
-                    cachingData = cachingData,
-                    icons = icons,
-                    images = images
-                )
+                    val markdownResult = buildFinalMarkdown(urlState, cachingData, icons, images)
+                    urlDataMap[urlState.id!!] = UrlCacheData(
+                        urlState = urlState,
+                        basePath = basePath,
+                        markdown = markdownResult.markdown,
+                        imageMapping = markdownResult.imageMapping,
+                        cachingData = cachingData,
+                        icons = icons,
+                        images = images
+                    )
+                }
             } catch (e: Exception) {
                 logger.warn("[{}] Failed to prepare markdown for HTML {}: {}", jobId, urlState.url, e.message)
             }

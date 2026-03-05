@@ -17,6 +17,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.parallel.Isolated
 import org.koin.core.context.GlobalContext
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
@@ -266,7 +267,6 @@ class SearchTimelineTest {
     private fun extractUrl(event: SearchFlowEvent): String? = when (event) {
         is SearchFlowEvent.SessionStarted -> event.url
         is SearchFlowEvent.UrlProcessingStarted -> event.url
-        is SearchFlowEvent.UrlHtmlPreviewReady -> event.url
         is SearchFlowEvent.UrlLinkDiscoveryComplete -> event.url
         is SearchFlowEvent.UrlMarkdownComplete -> event.url
         is SearchFlowEvent.UrlProcessingFailed -> event.url
@@ -281,13 +281,11 @@ class SearchTimelineTest {
     }
 
     private fun extractTitle(event: SearchFlowEvent): String? = when (event) {
-        is SearchFlowEvent.UrlHtmlPreviewReady -> event.title
         is SearchFlowEvent.UrlMarkdownComplete -> event.title
         else -> null
     }
 
     private fun extractDescription(event: SearchFlowEvent): String? = when (event) {
-        is SearchFlowEvent.UrlHtmlPreviewReady -> event.description
         is SearchFlowEvent.UrlMarkdownComplete -> event.description
         else -> null
     }
@@ -306,10 +304,6 @@ class SearchTimelineTest {
             event.technicalDetails?.let { put("technicalDetails", it) }
         }
         is SearchFlowEvent.DiscoverySerpComplete -> mapOf("linksFound" to event.linksFound)
-        is SearchFlowEvent.UrlHtmlPreviewReady -> buildMap {
-            put("accessType", event.accessType)
-            event.markdownLength?.let { put("markdownLength", it) }
-        }
         is SearchFlowEvent.UrlMarkdownComplete -> mapOf(
             "markdownLength" to event.markdownLength,
             "accessType" to event.accessType,

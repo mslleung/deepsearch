@@ -29,16 +29,15 @@ sealed class UrlContentResult {
     ) : UrlContentResult()
 
     /**
-     * Full markdown extraction with LLM processing.
-     * Contains properly formatted markdown with tables, images, etc.
+     * Markdown extracted from a non-HTML file (PDF, docx, etc.) via Gemini File Search.
+     * Not used for webpage content — webpages go through [AgenticAnswer] in query sessions
+     * or get indexed separately for semantic search in periodic indexing.
      */
-    data class FullMarkdown(
+    data class FileMarkdown(
         override val url: String,
         override val title: String?,
         override val description: String?,
-        val markdown: String,
-        /** Mapping of image numbers to hash IDs for new markdown format. Null for legacy format. */
-        val imageMapping: Map<String, String>? = null
+        val markdown: String
     ) : UrlContentResult()
 
     /**
@@ -52,5 +51,21 @@ sealed class UrlContentResult {
         override val description: String?,
         val extractedText: String,
         val pageCount: Int
+    ) : UrlContentResult()
+
+    /**
+     * Direct answer from VLM-driven agentic in-page search.
+     * Bypasses normal source evaluation — converted directly to EvaluatedSource.
+     */
+    data class AgenticAnswer(
+        override val url: String,
+        override val title: String?,
+        override val description: String?,
+        val answer: String?,
+        val evidence: String?,
+        val intention: String?,
+        val contentDate: String?,
+        val observations: List<String>,
+        val success: Boolean
     ) : UrlContentResult()
 }

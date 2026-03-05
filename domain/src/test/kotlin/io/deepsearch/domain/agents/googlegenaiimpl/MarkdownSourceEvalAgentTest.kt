@@ -8,18 +8,17 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
-import kotlin.test.assertFalse
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
+
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-class MarkdownSourceEvalAgentTest : KoinTest {
+class MarkdownSourceEvalAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koin = KoinTestExtension.create { modules(domainTestModule) }
+    val koin = IsolatedKoinExtension.create { modules(domainTestModule) }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IMarkdownSourceEvalAgent>()
@@ -216,14 +215,11 @@ class MarkdownSourceEvalAgentTest : KoinTest {
         assertNotNull(output)
         assertNotNull(output.evaluatedSource, "Should have evaluated source")
         
-        val evaluatedSource = output.evaluatedSource!!
+        val evaluatedSource = output.evaluatedSource
         
         assertTrue(evaluatedSource.url == source.url, "URL should be preserved")
         assertTrue(evaluatedSource.title == source.title, "Title should be preserved")
         assertTrue(evaluatedSource.description == source.description, "Description should be preserved")
         assertTrue(evaluatedSource.intention.isNotBlank(), "Should have intention describing the page purpose")
-        
-        // Verify isPreview is false for markdown sources (full content)
-        assertFalse(evaluatedSource.isPreview, "Markdown sources should have isPreview=false")
     }
 }

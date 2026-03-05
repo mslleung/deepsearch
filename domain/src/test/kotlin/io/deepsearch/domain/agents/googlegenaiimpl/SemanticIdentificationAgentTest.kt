@@ -11,15 +11,14 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 
-class SemanticIdentificationAgentTest : KoinTest {
+class SemanticIdentificationAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainTestModule)
     }
 

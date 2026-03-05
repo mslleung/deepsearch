@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.AnswerAssessment
 import io.deepsearch.domain.agents.DimensionAssessment
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
@@ -261,7 +262,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             input.previouslySearchedQueries.size
         )
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
@@ -297,12 +298,12 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(0F)
+                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
@@ -374,7 +375,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             input.previouslySearchedQueries.size
         )
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
 
         if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No facts provided, emitting default message")
@@ -405,12 +406,12 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val userPrompt = buildUserPrompt(input, globalImages)
 
         val config = GenerateContentConfig.builder()
-            .temperature(0F)
+            .temperature(1.0F)
             .responseSchema(outputSchema)
             .responseMimeType("application/json")
             .thinkingConfig(
                 ThinkingConfig.builder()
-                    .thinkingBudget(0)
+                    .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                     .build()
             )
             .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
@@ -812,10 +813,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     appendLine("### Facts")
                     source.relevantFacts.forEach { fact ->
                         appendLine("- ${fact.fact}")
-                    }
-                    // Indicate if source is from preview (incomplete content)
-                    if (source.isPreview) {
-                        appendLine("- Continue search for more facts on this page...")
                     }
 
                     // Show available images for this source with descriptions from input

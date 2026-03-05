@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.ITableExtractionAgent
 import io.deepsearch.domain.agents.TableExtractionInput
 import io.deepsearch.domain.agents.TableExtractionOutput
@@ -126,7 +127,7 @@ class TableExtractionAgentGenAiImpl(
             input.images.size
         )
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.images.isEmpty()) {
@@ -167,7 +168,7 @@ class TableExtractionAgentGenAiImpl(
             // Combine results in order
             val allExtractions = results.map { it.first }
             val aggregatedTokenUsage =
-                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
+                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
                     TokenUsageMetrics(
                         modelName = acc.modelName,
                         promptTokens = acc.promptTokens + tokenUsage.promptTokens,
@@ -190,7 +191,7 @@ class TableExtractionAgentGenAiImpl(
         image: TableExtractionInput.ImageItem,
         imageIndex: Int
     ): Pair<TableExtractionOutput.TextExtraction, TokenUsageMetrics> {
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Check if image is too large
@@ -220,7 +221,7 @@ class TableExtractionAgentGenAiImpl(
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .maxOutputTokens(8192)
@@ -409,7 +410,7 @@ class TableExtractionAgentGenAiImpl(
     ): BatchContentRequest {
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
             systemInstruction = systemInstruction,
             userPrompt = "Extract all content from this image, converting any tables to HTML format",
             imageData = Base64.encode(image.bytes),

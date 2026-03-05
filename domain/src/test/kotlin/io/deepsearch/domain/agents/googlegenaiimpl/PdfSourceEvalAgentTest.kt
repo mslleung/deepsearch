@@ -8,18 +8,17 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class PdfSourceEvalAgentTest : KoinTest {
+class PdfSourceEvalAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koin = KoinTestExtension.create { modules(domainTestModule) }
+    val koin = IsolatedKoinExtension.create { modules(domainTestModule) }
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IPdfSourceEvalAgent>()
@@ -87,9 +86,6 @@ class PdfSourceEvalAgentTest : KoinTest {
             }
         
         assertTrue(securityFacts.isNotEmpty(), "Should find facts about security features (prose facts are not filtered)")
-        
-        // Verify isPreview is set to true for PDF preview sources
-        assertTrue(output.evaluatedSource.isPreview, "PDF preview sources should have isPreview=true")
     }
 
     /**

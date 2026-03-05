@@ -39,6 +39,7 @@ import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.domain.services.JsoupDomService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
+import io.deepsearch.domain.services.ScreenshotAnnotationService
 import io.deepsearch.domain.services.SerperService
 import io.deepsearch.domain.services.GeminiBatchServiceImpl
 import io.deepsearch.domain.services.IGeminiBatchService
@@ -83,6 +84,7 @@ val domainModule = module {
     singleOf(::RecursiveTableDiscoveryService) bind IRecursiveTableDiscoveryService::class
     singleOf(::SemanticTableConverter) bind ISemanticTableConverter::class
     singleOf(::SemanticListConverter) bind ISemanticListConverter::class
+    singleOf(::ScreenshotAnnotationService)
 
     // Gemini Batch API service for cost-effective large-scale processing
     // Uses inline requests for batches under 20MB, 50% cost savings
@@ -117,7 +119,9 @@ val domainModule = module {
     singleOf(::VisualIdentificationAgentGenAiImpl) bind IVisualIdentificationAgent::class
     singleOf(::SemanticTableClassificationAgentGenAiImpl) bind ISemanticTableClassificationAgent::class
     singleOf(::LinearizedContentConversionAgentGenAiImpl) bind ILinearizedContentConversionAgent::class
-    
+    singleOf(::WebpageNavigationAgentGenAiImpl) bind IWebpageNavigationAgent::class
+    singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
+
     // Markdown formatting agent (singleton for MarkdownFormattingService)
     singleOf(::MarkdownFormattingAgentGenAiImpl) bind IMarkdownFormattingAgent::class
     

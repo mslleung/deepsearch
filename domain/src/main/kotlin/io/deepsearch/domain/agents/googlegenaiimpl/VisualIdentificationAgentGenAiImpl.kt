@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.IVisualIdentificationAgent
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.VisualIdentificationBatchRequest
@@ -224,11 +225,11 @@ class VisualIdentificationAgentGenAiImpl(
 
         // ========== Vision Detection ==========
         // Single LLM call for visible semantic elements and tables
-        var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+        var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)
         val visionResponse = withContext(dispatcherProvider.io) {
             retryLlmCall<CombinedVisionResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_vision") {
                 val result = client.models.generateContent(
-                    ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                    ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
                     listOf(
                         Content.fromParts(
                             Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
@@ -236,12 +237,12 @@ class VisualIdentificationAgentGenAiImpl(
                         )
                     ),
                     GenerateContentConfig.builder()
-                        .temperature(0F)
+                        .temperature(1.0F)
                         .responseSchema(combinedOutputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(combinedSystemInstruction)))
@@ -252,7 +253,7 @@ class VisualIdentificationAgentGenAiImpl(
 
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
-                        modelName = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+                        modelName = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
                         promptTokens = metadata.promptTokenCount().orElse(0),
                         outputTokens = metadata.candidatesTokenCount().orElse(0),
                         totalTokens = metadata.totalTokenCount().orElse(0)
@@ -830,12 +831,12 @@ class VisualIdentificationAgentGenAiImpl(
 
         val request = BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
             systemInstruction = combinedSystemInstruction,
             userPrompt = "Analyze this webpage screenshot for semantic elements and tables.",
             imageData = screenshotBase64,
             imageMimeType = screenshotMimeType,
-            temperature = 0f,
+            temperature = 1.0f,
             metadata = metadata
         ).withSchema(combinedOutputSchema)
 
@@ -879,7 +880,7 @@ class VisualIdentificationAgentGenAiImpl(
         return VisualIdentificationOutput(
             semanticElements = semanticElements,
             tables = tableIdentifications,
-            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)
         )
     }
 }

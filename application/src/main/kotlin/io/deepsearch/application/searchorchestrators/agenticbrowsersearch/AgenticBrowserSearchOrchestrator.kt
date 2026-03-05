@@ -8,6 +8,7 @@ import io.deepsearch.application.services.IUrlContentProcessingService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
+import io.deepsearch.domain.models.valueobjects.RelevantFact
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.exceptions.MarkdownConversionException
 import io.deepsearch.domain.exceptions.NetworkConnectionException
@@ -15,7 +16,6 @@ import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.ratelimit.IAdaptiveRateLimiter
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
-import io.deepsearch.domain.models.valueobjects.CachedUrlAccess
 import io.deepsearch.domain.models.valueobjects.FailedUrlAccess
 import io.deepsearch.domain.models.valueobjects.MarkdownSource
 import io.deepsearch.domain.models.valueobjects.UrlContentResult
@@ -275,12 +275,6 @@ class AgenticBrowserSearchOrchestrator(
                 }
                 .shareIn(sourceProcessingScope, SharingStarted.Eagerly)
 
-            // When includeImages is enabled, skip preview path evaluation
-            val includeImages = searchQuery.includeImages
-            if (includeImages) {
-                logger.info("[{}] includeImages enabled, skipping preview evaluation", sessionId.value)
-            }
-
             // Collect query processing result (runs in parallel with discovery, should be ready by now)
             val queryProcessingResult = queryProcessingFlow.first()
             val expandedQuery = queryProcessingResult.expandedQuery
@@ -310,30 +304,31 @@ class AgenticBrowserSearchOrchestrator(
                 }
             }
 
-            // Unified evaluation flow: preview (HTML/PDF) and markdown sources are evaluated in parallel
-            // and merged into a single stream of EvaluatedSource (isPreview set by eval agents)
+            // Evaluation flow: agentic answers are the primary source for HTML pages.
+            // PDF/file content still goes through markdown evaluation as a fallback
+            // (PDFs are static and don't have JS toggle issues).
             val unifiedEvalFlow = merge(
-                // HTML Preview path: fast HTML evaluation (when includeImages is false)
-                if (!includeImages) {
-                    sourceFlow
-                        .filterIsInstance<UrlContentResult.HtmlPreview>()
-                        .flatMapMerge(concurrency = 100) { htmlSource ->
-                            flow {
-                                val evalResult = sourceEvaluationFacadeService.evaluateHtmlSource(
-                                    sessionId, htmlSource, expandedQuery, fulfillmentRequirements
-                                )
-                                if (evalResult != null) {
-                                    emit(evalResult) // isPreview=true set by HtmlSourceEvalAgent
-                                }
-                            }
+                // Agentic answer path: direct answer from in-page VLM interaction
+                // This is the sole answer source for visited HTML pages
+                sourceFlow
+                    .filterIsInstance<UrlContentResult.AgenticAnswer>()
+                    .filter { it.success && it.answer != null }
+                    .map { agenticAnswer ->
+                        val facts = buildList {
+                            agenticAnswer.observations.forEach { obs -> add(RelevantFact(obs)) }
+                            add(RelevantFact(agenticAnswer.answer!!))
                         }
-                } else {
-                    flowOf() // Empty flow when includeImages is enabled
-                },
+                        EvaluatedSource(
+                            url = agenticAnswer.url,
+                            title = agenticAnswer.title,
+                            description = agenticAnswer.description,
+                            relevantFacts = facts,
+                            contentDate = agenticAnswer.contentDate,
+                            intention = agenticAnswer.intention ?: "Webpage"
+                        )
+                    },
 
                 // PDF Preview path: fast PDF evaluation using local text extraction
-                // Provides early results while Gemini upload runs
-                // Note: PDF text extraction doesn't include images, so this runs regardless of includeImages
                 sourceFlow
                     .filterIsInstance<UrlContentResult.PdfPreview>()
                     .filter { it.extractedText.isNotBlank() }
@@ -343,24 +338,24 @@ class AgenticBrowserSearchOrchestrator(
                                 sessionId, pdfSource, expandedQuery, fulfillmentRequirements
                             )
                             if (evalResult != null) {
-                                emit(evalResult) // isPreview=true set by PdfSourceEvalAgent
+                                emit(evalResult)
                             }
                         }
                     },
 
-                // Markdown path: full markdown evaluation (replaces preview when it arrives)
+                // File content path: PDFs, docs, etc. processed via Gemini File Search.
+                // HTML pages do NOT flow through here — they use AgenticAnswer instead.
                 sourceFlow
-                    .filterIsInstance<UrlContentResult.FullMarkdown>()
+                    .filterIsInstance<UrlContentResult.FileMarkdown>()
                     .filter { it.markdown.isNotBlank() }
-                    .flatMapMerge(concurrency = 100) { fullMarkdown ->
+                    .flatMapMerge(concurrency = 100) { fileMarkdown ->
                         flow {
-                            val markdownSource = MarkdownSource(fullMarkdown.url, fullMarkdown.title, fullMarkdown.description, fullMarkdown.markdown)
+                            val markdownSource = MarkdownSource(fileMarkdown.url, fileMarkdown.title, fileMarkdown.description, fileMarkdown.markdown)
                             val evalResult = sourceEvaluationFacadeService.evaluateMarkdownSource(
-                                sessionId, markdownSource, expandedQuery, fulfillmentRequirements,
-                                imageMapping = fullMarkdown.imageMapping
+                                sessionId, markdownSource, expandedQuery, fulfillmentRequirements
                             )
                             if (evalResult != null) {
-                                emit(evalResult) // isPreview=false (default)
+                                emit(evalResult)
                             }
                         }
                     }
@@ -491,7 +486,7 @@ class AgenticBrowserSearchOrchestrator(
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
                 // Add URL to processedUrls before processing to prevent duplicate processing
                 // This must happen before processUrlAsFlow, not on each event, because
-                // multiple events (HtmlPreview, LinkDiscovery, MarkdownExtraction)
+                // multiple events (LinkDiscovery, AgenticSearch, MarkdownExtraction)
                 // share the same URL and would filter out subsequent events
                 processedUrls.add(normalizedUrl)
                 emitUrlProcessingStarted(sessionId, normalizedUrl, eventChannel)
@@ -507,72 +502,55 @@ class AgenticBrowserSearchOrchestrator(
                     .onEach { event ->
                         when (event) {
                             is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                // Send discovered links to priority buffer with initial query context
                                 event.discoveredLinks.forEach { link ->
                                     priorityLinkBuffer.send(DiscoveredLink(link, searchQuery.query))
                                 }
                             }
 
-                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                // Record URL access based on cached status
-                                if (event.wasCached) {
-                                    urlAccessService.recordUrlAccess(
-                                        sessionId,
-                                        CachedUrlAccess(event.url, Clock.System.now())
-                                    )
-                                }
-                                // Emit UrlProcessed for all markdown extractions (cached and uncached)
+                            is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete -> {
+                                urlAccessService.recordUrlAccess(
+                                    sessionId,
+                                    UncachedUrlAccess(event.url, Clock.System.now())
+                                )
                                 emitUrlProcessed(
                                     sessionId = sessionId,
                                     url = event.url,
                                     title = event.title,
                                     description = event.description,
                                     markdownLength = event.markdown.length,
-                                    wasCached = event.wasCached,
+                                    wasCached = false,
                                     eventChannel = eventChannel
                                 )
                             }
 
-                            is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                // Record URL access for live crawled URLs (preview path is silent, no events)
+                            is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete -> {
                                 urlAccessService.recordUrlAccess(
                                     sessionId,
                                     UncachedUrlAccess(event.url, Clock.System.now())
                                 )
-                                logger.debug(
-                                    "[{}] HTML preview ready for {}: {} chars",
-                                    sessionId.value, event.url, event.cleanedHtml.length
+                                logger.info(
+                                    "[{}] Agentic search complete for {}: success={}",
+                                    sessionId.value, event.url, event.success
                                 )
                             }
 
                             is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
-                                // Record URL access for PDF preview (fast path)
                                 urlAccessService.recordUrlAccess(
                                     sessionId,
                                     UncachedUrlAccess(event.url, Clock.System.now())
                                 )
-                                logger.debug(
-                                    "[{}] PDF preview ready for {}: {} pages, {} chars",
-                                    sessionId.value, event.url, event.pageCount, event.extractedText.length
-                                )
                             }
+
+                            else -> {}
                         }
                     }
                     .filter { event ->
-                        event is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ||
-                                event is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ||
-                                event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
+                        event is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ||
+                                event is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete ||
+                                event is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete
                     }
                     .map { event ->
                         when (event) {
-                            is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ->
-                                UrlContentResult.HtmlPreview(
-                                    event.url,
-                                    event.title,
-                                    event.description,
-                                    event.cleanedHtml
-                                )
-
                             is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ->
                                 UrlContentResult.PdfPreview(
                                     event.url,
@@ -582,8 +560,21 @@ class AgenticBrowserSearchOrchestrator(
                                     event.pageCount
                                 )
 
-                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                                UrlContentResult.FullMarkdown(event.url, event.title, event.description, event.markdown, event.imageMapping)
+                            is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete ->
+                                UrlContentResult.FileMarkdown(event.url, event.title, event.description, event.markdown)
+
+                            is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete ->
+                                UrlContentResult.AgenticAnswer(
+                                    event.url,
+                                    null,
+                                    null,
+                                    event.answer,
+                                    event.evidence,
+                                    event.intention,
+                                    event.contentDate,
+                                    event.observations,
+                                    event.success
+                                )
 
                             else -> throw IllegalStateException("Unexpected event type")
                         }
@@ -776,34 +767,29 @@ class AgenticBrowserSearchOrchestrator(
                             .onEach { event ->
                                 when (event) {
                                     is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
-                                        // Send newly discovered links to recursive channel with query context
-                                        // Only send if channel is still open
                                         if (!recursiveChannel.isClosedForSend) {
                                             event.discoveredLinks.forEach { newLink ->
                                                 try {
                                                     recursiveChannel.send(DiscoveredLink(newLink, query))
                                                 } catch (e: kotlinx.coroutines.channels.ClosedSendChannelException) {
-                                                    // Channel closed while sending - this is expected during shutdown
                                                     logger.debug("[{}] Recursive channel closed, skipping link: {}", sessionId.value, newLink)
                                                 }
                                             }
                                         }
                                     }
 
-                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
-                                        if (event.wasCached) {
-                                            urlAccessService.recordUrlAccess(
-                                                sessionId,
-                                                CachedUrlAccess(event.url, Clock.System.now())
-                                            )
-                                        }
+                                    is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete -> {
+                                        urlAccessService.recordUrlAccess(
+                                            sessionId,
+                                            UncachedUrlAccess(event.url, Clock.System.now())
+                                        )
                                         emitUrlProcessed(
                                             sessionId = sessionId,
                                             url = event.url,
                                             title = event.title,
                                             description = event.description,
                                             markdownLength = event.markdown.length,
-                                            wasCached = event.wasCached,
+                                            wasCached = false,
                                             eventChannel = eventChannel
                                         )
                                         inFlight.remove(event.url)
@@ -811,11 +797,18 @@ class AgenticBrowserSearchOrchestrator(
                                         checkAndCloseIfIdle()
                                     }
 
-                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
+                                    is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete -> {
                                         urlAccessService.recordUrlAccess(
                                             sessionId,
                                             UncachedUrlAccess(event.url, Clock.System.now())
                                         )
+                                        logger.info(
+                                            "[{}] Agentic search complete for discovered URL {}: success={}",
+                                            sessionId.value, event.url, event.success
+                                        )
+                                        inFlight.remove(event.url)
+                                        inFlightLinkProcessing.decrementAndGet()
+                                        checkAndCloseIfIdle()
                                     }
 
                                     is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
@@ -824,23 +817,17 @@ class AgenticBrowserSearchOrchestrator(
                                             UncachedUrlAccess(event.url, Clock.System.now())
                                         )
                                     }
+
+                                    else -> {}
                                 }
                             }
                             .filter { event ->
-                                event is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ||
-                                        event is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ||
-                                        event is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete
+                                event is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ||
+                                        event is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete ||
+                                        event is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete
                             }
                             .map { event ->
                                 when (event) {
-                                    is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady ->
-                                        UrlContentResult.HtmlPreview(
-                                            event.url,
-                                            event.title,
-                                            event.description,
-                                            event.cleanedHtml
-                                        )
-
                                     is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ->
                                         UrlContentResult.PdfPreview(
                                             event.url,
@@ -850,13 +837,25 @@ class AgenticBrowserSearchOrchestrator(
                                             event.pageCount
                                         )
 
-                                    is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete ->
-                                        UrlContentResult.FullMarkdown(
+                                    is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete ->
+                                        UrlContentResult.FileMarkdown(
                                             event.url,
                                             event.title,
                                             event.description,
-                                            event.markdown,
-                                            event.imageMapping
+                                            event.markdown
+                                        )
+
+                                    is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete ->
+                                        UrlContentResult.AgenticAnswer(
+                                            event.url,
+                                            null,
+                                            null,
+                                            event.answer,
+                                            event.evidence,
+                                            event.intention,
+                                            event.contentDate,
+                                            event.observations,
+                                            event.success
                                         )
 
                                     else -> throw IllegalStateException("Unexpected event type")
@@ -872,11 +871,10 @@ class AgenticBrowserSearchOrchestrator(
 
     /**
      * Accumulator for unified answer generation with feedback loop support.
-     * Uses URL-keyed source map where markdown sources replace preview sources.
+     * Uses URL-keyed source map. Every source is authoritative (no preview replacement).
      * Tracks sources, queries, requirements, and synthesis iterations.
      */
     private data class SourceAccumulator(
-        /** URL-keyed source map - markdown (isPreview=false) replaces preview (isPreview=true) */
         val sourcesByUrl: Map<String, EvaluatedSource> = emptyMap(),
         /** Whether the answer is complete (status=FINISH_SEARCH from synthesis agent) */
         val isComplete: Boolean = false,
@@ -907,13 +905,9 @@ class AgenticBrowserSearchOrchestrator(
     }
 
     /**
-     * Aggregate a batch of evaluated sources into the accumulator with URL-keyed replacement.
-     * Markdown sources (isPreview=false) replace preview sources (isPreview=true) for the same URL.
+     * Aggregate a batch of evaluated sources into the accumulator.
+     * First source for a URL wins; subsequent sources for the same URL are ignored.
      * Triggers answer synthesis (via AnswerSynthesisFacadeService) after updating sources.
-     * 
-     * Requirements are refined by the synthesis agent based on discovered content:
-     * - Uses state.currentRequirements for synthesis (which may have been refined in previous iterations)
-     * - Updates currentRequirements if synthesis returns non-empty refinedRequirements
      */
     private suspend fun aggregateBatchIntoAccumulator(
         sessionId: QuerySessionId,
@@ -927,44 +921,18 @@ class AgenticBrowserSearchOrchestrator(
             return state
         }
 
-        // Build updated source map with replacement logic
         val updatedSourcesByUrl = state.sourcesByUrl.toMutableMap()
-        var replacements = 0
         var additions = 0
 
         for (source in batch) {
-            val url = source.url
-            val existing = updatedSourcesByUrl[url]
-
-            when {
-                // No existing entry - add new source
-                existing == null -> {
-                    updatedSourcesByUrl[url] = source
-                    additions++
-                }
-                // Existing is preview and new is markdown - replace
-                existing.isPreview && !source.isPreview -> {
-                    updatedSourcesByUrl[url] = source
-                    replacements++
-                    logger.debug(
-                        "[{}] Replacing preview with markdown for URL: {}",
-                        sessionId.value, url
-                    )
-                }
-                // Existing is markdown - keep existing (markdown is authoritative)
-                !existing.isPreview -> {
-                    // Skip - markdown already present
-                }
-                // Both are preview - keep existing
-                else -> {
-                    // Skip - first preview wins
-                }
+            if (updatedSourcesByUrl.putIfAbsent(source.url, source) == null) {
+                additions++
             }
         }
 
         logger.debug(
-            "[{}] Batch processing: {} sources, {} additions, {} replacements",
-            sessionId.value, batch.size, additions, replacements
+            "[{}] Batch processing: {} sources, {} additions",
+            sessionId.value, batch.size, additions
         )
 
         // Synthesize answer with updated sources (via facade service)

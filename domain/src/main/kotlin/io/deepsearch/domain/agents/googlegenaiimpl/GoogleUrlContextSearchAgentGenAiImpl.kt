@@ -3,6 +3,8 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
+import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import com.google.genai.types.Tool
 import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IGoogleUrlContextSearchAgent
@@ -52,7 +54,7 @@ class GoogleUrlContextSearchAgentGenAiImpl(
             appendLine("$query ${urls.joinToString(" ")}")
         }
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -60,7 +62,12 @@ class GoogleUrlContextSearchAgentGenAiImpl(
                 modelId,
                 userPrompt,
                 GenerateContentConfig.builder()
-                    .temperature(0.2F)
+                    .temperature(1.0F)
+                    .thinkingConfig(
+                        ThinkingConfig.builder()
+                            .thinkingLevel(ThinkingLevel.Known.MINIMAL)
+                            .build()
+                    )
                     .tools(listOf(urlContextTool))
                     .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                     .build()

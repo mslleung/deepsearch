@@ -4,6 +4,8 @@ import com.google.genai.types.Content
 import com.google.genai.types.FileSearch
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
+import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import com.google.genai.types.Tool
 import io.deepsearch.domain.agents.FileSearchQueryInput
 import io.deepsearch.domain.agents.FileSearchQueryOutput
@@ -42,7 +44,7 @@ class FileSearchQueryAgentGenAiImpl(
         val (storeName, query, maxAgeMs) = input
         logger.debug("File search query on store '{}': '{}' (maxAgeMs: {})", storeName, query, maxAgeMs)
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Build FileSearch with optional metadata filter for age
@@ -69,7 +71,12 @@ class FileSearchQueryAgentGenAiImpl(
                     modelId,
                     query,
                     GenerateContentConfig.builder()
-                        .temperature(0F)
+                        .temperature(1.0F)
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
+                                .build()
+                        )
                         .tools(listOf(fileSearchTool))
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                         .build()

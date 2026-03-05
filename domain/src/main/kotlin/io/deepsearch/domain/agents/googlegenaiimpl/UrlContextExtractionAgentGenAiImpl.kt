@@ -4,6 +4,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import com.google.genai.types.Tool
 import com.google.genai.types.UrlContext
 import io.deepsearch.domain.agents.IUrlContextExtractionAgent
@@ -55,7 +56,7 @@ class UrlContextExtractionAgentGenAiImpl(
     override suspend fun generate(input: UrlContextExtractionInput): UrlContextExtractionOutput {
         logger.debug("Extracting context from URL: {}", input.url)
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val responseText = withContext(dispatcherProvider.io) {
@@ -64,11 +65,11 @@ class UrlContextExtractionAgentGenAiImpl(
                     modelId,
                     "Please fetch and extract context from this URL: ${input.url}",
                     GenerateContentConfig.builder()
-                        .temperature(0F)
+                        .temperature(1.0F)
                         .tools(listOf(urlContextTool))
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))

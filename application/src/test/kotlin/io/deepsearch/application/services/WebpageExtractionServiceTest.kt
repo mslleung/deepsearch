@@ -13,10 +13,9 @@ import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.koin.core.context.startKoin
-import org.koin.core.context.stopKoin
-import org.koin.test.KoinTest
-import org.koin.test.inject
+import org.koin.core.KoinApplication
+import org.koin.dsl.koinApplication
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 
 /**
@@ -27,8 +26,9 @@ import io.deepsearch.domain.config.IApplicationCoroutineScope
  * Database initialization is handled by createdAtStart() in test DI module.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class WebpageExtractionServiceTest : KoinTest {
+class WebpageExtractionServiceTest : IsolatedKoinTest() {
 
+    private lateinit var koinApp: KoinApplication
     private val browserPool by inject<IBrowserPool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val webpageExtractionService by inject<IWebpageExtractionService>()
@@ -38,16 +38,18 @@ class WebpageExtractionServiceTest : KoinTest {
     fun setup() {
         // Start Koin once for all tests in this class.
         // DatabaseConfigurationService has createdAtStart() so schema init happens here.
-        startKoin {
+        koinApp = koinApplication {
             modules(applicationBenchmarkTestModule)
         }
+        koinApp.createEagerInstances()
+        testKoin = koinApp.koin
     }
     
     @AfterAll
     fun teardown() {
         // Clean up application scope to cancel background coroutines
         applicationScope.close()
-        stopKoin()
+        koinApp.close()
     }
 
     @Test

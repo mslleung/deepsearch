@@ -13,9 +13,8 @@ import io.deepsearch.domain.services.TableDetectionBoundingBox
 import io.deepsearch.domain.services.TableGridResult
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.seconds
 
@@ -33,11 +32,11 @@ import kotlin.time.Duration.Companion.seconds
  * - Recursive discovery finds nested tables (like accordion sections)
  * - Automatic deduplication of overlapping tables
  */
-class SpatialTableIdentificationExperimentTest : KoinTest {
+class SpatialTableIdentificationExperimentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainTestModule)
     }
 

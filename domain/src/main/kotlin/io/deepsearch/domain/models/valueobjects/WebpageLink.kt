@@ -10,7 +10,8 @@ enum class LinkSource {
     FILE_CONTENT,  // URLs extracted from file content (PDFs, docs, etc.)
     KNOWLEDGE_GRAPH,  // Links discovered from KG entity source URLs
     HYBRID_SEARCH,  // Links discovered from hybrid (vector + keyword) search of cache
-    FILE_SEARCH  // Links discovered from Gemini file search
+    FILE_SEARCH,  // Links discovered from Gemini file search
+    AGENTIC_NAVIGATION  // Links discovered via agentic page navigation (click triggered full-page navigation)
 }
 
 /**

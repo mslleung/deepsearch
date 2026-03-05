@@ -5,6 +5,7 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.config.domainBenchmarkTestModule
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import kotlinx.coroutines.runBlocking
@@ -15,9 +16,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.TestMethodOrder
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import java.awt.Color
 import java.awt.Font
 import java.awt.RenderingHints
@@ -42,11 +42,11 @@ import kotlin.time.measureTimedValue
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
-class GeminiImageDimensionLimitTest : KoinTest {
+class GeminiImageDimensionLimitTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainBenchmarkTestModule)
     }
 
@@ -247,7 +247,7 @@ class GeminiImageDimensionLimitTest : KoinTest {
                 .temperature(0F)
                 .thinkingConfig(
                     ThinkingConfig.builder()
-                        .thinkingBudget(0)
+                        .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                         .build()
                 )
                 .build()

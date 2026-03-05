@@ -30,7 +30,6 @@ enum class SearchFlowEventType {
 
     // URL processing (maps to SearchEvent.UrlProcessingStarted/UrlProcessed)
     URL_PROCESSING_STARTED,
-    URL_HTML_PREVIEW_READY,
     URL_LINK_DISCOVERY_COMPLETE,
     URL_MARKDOWN_COMPLETE,
     URL_PROCESSING_FAILED,
@@ -208,21 +207,6 @@ sealed class SearchFlowEvent {
         val url: String
     ) : SearchFlowEvent() {
         override val eventType = SearchFlowEventType.URL_PROCESSING_STARTED
-        override fun withId(newId: Long) = copy(id = newId)
-    }
-
-    data class UrlHtmlPreviewReady(
-        override val id: Long = 0,
-        override val sessionId: QuerySessionId,
-        override val timestampMs: Long = System.currentTimeMillis(),
-        override val createdAt: Instant = Clock.System.now(),
-        val url: String,
-        val title: String? = null,
-        val description: String? = null,
-        val accessType: String,
-        val markdownLength: Int? = null
-    ) : SearchFlowEvent() {
-        override val eventType = SearchFlowEventType.URL_HTML_PREVIEW_READY
         override fun withId(newId: Long) = copy(id = newId)
     }
 

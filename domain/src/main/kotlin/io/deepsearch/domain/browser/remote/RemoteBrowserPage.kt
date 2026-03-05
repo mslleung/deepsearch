@@ -249,8 +249,46 @@ class RemoteBrowserPage(
         return IBrowserPage.Screenshot(Base64.decode(r.base64), ImageMimeType.fromValue(r.mimeType))
     }
 
+    override suspend fun getInteractiveElements(): List<IBrowserPage.InteractiveElementInfo> {
+        val r = pageCmdParse<InteractiveElementsResponse>(PageCommand.GetInteractiveElements)
+        return r.elements.map { e ->
+            IBrowserPage.InteractiveElementInfo(
+                tag = e.tag,
+                text = e.text,
+                role = e.role,
+                ariaLabel = e.ariaLabel,
+                states = e.states,
+                boundingBox = IBrowserPage.BoundingBox(e.left, e.top, e.right, e.bottom),
+                index = e.index
+            )
+        }
+    }
+
+    override suspend fun clickAtCoordinates(x: Int, y: Int) {
+        pageCmd(PageCommand.ClickAtCoordinates(x, y))
+    }
+
     override suspend fun clickByXPathSelector(xpath: String) {
         elementCmd(PageCommand.ClickByXPathSelector(xpath))
+    }
+
+    override suspend fun clickByCssSelector(cssSelector: String) {
+        elementCmd(PageCommand.ClickByCssSelector(cssSelector))
+    }
+
+    override suspend fun scrollToElementByCssSelector(cssSelector: String) {
+        elementCmd(PageCommand.ScrollToElementByCssSelector(cssSelector))
+    }
+
+    override suspend fun scrollToTextContent(searchText: String, occurrence: Int): Boolean =
+        pageCmd(PageCommand.ScrollToTextContent(searchText, occurrence)).toBoolean()
+
+    override suspend fun scrollToPercentage(percent: Int) {
+        pageCmd(PageCommand.ScrollToPercentage(percent))
+    }
+
+    override suspend fun scrollPage(deltaY: Int) {
+        pageCmd(PageCommand.ScrollPage(deltaY))
     }
 
     // ==================== Query Operations (return boolean, throw PageOperationException) ====================

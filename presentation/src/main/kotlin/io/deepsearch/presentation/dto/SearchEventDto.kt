@@ -45,7 +45,6 @@ sealed class SearchEventDto {
         val description: String? = null,
         val markdownLength: Int? = null,
         val errorMessage: String? = null,
-        val isPreview: Boolean = false,
         override val timestampMs: Long
     ) : SearchEventDto()
 
@@ -187,7 +186,6 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
             description = description,
             markdownLength = markdownLength,
             errorMessage = errorMessage,
-            isPreview = isPreview,
             timestampMs = timestampMs
         )
 
@@ -252,8 +250,7 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
                             url = urlAccess.url,
                             title = webpage.title,
                             description = webpage.description,
-                            markdown = markdownContent,
-                            isPreview = webpage.isPreview
+                            markdown = markdownContent
                         )
                     } else null
                 }

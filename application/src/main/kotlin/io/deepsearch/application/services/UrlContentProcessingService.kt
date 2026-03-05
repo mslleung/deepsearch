@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.exceptions.*
 import kotlinx.coroutines.CancellationException
@@ -23,7 +24,6 @@ import io.deepsearch.domain.models.valueobjects.PeriodicIndexSessionId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.services.INormalizeUrlService
-import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
 import io.deepsearch.domain.proxy.ProxyConfiguration
 
 interface IUrlContentProcessingService {
@@ -40,24 +40,26 @@ interface IUrlContentProcessingService {
             val discoveredLinks: List<WebpageLink>
         ) : UrlProcessingEvent
 
+        /**
+         * Webpage markdown extracted via DOM pipeline (periodic indexing) or from cache.
+         * NOT emitted during query sessions for HTML pages — those use [AgenticSearchComplete].
+         */
         data class MarkdownExtractionComplete(
             override val url: String,
             val markdown: String,
             val title: String?,
             val description: String?,
             val wasCached: Boolean,
-            /** Mapping of image numbers to hash IDs for new markdown format. Null for legacy format. */
             val imageMapping: Map<String, String>? = null
         ) : UrlProcessingEvent
 
         /**
-         * Emitted immediately after HTML is loaded, before LLM processing.
-         * Contains cleaned HTML for preview source evaluation.
-         * Only emitted for uncached HTML URLs.
+         * Markdown extracted from a non-HTML file (PDF, docx, etc.) via Gemini File Search.
+         * Distinct from [MarkdownExtractionComplete] which is webpage-specific.
          */
-        data class HtmlPreviewReady(
+        data class FileMarkdownExtractionComplete(
             override val url: String,
-            val cleanedHtml: String,
+            val markdown: String,
             val title: String?,
             val description: String?
         ) : UrlProcessingEvent
@@ -72,6 +74,21 @@ interface IUrlContentProcessingService {
             val extractedText: String,
             val title: String?,
             val pageCount: Int
+        ) : UrlProcessingEvent
+
+        /**
+         * Emitted when agentic in-page search completes.
+         * Contains a direct answer from VLM-driven page interaction.
+         * Emitted for non-cached HTML URLs during query sessions.
+         */
+        data class AgenticSearchComplete(
+            override val url: String,
+            val answer: String?,
+            val evidence: String?,
+            val intention: String?,
+            val contentDate: String?,
+            val observations: List<String>,
+            val success: Boolean
         ) : UrlProcessingEvent
     }
 
@@ -115,13 +132,12 @@ class UrlContentProcessingService(
     private val normalizeUrlService: INormalizeUrlService,
     private val webpageCacheService: IWebpageCacheService,
     private val httpContentTypeResolutionService: IHttpContentTypeResolutionService,
-    private val webpageExtractionService: IWebpageExtractionService,
+    private val webpageIndexingService: IWebpageIndexingService,
+    private val agenticWebpageSearchService: IAgenticWebpageSearchService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val fileSearchService: IFileSearchService,
     private val tokenUsageService: ILlmTokenUsageService,
     private val urlProcessingLockRegistry: UrlProcessingLockRegistry,
-    private val webpageImageLinkageRepository: IWebpageImageLinkageRepository,
-    private val htmlPreviewService: IHtmlPreviewService,
     private val pdfPreviewService: IPdfPreviewService
 ) : IUrlContentProcessingService {
 
@@ -197,18 +213,21 @@ class UrlContentProcessingService(
 
         urlProcessingLockRegistry.withKeyLock(normalizedUrl) {
             try {
-                when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl, maxCacheAge)) {
-                    is CachedWebpageResult.Hit -> {
-                        logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
-                        handleCachedResultAsFlow(url, cacheResult.webpageMarkdown, discoverLinks)
-                            .collect { event -> emit(event) }
-                        return@withKeyLock
-                    }
+                if (sessionId is PeriodicIndexSessionId) {
+                    when (val cacheResult = webpageCacheService.getCachedMarkdown(normalizedUrl, maxCacheAge)) {
+                        is CachedWebpageResult.Hit -> {
+                            logger.debug("Cache hit for URL after lock acquisition: {}", normalizedUrl)
+                            handleCachedResultAsFlow(url, cacheResult.webpageMarkdown, discoverLinks)
+                                .collect { event -> emit(event) }
+                            return@withKeyLock
+                        }
 
-                    is CachedWebpageResult.Miss, is CachedWebpageResult.Expired, is CachedWebpageResult.Failure -> {
-                        // non-html links will always miss, failures are retried
-                        logger.debug("Cache miss/expired/failure for URL, proceeding with processing: {}", normalizedUrl)
+                        is CachedWebpageResult.Miss, is CachedWebpageResult.Expired, is CachedWebpageResult.Failure -> {
+                            logger.debug("Cache miss/expired/failure for URL, proceeding with processing: {}", normalizedUrl)
+                        }
                     }
+                } else {
+                    logger.debug("Query session — skipping cache, proceeding to live processing: {}", normalizedUrl)
                 }
 
                 when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
@@ -217,6 +236,7 @@ class UrlContentProcessingService(
                         processHtmlUrlAsFlow(
                             normalizedUrl = normalizedUrl,
                             cachedHtmlBody = contentTypeResult.bodyBytes,
+                            query = query,
                             sessionId = sessionId,
                             ocrLanguage = ocrLanguage,
                             proxyConfig = proxyConfig,
@@ -280,11 +300,6 @@ class UrlContentProcessingService(
         cached: io.deepsearch.domain.models.entities.WebpageMarkdown,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = flow {
-        // NOTE: We intentionally do NOT emit HtmlPreviewReady for cached pages.
-        // The preview path is designed for early answers while waiting for markdown extraction.
-        // For cached pages, the full markdown is already available immediately, so there's
-        // no benefit to the preview path racing against it.
-        
         // Use pre-computed link-relevance cleaned HTML for link discovery
         // This is much smaller than raw HTML (~10-30KB vs ~500KB-1MB) but contains all anchor tags
         val linkRelevanceHtml = cached.cleanedLinkRelevanceHtml
@@ -310,65 +325,27 @@ class UrlContentProcessingService(
     /**
      * Process HTML URL with single-request optimization.
      * 
-     * Flow:
-     * 1. HTML body is already fetched by httpContentTypeResolutionService (single GET request)
-     * 2. Emit HtmlPreviewReady immediately from cached HTML (no browser needed for preview)
-     * 3. Browser navigates using cached HTML via Fetch interception (no second server request)
-     * 4. Full markdown extraction proceeds with rendered page
+     * For periodic indexing: DOM extraction pipeline (comprehensive, including hidden content).
+     * For query sessions: Agentic VLM search (navigates page, interacts with elements).
      * 
      * @param cachedHtmlBody Pre-fetched HTML body from the initial GET request
      */
     private fun processHtmlUrlAsFlow(
         normalizedUrl: String,
         cachedHtmlBody: ByteArray,
+        query: String,
         sessionId: SessionId,
         ocrLanguage: OcrLanguage,
         proxyConfig: ProxyConfiguration,
         discoverLinks: suspend (html: String) -> List<WebpageLink>
     ): Flow<UrlProcessingEvent> = channelFlow {
-        // Convert cached HTML to string for processing
         val cachedHtmlString = cachedHtmlBody.decodeToString()
         logger.debug("Using cached HTML for {}: {} chars", normalizedUrl, cachedHtmlString.length)
         
-        // Emit HTML preview IMMEDIATELY from cached HTML - no browser needed for preview
-        // This is the fastest path: HTTP already downloaded the HTML, just clean and emit
-        val previewStart = System.currentTimeMillis()
-        val previewResult = htmlPreviewService.prepareHtmlPreview(cachedHtmlString, normalizedUrl)
-        val previewTime = System.currentTimeMillis() - previewStart
-        logger.debug("HTML preview ready for {} in {}ms: {} chars", normalizedUrl, previewTime, previewResult.extractedSentences.length)
-        
-        // Emit preview before browser starts - this is the key latency win
-        send(
-            UrlProcessingEvent.HtmlPreviewReady(
-                normalizedUrl,
-                previewResult.extractedSentences,
-                previewResult.title,
-                previewResult.description
-            )
-        )
-        
-        // Cache preview IMMEDIATELY so it's available when session completes
-        // This ensures content sources are consistent between SSE and query session views
-        webpageCacheService.cacheWebpage(
-            url = normalizedUrl,
-            title = previewResult.title,
-            description = previewResult.description,
-            markdown = previewResult.extractedSentences,
-            html = null,  // Skip raw HTML for preview - full extraction will store it
-            httpStatus = 200,
-            httpReason = "OK",
-            mimeType = "text/html",
-            sessionId = sessionId,
-            isPreview = true
-        )
-        
-        // Now start browser operations for full markdown extraction
-        // Browser uses cached HTML via Fetch interception - no second server request
         val navigateStart = System.currentTimeMillis()
         withResolvedPageCachedHtml(normalizedUrl, cachedHtmlBody, proxyConfig) { page ->
             val navigateTime = System.currentTimeMillis() - navigateStart
             
-            // Get full HTML from rendered page (may differ from cached due to JS execution)
             val getHtmlStart = System.currentTimeMillis()
             val extractedHtml = page.getFullHtml()
             val getHtmlTime = System.currentTimeMillis() - getHtmlStart
@@ -378,66 +355,86 @@ class UrlContentProcessingService(
                 normalizedUrl, navigateTime, getHtmlTime, extractedHtml.length
             )
 
-            // Link discovery uses rendered HTML for accuracy (JS may modify links)
             val linkDiscoveryFlow = flow {
                 val discoveredLinks = discoverLinks(extractedHtml)
                 logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
                 emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
             }
 
-            val markdownExtractionFlow = flow {
+            val contentFlow = flow {
                 try {
-                    // Wait for full page load before extraction
                     page.waitForLoad()
                     
-                    // Extract webpage content
-                    val extractionResult = webpageExtractionService.extractWebpage(page, sessionId, ocrLanguage)
-                    logger.debug(
-                        "Markdown extraction complete for {}: {} chars",
-                        normalizedUrl,
-                        extractionResult.markdown.length
-                    )
-
-                    // Cache the webpage content - full markdown replaces preview
-                    webpageCacheService.cacheWebpage(
-                        url = normalizedUrl,
-                        title = extractionResult.title,
-                        description = extractionResult.description,
-                        markdown = extractionResult.markdown,
-                        html = extractedHtml,
-                        httpStatus = 200,
-                        httpReason = "OK",
-                        mimeType = "text/html",
-                        sessionId = sessionId,
-                        isPreview = false,
-                        imageMapping = extractionResult.imageMapping.takeIf { it.isNotEmpty() }
-                    )
-
-                    // Update URL-to-image linkages
-                    if (extractionResult.imageHashes.isNotEmpty()) {
-                        webpageImageLinkageRepository.upsertLinkages(
-                            normalizedUrl,
-                            extractionResult.imageHashes
+                    if (sessionId is PeriodicIndexSessionId) {
+                        val indexResult = webpageIndexingService.indexWebpage(page, sessionId)
+                        logger.debug(
+                            "Indexing complete for {}: {} chars markdown",
+                            normalizedUrl, indexResult.markdown.length
                         )
+
+                        webpageCacheService.cacheWebpage(
+                            url = normalizedUrl,
+                            title = indexResult.title,
+                            description = indexResult.description,
+                            markdown = indexResult.markdown,
+                            html = extractedHtml,
+                            httpStatus = 200,
+                            httpReason = "OK",
+                            mimeType = "text/html",
+                            sessionId = sessionId
+                        )
+
+                        emit(
+                            UrlProcessingEvent.MarkdownExtractionComplete(
+                                normalizedUrl,
+                                indexResult.markdown,
+                                indexResult.title,
+                                indexResult.description,
+                                wasCached = false
+                            )
+                        )
+                    } else if (sessionId is QuerySessionId) {
+                        val agenticResult = agenticWebpageSearchService.searchWithinPage(
+                            page, normalizedUrl, query, sessionId
+                        )
+                        logger.debug(
+                            "Agentic search complete for {}: success={}",
+                            normalizedUrl, agenticResult.success
+                        )
+                        emit(
+                            UrlProcessingEvent.AgenticSearchComplete(
+                                normalizedUrl,
+                                agenticResult.answer,
+                                agenticResult.evidence,
+                                agenticResult.intention,
+                                agenticResult.contentDate,
+                                agenticResult.observations,
+                                agenticResult.success
+                            )
+                        )
+
+                        if (agenticResult.discoveredUrls.isNotEmpty()) {
+                            val agenticLinks = agenticResult.discoveredUrls.map { discoveredUrl ->
+                                WebpageLink(
+                                    url = discoveredUrl,
+                                    source = LinkSource.AGENTIC_NAVIGATION,
+                                    reason = "Discovered via agentic page interaction"
+                                )
+                            }
+                            logger.info(
+                                "Agentic search discovered {} new URLs from {}: {}",
+                                agenticLinks.size, normalizedUrl,
+                                agenticLinks.map { it.url }
+                            )
+                            emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, agenticLinks))
+                        }
                     }
-
-                    emit(
-                        UrlProcessingEvent.MarkdownExtractionComplete(
-                            normalizedUrl,
-                            extractionResult.markdown,
-                            extractionResult.title,
-                            extractionResult.description,
-                            wasCached = false,
-                            imageMapping = extractionResult.imageMapping.takeIf { it.isNotEmpty() }
-                        )
-                    )
                 } catch (e: Exception) {
                     throw MarkdownExtractionException(normalizedUrl, e)
                 }
             }
 
-            // Merge browser operations for link discovery and markdown extraction
-            merge(linkDiscoveryFlow, markdownExtractionFlow)
+            merge(linkDiscoveryFlow, contentFlow)
                 .onCompletion { cause ->
                     if (cause != null) {
                         logger.debug("Flow cancelled for {}: {}", normalizedUrl, cause.message)
@@ -523,7 +520,7 @@ class UrlContentProcessingService(
      * 1. For PDFs: Emit PdfPreviewReady immediately using local PDFTextStripper (fast path)
      * 2. Use FileSearchService to ingest (upload if needed) the file
      * 3. Query the file search store for relevant content
-     * 4. Emit MarkdownExtractionComplete with file search results (replaces preview)
+     * 4. Emit FileMarkdownExtractionComplete with file search results (replaces preview)
      * 5. Discover links from the extracted markdown (not the entire file)
      * 6. Emit LinkDiscoveryComplete with discovered links
      *
@@ -594,12 +591,11 @@ class UrlContentProcessingService(
         )
 
         send(
-            UrlProcessingEvent.MarkdownExtractionComplete(
+            UrlProcessingEvent.FileMarkdownExtractionComplete(
                 url = normalizedUrl,
                 markdown = queryResult.markdown,
                 title = ingestResult.fileInfo.displayName,
-                description = "File from ${ingestResult.fileInfo.sourceUrl}",
-                wasCached = !ingestResult.wasUploaded
+                description = "File from ${ingestResult.fileInfo.sourceUrl}"
             )
         )
 
@@ -629,8 +625,7 @@ class UrlContentProcessingService(
             httpStatus = statusCode,
             httpReason = reasonPhrase,
             mimeType = mimeType,
-            sessionId = sessionId,
-            isPreview = false
+            sessionId = sessionId
         )
     }
 }

@@ -28,6 +28,8 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
     private val tableMarkdownsStorage = ConcurrentHashMap<String, Map<String, String>>()
     private val kgExtractionStorage = ConcurrentHashMap<String, KgExtractionResult>()
     private val metadataStorage = ConcurrentHashMap<String, Pair<String?, String?>>() // title, description
+    private val snapshotHtmlStorage = ConcurrentHashMap<String, String>()
+    private val lightweightMarkdownStorage = ConcurrentHashMap<String, String>()
     
     override suspend fun storeExtraction(
         jobId: Long,
@@ -65,6 +67,18 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         
         return basePath
     }
+    
+    override suspend fun storeSnapshotHtml(basePath: String, html: String) {
+        snapshotHtmlStorage[basePath] = html
+    }
+    
+    override suspend fun readSnapshotHtml(basePath: String): String? = snapshotHtmlStorage[basePath]
+    
+    override suspend fun storeLightweightMarkdown(basePath: String, markdown: String) {
+        lightweightMarkdownStorage[basePath] = markdown
+    }
+    
+    override suspend fun readLightweightMarkdown(basePath: String): String? = lightweightMarkdownStorage[basePath]
     
     override suspend fun readHtml(basePath: String): String? = htmlStorage[basePath]
     
@@ -142,6 +156,8 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         if (tableMarkdownsStorage.remove(basePath) != null) count++
         if (kgExtractionStorage.remove(basePath) != null) count++
         if (metadataStorage.remove(basePath) != null) count++
+        if (snapshotHtmlStorage.remove(basePath) != null) count++
+        if (lightweightMarkdownStorage.remove(basePath) != null) count++
         return count
     }
     
@@ -153,7 +169,8 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
             htmlStorage, screenshotStorage, boundingBoxStorage, hiddenContainerBboxStorage,
             iconStorage, imageStorage, cleanedHtmlStorage, semanticElementsStorage, 
             tableIdentificationsStorage, iconInterpretationsStorage, imageTextsStorage,
-            tableMarkdownsStorage, kgExtractionStorage, metadataStorage
+            tableMarkdownsStorage, kgExtractionStorage, metadataStorage,
+            snapshotHtmlStorage, lightweightMarkdownStorage
         ).forEach { storage ->
             val keysToRemove = storage.keys.filter { it.startsWith(prefix) }
             keysToRemove.forEach { key ->
@@ -182,6 +199,8 @@ class InMemoryBatchSnapshotStorageService : IBatchSnapshotStorageService {
         tableMarkdownsStorage.clear()
         kgExtractionStorage.clear()
         metadataStorage.clear()
+        snapshotHtmlStorage.clear()
+        lightweightMarkdownStorage.clear()
     }
     
     fun size(): Int = htmlStorage.size

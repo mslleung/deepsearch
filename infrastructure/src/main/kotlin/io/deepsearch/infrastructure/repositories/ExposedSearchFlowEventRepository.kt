@@ -112,7 +112,6 @@ class ExposedSearchFlowEventRepository(
     private fun extractUrl(event: SearchFlowEvent): String? = when (event) {
         is SearchFlowEvent.SessionStarted -> event.url
         is SearchFlowEvent.UrlProcessingStarted -> event.url
-        is SearchFlowEvent.UrlHtmlPreviewReady -> event.url
         is SearchFlowEvent.UrlLinkDiscoveryComplete -> event.url
         is SearchFlowEvent.UrlMarkdownComplete -> event.url
         is SearchFlowEvent.UrlProcessingFailed -> event.url
@@ -127,13 +126,11 @@ class ExposedSearchFlowEventRepository(
     }
 
     private fun extractTitle(event: SearchFlowEvent): String? = when (event) {
-        is SearchFlowEvent.UrlHtmlPreviewReady -> event.title
         is SearchFlowEvent.UrlMarkdownComplete -> event.title
         else -> null
     }
 
     private fun extractDescription(event: SearchFlowEvent): String? = when (event) {
-        is SearchFlowEvent.UrlHtmlPreviewReady -> event.description
         is SearchFlowEvent.UrlMarkdownComplete -> event.description
         else -> null
     }
@@ -160,10 +157,6 @@ class ExposedSearchFlowEventRepository(
                 }
                 is SearchFlowEvent.DiscoverySerpComplete -> {
                     put("linksFound", JsonPrimitive(event.linksFound))
-                }
-                is SearchFlowEvent.UrlHtmlPreviewReady -> {
-                    put("accessType", JsonPrimitive(event.accessType))
-                    event.markdownLength?.let { put("markdownLength", JsonPrimitive(it)) }
                 }
                 is SearchFlowEvent.UrlMarkdownComplete -> {
                     put("markdownLength", JsonPrimitive(event.markdownLength))
@@ -311,17 +304,6 @@ class ExposedSearchFlowEventRepository(
                 timestampMs = timestampMs,
                 createdAt = createdAt,
                 url = url ?: ""
-            )
-            SearchFlowEventType.URL_HTML_PREVIEW_READY -> SearchFlowEvent.UrlHtmlPreviewReady(
-                id = id,
-                sessionId = sessionId,
-                timestampMs = timestampMs,
-                createdAt = createdAt,
-                url = url ?: "",
-                title = title,
-                description = description,
-                accessType = metadata.getString("accessType") ?: "UNCACHED",
-                markdownLength = metadata.getInt("markdownLength")
             )
             SearchFlowEventType.URL_LINK_DISCOVERY_COMPLETE -> SearchFlowEvent.UrlLinkDiscoveryComplete(
                 id = id,

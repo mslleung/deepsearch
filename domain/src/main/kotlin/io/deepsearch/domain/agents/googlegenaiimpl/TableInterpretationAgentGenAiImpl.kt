@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.ITableInterpretationAgent
 import io.deepsearch.domain.agents.SnippetClassification
 import io.deepsearch.domain.agents.TableInterpretationBatchResult
@@ -156,7 +157,7 @@ class TableInterpretationAgentGenAiImpl(
             appendLine("Please generate the response in JSON structured output")
         }
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -170,7 +171,7 @@ class TableInterpretationAgentGenAiImpl(
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
@@ -636,7 +637,7 @@ class TableInterpretationAgentGenAiImpl(
 
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
             systemInstruction = systemInstruction,
             userPrompt = userPrompt,
             temperature = 1.0f

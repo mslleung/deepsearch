@@ -6,32 +6,59 @@ alwaysApply: true
 
 Adopt Koin-based integration/component tests by default. Favor real modules over mocks to reflect production wiring and catch integration issues early.
 
-- **Use JUnit 5 Koin extension**: Prefer `KoinTestExtension` over manual `startKoin/stopKoin`.
+- **Use isolated Koin extensions**: Use `IsolatedKoinExtension` and `IsolatedKoinTest` (in `io.deepsearch.domain.testing`) instead of `KoinTestExtension` and `KoinTest`. The isolated variants create a per-test Koin container that never touches `GlobalContext`, enabling safe parallel test execution.
 
 ```kotlin
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
+import io.deepsearch.domain.testing.IsolatedKoinExtension
 
 // Domain tests: use domainTestModule
-class MyDomainTest : KoinTest {
+class MyDomainTest : IsolatedKoinTest() {
   @JvmField
   @RegisterExtension
-  val koin = KoinTestExtension.create { modules(io.deepsearch.domain.config.domainTestModule) }
+  val koinExtension = IsolatedKoinExtension.create { modules(io.deepsearch.domain.config.domainTestModule) }
 
   private val agent by inject<SomeDomainInterface>()
 }
 
 // Application tests: use applicationTestModule
-class MyAppTest : KoinTest {
+class MyAppTest : IsolatedKoinTest() {
   @JvmField
   @RegisterExtension
-  val koin = KoinTestExtension.create { modules(io.deepsearch.application.config.applicationTestModule) }
+  val koinExtension = IsolatedKoinExtension.create { modules(io.deepsearch.application.config.applicationTestModule) }
 
   private val service by inject<SomeAppInterface>()
 }
 ```
+
+- **PER_CLASS lifecycle tests**: For `@TestInstance(Lifecycle.PER_CLASS)` tests that need manual setup/teardown, use `koinApplication` directly:
+
+```kotlin
+import org.junit.jupiter.api.TestInstance
+import org.koin.core.KoinApplication
+import org.koin.dsl.koinApplication
+import io.deepsearch.domain.testing.IsolatedKoinTest
+
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class MyPerClassTest : IsolatedKoinTest() {
+  private lateinit var koinApp: KoinApplication
+
+  @BeforeAll
+  fun setup() {
+    koinApp = koinApplication { modules(myTestModule) }
+    koinApp.createEagerInstances()
+    testKoin = koinApp.koin
+  }
+
+  @AfterAll
+  fun teardown() {
+    koinApp.close()
+  }
+}
+```
+
+- **Do NOT use global Koin**: Never use `startKoin`/`stopKoin`, `KoinTest`, `KoinTestExtension`, or `GlobalContext.get()` in tests. These use a JVM-wide singleton that breaks parallel execution.
 
 - **Default to real bindings**: Do not stub or mock domain agents or application services unless isolating an external boundary (e.g., network, time, randomness) is essential for determinism.
 
@@ -48,14 +75,13 @@ private val overrides = module {
 
 @JvmField
 @RegisterExtension
-val koin = KoinTestExtension.create {
+val koinExtension = IsolatedKoinExtension.create {
   modules(io.deepsearch.domain.config.domainTestModule, overrides)
 }
 ```
 
 - **Request-scoped components**: Exercise them via injected services/agents. Avoid manual scope management unless the test specifically verifies scope behavior.
 
-- **Resolution pattern**: Prefer `by inject<T>()` within a `KoinTest`. Avoid global lookups.
+- **Resolution pattern**: Prefer `by inject<T>()` within an `IsolatedKoinTest`. Avoid global lookups.
 
 - **When adding new bindings**: Mirror production lifecycles in the test modules. Update `domainTestModule`/`applicationTestModule` to keep integration coverage high.
-

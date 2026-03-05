@@ -46,7 +46,6 @@ interface IWebpageCacheService {
      * @param httpReason HTTP reason phrase
      * @param mimeType Content MIME type
      * @param sessionId Session ID for token tracking
-     * @param isPreview True if content is from simple text extraction (no LLM processing)
      * @param imageMapping Mapping of image numbers to original hash IDs: {"1": "img-abc123"}
      */
     suspend fun cacheWebpage(
@@ -59,8 +58,8 @@ interface IWebpageCacheService {
         httpReason: String,
         mimeType: String?,
         sessionId: SessionId,
-        isPreview: Boolean = false,
-        imageMapping: Map<String, String>? = null
+        imageMapping: Map<String, String>? = null,
+        contentMapJson: String? = null
     )
 
     /**
@@ -127,7 +126,6 @@ class WebpageCacheService(
     private val textEmbeddingService: ITextEmbeddingService,
     private val normalizeUrlService: io.deepsearch.domain.services.INormalizeUrlService,
     private val tokenUsageService: ILlmTokenUsageService,
-    private val htmlPreviewService: IHtmlPreviewService,
     private val linkRelevanceHtmlService: ILinkRelevanceHtmlService,
     private val markdownIndexingTaskRepository: IMarkdownIndexingTaskRepository,
     private val markdownIndexingWorker: IMarkdownIndexingWorker
@@ -147,20 +145,9 @@ class WebpageCacheService(
             return CachedWebpageResult.Failure(cached)
         }
 
-        // If no expiry time is specified, always return Hit
         if (maxCacheAge == null) {
             logger.debug("Cache hit for URL: {} (no expiry check)", url)
             return CachedWebpageResult.Hit(cached)
-        }
-
-        // For live crawling (maxCacheAge != null), treat preview content as expired
-        // This ensures preview-only cached pages will be re-crawled with full extraction
-        if (cached.isPreview) {
-            logger.debug(
-                "Cache expired for URL: {} (preview content, will re-crawl for full markdown)",
-                url
-            )
-            return CachedWebpageResult.Expired(cached)
         }
 
         val currentTime = Clock.System.now()
@@ -195,45 +182,31 @@ class WebpageCacheService(
         httpReason: String,
         mimeType: String?,
         sessionId: SessionId,
-        isPreview: Boolean,
-        imageMapping: Map<String, String>?
+        imageMapping: Map<String, String>?,
+        contentMapJson: String?
     ) {
-        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview, imageMapping = imageMapping)
+        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, imageMapping = imageMapping, contentMapJson = contentMapJson)
 
-        // Create indexing tasks for async processing
         if (!markdown.isNullOrBlank()) {
-            val tasks = mutableListOf<MarkdownIndexingTask>()
-
-            // Hybrid search embedding task (both preview and full markdown)
-            tasks.add(
+            val tasks = listOf(
                 MarkdownIndexingTask.createPending(
                     url = url,
                     taskType = IndexingTaskType.EMBEDDING,
                     sessionId = sessionId.toStorageString(),
                     markdown = markdown
+                ),
+                MarkdownIndexingTask.createPending(
+                    url = url,
+                    taskType = IndexingTaskType.KNOWLEDGE_GRAPH,
+                    sessionId = sessionId.toStorageString(),
+                    markdown = markdown
                 )
             )
 
-            // Knowledge graph indexing task (only for full content, not previews)
-            if (!isPreview) {
-                tasks.add(
-                    MarkdownIndexingTask.createPending(
-                        url = url,
-                        taskType = IndexingTaskType.KNOWLEDGE_GRAPH,
-                        sessionId = sessionId.toStorageString(),
-                        markdown = markdown
-                    )
-                )
-            }
-
-            // Persist tasks and notify worker
             markdownIndexingTaskRepository.createBatch(tasks)
             markdownIndexingWorker.notifyNewTasks()
             
-            logger.debug(
-                "Created {} indexing task(s) for URL: {} (isPreview: {})",
-                tasks.size, url, isPreview
-            )
+            logger.debug("Created {} indexing task(s) for URL: {}", tasks.size, url)
         }
     }
 
@@ -250,8 +223,7 @@ class WebpageCacheService(
         imageMapping: Map<String, String>?,
         fileSearchDocumentName: String?
     ) {
-        // Batch mode: only cache, no async indexing (handled by batch stages)
-        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, isPreview = false, fileSearchDocumentName = fileSearchDocumentName, imageMapping = imageMapping)
+        cacheWebpageInternal(url, title, description, markdown, html, httpStatus, httpReason, mimeType, fileSearchDocumentName = fileSearchDocumentName, imageMapping = imageMapping)
     }
 
     private suspend fun cacheWebpageInternal(
@@ -263,30 +235,19 @@ class WebpageCacheService(
         httpStatus: Int,
         httpReason: String,
         mimeType: String?,
-        isPreview: Boolean,
         fileSearchDocumentName: String? = null,
-        imageMapping: Map<String, String>? = null
+        imageMapping: Map<String, String>? = null,
+        contentMapJson: String? = null
     ) {
         val currentTime = Clock.System.now()
         val existing = webpageMarkdownRepository.findByUrl(url)
 
-        // Pre-compute cleaned versions when raw HTML is available
-        val cleanedPreviewHtml = when {
-            // For full HTML content, compute cleaned preview
-            !html.isNullOrBlank() -> htmlPreviewService.prepareHtmlPreview(html, url).extractedSentences
-            // For preview mode without HTML, the markdown IS the cleaned preview content
-            isPreview && !markdown.isNullOrBlank() -> markdown
-            else -> null
-        }
-        
-        // Pre-compute link-relevance cleaned HTML (~10-30KB vs ~500KB-1MB raw)
         val cleanedLinkRelevanceHtml = if (!html.isNullOrBlank()) {
             linkRelevanceHtmlService.prepareLinkRelevanceHtml(html, url).cleanedHtml
         } else {
             null
         }
 
-        // Store webpage without embedding first
         webpageMarkdownRepository.upsert(
             WebpageMarkdown(
                 url = url,
@@ -294,29 +255,22 @@ class WebpageCacheService(
                 description = description,
                 markdown = markdown,
                 cleanedLinkRelevanceHtml = cleanedLinkRelevanceHtml,
-                cleanedPreviewHtml = cleanedPreviewHtml,
                 httpStatus = httpStatus,
                 httpReason = httpReason,
                 mimeType = mimeType,
-                embedding = null, // Will be updated by indexing service
-                isPreview = isPreview,
+                embedding = null,
                 fileSearchDocumentName = fileSearchDocumentName,
                 imageMapping = imageMapping,
+                contentMapJson = contentMapJson ?: existing?.contentMapJson,
                 createdAt = existing?.createdAt ?: currentTime,
                 updatedAt = currentTime,
-                version = existing?.version ?: 0 // Preserve version for optimistic locking
+                version = existing?.version ?: 0
             )
         )
 
         logger.debug(
-            "Cached webpage for URL: {} (status: {}, markdown: {} chars, cleanedPreviewHtml: {} chars, linkRelevanceHtml: {} chars, isPreview: {}, fileSearchDocumentName: {})",
-            url,
-            httpStatus,
-            markdown?.length ?: 0,
-            cleanedPreviewHtml?.length ?: 0,
-            cleanedLinkRelevanceHtml?.length ?: 0,
-            isPreview,
-            fileSearchDocumentName
+            "Cached webpage for URL: {} (status: {}, markdown: {} chars, linkRelevanceHtml: {} chars)",
+            url, httpStatus, markdown?.length ?: 0, cleanedLinkRelevanceHtml?.length ?: 0
         )
     }
 

@@ -49,6 +49,21 @@ sealed class PageCommand {
     @Serializable @SerialName("clickByXPathSelector")
     data class ClickByXPathSelector(val xpath: String) : PageCommand()
     
+    @Serializable @SerialName("clickByCssSelector")
+    data class ClickByCssSelector(val cssSelector: String) : PageCommand()
+    
+    @Serializable @SerialName("scrollToElementByCssSelector")
+    data class ScrollToElementByCssSelector(val cssSelector: String) : PageCommand()
+
+    @Serializable @SerialName("scrollToTextContent")
+    data class ScrollToTextContent(val searchText: String, val occurrence: Int = 1) : PageCommand()
+
+    @Serializable @SerialName("scrollToPercentage")
+    data class ScrollToPercentage(val percent: Int) : PageCommand()
+    
+    @Serializable @SerialName("scrollPage")
+    data class ScrollPage(val deltaY: Int) : PageCommand()
+    
     @Serializable @SerialName("removeElement")
     data class RemoveElement(val xpath: String) : PageCommand()
     
@@ -141,6 +156,12 @@ sealed class PageCommand {
 
     @Serializable @SerialName("captureHiddenContainerBoundingBoxes")
     data object CaptureHiddenContainerBoundingBoxes : PageCommand()
+
+    @Serializable @SerialName("getInteractiveElements")
+    data object GetInteractiveElements : PageCommand()
+
+    @Serializable @SerialName("clickAtCoordinates")
+    data class ClickAtCoordinates(val x: Int, val y: Int) : PageCommand()
 }
 
 @Serializable
@@ -235,6 +256,27 @@ data class TableInterpretationDataResponse(
 @Serializable
 data class TablesInterpretationDataResponse(
     val data: Map<String, TableInterpretationDataResponse>
+)
+
+// ==================== Interactive Elements Response ====================
+
+@Serializable
+data class InteractiveElementResponse(
+    val tag: String,
+    val text: String,
+    val role: String? = null,
+    val ariaLabel: String? = null,
+    val states: List<String> = emptyList(),
+    val left: Double,
+    val top: Double,
+    val right: Double,
+    val bottom: Double,
+    val index: Int
+)
+
+@Serializable
+data class InteractiveElementsResponse(
+    val elements: List<InteractiveElementResponse>
 )
 
 // ==================== Hidden Container Bounding Boxes Response ====================

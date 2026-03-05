@@ -356,6 +356,9 @@ class CrawlAndExtractHandler(
             
             val basePath = snapshotStorage.storeExtraction(jobId, urlHash, extractionData)
             
+            // Store post-stable-ID HTML for lightweight indexing pipeline
+            snapshotStorage.storeSnapshotHtml(basePath, snapshot.html)
+            
             // Update URL state with GCS path (not JSON blob)
             urlState.markExtracted(basePath, snapshot.title, snapshot.description)
             batchUrlStateRepository.update(urlState)

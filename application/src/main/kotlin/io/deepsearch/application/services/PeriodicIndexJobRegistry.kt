@@ -584,11 +584,24 @@ class PeriodicIndexJobRegistry(
                                     cachedHit = event.wasCached
                                 )
                             }
-                            is IUrlContentProcessingService.UrlProcessingEvent.HtmlPreviewReady -> {
-                                // Ignored for periodic index
+                            is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete -> {
+                                logger.debug("[{}] File markdown extracted: {} chars", jobId, event.markdown.length)
+                                urlAccessService.recordUrlAccess(
+                                    sessionId,
+                                    UncachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
+                                )
+                                urlTracker.finishProcessing(normalizedUrl, event.title, false)
+                                result = PeriodicIndexStepResult(
+                                    url = normalizedUrl,
+                                    title = event.title,
+                                    cachedHit = false
+                                )
                             }
                             is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
                                 // Ignored for periodic index
+                            }
+                            is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete -> {
+                                // Not used in periodic indexing
                             }
                         }
                     }

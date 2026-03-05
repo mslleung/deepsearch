@@ -18,6 +18,7 @@ class BatchPeriodicIndexJobTable(
     val maxUrlCount = integer("max_url_count")
     val sitemapUrl = varchar("sitemap_url", length = 2048).nullable()
     val state = varchar("state", length = 64)
+    val pipelineMode = varchar("pipeline_mode", length = 32).default("LIGHTWEIGHT")
     val createdAtMs = long("created_at_ms")
     val updatedAtMs = long("updated_at_ms")
     val version = long("version").default(0)

@@ -4,6 +4,7 @@ import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
+import io.deepsearch.domain.models.entities.BatchPipelineMode
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
 import io.deepsearch.domain.services.IGeminiBatchService
@@ -69,6 +70,7 @@ class BatchPeriodicIndexOrchestrator(
     private val tableInterpretationHandler: TableInterpretationBatchHandler,
     private val parallelEmbeddingAndKgHandler: ParallelEmbeddingAndKgHandler,
     private val kgEntityEmbeddingsHandler: KgEntityEmbeddingsHandler,
+    private val lightweightIndexHandler: LightweightIndexHandler,
     // Background workers
     private val fileUploadBackgroundWorker: FileUploadBackgroundWorker,
     private val eventEmitter: BatchEventEmitter
@@ -157,8 +159,13 @@ class BatchPeriodicIndexOrchestrator(
                 when (job.state) {
                     BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT -> 
                         crawlAndExtractHandler.execute(job, eventFlow)
-                    BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> 
-                        contentLlmBatchHandler.execute(job, eventFlow)
+                    BatchPeriodicIndexJobState.CONTENT_LLM_BATCH -> {
+                        if (job.pipelineMode == BatchPipelineMode.LIGHTWEIGHT) {
+                            lightweightIndexHandler.execute(job, eventFlow)
+                        } else {
+                            contentLlmBatchHandler.execute(job, eventFlow)
+                        }
+                    }
                     BatchPeriodicIndexJobState.LLM_TABLE_INTERPRETATION -> 
                         tableInterpretationHandler.execute(job, eventFlow)
                     BatchPeriodicIndexJobState.PARALLEL_EMBEDDING_AND_KG_EXTRACTION ->

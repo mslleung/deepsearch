@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.ILinearizedContentConversionAgent
 import io.deepsearch.domain.agents.LinearizedContentConversionInput
 import io.deepsearch.domain.agents.LinearizedContentConversionOutput
@@ -126,7 +127,7 @@ class LinearizedContentConversionAgentGenAiImpl(
             appendLine("Please generate the response in JSON structured output")
         }
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -138,7 +139,7 @@ class LinearizedContentConversionAgentGenAiImpl(
                         .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
-                        .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0).build())
+                        .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                         .build()
                 )

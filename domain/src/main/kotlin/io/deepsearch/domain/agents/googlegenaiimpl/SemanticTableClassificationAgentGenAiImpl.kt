@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.ISemanticTableClassificationAgent
 import io.deepsearch.domain.agents.SemanticTableClassificationBatchResult
 import io.deepsearch.domain.agents.SemanticTableClassificationInput
@@ -123,7 +124,7 @@ class SemanticTableClassificationAgentGenAiImpl(
         if (inputs.isEmpty()) {
             return SemanticTableClassificationBatchResult(
                 classifications = emptyList(),
-                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId)
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)
             )
         }
 
@@ -144,7 +145,7 @@ class SemanticTableClassificationAgentGenAiImpl(
 
         logger.debug("Classifying {} semantic tables", inputs.size)
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -153,12 +154,12 @@ class SemanticTableClassificationAgentGenAiImpl(
                     modelId,
                     prompt,
                     GenerateContentConfig.builder()
-                        .temperature(0F)
+                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))

@@ -16,10 +16,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
-import org.koin.core.context.startKoin
-import org.koin.core.context.stopKoin
-import org.koin.test.KoinTest
-import org.koin.test.inject
+import org.koin.core.KoinApplication
+import org.koin.dsl.koinApplication
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -28,8 +27,9 @@ import kotlin.time.Duration.Companion.seconds
  * candidates to linearized row format via the new agent.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class HiddenContentLinearizedConversionTest : KoinTest {
+class HiddenContentLinearizedConversionTest : IsolatedKoinTest() {
 
+    private lateinit var koinApp: KoinApplication
     private val browserPool by inject<IBrowserPool>()
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val recursiveTableDiscoveryService by inject<IRecursiveTableDiscoveryService>()
@@ -38,13 +38,15 @@ class HiddenContentLinearizedConversionTest : KoinTest {
 
     @BeforeAll
     fun setup() {
-        startKoin { modules(applicationBenchmarkTestModule) }
+        koinApp = koinApplication { modules(applicationBenchmarkTestModule) }
+        koinApp.createEagerInstances()
+        testKoin = koinApp.koin
     }
 
     @AfterAll
     fun teardown() {
         applicationScope.close()
-        stopKoin()
+        koinApp.close()
     }
 
     @Test

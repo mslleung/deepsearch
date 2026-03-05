@@ -28,13 +28,11 @@ interface IHybridSearchIndexingService {
      * @param url The URL of the document
      * @param markdown The markdown content to embed
      * @param sessionId Session ID for token tracking
-     * @param isPreview Whether this is preview content (for race protection)
      */
     fun indexAsync(
         url: String,
         markdown: String,
-        sessionId: SessionId,
-        isPreview: Boolean = false
+        sessionId: SessionId
     )
 
     /**
@@ -74,20 +72,17 @@ class HybridSearchIndexingService(
     override fun indexAsync(
         url: String,
         markdown: String,
-        sessionId: SessionId,
-        isPreview: Boolean
+        sessionId: SessionId
     ) {
         if (markdown.isBlank()) {
             logger.debug("Skipping embedding for URL {} - empty markdown", url)
             return
         }
 
-        // Launch in application scope (fire-and-forget)
         applicationScope.scope.launch {
             try {
-                logger.debug("Generating embedding for URL: {} (isPreview: {})", url, isPreview)
+                logger.debug("Generating embedding for URL: {}", url)
 
-                // Generate embedding
                 val result = textEmbeddingService.embedDocuments(listOf(markdown))
 
                 if (result.embeddings.isEmpty()) {
@@ -101,7 +96,6 @@ class HybridSearchIndexingService(
                     embedding.size, url, result.tokenUsage.totalTokens
                 )
 
-                // Record token usage
                 tokenUsageService.recordTokenUsage(
                     sessionId = sessionId,
                     agentName = "HybridSearchIndexingService.embedDocuments",
@@ -111,8 +105,7 @@ class HybridSearchIndexingService(
                     totalTokens = result.tokenUsage.totalTokens
                 )
 
-                // Store embedding with retry logic
-                storeEmbeddingWithRetry(url, embedding, isPreview)
+                storeEmbeddingWithRetry(url, embedding)
 
             } catch (e: Exception) {
                 logger.error("Failed to generate/store embedding for URL {}: {}", url, e.message, e)
@@ -135,7 +128,7 @@ class HybridSearchIndexingService(
 
         results.forEach { (url, embedding) ->
             try {
-                storeEmbeddingWithRetry(url, embedding, isPreview = false)
+                storeEmbeddingWithRetry(url, embedding)
                 logger.debug("Stored batch embedding for URL: {}", url)
             } catch (e: Exception) {
                 logger.warn("Failed to store batch embedding for URL {}: {}", url, e.message)
@@ -147,8 +140,7 @@ class HybridSearchIndexingService(
 
     private suspend fun storeEmbeddingWithRetry(
         url: String,
-        embedding: List<Float>,
-        isPreview: Boolean
+        embedding: List<Float>
     ) {
         var retries = 0
         val maxRetries = 3
@@ -157,22 +149,13 @@ class HybridSearchIndexingService(
             try {
                 val existing = webpageMarkdownRepository.findByUrl(url)
                 if (existing != null) {
-                    // Race protection: don't let preview embedding overwrite full markdown embedding
-                    if (isPreview && !existing.isPreview) {
-                        logger.debug("Skipping preview embedding for URL {} - full markdown already stored", url)
-                        return
-                    }
-
                     webpageMarkdownRepository.upsert(
                         existing.copy(
                             embedding = embedding,
                             updatedAt = Clock.System.now()
                         )
                     )
-                    logger.debug(
-                        "Stored embedding for URL: {} (attempt {}, isPreview: {})",
-                        url, retries + 1, isPreview
-                    )
+                    logger.debug("Stored embedding for URL: {} (attempt {})", url, retries + 1)
                     return
                 } else {
                     logger.warn("Webpage not found for URL {} when trying to store embedding", url)

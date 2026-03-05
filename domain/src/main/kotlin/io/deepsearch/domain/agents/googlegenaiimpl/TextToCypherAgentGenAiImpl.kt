@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.ITextToCypherAgent
 import io.deepsearch.domain.agents.TextToCypherInput
 import io.deepsearch.domain.agents.TextToCypherOutput
@@ -103,7 +104,7 @@ class TextToCypherAgentGenAiImpl(
     override suspend fun generate(input: TextToCypherInput): TextToCypherOutput {
         logger.debug("Generating Cypher for query: '{}', domain: {}", input.query, input.domain)
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
         val systemInstruction = buildSystemInstruction(input.domain)
@@ -124,12 +125,12 @@ class TextToCypherAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(0f)
+                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))

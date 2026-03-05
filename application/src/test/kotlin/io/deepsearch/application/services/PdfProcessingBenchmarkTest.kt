@@ -17,9 +17,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
+import io.deepsearch.domain.testing.IsolatedKoinExtension
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import kotlin.system.measureTimeMillis
 
@@ -35,11 +34,11 @@ import kotlin.system.measureTimeMillis
  * - Network access to download test PDFs
  * - Database connection for file search store operations
  */
-class PdfProcessingBenchmarkTest : KoinTest {
+class PdfProcessingBenchmarkTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(applicationBenchmarkTestModule)
     }
 

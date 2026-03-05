@@ -14,6 +14,7 @@ import com.google.genai.types.InlinedRequest
 import com.google.genai.types.JobState
 import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import com.google.genai.types.UploadFileConfig
 import io.deepsearch.domain.agents.infra.withRateLimitRetry
 import io.deepsearch.domain.config.IDispatcherProvider
@@ -767,7 +768,7 @@ class GeminiBatchServiceImpl(
             .temperature(request.temperature)
             .thinkingConfig(
                 ThinkingConfig.builder()
-                    .thinkingBudget(0)
+                    .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                     .build()
             )
 

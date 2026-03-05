@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.EntityExtractionInput
 import io.deepsearch.domain.agents.EntityExtractionOutput
 import io.deepsearch.domain.agents.IEntityExtractionAgent
@@ -26,7 +27,7 @@ import org.slf4j.LoggerFactory
 
 /**
  * Entity extraction agent that extracts entities and relationships from markdown content.
- * Uses Gemini 2.5 Flash Lite to process full markdown documents (no chunking).
+ * Uses Gemini 3.1 Flash Lite to process full markdown documents (no chunking).
  * 
  * Uses a triples-based extraction approach (Subject-Predicate-Object) to ensure
  * that both entities in a relationship are always explicitly defined, preventing
@@ -218,7 +219,7 @@ class EntityExtractionAgentGenAiImpl(
             input.markdown.length
         )
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val userPrompt = """
@@ -236,12 +237,12 @@ class EntityExtractionAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(0f)
+                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
@@ -367,10 +368,10 @@ class EntityExtractionAgentGenAiImpl(
 
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId,
+            modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
             systemInstruction = systemInstruction,
             userPrompt = userPrompt,
-            temperature = 0f
+            temperature = 1.0f
         ).withSchema(outputSchema)
     }
 

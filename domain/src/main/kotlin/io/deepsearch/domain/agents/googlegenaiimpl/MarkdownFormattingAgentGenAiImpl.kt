@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import com.ibm.icu.text.BreakIterator
 import io.deepsearch.domain.agents.IMarkdownFormattingAgent
 import io.deepsearch.domain.agents.MarkdownFormattingInput
@@ -87,7 +88,7 @@ class MarkdownFormattingAgentGenAiImpl(
     """.trimIndent()
 
     override suspend fun generate(input: MarkdownFormattingInput): MarkdownFormattingOutput {
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
 
         logger.debug("Formatting markdown for URL: {}, raw text length: {} chars", input.url, input.rawText.length)
 
@@ -121,7 +122,7 @@ class MarkdownFormattingAgentGenAiImpl(
         chunks: List<String>,
         input: MarkdownFormattingInput
     ): MarkdownFormattingOutput = coroutineScope {
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         
         logger.debug("Processing {} chunks in parallel", chunks.size)
 
@@ -159,7 +160,7 @@ class MarkdownFormattingAgentGenAiImpl(
      * Returns a Pair of (formatted markdown, token usage).
      */
     private suspend fun processChunk(userPrompt: String): Pair<String, TokenUsageMetrics> {
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -168,12 +169,12 @@ class MarkdownFormattingAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(Part.fromText(userPrompt))),
                     GenerateContentConfig.builder()
-                        .temperature(0.1F) // Low temperature for consistent formatting
+                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))

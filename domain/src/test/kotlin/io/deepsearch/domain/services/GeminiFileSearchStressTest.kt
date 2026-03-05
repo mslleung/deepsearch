@@ -17,9 +17,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.TestMethodOrder
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
@@ -42,11 +41,11 @@ import kotlin.time.measureTimedValue
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
-class GeminiFileSearchStressTest : KoinTest {
+class GeminiFileSearchStressTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainBenchmarkTestModule)
     }
 

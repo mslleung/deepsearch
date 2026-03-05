@@ -12,18 +12,17 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.getValue
 import kotlin.time.ExperimentalTime
 
 @OptIn(ExperimentalTime::class)
-class AgeKnowledgeGraphRepositoryTest : KoinTest {
+class AgeKnowledgeGraphRepositoryTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinExtension = KoinTestExtension.create {
+    val koinExtension = IsolatedKoinExtension.create {
         modules(domainTestModule, infrastructureTestModule)
     }
 

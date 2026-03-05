@@ -11,9 +11,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -33,11 +32,11 @@ import kotlin.time.measureTimedValue
  * - LLM processing: 1-3 seconds
  * - Total: 3-8 seconds per URL
  */
-class UrlContextExtractionAgentTest : KoinTest {
+class UrlContextExtractionAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainBenchmarkTestModule)
     }
 

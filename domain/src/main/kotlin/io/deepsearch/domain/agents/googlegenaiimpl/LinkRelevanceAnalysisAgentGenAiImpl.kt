@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.ILinkRelevanceAnalysisAgent
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisInput
 import io.deepsearch.domain.agents.LinkRelevanceAnalysisOutput
@@ -141,7 +142,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
             appendLine(cleanedHtml)
         }
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
         val links = try {
@@ -151,12 +152,12 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                         modelId,
                         userPrompt,
                         GenerateContentConfig.builder()
-                            .temperature(0.2F)
+                            .temperature(1.0F)
                             .responseSchema(outputSchema)
                             .responseMimeType("application/json")
                             .thinkingConfig(
                                 ThinkingConfig.builder()
-                                    .thinkingBudget(0)
+                                    .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                     .build()
                             )
                             .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))

@@ -41,14 +41,13 @@ class ExposedWebpageMarkdownRepository(
             webpageMarkdownTable.description,
             webpageMarkdownTable.markdown,
             webpageMarkdownTable.cleanedLinkRelevanceHtml,
-            webpageMarkdownTable.cleanedPreviewHtml,
             webpageMarkdownTable.httpStatus,
             webpageMarkdownTable.httpReason,
             webpageMarkdownTable.mimeType,
             webpageMarkdownTable.embedding,
-            webpageMarkdownTable.isPreview,
             webpageMarkdownTable.fileSearchDocumentName,
             webpageMarkdownTable.imageMapping,
+            webpageMarkdownTable.contentMapJson,
             webpageMarkdownTable.createdAtEpochMs,
             webpageMarkdownTable.updatedAtEpochMs,
             webpageMarkdownTable.version
@@ -75,26 +74,14 @@ class ExposedWebpageMarkdownRepository(
     }
 
     override suspend fun upsert(webpage: WebpageMarkdown): Unit = transactionService.withTransaction {
-        // Check for existing record to implement optimistic locking and preview protection
-        val existingRecord = webpageMarkdownTable
-            .select(webpageMarkdownTable.version, webpageMarkdownTable.isPreview)
+        val existingVersion = webpageMarkdownTable
+            .select(webpageMarkdownTable.version)
             .where { webpageMarkdownTable.url eq webpage.url }
-            .map { Pair(it[webpageMarkdownTable.version], it[webpageMarkdownTable.isPreview]) }
+            .map { it[webpageMarkdownTable.version] }
             .singleOrNull()
 
-        val existingVersion = existingRecord?.first
-        val existingIsPreview = existingRecord?.second
-
-        // If record exists, verify version matches to prevent concurrent modification issues
         if (existingVersion != null && existingVersion != webpage.version) {
             throw OptimisticLockException("WebpageMarkdown", webpage.url, webpage.version)
-        }
-
-        // Prevent preview from overwriting full markdown
-        // This can happen if preview extraction runs after full extraction in a race condition
-        if (existingIsPreview == false && webpage.isPreview) {
-            logger.debug("Skipping preview upsert - full markdown already exists for {}", webpage.url)
-            return@withTransaction
         }
 
         // Calculate new version (increment from existing, or use provided version for new records)
@@ -117,14 +104,13 @@ class ExposedWebpageMarkdownRepository(
             it[markdown] = webpage.markdown  // Original markdown preserved
             it[markdownSanitized] = sanitizedMarkdown  // Sanitized version for tsvector trigger
             it[cleanedLinkRelevanceHtml] = webpage.cleanedLinkRelevanceHtml
-            it[cleanedPreviewHtml] = webpage.cleanedPreviewHtml
             it[httpStatus] = webpage.httpStatus
             it[httpReason] = webpage.httpReason
             it[mimeType] = webpage.mimeType
             it[embedding] = webpage.embedding
-            it[isPreview] = webpage.isPreview
             it[fileSearchDocumentName] = webpage.fileSearchDocumentName
             it[imageMapping] = imageMappingJson
+            it[contentMapJson] = webpage.contentMapJson
             it[createdAtEpochMs] = webpage.createdAt.toEpochMilliseconds()
             it[updatedAtEpochMs] = webpage.updatedAt.toEpochMilliseconds()
             it[version] = newVersion
@@ -134,11 +120,10 @@ class ExposedWebpageMarkdownRepository(
         webpage.version = newVersion
 
         logger.debug(
-            "Upserted webpage for URL: {} (version: {} -> {}, isPreview: {})",
+            "Upserted webpage for URL: {} (version: {} -> {})",
             webpage.url,
             existingVersion ?: "new",
-            newVersion,
-            webpage.isPreview
+            newVersion
         )
     }
 
@@ -382,14 +367,13 @@ class ExposedWebpageMarkdownRepository(
             description = row[webpageMarkdownTable.description],
             markdown = row[webpageMarkdownTable.markdown],
             cleanedLinkRelevanceHtml = row[webpageMarkdownTable.cleanedLinkRelevanceHtml],
-            cleanedPreviewHtml = row[webpageMarkdownTable.cleanedPreviewHtml],
             httpStatus = row[webpageMarkdownTable.httpStatus],
             httpReason = row[webpageMarkdownTable.httpReason],
             mimeType = row[webpageMarkdownTable.mimeType],
             embedding = row[webpageMarkdownTable.embedding],
-            isPreview = row[webpageMarkdownTable.isPreview],
             fileSearchDocumentName = row[webpageMarkdownTable.fileSearchDocumentName],
             imageMapping = imageMapping,
+            contentMapJson = row[webpageMarkdownTable.contentMapJson],
             createdAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.createdAtEpochMs]),
             updatedAt = Instant.fromEpochMilliseconds(row[webpageMarkdownTable.updatedAtEpochMs]),
             version = row[webpageMarkdownTable.version]

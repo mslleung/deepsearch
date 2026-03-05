@@ -3,6 +3,7 @@ package io.deepsearch.infrastructure.repositories
 import io.deepsearch.domain.exceptions.OptimisticLockException
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJob
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
+import io.deepsearch.domain.models.entities.BatchPipelineMode
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
@@ -38,6 +39,7 @@ class ExposedBatchPeriodicIndexJobRepository(
             it[maxUrlCount] = job.maxUrlCount
             it[sitemapUrl] = job.sitemapUrl
             it[state] = job.state.name
+            it[pipelineMode] = job.pipelineMode.name
             it[createdAtMs] = job.createdAt.toEpochMilliseconds()
             it[updatedAtMs] = job.updatedAt.toEpochMilliseconds()
             it[version] = job.version
@@ -162,6 +164,8 @@ class ExposedBatchPeriodicIndexJobRepository(
         createdAt = Instant.fromEpochMilliseconds(row[table.createdAtMs]),
         updatedAt = Instant.fromEpochMilliseconds(row[table.updatedAtMs]),
         state = BatchPeriodicIndexJobState.valueOf(row[table.state]),
+        pipelineMode = runCatching { BatchPipelineMode.valueOf(row[table.pipelineMode]) }
+            .getOrDefault(BatchPipelineMode.LIGHTWEIGHT),
         version = row[table.version],
         languagePattern = row[table.languagePattern],
         ocrLanguage = OcrLanguage.fromCodeOrDefault(row[table.ocrLanguage]),

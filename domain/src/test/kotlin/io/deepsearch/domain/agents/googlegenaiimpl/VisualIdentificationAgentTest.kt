@@ -9,9 +9,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.system.measureTimeMillis
 import kotlin.test.Test
 
@@ -26,11 +25,11 @@ import kotlin.test.Test
  * - Token usage (prompt + output)
  * - Result accuracy (semantic elements found, tables found)
  */
-class VisualIdentificationAgentTest : KoinTest {
+class VisualIdentificationAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         modules(domainTestModule)
     }
 

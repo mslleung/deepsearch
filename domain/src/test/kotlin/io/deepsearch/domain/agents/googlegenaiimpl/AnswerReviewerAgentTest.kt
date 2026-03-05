@@ -7,18 +7,17 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-class AnswerReviewerAgentTest : KoinTest {
+class AnswerReviewerAgentTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koin = KoinTestExtension.create { modules(domainTestModule) }
+    val koin = IsolatedKoinExtension.create { modules(domainTestModule) }
 
     private val agent by inject<IAnswerReviewerAgent>()
     private val testDispatcher by inject<CoroutineDispatcher>()

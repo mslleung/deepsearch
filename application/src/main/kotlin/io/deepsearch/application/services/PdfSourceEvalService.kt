@@ -171,8 +171,7 @@ class PdfSourceEvalService(
                     relevantFacts = cachedSource.relevantFacts.map { RelevantFact(fact = it) },
                     contentDate = cachedSource.contentDate,
                     intention = cachedSource.intention,
-                    relevantImageIds = emptyList(),
-                    isPreview = true  // PDF preview sources are always preview
+                    relevantImageIds = emptyList()
                 )
             } catch (e: Exception) {
                 logger.warn("Failed to deserialize cached result for {}: {}", url, e.message)

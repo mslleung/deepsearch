@@ -5,6 +5,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.IQueryExpansionAgent
 import io.deepsearch.domain.agents.QueryExpansionAgentOutput
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -101,7 +102,7 @@ class QueryExpansionAgentGenAiImpl(
     override suspend fun generate(input: io.deepsearch.domain.agents.QueryExpansionAgentInput): io.deepsearch.domain.agents.QueryExpansionAgentOutput {
         logger.debug("Expand query: {}", input.searchQuery)
 
-        val modelId = ModelIds.GEMINI_2_5_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -110,12 +111,12 @@ class QueryExpansionAgentGenAiImpl(
                     modelId,
                     input.searchQuery.query,
                     GenerateContentConfig.builder()
-                        .temperature(0.2F)
+                        .temperature(1.0F)
                         .responseSchema(queryExpansionOutputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
-                                .thinkingBudget(0)
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))

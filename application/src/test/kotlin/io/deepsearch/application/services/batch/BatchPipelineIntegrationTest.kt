@@ -16,9 +16,8 @@ import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.koin.test.KoinTest
-import org.koin.test.inject
-import org.koin.test.junit5.KoinTestExtension
+import io.deepsearch.domain.testing.IsolatedKoinTest
+import io.deepsearch.domain.testing.IsolatedKoinExtension
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import java.util.concurrent.TimeUnit
 import kotlin.time.Clock
@@ -39,11 +38,11 @@ import kotlin.time.ExperimentalTime
  * Similar to WebpageExtractionServiceTest but tests the batch path instead of the interactive path.
  */
 @OptIn(ExperimentalTime::class)
-class BatchPipelineIntegrationTest : KoinTest {
+class BatchPipelineIntegrationTest : IsolatedKoinTest() {
 
     @JvmField
     @RegisterExtension
-    val koinTestExtension = KoinTestExtension.create {
+    val koinTestExtension = IsolatedKoinExtension.create {
         // Use benchmark module which provides real dispatchers (Dispatchers.IO, etc.)
         // instead of StandardTestDispatcher which skips all timing/delays
         modules(applicationBenchmarkTestModule)

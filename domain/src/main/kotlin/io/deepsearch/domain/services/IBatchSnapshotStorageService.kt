@@ -57,6 +57,30 @@ interface IBatchSnapshotStorageService {
         extraction: ExtractionData
     ): String
     
+    // ==================== Lightweight Pipeline ====================
+    
+    /**
+     * Store the post-stable-ID HTML snapshot for lightweight indexing.
+     * This HTML has data-ds-id attributes injected by injectStableIds(), which
+     * WebpageIndexingService requires for semantic element and table extraction.
+     */
+    suspend fun storeSnapshotHtml(basePath: String, html: String)
+    
+    /**
+     * Read the post-stable-ID HTML snapshot.
+     */
+    suspend fun readSnapshotHtml(basePath: String): String?
+    
+    /**
+     * Store pre-built markdown from lightweight indexing pipeline.
+     */
+    suspend fun storeLightweightMarkdown(basePath: String, markdown: String)
+    
+    /**
+     * Read pre-built markdown from lightweight indexing pipeline.
+     */
+    suspend fun readLightweightMarkdown(basePath: String): String?
+    
     // ==================== Stage 2: Read/Write Content LLM Data ====================
     
     /**

@@ -73,7 +73,7 @@ data class BatchContentRequest(
     /** Optional image MIME type */
     val imageMimeType: String? = null,
     /** Temperature for generation */
-    val temperature: Float = 0f,
+    val temperature: Float = 1.0f,
     /** Optional metadata for client-side use (not sent to the API) */
     val metadata: Map<String, String>? = null
 ) {

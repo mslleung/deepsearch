@@ -7,6 +7,17 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 /**
+ * Pipeline mode for batch periodic index jobs.
+ * Controls which processing path is used for HTML-to-markdown conversion.
+ */
+enum class BatchPipelineMode {
+    /** Uses WebpageIndexingService with real-time LLM calls. Simpler, faster, cheaper. */
+    LIGHTWEIGHT,
+    /** Uses multi-stage Gemini Batch API (Stages 2+3). More comprehensive, slower, more expensive. */
+    FULL
+}
+
+/**
  * State machine for batch periodic index jobs.
  * Batch jobs go through 5 stages with async Gemini batch processing.
  */
@@ -56,6 +67,7 @@ class BatchPeriodicIndexJob(
     val createdAt: Instant = Clock.System.now(),
     var updatedAt: Instant = Clock.System.now(),
     var state: BatchPeriodicIndexJobState = BatchPeriodicIndexJobState.CRAWL_AND_EXTRACT,
+    val pipelineMode: BatchPipelineMode = BatchPipelineMode.LIGHTWEIGHT,
     var version: Long = 0,
     /**
      * Language filter pattern for URL filtering during crawling.

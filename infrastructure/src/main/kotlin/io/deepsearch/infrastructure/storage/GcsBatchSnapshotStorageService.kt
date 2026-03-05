@@ -84,6 +84,8 @@ class GcsBatchSnapshotStorageService(
         private const val IMAGE_TEXTS_FILE = "image-texts.json"
         private const val TABLE_MARKDOWNS_FILE = "table-markdowns.json"
         private const val KG_EXTRACTION_FILE = "kg-extraction.json"
+        private const val SNAPSHOT_HTML_FILE = "snapshot-html.txt"
+        private const val LIGHTWEIGHT_MARKDOWN_FILE = "lightweight-markdown.txt"
         
         // Subdirectories
         private const val ICONS_DIR = "icons"
@@ -165,6 +167,28 @@ class GcsBatchSnapshotStorageService(
         
         basePath
     }
+    
+    // ==================== Lightweight Pipeline ====================
+    
+    override suspend fun storeSnapshotHtml(basePath: String, html: String): Unit =
+        withContext(dispatchers.io) {
+            storeText("$basePath/$SNAPSHOT_HTML_FILE", html)
+        }
+    
+    override suspend fun readSnapshotHtml(basePath: String): String? =
+        withContext(dispatchers.io) {
+            readText("$basePath/$SNAPSHOT_HTML_FILE")
+        }
+    
+    override suspend fun storeLightweightMarkdown(basePath: String, markdown: String): Unit =
+        withContext(dispatchers.io) {
+            storeText("$basePath/$LIGHTWEIGHT_MARKDOWN_FILE", markdown)
+        }
+    
+    override suspend fun readLightweightMarkdown(basePath: String): String? =
+        withContext(dispatchers.io) {
+            readText("$basePath/$LIGHTWEIGHT_MARKDOWN_FILE")
+        }
     
     // ==================== Stage 2: Read/Write Content LLM Data ====================
     

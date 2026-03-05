@@ -55,7 +55,6 @@ sealed class SearchEvent {
         val description: String? = null,
         val markdownLength: Int? = null,
         val errorMessage: String? = null,
-        val isPreview: Boolean = false,  // true for simple text extraction, false for full markdown
         override val timestampMs: Long = System.currentTimeMillis()
     ) : SearchEvent()
 
