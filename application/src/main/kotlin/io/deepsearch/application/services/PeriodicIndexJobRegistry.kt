@@ -41,7 +41,7 @@ interface IPeriodicIndexJobRegistry {
 class PeriodicIndexJobRegistry(
     private val normalizeUrlService: INormalizeUrlService,
     private val webpageCacheService: IWebpageCacheService,
-    private val urlContentProcessingService: IUrlContentProcessingService,
+    private val indexingUrlProcessingService: IIndexingUrlProcessingService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val periodicIndexJobRepository: IPeriodicIndexJobRepository,
     private val urlAccessService: IUrlAccessService,
@@ -549,13 +549,12 @@ class PeriodicIndexJobRegistry(
         
         try {
             adaptiveRateLimiter.withRateLimit(normalizedUrl) {
-                urlContentProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
+                indexingUrlProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
                     .collect { event ->
                         when (event) {
-                            is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                            is UrlProcessingEvent.LinkDiscoveryComplete -> {
                                 logger.debug("[{}] URL {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
                                 
-                                // Send discovered links to priority buffer for processing
                                 event.discoveredLinks
                                     .filter { link -> 
                                         val url = normalize(link.url)
@@ -569,7 +568,7 @@ class PeriodicIndexJobRegistry(
                                         }
                                     }
                             }
-                            is IUrlContentProcessingService.UrlProcessingEvent.MarkdownExtractionComplete -> {
+                            is UrlProcessingEvent.MarkdownExtractionComplete -> {
                                 logger.debug("[{}] URL markdown extracted: {} chars", jobId, event.markdown.length)
                                 val urlAccess = if (event.wasCached) {
                                     CachedUrlAccess(url = normalizedUrl, timestamp = Clock.System.now())
@@ -584,7 +583,7 @@ class PeriodicIndexJobRegistry(
                                     cachedHit = event.wasCached
                                 )
                             }
-                            is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete -> {
+                            is UrlProcessingEvent.FileMarkdownExtractionComplete -> {
                                 logger.debug("[{}] File markdown extracted: {} chars", jobId, event.markdown.length)
                                 urlAccessService.recordUrlAccess(
                                     sessionId,
@@ -597,12 +596,8 @@ class PeriodicIndexJobRegistry(
                                     cachedHit = false
                                 )
                             }
-                            is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
-                                // Ignored for periodic index
-                            }
-                            is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete -> {
-                                // Not used in periodic indexing
-                            }
+                            is UrlProcessingEvent.PdfPreviewReady -> {}
+                            is UrlProcessingEvent.AgenticSearchComplete -> {}
                         }
                     }
             }

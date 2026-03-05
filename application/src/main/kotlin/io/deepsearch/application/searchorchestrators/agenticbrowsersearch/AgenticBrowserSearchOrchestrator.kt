@@ -4,7 +4,8 @@ import io.deepsearch.application.searchorchestrators.ISearchOrchestrator
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.ISearchFlowEventService
 import io.deepsearch.application.services.IUrlAccessService
-import io.deepsearch.application.services.IUrlContentProcessingService
+import io.deepsearch.application.services.IQueryUrlProcessingService
+import io.deepsearch.application.services.UrlProcessingEvent
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
@@ -91,7 +92,7 @@ class AgenticBrowserSearchOrchestrator(
     private val sourceEvaluationFacadeService: ISourceEvaluationFacadeService,
     private val answerSynthesisFacadeService: IAnswerSynthesisFacadeService,
     // URL Processing
-    private val urlContentProcessingService: IUrlContentProcessingService,
+    private val queryUrlProcessingService: IQueryUrlProcessingService,
     private val adaptiveRateLimiter: IAdaptiveRateLimiter,
     private val webpageMarkdownRepository: IWebpageMarkdownRepository,
     // Session/Tracking
@@ -491,23 +492,22 @@ class AgenticBrowserSearchOrchestrator(
                 processedUrls.add(normalizedUrl)
                 emitUrlProcessingStarted(sessionId, normalizedUrl, eventChannel)
 
-                urlContentProcessingService.processUrlAsFlow(
+                queryUrlProcessingService.processUrlAsFlow(
                     normalizedUrl,
                     searchQuery.query,
-                    maxCacheAge,
                     sessionId,
                     searchQuery.ocrLanguage,
                     proxyConfig
                 )
                     .onEach { event ->
                         when (event) {
-                            is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                            is UrlProcessingEvent.LinkDiscoveryComplete -> {
                                 event.discoveredLinks.forEach { link ->
                                     priorityLinkBuffer.send(DiscoveredLink(link, searchQuery.query))
                                 }
                             }
 
-                            is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete -> {
+                            is UrlProcessingEvent.FileMarkdownExtractionComplete -> {
                                 urlAccessService.recordUrlAccess(
                                     sessionId,
                                     UncachedUrlAccess(event.url, Clock.System.now())
@@ -523,7 +523,7 @@ class AgenticBrowserSearchOrchestrator(
                                 )
                             }
 
-                            is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete -> {
+                            is UrlProcessingEvent.AgenticSearchComplete -> {
                                 urlAccessService.recordUrlAccess(
                                     sessionId,
                                     UncachedUrlAccess(event.url, Clock.System.now())
@@ -534,7 +534,7 @@ class AgenticBrowserSearchOrchestrator(
                                 )
                             }
 
-                            is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
+                            is UrlProcessingEvent.PdfPreviewReady -> {
                                 urlAccessService.recordUrlAccess(
                                     sessionId,
                                     UncachedUrlAccess(event.url, Clock.System.now())
@@ -545,13 +545,13 @@ class AgenticBrowserSearchOrchestrator(
                         }
                     }
                     .filter { event ->
-                        event is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ||
-                                event is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete ||
-                                event is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete
+                        event is UrlProcessingEvent.PdfPreviewReady ||
+                                event is UrlProcessingEvent.FileMarkdownExtractionComplete ||
+                                event is UrlProcessingEvent.AgenticSearchComplete
                     }
                     .map { event ->
                         when (event) {
-                            is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ->
+                            is UrlProcessingEvent.PdfPreviewReady ->
                                 UrlContentResult.PdfPreview(
                                     event.url,
                                     event.title,
@@ -560,10 +560,10 @@ class AgenticBrowserSearchOrchestrator(
                                     event.pageCount
                                 )
 
-                            is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete ->
+                            is UrlProcessingEvent.FileMarkdownExtractionComplete ->
                                 UrlContentResult.FileMarkdown(event.url, event.title, event.description, event.markdown)
 
-                            is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete ->
+                            is UrlProcessingEvent.AgenticSearchComplete ->
                                 UrlContentResult.AgenticAnswer(
                                     event.url,
                                     null,
@@ -737,10 +737,9 @@ class AgenticBrowserSearchOrchestrator(
 
                     // Use adaptive rate limiter to respect website rate limits
                     adaptiveRateLimiter.withRateLimit(url) {
-                        urlContentProcessingService.processUrlAsFlow(
+                        queryUrlProcessingService.processUrlAsFlow(
                             url,
                             searchQuery.query,
-                            maxCacheAge,
                             sessionId,
                             searchQuery.ocrLanguage,
                             proxyConfig
@@ -766,7 +765,7 @@ class AgenticBrowserSearchOrchestrator(
                             }
                             .onEach { event ->
                                 when (event) {
-                                    is IUrlContentProcessingService.UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                    is UrlProcessingEvent.LinkDiscoveryComplete -> {
                                         if (!recursiveChannel.isClosedForSend) {
                                             event.discoveredLinks.forEach { newLink ->
                                                 try {
@@ -778,7 +777,7 @@ class AgenticBrowserSearchOrchestrator(
                                         }
                                     }
 
-                                    is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete -> {
+                                    is UrlProcessingEvent.FileMarkdownExtractionComplete -> {
                                         urlAccessService.recordUrlAccess(
                                             sessionId,
                                             UncachedUrlAccess(event.url, Clock.System.now())
@@ -797,7 +796,7 @@ class AgenticBrowserSearchOrchestrator(
                                         checkAndCloseIfIdle()
                                     }
 
-                                    is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete -> {
+                                    is UrlProcessingEvent.AgenticSearchComplete -> {
                                         urlAccessService.recordUrlAccess(
                                             sessionId,
                                             UncachedUrlAccess(event.url, Clock.System.now())
@@ -811,7 +810,7 @@ class AgenticBrowserSearchOrchestrator(
                                         checkAndCloseIfIdle()
                                     }
 
-                                    is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady -> {
+                                    is UrlProcessingEvent.PdfPreviewReady -> {
                                         urlAccessService.recordUrlAccess(
                                             sessionId,
                                             UncachedUrlAccess(event.url, Clock.System.now())
@@ -822,13 +821,13 @@ class AgenticBrowserSearchOrchestrator(
                                 }
                             }
                             .filter { event ->
-                                event is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ||
-                                        event is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete ||
-                                        event is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete
+                                event is UrlProcessingEvent.PdfPreviewReady ||
+                                        event is UrlProcessingEvent.FileMarkdownExtractionComplete ||
+                                        event is UrlProcessingEvent.AgenticSearchComplete
                             }
                             .map { event ->
                                 when (event) {
-                                    is IUrlContentProcessingService.UrlProcessingEvent.PdfPreviewReady ->
+                                    is UrlProcessingEvent.PdfPreviewReady ->
                                         UrlContentResult.PdfPreview(
                                             event.url,
                                             event.title,
@@ -837,7 +836,7 @@ class AgenticBrowserSearchOrchestrator(
                                             event.pageCount
                                         )
 
-                                    is IUrlContentProcessingService.UrlProcessingEvent.FileMarkdownExtractionComplete ->
+                                    is UrlProcessingEvent.FileMarkdownExtractionComplete ->
                                         UrlContentResult.FileMarkdown(
                                             event.url,
                                             event.title,
@@ -845,7 +844,7 @@ class AgenticBrowserSearchOrchestrator(
                                             event.markdown
                                         )
 
-                                    is IUrlContentProcessingService.UrlProcessingEvent.AgenticSearchComplete ->
+                                    is UrlProcessingEvent.AgenticSearchComplete ->
                                         UrlContentResult.AgenticAnswer(
                                             event.url,
                                             null,

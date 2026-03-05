@@ -59,7 +59,10 @@ val applicationModule = module {
     singleOf(::PdfPreviewService) bind IPdfPreviewService::class
     singleOf(::LinkRelevanceHtmlService) bind ILinkRelevanceHtmlService::class
     singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
-    singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
+    singleOf(::BrowserPageResolver) bind IBrowserPageResolver::class
+    singleOf(::FileUrlProcessingService) bind IFileUrlProcessingService::class
+    singleOf(::IndexingUrlProcessingService) bind IIndexingUrlProcessingService::class
+    singleOf(::QueryUrlProcessingService) bind IQueryUrlProcessingService::class
     singleOf(::PeriodicIndexService) bind IPeriodicIndexService::class
     singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
     

@@ -71,7 +71,10 @@ private val applicationCommonTestModule = module {
     singleOf(::PdfSourceEvalService) bind IPdfSourceEvalService::class
     singleOf(::LinkRelevanceHtmlService) bind ILinkRelevanceHtmlService::class
     singleOf(::WebpageCacheService) bind IWebpageCacheService::class
-    singleOf(::UrlContentProcessingService) bind IUrlContentProcessingService::class
+    singleOf(::BrowserPageResolver) bind IBrowserPageResolver::class
+    singleOf(::FileUrlProcessingService) bind IFileUrlProcessingService::class
+    singleOf(::IndexingUrlProcessingService) bind IIndexingUrlProcessingService::class
+    singleOf(::QueryUrlProcessingService) bind IQueryUrlProcessingService::class
     singleOf(::UrlAccessService) bind IUrlAccessService::class
     singleOf(::QuerySessionService) bind IQuerySessionService::class
     singleOf(::PeriodicIndexJobService) bind IPeriodicIndexJobService::class
