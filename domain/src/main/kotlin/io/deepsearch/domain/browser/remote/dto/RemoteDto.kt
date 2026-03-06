@@ -162,6 +162,9 @@ sealed class PageCommand {
 
     @Serializable @SerialName("clickAtCoordinates")
     data class ClickAtCoordinates(val x: Int, val y: Int) : PageCommand()
+
+    @Serializable @SerialName("typeText")
+    data class TypeText(val text: String) : PageCommand()
 }
 
 @Serializable

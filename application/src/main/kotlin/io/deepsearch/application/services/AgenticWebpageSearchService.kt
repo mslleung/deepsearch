@@ -2,10 +2,8 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.agents.ElementLabel
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
-import io.deepsearch.domain.agents.IWebpageReconnaissanceAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.WebpageNavigationInput
-import io.deepsearch.domain.agents.WebpageReconnaissanceInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.constants.ImageMimeType
@@ -17,7 +15,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.awt.Image
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import javax.imageio.ImageIO
 
 data class AgenticPageSearchResult(
@@ -49,7 +50,6 @@ interface IAgenticWebpageSearchService {
 
 class AgenticWebpageSearchService(
     private val browserPool: IBrowserPool,
-    private val reconnaissanceAgent: IWebpageReconnaissanceAgent,
     private val webpageNavigationAgent: IWebpageNavigationAgent,
     private val screenshotAnnotationService: ScreenshotAnnotationService,
     private val tokenUsageService: ILlmTokenUsageService
@@ -62,7 +62,10 @@ class AgenticWebpageSearchService(
         private const val MAX_FAILED_CLICKS = 2
         private const val POST_CLICK_DELAY_MS = 350L
         private const val POST_SCROLL_DELAY_MS = 150L
+        private const val POST_TYPE_DELAY_MS = 500L
         private const val SCROLL_VIEWPORT_PIXELS = 600
+        private const val PEEK_MAX_HEIGHT = 3000
+        private const val PEEK_JPEG_QUALITY = 0.80f
     }
 
     override suspend fun searchWithinPage(
@@ -94,49 +97,12 @@ class AgenticWebpageSearchService(
         val discoveredUrls = mutableListOf<String>()
         var aggregatedTokenUsage = TokenUsageMetrics.empty("gemini-3.1-flash-lite")
 
-        // === Phase 1: Reconnaissance ===
-        val pageText = page.extractTextContent()
-
-        val reconOutput = reconnaissanceAgent.generate(
-            WebpageReconnaissanceInput(pageText, query)
-        )
-        aggregatedTokenUsage += reconOutput.tokenUsage
-
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "WebpageReconnaissanceAgent",
-            modelName = reconOutput.tokenUsage.modelName,
-            promptTokens = reconOutput.tokenUsage.promptTokens,
-            outputTokens = reconOutput.tokenUsage.outputTokens,
-            totalTokens = reconOutput.tokenUsage.totalTokens
-        )
-
-        if (reconOutput.scrollTargetText != null) {
-            val scrolled = page.scrollToTextContent(
-                reconOutput.scrollTargetText!!,
-                reconOutput.scrollTargetOccurrence
-            )
-            if (scrolled) {
-                delay(POST_SCROLL_DELAY_MS)
-                logger.info(
-                    "Reconnaissance: scrolled to '{}' (occurrence {})",
-                    reconOutput.scrollTargetText, reconOutput.scrollTargetOccurrence
-                )
-            } else {
-                logger.info(
-                    "Reconnaissance: scroll target '{}' (occurrence {}) not found on page, staying at top",
-                    reconOutput.scrollTargetText, reconOutput.scrollTargetOccurrence
-                )
-            }
-        }
-
-        val pageContext = reconOutput.pageStructure
-
-        // === Phase 2: Navigation Loop ===
+        // Navigation Loop
         var previousClickScreenshot: ByteArray? = null
         var previousActionOutcome: String? = null
         val failedClickDescs = mutableMapOf<String, Int>()
         var lastActionWasClick = false
+        var peekScreenshotOverride: IBrowserPage.Screenshot? = null
 
         for (iteration in 1..MAX_ITERATIONS) {
             logger.debug("Agentic search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
@@ -156,6 +122,7 @@ class AgenticWebpageSearchService(
                 val clickDesc = when (lastAction) {
                     is NavigationAction.Click -> lastAction.elementDescription ?: ""
                     is NavigationAction.ClickAt -> lastAction.elementDescription ?: "(${lastAction.x},${lastAction.y})"
+                    is NavigationAction.Type -> lastAction.elementDescription ?: ""
                     else -> ""
                 }
                 if (changed) {
@@ -175,8 +142,8 @@ class AgenticWebpageSearchService(
                     }
                 }
                 logger.debug("Visual diff after click: changed={}", changed)
-            } else if (!lastActionWasClick && actionsPerformed.isNotEmpty()) {
-                previousActionOutcome = null
+            } else if (!lastActionWasClick && actionsPerformed.isNotEmpty() && previousActionOutcome == null) {
+                // Don't reset outcome if already set by SearchText/PeekFullPage handlers
             }
             lastActionWasClick = false
 
@@ -209,10 +176,12 @@ class AgenticWebpageSearchService(
                 mimeType = ImageMimeType.JPEG
             )
 
+            val screenshotForAgent = peekScreenshotOverride ?: annotatedScreenshot
+            peekScreenshotOverride = null
+
             val input = WebpageNavigationInput(
-                screenshot = annotatedScreenshot,
+                screenshot = screenshotForAgent,
                 query = query,
-                pageContext = pageContext,
                 previousActions = actionsPerformed.toList(),
                 previousActionOutcome = previousActionOutcome,
                 elementLabels = elementLabels,
@@ -379,6 +348,71 @@ class AgenticWebpageSearchService(
                         logger.warn("Scroll failed: {}", e.message)
                     }
                 }
+
+                is NavigationAction.SearchText -> {
+                    logger.debug("Searching for text: {}", action.searchTerms)
+                    var matched: String? = null
+                    for (term in action.searchTerms) {
+                        if (page.scrollToTextContent(term)) {
+                            matched = term
+                            break
+                        }
+                    }
+                    previousActionOutcome = if (matched != null) {
+                        logger.info("search_text matched '{}' on {}", matched, url)
+                        "search_text found \"$matched\". Viewport scrolled to match."
+                    } else {
+                        logger.debug("search_text found no matches for {} on {}", action.searchTerms, url)
+                        "search_text found NO matches for: ${action.searchTerms.joinToString { "\"$it\"" }}"
+                    }
+                    delay(POST_SCROLL_DELAY_MS)
+                }
+
+                is NavigationAction.PeekFullPage -> {
+                    logger.debug("Taking full-page peek screenshot for {}", url)
+                    try {
+                        val fullPageScreenshot = page.takeFullPageScreenshot()
+                        val downscaled = downscaleScreenshot(fullPageScreenshot.bytes, PEEK_MAX_HEIGHT)
+                        peekScreenshotOverride = IBrowserPage.Screenshot(
+                            bytes = downscaled,
+                            mimeType = ImageMimeType.JPEG
+                        )
+                        previousActionOutcome = "Full page overview captured. Study this image to understand " +
+                                "the overall page content and layout, then decide your next action."
+                    } catch (e: Exception) {
+                        logger.warn("Full-page screenshot failed: {}", e.message)
+                        previousActionOutcome = "peek_full_page failed: ${e.message}"
+                    }
+                }
+
+                is NavigationAction.Type -> {
+                    val targetElement = annotated.elementIndex[action.labelNumber]
+                    if (targetElement != null) {
+                        val desc = "${targetElement.tag} '${targetElement.text.take(40)}'".trim()
+                        actionsPerformed[actionsPerformed.lastIndex] =
+                            action.copy(elementDescription = desc)
+
+                        val x = targetElement.centerX
+                        val y = targetElement.centerY
+                        logger.debug(
+                            "Typing '{}' into label {} at ({},{}) - {} (reason: {})",
+                            action.text.take(30), action.labelNumber, x, y, desc, action.reason
+                        )
+
+                        previousClickScreenshot = rawScreenshot.bytes
+                        lastActionWasClick = true
+
+                        page.clickAtCoordinates(x, y)
+                        delay(POST_CLICK_DELAY_MS)
+                        page.typeText(action.text)
+                        delay(POST_TYPE_DELAY_MS)
+                    } else {
+                        logger.warn(
+                            "VLM referenced non-existent label {} for type action. Available: 0..{}",
+                            action.labelNumber, interactiveElements.size - 1
+                        )
+                    }
+                }
             }
         }
 
@@ -399,4 +433,30 @@ class AgenticWebpageSearchService(
         )
     }
 
+    private fun downscaleScreenshot(imageBytes: ByteArray, maxHeight: Int): ByteArray {
+        val original = ImageIO.read(ByteArrayInputStream(imageBytes)) ?: return imageBytes
+        val needsResize = original.height > maxHeight
+
+        val buffered = if (needsResize) {
+            val scale = maxHeight.toDouble() / original.height
+            val newWidth = (original.width * scale).toInt().coerceAtLeast(1)
+            val scaled = original.getScaledInstance(newWidth, maxHeight, Image.SCALE_SMOOTH)
+            BufferedImage(newWidth, maxHeight, BufferedImage.TYPE_INT_RGB).also {
+                it.graphics.drawImage(scaled, 0, 0, null)
+            }
+        } else {
+            original
+        }
+
+        val output = ByteArrayOutputStream()
+        val writer = ImageIO.getImageWritersByFormatName("jpg").next()
+        val param = writer.defaultWriteParam.apply {
+            compressionMode = javax.imageio.ImageWriteParam.MODE_EXPLICIT
+            compressionQuality = PEEK_JPEG_QUALITY
+        }
+        writer.output = ImageIO.createImageOutputStream(output)
+        writer.write(null, javax.imageio.IIOImage(buffered, null, null), param)
+        writer.dispose()
+        return output.toByteArray()
+    }
 }

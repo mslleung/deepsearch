@@ -8,7 +8,6 @@ import kotlinx.serialization.Serializable
 data class WebpageNavigationInput(
     val screenshot: IBrowserPage.Screenshot,
     val query: String,
-    val pageContext: String,
     val previousActions: List<NavigationAction>,
     val previousActionOutcome: String?,
     val elementLabels: List<ElementLabel>,
@@ -58,6 +57,25 @@ sealed class NavigationAction {
 
     @Serializable
     data class GiveUp(val reason: String) : NavigationAction()
+
+    @Serializable
+    data class SearchText(
+        val searchTerms: List<String>,
+        val reason: String
+    ) : NavigationAction()
+
+    @Serializable
+    data class PeekFullPage(
+        val reason: String
+    ) : NavigationAction()
+
+    @Serializable
+    data class Type(
+        val labelNumber: Int,
+        val text: String,
+        val reason: String,
+        val elementDescription: String? = null
+    ) : NavigationAction()
 }
 
 @Serializable

@@ -118,6 +118,12 @@ interface IBrowserPage {
     suspend fun clickAtCoordinates(x: Int, y: Int)
 
     /**
+     * Type text at the current cursor/focus position using low-level input events.
+     * The caller is responsible for focusing the target element first (e.g., via [clickAtCoordinates]).
+     */
+    suspend fun typeText(text: String)
+
+    /**
      * Click the first element matching the provided XPath selector.
      * Returns true if a matching element was found and clicked; false otherwise.
      */

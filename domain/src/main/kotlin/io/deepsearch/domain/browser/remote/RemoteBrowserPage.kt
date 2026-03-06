@@ -268,6 +268,10 @@ class RemoteBrowserPage(
         pageCmd(PageCommand.ClickAtCoordinates(x, y))
     }
 
+    override suspend fun typeText(text: String) {
+        pageCmd(PageCommand.TypeText(text))
+    }
+
     override suspend fun clickByXPathSelector(xpath: String) {
         elementCmd(PageCommand.ClickByXPathSelector(xpath))
     }

@@ -122,7 +122,6 @@ class LightweightIndexHandler(
         val snapshotHtml = snapshotStorage.readSnapshotHtml(basePath) ?: return null
         val boundingBoxes = snapshotStorage.readBoundingBoxes(basePath) ?: emptyMap()
         val screenshotData = snapshotStorage.readScreenshot(basePath) ?: return null
-        val iconFiles = snapshotStorage.readIcons(basePath)
 
         val snapshot = IBrowserPage.PageSnapshotWithMetadata(
             title = urlState.title ?: "",
@@ -137,15 +136,7 @@ class LightweightIndexHandler(
             mimeType = ImageMimeType.fromValue(screenshotData.mimeType)
         )
 
-        val icons = iconFiles.map { media ->
-            IBrowserPage.Icon(
-                bytes = media.bytes,
-                mimeType = ImageMimeType.fromValue(media.mimeType),
-                cssSelectors = media.cssSelectors
-            )
-        }
-
-        return QuickCaptureData(snapshot, screenshot, icons)
+        return QuickCaptureData(snapshot, screenshot)
     }
 
     private suspend fun skipToEmbeddingStage(

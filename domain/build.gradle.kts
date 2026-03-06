@@ -101,6 +101,7 @@ tasks.test {
 tasks.register<Jar>("testJar") {
     archiveClassifier.set("test")
     from(sourceSets.test.get().output)
+    exclude("junit-platform.properties")
     dependsOn(tasks.testClasses)
 }
 

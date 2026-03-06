@@ -44,12 +44,12 @@ class WebpageNavigationAgentGenAiImpl(
                     .build(),
                 "actionType" to Schema.builder()
                     .type("STRING")
-                    .description("One of: click, click_at, scroll, answer_found, give_up")
-                    .enum_(listOf("click", "click_at", "scroll", "answer_found", "give_up"))
+                    .description("One of: click, click_at, scroll, search_text, peek_full_page, type, answer_found, give_up")
+                    .enum_(listOf("click", "click_at", "scroll", "search_text", "peek_full_page", "type", "answer_found", "give_up"))
                     .build(),
                 "labelNumber" to Schema.builder()
                     .type("INTEGER")
-                    .description("The label number of the element to click. REQUIRED for 'click' actions. Use -1 for non-click actions.")
+                    .description("The label number of the element to interact with. REQUIRED for 'click' and 'type' actions. Use -1 for other actions.")
                     .build(),
                 "clickX" to Schema.builder()
                     .type("INTEGER")
@@ -63,6 +63,15 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("STRING")
                     .description("Scroll direction. Required when actionType is 'scroll'.")
                     .enum_(listOf("DOWN", "UP"))
+                    .build(),
+                "searchTerms" to Schema.builder()
+                    .type("ARRAY")
+                    .items(Schema.builder().type("STRING").build())
+                    .description("List of text phrases to search for on the page (like Ctrl+F). Tried in order, stops at first match. REQUIRED for 'search_text' actions.")
+                    .build(),
+                "text" to Schema.builder()
+                    .type("STRING")
+                    .description("Text to type into the focused element. REQUIRED for 'type' actions.")
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
@@ -95,12 +104,14 @@ class WebpageNavigationAgentGenAiImpl(
         COMPREHENSIVE answer. You navigate a page, record findings, identify gaps, and
         explore to fill those gaps — like a researcher taking notes.
 
-        PAGE_CONTEXT describes the page structure and interactive elements to explore.
-        The viewport screenshot has numbered badges corresponding to ELEMENT_LABELS.
+        You only see the CURRENT VIEWPORT — not the full page. Use search_text (Ctrl+F)
+        to jump to relevant content, or scroll to explore. The viewport screenshot has
+        numbered badges corresponding to ELEMENT_LABELS.
 
         ACTION_OUTCOME tells you whether your last action produced a visible change:
         - NO visible change → your click missed, try a DIFFERENT label number.
         - VISIBLE CHANGE → it worked. READ THE SCREENSHOT CAREFULLY for new data.
+        - For search_text: tells you which term matched (or that none did).
 
         ANSWERED_QUESTIONS lists questions you have already resolved. Do not re-investigate them.
         OPEN_QUESTIONS lists questions that still need answering.
@@ -115,21 +126,41 @@ class WebpageNavigationAgentGenAiImpl(
         2. "openQuestions" — specific questions that still need answering. Empty array
            only when the query is fully answered.
 
-        3. An action (click, click_at, scroll, answer_found, give_up) — what to do next.
+        3. An action — what to do next.
 
         === ACTIONS ===
 
-        - click: Click a labeled element. You MUST set "labelNumber" to the element's label number.
-          Always prefer this over click_at when a label is available — it is more precise.
+        - search_text: Search the page text like Ctrl+F. Provide "searchTerms" — a list of
+          phrases to try in order. The system scrolls the viewport to the first match.
+          Use this FIRST when the answer is not visible — it is much faster than scrolling.
+          Example: searchTerms=["promo code", "discount", "free trial"]
+        - click: Click a labeled element. You MUST set "labelNumber" to the element's
+          label number. Always prefer this over click_at when a label is available.
         - click_at: Click at specific coordinates in the screenshot. Use ONLY when the
-          element you want to click has NO label number (e.g., an accordion trigger, a
-          non-labeled div that visually looks clickable). Set "clickX" and "clickY" using
-          the 0-1000 normalized coordinate system: (0,0) is the top-left corner,
-          (1000,1000) is the bottom-right corner.
-        - scroll: Scroll up or down to see more content.
+          element you want to click has NO label number. Set "clickX" and "clickY" using
+          the 0-1000 normalized coordinate system.
+        - type: Click a labeled element and type text into it. Set "labelNumber" to the
+          input element and "text" to what you want to type. Use when you see a search box
+          or text input that could help find the answer.
+        - scroll: Scroll up or down to see more content. Use when search_text didn't help
+          and you need to explore nearby content.
+        - peek_full_page: Capture an overview of the entire page. Use this to see the full
+          page content and layout at a glance. Use as a last resort before give_up when
+          search_text found nothing — the overview may reveal where the answer is located.
         - answer_found: Synthesize ALL your findings into a comprehensive answer.
           ONLY allowed when openQuestions is empty.
         - give_up: After exhausting all exploration options.
+
+        === NAVIGATION STRATEGY ===
+
+        Think like a human browsing a webpage:
+        1. Look at the current viewport — is the answer visible? If yes, record and answer.
+        2. Not visible? Use search_text with relevant keywords from the query.
+        3. search_text found a match? Read the new viewport carefully.
+        4. No text matches? Try typing in a search box if one exists.
+        5. Still nothing? Use peek_full_page to see the full layout.
+        6. Found a promising area in the peek? Scroll or search_text to get there.
+        7. Exhausted all options? give_up.
 
         === ITERATIVE SEARCH LOOP ===
 
@@ -138,23 +169,6 @@ class WebpageNavigationAgentGenAiImpl(
         CRITICAL: After ACTION_OUTCOME says VISIBLE CHANGE, the page has NEW content.
         You MUST read the screenshot fresh — prices, text, and states may have changed.
         Do NOT carry forward old values from previous iterations.
-
-        Example for "What is the Pro plan price without AI?":
-
-          Iter 1: See pricing with AI ON, yearly billing.
-            finding: "Pro plan with AI: ${'$'}99/month (yearly billing active)"
-            openQuestions: ["Pro price without AI?", "Pro price with monthly billing?"]
-            action: click AI toggle (label 11)
-
-          Iter 2: AI toggled off. VISIBLE CHANGE. READ screenshot for new prices.
-            finding: "Pro plan without AI: ${'$'}79/month (yearly billing)"
-            openQuestions: ["Pro price without AI, monthly billing?"]
-            action: click billing toggle (label 12)
-
-          Iter 3: Billing toggled to monthly. VISIBLE CHANGE. READ screenshot for new prices.
-            finding: "Pro plan without AI: ${'$'}99/month (monthly billing)"
-            openQuestions: []
-            action: answer_found — synthesize all findings
 
         === RULES ===
 
@@ -166,6 +180,7 @@ class WebpageNavigationAgentGenAiImpl(
         - If a click fails 2+ times on the same element, abandon that question —
           set openQuestions to [] and use answer_found with what you have.
         - For tables/grids, carefully match row labels to column headers.
+        - Prefer search_text over blind scrolling — it is faster and more precise.
     """.trimIndent()
 
     @Serializable
@@ -177,6 +192,8 @@ class WebpageNavigationAgentGenAiImpl(
         val clickX: Int? = null,
         val clickY: Int? = null,
         val scrollDirection: String? = null,
+        val searchTerms: List<String>? = null,
+        val text: String? = null,
         val answer: String? = null,
         val evidence: String? = null,
         val intention: String? = null,
@@ -190,12 +207,6 @@ class WebpageNavigationAgentGenAiImpl(
 
         val userPrompt = buildString {
             appendLine("QUERY: ${input.query}")
-
-            if (input.pageContext.isNotBlank()) {
-                appendLine()
-                appendLine("PAGE_CONTEXT:")
-                appendLine(input.pageContext)
-            }
 
             if (input.previousActionOutcome != null) {
                 appendLine()
@@ -343,6 +354,28 @@ class WebpageNavigationAgentGenAiImpl(
                     )
                 }
             }
+            "search_text" -> {
+                val terms = response.searchTerms
+                if (terms.isNullOrEmpty()) {
+                    logger.warn("VLM returned search_text without searchTerms, scrolling instead")
+                    NavigationAction.Scroll(direction = ScrollDirection.DOWN)
+                } else {
+                    NavigationAction.SearchText(searchTerms = terms, reason = response.reason ?: "")
+                }
+            }
+            "peek_full_page" -> NavigationAction.PeekFullPage(
+                reason = response.reason ?: ""
+            )
+            "type" -> {
+                val label = response.labelNumber?.takeIf { it >= 0 }
+                val text = response.text
+                if (label == null || text.isNullOrBlank()) {
+                    logger.warn("VLM returned type without labelNumber or text, scrolling instead")
+                    NavigationAction.Scroll(direction = ScrollDirection.DOWN)
+                } else {
+                    NavigationAction.Type(labelNumber = label, text = text, reason = response.reason ?: "")
+                }
+            }
             "give_up" -> NavigationAction.GiveUp(
                 reason = response.reason ?: "No reason provided"
             )
@@ -370,6 +403,12 @@ class WebpageNavigationAgentGenAiImpl(
             "Clicked at (${action.x},${action.y}) on $target — ${action.reason}"
         }
         is NavigationAction.Scroll -> "Scrolled ${action.direction.name.lowercase()}"
+        is NavigationAction.SearchText -> "Searched for: ${action.searchTerms.joinToString()}"
+        is NavigationAction.PeekFullPage -> "Peeked at full page overview"
+        is NavigationAction.Type -> {
+            val target = action.elementDescription ?: "element"
+            "Typed '${action.text.take(30)}' into $target"
+        }
         is NavigationAction.AnswerFound -> "Reported answer: ${action.answer.take(80)}"
         is NavigationAction.GiveUp -> "Gave up: ${action.reason}"
     }
