@@ -24,7 +24,6 @@ import javax.imageio.ImageIO
 data class AgenticPageSearchResult(
     val answer: String?,
     val evidence: String?,
-    val intention: String?,
     val contentDate: String?,
     val actionsPerformed: List<NavigationAction>,
     val observations: List<String>,
@@ -228,8 +227,7 @@ class AgenticWebpageSearchService(
                     )
                     return AgenticPageSearchResult(
                         answer = action.answer,
-                        evidence = action.evidence,
-                        intention = action.intention,
+                        evidence = finding ?: observations.lastOrNull(),
                         contentDate = action.contentDate,
                         actionsPerformed = actionsPerformed,
                         observations = observations.toList(),
@@ -247,7 +245,6 @@ class AgenticWebpageSearchService(
                     return AgenticPageSearchResult(
                         answer = null,
                         evidence = null,
-                        intention = null,
                         contentDate = null,
                         actionsPerformed = actionsPerformed,
                         observations = observations.toList(),
@@ -423,7 +420,6 @@ class AgenticWebpageSearchService(
         return AgenticPageSearchResult(
             answer = null,
             evidence = null,
-            intention = null,
             contentDate = null,
             actionsPerformed = actionsPerformed,
             observations = observations.toList(),

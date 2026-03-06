@@ -42,9 +42,7 @@ sealed class NavigationAction {
     @Serializable
     data class AnswerFound(
         val answer: String,
-        val evidence: String,
-        val intention: String,
-        val contentDate: String?
+        val contentDate: String? = null
     ) : NavigationAction()
 
     @Serializable

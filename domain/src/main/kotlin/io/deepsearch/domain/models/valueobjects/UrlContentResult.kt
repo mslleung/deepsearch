@@ -63,7 +63,6 @@ sealed class UrlContentResult {
         override val description: String?,
         val answer: String?,
         val evidence: String?,
-        val intention: String?,
         val contentDate: String?,
         val observations: List<String>,
         val success: Boolean

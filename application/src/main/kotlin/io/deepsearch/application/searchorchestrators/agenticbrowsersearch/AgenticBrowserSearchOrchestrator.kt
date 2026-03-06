@@ -325,7 +325,7 @@ class AgenticBrowserSearchOrchestrator(
                             description = agenticAnswer.description,
                             relevantFacts = facts,
                             contentDate = agenticAnswer.contentDate,
-                            intention = agenticAnswer.intention ?: "Webpage"
+                            intention = "Webpage"
                         )
                     },
 
@@ -570,7 +570,6 @@ class AgenticBrowserSearchOrchestrator(
                                     null,
                                     event.answer,
                                     event.evidence,
-                                    event.intention,
                                     event.contentDate,
                                     event.observations,
                                     event.success
@@ -851,7 +850,6 @@ class AgenticBrowserSearchOrchestrator(
                                             null,
                                             event.answer,
                                             event.evidence,
-                                            event.intention,
                                             event.contentDate,
                                             event.observations,
                                             event.success

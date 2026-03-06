@@ -34,153 +34,82 @@ class WebpageNavigationAgentGenAiImpl(
             mapOf(
                 "finding" to Schema.builder()
                     .type("STRING")
-                    .description("What you observe on the current screenshot that is relevant to the query or open questions. Record data BEFORE it disappears due to your action (clicking/scrolling). Always populate this when relevant data is visible.")
+                    .description("Relevant data visible on the current screenshot. Record BEFORE acting.")
                     .nullable(true)
                     .build(),
                 "openQuestions" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
-                    .description("Specific questions that still need answering to provide a complete response. Empty array when all questions are resolved.")
+                    .description("Questions still needing answers. Empty when fully resolved.")
                     .build(),
                 "actionType" to Schema.builder()
                     .type("STRING")
-                    .description("One of: click, click_at, scroll, search_text, peek_full_page, type, answer_found, give_up")
                     .enum_(listOf("click", "click_at", "scroll", "search_text", "peek_full_page", "type", "answer_found", "give_up"))
                     .build(),
                 "labelNumber" to Schema.builder()
                     .type("INTEGER")
-                    .description("The label number of the element to interact with. REQUIRED for 'click' and 'type' actions. Use -1 for other actions.")
+                    .description("Element label number for click/type actions.")
+                    .nullable(true)
                     .build(),
                 "clickX" to Schema.builder()
                     .type("INTEGER")
-                    .description("X coordinate (0-1000, left to right) in the screenshot. REQUIRED for click_at actions.")
+                    .description("X coordinate (0-1000) for click_at.")
                     .build(),
                 "clickY" to Schema.builder()
                     .type("INTEGER")
-                    .description("Y coordinate (0-1000, top to bottom) in the screenshot. REQUIRED for click_at actions.")
+                    .description("Y coordinate (0-1000) for click_at.")
                     .build(),
                 "scrollDirection" to Schema.builder()
                     .type("STRING")
-                    .description("Scroll direction. Required when actionType is 'scroll'.")
                     .enum_(listOf("DOWN", "UP"))
                     .build(),
                 "searchTerms" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
-                    .description("List of text phrases to search for on the page (like Ctrl+F). Tried in order, stops at first match. REQUIRED for 'search_text' actions.")
+                    .description("Phrases to search (Ctrl+F style) for search_text.")
                     .build(),
                 "text" to Schema.builder()
                     .type("STRING")
-                    .description("Text to type into the focused element. REQUIRED for 'type' actions.")
+                    .description("Text to type for type actions.")
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
-                    .description("Comprehensive answer synthesizing all findings. Required when actionType is 'answer_found'.")
-                    .build(),
-                "evidence" to Schema.builder()
-                    .type("STRING")
-                    .description("Evidence supporting the answer, or reason for giving up.")
-                    .build(),
-                "intention" to Schema.builder()
-                    .type("STRING")
-                    .description("Purpose of this webpage. Required when actionType is 'answer_found'.")
-                    .build(),
-                "contentDate" to Schema.builder()
-                    .type("STRING")
-                    .description("Publication or last-updated date visible on the page. Null if none visible.")
-                    .nullable(true)
+                    .description("Final answer synthesizing all findings for answer_found.")
                     .build(),
                 "reason" to Schema.builder()
                     .type("STRING")
-                    .description("Brief explanation for the chosen action.")
+                    .description("Brief reason for the chosen action.")
                     .build()
             )
         )
-        .required(listOf("actionType", "reason", "openQuestions", "labelNumber"))
+        .required(listOf("actionType", "openQuestions"))
         .build()
 
     private val systemInstruction = """
-        You are a webpage search agent that ITERATIVELY gathers information to build a
-        COMPREHENSIVE answer. You navigate a page, record findings, identify gaps, and
-        explore to fill those gaps — like a researcher taking notes.
+        You are a webpage search agent. Iteratively navigate, record findings, and explore to answer the query.
 
-        You only see the CURRENT VIEWPORT — not the full page. Use search_text (Ctrl+F)
-        to jump to relevant content, or scroll to explore. The viewport screenshot has
-        numbered badges corresponding to ELEMENT_LABELS.
+        You see only the CURRENT VIEWPORT. The screenshot has numbered badges matching ELEMENT_LABELS.
+        ACTION_OUTCOME tells you if your last action caused a visible change. No change means try a different element.
 
-        ACTION_OUTCOME tells you whether your last action produced a visible change:
-        - NO visible change → your click missed, try a DIFFERENT label number.
-        - VISIBLE CHANGE → it worked. READ THE SCREENSHOT CAREFULLY for new data.
-        - For search_text: tells you which term matched (or that none did).
-
-        ANSWERED_QUESTIONS lists questions you have already resolved. Do not re-investigate them.
-        OPEN_QUESTIONS lists questions that still need answering.
-
-        === EVERY RESPONSE MUST INCLUDE ===
-
-        1. "finding" — what you see on the CURRENT screenshot that is relevant to the
-           query or to your open questions. READ THE SCREENSHOT — do not repeat old data
-           from memory. Record data NOW because clicking or scrolling will change the
-           viewport. Null only if nothing relevant is visible.
-
-        2. "openQuestions" — specific questions that still need answering. Empty array
-           only when the query is fully answered.
-
-        3. An action — what to do next.
+        === RESPONSE ===
+        1. "finding": what's relevant on the current screenshot. Record data BEFORE acting — viewport changes on click/scroll. Null only if nothing relevant is visible.
+        2. "openQuestions": gaps remaining. Empty only when fully answered.
+        3. One action (below).
 
         === ACTIONS ===
-
-        - search_text: Search the page text like Ctrl+F. Provide "searchTerms" — a list of
-          phrases to try in order. The system scrolls the viewport to the first match.
-          Use this FIRST when the answer is not visible — it is much faster than scrolling.
-          Example: searchTerms=["promo code", "discount", "free trial"]
-        - click: Click a labeled element. You MUST set "labelNumber" to the element's
-          label number. Always prefer this over click_at when a label is available.
-        - click_at: Click at specific coordinates in the screenshot. Use ONLY when the
-          element you want to click has NO label number. Set "clickX" and "clickY" using
-          the 0-1000 normalized coordinate system.
-        - type: Click a labeled element and type text into it. Set "labelNumber" to the
-          input element and "text" to what you want to type. Use when you see a search box
-          or text input that could help find the answer.
-        - scroll: Scroll up or down to see more content. Use when search_text didn't help
-          and you need to explore nearby content.
-        - peek_full_page: Capture an overview of the entire page. Use this to see the full
-          page content and layout at a glance. Use as a last resort before give_up when
-          search_text found nothing — the overview may reveal where the answer is located.
-        - answer_found: Synthesize ALL your findings into a comprehensive answer.
-          ONLY allowed when openQuestions is empty.
-        - give_up: After exhausting all exploration options.
-
-        === NAVIGATION STRATEGY ===
-
-        Think like a human browsing a webpage:
-        1. Look at the current viewport — is the answer visible? If yes, record and answer.
-        2. Not visible? Use search_text with relevant keywords from the query.
-        3. search_text found a match? Read the new viewport carefully.
-        4. No text matches? Try typing in a search box if one exists.
-        5. Still nothing? Use peek_full_page to see the full layout.
-        6. Found a promising area in the peek? Scroll or search_text to get there.
-        7. Exhausted all options? give_up.
-
-        === ITERATIVE SEARCH LOOP ===
-
-        Each iteration: READ the screenshot → RECORD what you see → IDENTIFY gaps → ACT.
-
-        CRITICAL: After ACTION_OUTCOME says VISIBLE CHANGE, the page has NEW content.
-        You MUST read the screenshot fresh — prices, text, and states may have changed.
-        Do NOT carry forward old values from previous iterations.
+        - search_text: Ctrl+F page search. Set "searchTerms" (tried in order). Prefer this over scrolling.
+        - click: Click labeled element. Set "labelNumber".
+        - click_at: Click unlabeled element. Set "clickX"/"clickY" (0-1000).
+        - type: Type into labeled input. Set "labelNumber" and "text".
+        - scroll: Set "scrollDirection" (DOWN/UP). Use when search_text didn't help.
+        - peek_full_page: Full-page overview. Last resort before give_up.
+        - answer_found: Set "answer". ONLY when openQuestions is empty.
+        - give_up: After exhausting all options.
 
         === RULES ===
-
-        - ALWAYS read the screenshot fresh each iteration — the page may have changed.
-        - ALWAYS record a finding BEFORE clicking/scrolling — data is lost on viewport change.
-        - NEVER use answer_found while openQuestions is non-empty.
-        - NEVER repeat a click that ACTION_OUTCOME said had no visible change.
-          Try a DIFFERENT element or give_up on that specific question.
-        - If a click fails 2+ times on the same element, abandon that question —
-          set openQuestions to [] and use answer_found with what you have.
+        - Read the screenshot fresh each turn — never carry stale data forward.
+        - If a click had no visible change, try a DIFFERENT element or approach.
         - For tables/grids, carefully match row labels to column headers.
-        - Prefer search_text over blind scrolling — it is faster and more precise.
     """.trimIndent()
 
     @Serializable
@@ -195,9 +124,6 @@ class WebpageNavigationAgentGenAiImpl(
         val searchTerms: List<String>? = null,
         val text: String? = null,
         val answer: String? = null,
-        val evidence: String? = null,
-        val intention: String? = null,
-        val contentDate: String? = null,
         val reason: String? = null
     )
 
@@ -346,12 +272,7 @@ class WebpageNavigationAgentGenAiImpl(
                     logger.warn("VLM returned answer_found without answer text, treating as give_up")
                     NavigationAction.GiveUp(reason = "Model claimed answer_found but provided no answer")
                 } else {
-                    NavigationAction.AnswerFound(
-                        answer = answer,
-                        evidence = response.evidence ?: "",
-                        intention = response.intention ?: "Webpage",
-                        contentDate = response.contentDate
-                    )
+                    NavigationAction.AnswerFound(answer = answer)
                 }
             }
             "search_text" -> {

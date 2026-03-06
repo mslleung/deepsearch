@@ -114,7 +114,6 @@ class QueryUrlProcessingService(
                             normalizedUrl,
                             agenticResult.answer,
                             agenticResult.evidence,
-                            agenticResult.intention,
                             agenticResult.contentDate,
                             agenticResult.observations,
                             agenticResult.success
