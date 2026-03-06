@@ -109,7 +109,6 @@ val applicationModule = module {
 
     // Request-scoped services (user/auth related)
     requestScope {
-        scopedOf(::HtmlSourceEvalService) bind IHtmlSourceEvalService::class
         scopedOf(::PdfSourceEvalService) bind IPdfSourceEvalService::class
         scopedOf(::ApiKeyService) bind IApiKeyService::class
         scopedOf(::AuthService) bind IAuthService::class

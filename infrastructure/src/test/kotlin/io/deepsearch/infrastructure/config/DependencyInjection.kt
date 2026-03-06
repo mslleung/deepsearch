@@ -81,9 +81,6 @@ private val infrastructureCommonTestModule = module {
     // Markdown indexing task table
     singleOf(::MarkdownIndexingTaskTable)
     
-    // HTML source eval cache table
-    singleOf(::HtmlSourceEvalCacheTable)
-    
     // PDF source eval cache table
     singleOf(::PdfSourceEvalCacheTable)
     
@@ -127,9 +124,6 @@ private val infrastructureCommonTestModule = module {
     
     // Markdown indexing task repository
     singleOf(::ExposedMarkdownIndexingTaskRepository) bind IMarkdownIndexingTaskRepository::class
-    
-    // HTML source eval cache repository
-    singleOf(::ExposedHtmlSourceEvalCacheRepository) bind IHtmlSourceEvalCacheRepository::class
     
     // PDF source eval cache repository
     singleOf(::ExposedPdfSourceEvalCacheRepository) bind IPdfSourceEvalCacheRepository::class

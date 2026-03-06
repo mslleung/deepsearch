@@ -1,7 +1,5 @@
 package io.deepsearch.domain.agents.googlegenaiimpl
 
-import io.deepsearch.domain.agents.HtmlSourceEvalInput
-import io.deepsearch.domain.agents.IHtmlSourceEvalAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.config.domainTestModule
@@ -9,7 +7,6 @@ import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
 import io.deepsearch.domain.models.valueobjects.SessionHistory
-import io.deepsearch.domain.models.valueobjects.UrlContentResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -29,7 +26,6 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
 
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agent by inject<IStreamingAnswerSynthesisAgent>()
-    private val htmlEvalAgent by inject<IHtmlSourceEvalAgent>()
 
     @Test
     fun `should return default message when evaluated sources are empty`() = runTest(testCoroutineDispatcher) {
@@ -539,86 +535,20 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
      */
     @Test
     fun `should return CONTINUE_SEARCH with temporality not satisfied for outdated pricing blog`() = runTest(testCoroutineDispatcher) {
-        // HTML content from SleekFlow pricing 2024 blog post (dated July 29, 2024)
-        val sleekflowPricing2024Html = UrlContentResult.HtmlPreview(
+        val evaluatedSource = EvaluatedSource(
             url = "https://sleekflow.io/blog/sleekflow-pricing-2024",
             title = "SleekFlow new pricing plans 2024",
             description = "Announcing new pricing plans for 2024 with Flow Builder and more features",
-            cleanedHtml = """
-                <article>
-                    <header>
-                        <h1>SleekFlow new pricing plans 2024</h1>
-                        <p>Esther Fong, Product Marketing Manager</p>
-                        <time datetime="2024-07-29">Jul 29, 2024</time>
-                    </header>
-                    
-                    <section>
-                        <h2>Introducing Flow Builder usage-based pricing model</h2>
-                        <p>We're excited that Flow Builder will officially be out of beta and fully integrated 
-                        into SleekFlow's subscription plans starting August 28, 2024.</p>
-                        
-                        <p>Flow Builder is a versatile customer journey automation tool for chats. It allows 
-                        you to design automation scenarios visually to capture customers' behavioral cues 
-                        across different sources and trigger engagement, sales, and support messages at 
-                        the right time.</p>
-                        
-                        <p>The Flow Builder usage limits are aligned with our tiered subscription model:</p>
-                        <ul>
-                            <li>Pro Plan: 3 active flows, 25 nodes per flow, 500 monthly flow enrollments</li>
-                            <li>Premium Plan: 25 active flows, 100 nodes per flow, 3,000 monthly flow enrollments</li>
-                            <li>Enterprise Plan: 50 active flows, 200 nodes per flow, 10,000 monthly flow enrollments</li>
-                        </ul>
-                    </section>
-                    
-                    <section>
-                        <h2>New Pro Plan - for small teams to collaborate better on chats</h2>
-                        <p>Our Pro Plan is now better than ever, packed with more commerce features without 
-                        the need for additional purchases. It is perfect for small businesses and teams 
-                        that want to provide a convenient customer experience on chats.</p>
-                        <p>Key features include: Omnichannel inbox, Native Shopify integration, Stripe payment 
-                        link integration, Basic Flow Builder features, Facebook Lead Ads integration, 
-                        WhatsApp Broadcast, SleekFlow AI, Mobile App, and up to 5,000 API calls monthly.</p>
-                    </section>
-                    
-                    <section>
-                        <h2>New Premium Plan - for scaling businesses to automate workflows</h2>
-                        <p>Our Premium Plan continues to be our top-tier offering, providing the best value 
-                        in the market. Designed for businesses desiring to scale productivity.</p>
-                        <p>Key features include: HubSpot integration, 300,000 broadcast message quota, 
-                        Custom Objects, Advanced Flow Builder features, Analytics dashboard, and 
-                        Team access management.</p>
-                    </section>
-                    
-                    <section>
-                        <h2>New Enterprise Plan - for large businesses to build tailored solutions</h2>
-                        <p>The Enterprise Plan guarantees top-quality customized services. This plan includes 
-                        everything from the Premium Plan plus enterprise-level features.</p>
-                        <p>Key offerings include: Custom usage limit, Unlimited features, Salesforce integration, 
-                        Export SleekFlow chats, Enterprise-level contact masking, Analytics export, Custom SLAs, 
-                        Flow Builder and automation setup, 100,000 Custom Object records, and 10 million 
-                        SleekFlow API calls per month.</p>
-                    </section>
-                </article>
-            """.trimIndent()
+            relevantFacts = listOf(
+                RelevantFact("Flow Builder will be fully integrated into SleekFlow's subscription plans starting August 28, 2024."),
+                RelevantFact("Pro Plan: 3 active flows, 25 nodes per flow, 500 monthly flow enrollments. Features include Omnichannel inbox, Native Shopify integration, Stripe payment link integration, WhatsApp Broadcast, SleekFlow AI, Mobile App, and up to 5,000 API calls monthly."),
+                RelevantFact("Premium Plan: 25 active flows, 100 nodes per flow, 3,000 monthly flow enrollments. Features include HubSpot integration, 300,000 broadcast message quota, Custom Objects, Advanced Flow Builder features, Analytics dashboard, and Team access management."),
+                RelevantFact("Enterprise Plan: 50 active flows, 200 nodes per flow, 10,000 monthly flow enrollments. Features include Custom usage limit, Unlimited features, Salesforce integration, Export SleekFlow chats, Enterprise-level contact masking, Analytics export, Custom SLAs, and 10 million SleekFlow API calls per month.")
+            ),
+            contentDate = "2024-07-29",
+            intention = "Blog post announcing SleekFlow's 2024 pricing plans with Flow Builder integration"
         )
 
-        // Step 1: Evaluate the HTML source with HtmlSourceEvalAgent
-        val evalInput = HtmlSourceEvalInput(
-            htmlSource = sleekflowPricing2024Html,
-            expandedQuery = "What are the current SleekFlow pricing plans?"
-        )
-
-        val evalOutput = htmlEvalAgent.generate(evalInput)
-
-        assertNotNull(evalOutput.evaluatedSource, "Should extract facts from the pricing blog post")
-        
-        val evaluatedSource = evalOutput.evaluatedSource
-        assertTrue(
-            evaluatedSource.relevantFacts.isNotEmpty(),
-            "Should have extracted relevant pricing facts"
-        )
-
-        // Step 2: Pass the evaluated source to the answer synthesis agent
         val answerInput = StreamingAnswerSynthesisInput(
             query = "What are the current SleekFlow pricing plans?",
             evaluatedSources = listOf(evaluatedSource)

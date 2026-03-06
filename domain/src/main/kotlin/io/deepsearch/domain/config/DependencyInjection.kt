@@ -145,7 +145,6 @@ val domainModule = module {
         scopedOf(::QueryExpansionAgentGenAiImpl) bind IQueryExpansionAgent::class
         scopedOf(::SerpQueryOptimizationAgentGenAiImpl) bind ISerpQueryOptimizationAgent::class
         scopedOf(::StreamingAnswerAgentGenAiImpl) bind IStreamingAnswerAgent::class
-        scopedOf(::HtmlSourceEvalAgentGenAiImpl) bind IHtmlSourceEvalAgent::class
         scopedOf(::PdfSourceEvalAgentGenAiImpl) bind IPdfSourceEvalAgent::class
         scopedOf(::MarkdownSourceEvalAgentGenAiImpl) bind IMarkdownSourceEvalAgent::class
         scopedOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class
