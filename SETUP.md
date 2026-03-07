@@ -14,7 +14,7 @@ cd deepsearch
 ### 2. Install Required Tools
 
 #### Java Development Kit (JDK)
-- Download and install [OpenJDK 24](https://jdk.java.net/24/)
+- Download and install [OpenJDK 25](https://jdk.java.net/25/)
 - Add the `bin` folder to your system's `PATH` environment variable
 - **Note:** Do NOT set `JAVA_HOME`; only update `PATH`
 

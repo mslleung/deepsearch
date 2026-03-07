@@ -80,6 +80,12 @@ val envVars: Map<String, String> by rootProject.extra
 
 tasks.test {
     useJUnitPlatform()
+    jvmArgs(
+        "--enable-native-access=ALL-UNNAMED",
+        "-Xmx4g",
+        "-Dorg.bytedeco.javacpp.maxphysicalbytes=0",
+        "-Dorg.bytedeco.javacpp.maxbytes=0"
+    )
     
     // Run tests in parallel using available CPU cores
     maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
