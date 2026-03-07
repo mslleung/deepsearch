@@ -1,6 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.browser.IBrowserPage
+import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SemanticElements
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.services.IHtmlToMarkdownService
@@ -57,14 +58,21 @@ data class QuickCaptureData(
     val screenshot: IBrowserPage.Screenshot
 )
 
+private val quickCaptureLogger: Logger = LoggerFactory.getLogger("io.deepsearch.application.services.QuickCapture")
+
 /**
  * Captures essential browser data quickly (~0.5s) without closing the page.
  * The page remains open for subsequent agentic search.
+ *
+ * Screenshot failure is non-fatal: the pipeline will skip visual identification
+ * (boilerplate removal) and produce markdown from the full HTML instead.
  */
 suspend fun quickCapture(page: IBrowserPage): QuickCaptureData = coroutineScope {
     page.injectStableIds()
     val snapshotDeferred = async { page.capturePageSnapshot() }
-    val screenshotDeferred = async { page.takeFullPageScreenshot() }
+    val screenshotDeferred = async {
+        page.takeFullPageScreenshot()
+    }
     QuickCaptureData(snapshotDeferred.await(), screenshotDeferred.await())
 }
 
@@ -125,19 +133,19 @@ class WebpageIndexingService(
         val snapshot = data.snapshot
         val screenshot = data.screenshot
 
-        // Phase 1: Visual identification (for semantic element removal only — table results are ignored)
-        val visualResult: VisualIdentificationResult
-        val visualDuration = measureTimeMillis {
-            visualResult = visualIdentificationService.identifyVisualElements(sessionId, snapshot, screenshot)
+        // Phase 1: Layout identification (lightweight -- only header/footer/nav/breadcrumb)
+        val semanticElements: SemanticElements
+        val layoutDuration = measureTimeMillis {
+            semanticElements = visualIdentificationService.identifyLayoutElements(sessionId, snapshot, screenshot)
         }
-        logger.debug("Visual identification: {} ms", visualDuration)
+        logger.debug("Layout identification: {} ms", layoutDuration)
 
         // Phase 2: DOM processing (remove boilerplate, convert to markdown)
         val rawMarkdown: String
         val domDuration = measureTimeMillis {
             val jsoupDoc = Jsoup.parse(snapshot.html)
 
-            jsoupDomService.removeElements(jsoupDoc, collectSemanticDataIdSelectors(visualResult.semanticElements))
+            jsoupDomService.removeElements(jsoupDoc, collectLayoutDataIdSelectors(semanticElements))
             jsoupDomService.cleanupForMarkdownConversion(jsoupDoc)
             rawMarkdown = htmlToMarkdownService.convert(jsoupDoc.html())
         }
@@ -162,15 +170,12 @@ class WebpageIndexingService(
         )
     }
 
-    private fun collectSemanticDataIdSelectors(semanticElements: SemanticElements): List<String> {
+    private fun collectLayoutDataIdSelectors(semanticElements: SemanticElements): List<String> {
         return buildList {
             semanticElements.header?.let { add("[data-ds-id=\"${it.dataId}\"]") }
             semanticElements.footer?.let { add("[data-ds-id=\"${it.dataId}\"]") }
             semanticElements.navSidebar?.let { add("[data-ds-id=\"${it.dataId}\"]") }
             semanticElements.breadcrumb?.let { add("[data-ds-id=\"${it.dataId}\"]") }
-            semanticElements.cookieBanner?.let { add("[data-ds-id=\"${it.dataId}\"]") }
-            addAll(semanticElements.adBanners.map { "[data-ds-id=\"${it.dataId}\"]" })
-            addAll(semanticElements.popups.map { "[data-ds-id=\"${it.dataId}\"]" })
         }
     }
 }

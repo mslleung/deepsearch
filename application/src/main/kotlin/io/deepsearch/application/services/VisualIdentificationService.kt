@@ -74,6 +74,17 @@ interface IVisualIdentificationService {
         pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
         screenshot: IBrowserPage.Screenshot
     ): VisualIdentificationResult
+
+    /**
+     * Lightweight layout-only identification for the indexing pipeline.
+     * Detects only page chrome (header, footer, navSidebar, breadcrumb) -- no tables,
+     * popups, or cookie banners -- using a simpler schema and prompt.
+     */
+    suspend fun identifyLayoutElements(
+        sessionId: SessionId,
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
+        screenshot: IBrowserPage.Screenshot
+    ): SemanticElements
     
     // ========== Batch API Methods ==========
     
@@ -182,6 +193,18 @@ class VisualIdentificationService(
         return digest.digest()
     }
 
+    /**
+     * Discriminated hash for layout-only results so they don't collide with
+     * full visual identification cache entries for the same page.
+     */
+    private fun computeLayoutContentHash(screenshotBytes: ByteArray, html: String): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update("layout-v1".toByteArray(Charsets.UTF_8))
+        digest.update(screenshotBytes)
+        digest.update(stripDataDsId(html).toByteArray(Charsets.UTF_8))
+        return digest.digest()
+    }
+
     private fun agentOutputToCached(output: io.deepsearch.domain.agents.VisualIdentificationOutput): CachedVisionResult {
         return CachedVisionResult(
             semanticElements = CachedSemanticElements(
@@ -251,6 +274,11 @@ class VisualIdentificationService(
             pageSnapshot.html.length, screenshot.bytes.size
         )
 
+        if (screenshot.bytes.isEmpty()) {
+            logger.warn("Screenshot bytes are empty, skipping visual identification")
+            return VisualIdentificationResult(SemanticElements(), emptyList())
+        }
+
         // Check cache first
         val contentHash = computeVisionContentHash(screenshot.bytes, pageSnapshot.html)
         val cached = visionDetectionCacheRepository.findByHash(contentHash)
@@ -300,6 +328,79 @@ class VisualIdentificationService(
             semanticElements = agentOutput.semanticElements,
             tables = agentOutput.tables
         )
+    }
+
+    // ========== Layout-Only Identification ==========
+
+    override suspend fun identifyLayoutElements(
+        sessionId: SessionId,
+        pageSnapshot: IBrowserPage.PageSnapshotWithMetadata,
+        screenshot: IBrowserPage.Screenshot
+    ): SemanticElements {
+        logger.debug(
+            "Starting layout identification: HTML={} bytes, screenshot={} bytes",
+            pageSnapshot.html.length, screenshot.bytes.size
+        )
+
+        if (screenshot.bytes.isEmpty()) {
+            logger.warn("Screenshot bytes are empty, skipping layout identification")
+            return SemanticElements()
+        }
+
+        val contentHash = computeLayoutContentHash(screenshot.bytes, pageSnapshot.html)
+        val cached = visionDetectionCacheRepository.findByHash(contentHash)
+
+        if (cached != null) {
+            logger.debug("Layout detection cache HIT")
+            val cachedResult = cacheJson.decodeFromString<CachedVisionResult>(cached.visionResponseJson)
+            return cachedToResult(cachedResult).semanticElements
+        }
+
+        logger.debug("Layout detection cache MISS - calling LLM")
+
+        val agentOutput = visualIdentificationAgent.generateForLayout(
+            VisualIdentificationInput(
+                pageSnapshot = pageSnapshot,
+                screenshot = screenshot
+            )
+        )
+
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "LayoutIdentificationAgent",
+            modelName = agentOutput.tokenUsage.modelName,
+            promptTokens = agentOutput.tokenUsage.promptTokens,
+            outputTokens = agentOutput.tokenUsage.outputTokens,
+            totalTokens = agentOutput.tokenUsage.totalTokens
+        )
+
+        val cachedResult = CachedVisionResult(
+            semanticElements = CachedSemanticElements(
+                headerDataId = agentOutput.semanticElements.header?.dataId,
+                headerNote = agentOutput.semanticElements.header?.note,
+                footerDataId = agentOutput.semanticElements.footer?.dataId,
+                footerNote = agentOutput.semanticElements.footer?.note,
+                navSidebarDataId = agentOutput.semanticElements.navSidebar?.dataId,
+                navSidebarNote = agentOutput.semanticElements.navSidebar?.note,
+                breadcrumbDataId = agentOutput.semanticElements.breadcrumb?.dataId,
+                breadcrumbNote = agentOutput.semanticElements.breadcrumb?.note
+            ),
+            tables = emptyList()
+        )
+        visionDetectionCacheRepository.upsert(
+            VisionDetectionCache(
+                contentHash = contentHash,
+                visionResponseJson = cacheJson.encodeToString(cachedResult)
+            )
+        )
+
+        logger.debug(
+            "Layout identification complete: {} semantic elements, {} tokens",
+            countLayoutElements(agentOutput.semanticElements),
+            agentOutput.tokenUsage.totalTokens
+        )
+
+        return agentOutput.semanticElements
     }
 
     // ========== Batch API Methods ==========
@@ -382,6 +483,15 @@ class VisualIdentificationService(
         if (elements.cookieBanner != null) count++
         count += elements.adBanners.size
         count += elements.popups.size
+        return count
+    }
+
+    private fun countLayoutElements(elements: SemanticElements): Int {
+        var count = 0
+        if (elements.header != null) count++
+        if (elements.footer != null) count++
+        if (elements.navSidebar != null) count++
+        if (elements.breadcrumb != null) count++
         return count
     }
 }

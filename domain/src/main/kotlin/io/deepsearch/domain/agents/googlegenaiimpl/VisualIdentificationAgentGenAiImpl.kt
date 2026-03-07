@@ -7,6 +7,7 @@ import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.IVisualIdentificationAgent
+import io.deepsearch.domain.agents.LayoutIdentificationOutput
 import io.deepsearch.domain.agents.TableIdentification
 import io.deepsearch.domain.agents.VisualIdentificationBatchRequest
 import io.deepsearch.domain.agents.VisualIdentificationInput
@@ -154,6 +155,39 @@ class VisualIdentificationAgentGenAiImpl(
         }
     """.trimIndent()
 
+    // ========== Layout-Only Schema (lightweight, for indexing pipeline) ==========
+
+    private val layoutOutputSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .description("Page chrome elements for boilerplate removal")
+        .properties(
+            mapOf(
+                "header" to visionElementSchema.toBuilder().nullable(true).build(),
+                "footer" to visionElementSchema.toBuilder().nullable(true).build(),
+                "navSidebar" to visionElementSchema.toBuilder().nullable(true).build(),
+                "breadcrumb" to visionElementSchema.toBuilder().nullable(true).build()
+            )
+        )
+        .build()
+
+    private val layoutSystemInstruction = """
+        Detect page chrome elements in this webpage screenshot for content extraction.
+        
+        Return bounding boxes using box_2d format: [ymin, xmin, ymax, xmax] where coordinates are scaled to [0, 1000].
+        
+        Identify these navigational elements:
+        - header: webpage header/navigation bar at the top
+        - footer: webpage footer at the bottom
+        - navSidebar: side navigation column (not main content sidebar)
+        - breadcrumb: navigation path like "Home > Category > Page"
+        
+        Example output:
+        {
+            "header": {"box_2d": [0, 0, 50, 1000], "label": "Navigation bar with logo"},
+            "footer": {"box_2d": [920, 0, 1000, 1000], "label": "Footer with links"}
+        }
+    """.trimIndent()
+
     // ========== Response Data Classes ==========
 
     @Serializable
@@ -189,6 +223,14 @@ class VisualIdentificationAgentGenAiImpl(
         val cookieBanner: VisionElement? = null,
         val popups: List<VisionElement>? = null,
         val tables: List<VisionTableElement> = emptyList()
+    )
+
+    @Serializable
+    private data class LayoutVisionResponse(
+        val header: VisionElement? = null,
+        val footer: VisionElement? = null,
+        val navSidebar: VisionElement? = null,
+        val breadcrumb: VisionElement? = null
     )
 
     // Internal result after IoU mapping
@@ -306,6 +348,90 @@ class VisualIdentificationAgentGenAiImpl(
         VisualIdentificationOutput(
             semanticElements = semanticElements,
             tables = tableIdentifications,
+            tokenUsage = tokenUsage
+        )
+    }
+
+    // ========== Layout-Only Generate Method ==========
+
+    override suspend fun generateForLayout(input: VisualIdentificationInput): LayoutIdentificationOutput = coroutineScope {
+        val htmlWithIds = input.pageSnapshot.html
+        val boundingBoxes = input.pageSnapshot.boundingBoxes
+        val screenshot = input.screenshot
+
+        logger.debug(
+            "Layout identification: HTML={} bytes, screenshot={} bytes, {} bounding boxes",
+            htmlWithIds.length, screenshot.bytes.size, boundingBoxes.size
+        )
+
+        val (screenshotWidth, screenshotHeight) = withContext(dispatcherProvider.io) {
+            imageDimensionService.getImageDimensions(screenshot.bytes)
+        }
+
+        var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)
+        val visionResponse = withContext(dispatcherProvider.io) {
+            retryLlmCall<LayoutVisionResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_layout") {
+                val result = client.models.generateContent(
+                    ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+                    listOf(
+                        Content.fromParts(
+                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
+                            Part.fromText("Identify the page chrome elements in this webpage screenshot.")
+                        )
+                    ),
+                    GenerateContentConfig.builder()
+                        .temperature(1.0F)
+                        .responseSchema(layoutOutputSchema)
+                        .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
+                                .build()
+                        )
+                        .systemInstruction(Content.fromParts(Part.fromText(layoutSystemInstruction)))
+                        .build()
+                )
+
+                result.checkFinishReason()
+
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
+        }
+
+        val pageWidth = screenshotWidth.toDouble()
+        val pageHeight = screenshotHeight.toDouble()
+
+        logger.debug("Layout identification dimensions: {}x{} (original)", pageWidth.toInt(), pageHeight.toInt())
+
+        val doc = Jsoup.parse(htmlWithIds)
+
+        // Convert LayoutVisionResponse -> CombinedVisionResponse to reuse mapping logic
+        val asCombined = CombinedVisionResponse(
+            header = visionResponse.header,
+            footer = visionResponse.footer,
+            navSidebar = visionResponse.navSidebar,
+            breadcrumb = visionResponse.breadcrumb
+        )
+        val mappedSemantic = mapSemanticElements(asCombined, boundingBoxes, htmlWithIds, pageWidth, pageHeight, doc)
+        val finalSemantic = applySemanticOverrides(mappedSemantic, doc)
+        val semanticElements = buildSemanticElements(finalSemantic)
+
+        logger.debug(
+            "Layout identification complete: {} semantic elements",
+            countSemanticElements(semanticElements)
+        )
+
+        LayoutIdentificationOutput(
+            semanticElements = semanticElements,
             tokenUsage = tokenUsage
         )
     }

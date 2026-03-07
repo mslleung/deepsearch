@@ -44,6 +44,16 @@ data class VisualIdentificationOutput(
 ) : IAgent.IAgentOutput
 
 /**
+ * Lightweight output for layout-only identification (no tables, popups, or cookie banners).
+ * Used by the indexing pipeline which only needs page chrome for boilerplate removal.
+ */
+@Serializable
+data class LayoutIdentificationOutput(
+    val semanticElements: SemanticElements,
+    @Contextual val tokenUsage: TokenUsageMetrics
+) : IAgent.IAgentOutput
+
+/**
  * Prepared batch request for visual identification.
  * Contains the request to submit and the HTML with injected IDs for response parsing.
  */
@@ -65,6 +75,13 @@ data class VisualIdentificationBatchRequest(
  */
 interface IVisualIdentificationAgent : IAgent<VisualIdentificationInput, VisualIdentificationOutput> {
     override suspend fun generate(input: VisualIdentificationInput): VisualIdentificationOutput
+
+    /**
+     * Lightweight layout-only identification for the indexing pipeline.
+     * Detects only page chrome (header, footer, navSidebar, breadcrumb) using a simpler
+     * schema and prompt, reducing output tokens and LLM latency compared to [generate].
+     */
+    suspend fun generateForLayout(input: VisualIdentificationInput): LayoutIdentificationOutput
 
     /**
      * Prepare a batch request for visual identification.

@@ -77,7 +77,7 @@ class WebpageIndexingServiceTest : IsolatedKoinTest() {
             println("Markdown length: ${result.markdown.length}")
             println("Title: ${result.title}")
             println("=== MARKDOWN PREVIEW (first 500 chars) ===")
-            println(result.markdown.take(500))
+            println(result.markdown)
             println("=== END PREVIEW ===")
 
             assertTrue(result.markdown.length > 200, "Markdown should be longer than 200 chars")
