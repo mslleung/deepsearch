@@ -45,6 +45,8 @@ sealed class UrlContentResult {
         val evidence: String?,
         val contentDate: String?,
         val observations: List<String>,
-        val success: Boolean
+        val success: Boolean,
+        val imageIds: List<String> = emptyList(),
+        val imageDescriptions: Map<String, String> = emptyMap()
     ) : UrlContentResult()
 }

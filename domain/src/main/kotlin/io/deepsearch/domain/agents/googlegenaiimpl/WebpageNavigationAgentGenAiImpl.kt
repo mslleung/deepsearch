@@ -7,6 +7,7 @@ import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
 
+import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.ScrollDirection
@@ -79,6 +80,26 @@ class WebpageNavigationAgentGenAiImpl(
                 "reason" to Schema.builder()
                     .type("STRING")
                     .description("Brief reason for the chosen action.")
+                    .build(),
+                "captureRegions" to Schema.builder()
+                    .type("ARRAY")
+                    .items(
+                        Schema.builder()
+                            .type("OBJECT")
+                            .properties(
+                                mapOf(
+                                    "x1" to Schema.builder().type("INTEGER").description("Left edge (0-1000).").build(),
+                                    "y1" to Schema.builder().type("INTEGER").description("Top edge (0-1000).").build(),
+                                    "x2" to Schema.builder().type("INTEGER").description("Right edge (0-1000).").build(),
+                                    "y2" to Schema.builder().type("INTEGER").description("Bottom edge (0-1000).").build(),
+                                    "relevance" to Schema.builder().type("STRING").description("Why this visual region is relevant to the query.").build()
+                                )
+                            )
+                            .required(listOf("x1", "y1", "x2", "y2", "relevance"))
+                            .build()
+                    )
+                    .description("Bounding boxes of visual regions (charts, diagrams, table images, etc.) relevant to the query. Use 0-1000 coordinates. Omit or leave empty if nothing visual is worth capturing.")
+                    .nullable(true)
                     .build()
             )
         )
@@ -106,11 +127,26 @@ class WebpageNavigationAgentGenAiImpl(
         - answer_found: Set "answer". ONLY when openQuestions is empty.
         - give_up: After exhausting all options.
 
+        === VISUAL CAPTURE ===
+        - If you see a visual region (chart, diagram, table image, infographic, etc.) relevant to the query, specify its bounding box in "captureRegions" using 0-1000 coordinates.
+        - Include a brief "relevance" description explaining why this visual matters.
+        - Ignore logos, icons, navigation elements, and decorative images.
+        - You may capture regions on any turn, alongside your normal action.
+
         === RULES ===
         - Read the screenshot fresh each turn — never carry stale data forward.
         - If a click had no visible change, try a DIFFERENT element or approach.
         - For tables/grids, carefully match row labels to column headers.
     """.trimIndent()
+
+    @Serializable
+    private data class CaptureRegionResponse(
+        val x1: Int,
+        val y1: Int,
+        val x2: Int,
+        val y2: Int,
+        val relevance: String
+    )
 
     @Serializable
     private data class NavigationResponse(
@@ -124,7 +160,8 @@ class WebpageNavigationAgentGenAiImpl(
         val searchTerms: List<String>? = null,
         val text: String? = null,
         val answer: String? = null,
-        val reason: String? = null
+        val reason: String? = null,
+        val captureRegions: List<CaptureRegionResponse>? = null
     )
 
     override suspend fun generate(input: WebpageNavigationInput): WebpageNavigationOutput {
@@ -226,10 +263,21 @@ class WebpageNavigationAgentGenAiImpl(
             response.reason
         )
 
+        val captureRegions = response.captureRegions?.map { r ->
+            CaptureRegion(
+                x1 = r.x1.coerceIn(0, 1000),
+                y1 = r.y1.coerceIn(0, 1000),
+                x2 = r.x2.coerceIn(0, 1000),
+                y2 = r.y2.coerceIn(0, 1000),
+                relevance = r.relevance
+            )
+        }?.filter { it.x2 > it.x1 && it.y2 > it.y1 } ?: emptyList()
+
         return WebpageNavigationOutput(
             action = action,
             finding = response.finding,
             openQuestions = response.openQuestions ?: emptyList(),
+            captureRegions = captureRegions,
             tokenUsage = tokenUsage
         )
     }

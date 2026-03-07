@@ -119,7 +119,6 @@ class SearchController(
             apiKey.userId,
             request.languagePattern,
             request.toOcrLanguage(),
-            request.includeImages ?: false,
             request.continueSessionId
         )
 
@@ -214,7 +213,6 @@ class SearchController(
             val modeParam = call.request.queryParameters["mode"]
             val languagePattern = call.request.queryParameters["languagePattern"]
             val ocrLanguageParam = call.request.queryParameters["ocrLanguage"]
-            val includeImages = call.request.queryParameters["includeImages"]?.toBoolean() ?: false
             val continueSessionId = call.request.queryParameters["continueSessionId"]
 
             if (query.isNullOrBlank() || url.isNullOrBlank()) {
@@ -253,7 +251,7 @@ class SearchController(
             }
 
             // Parse mode and validate language pattern
-            val searchRequest = SearchRequest(query, url, maxCacheAge, modeParam, languagePattern, ocrLanguageParam, includeImages)
+            val searchRequest = SearchRequest(query, url, maxCacheAge, modeParam, languagePattern, ocrLanguageParam)
             val searchMode = try {
                 searchRequest.toSearchMode()
             } catch (e: IllegalArgumentException) {
@@ -326,7 +324,6 @@ class SearchController(
                 apiKey.userId,
                 languagePattern,
                 searchRequest.toOcrLanguage(),
-                includeImages,
                 continueSessionId
             )
 

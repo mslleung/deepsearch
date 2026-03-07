@@ -81,15 +81,27 @@ enum class ScrollDirection {
     DOWN, UP
 }
 
+data class CaptureRegion(
+    val x1: Int,
+    val y1: Int,
+    val x2: Int,
+    val y2: Int,
+    val relevance: String
+)
+
 /**
  * Every VLM response includes [finding] (what's relevant on the current screenshot)
  * and [openQuestions] (gaps that remain), alongside the page [action].
  * This ensures the agent observes AND acts in every iteration — no wasted turns.
+ *
+ * [captureRegions] allows the agent to flag visual regions (charts, diagrams, tables, etc.)
+ * worth capturing as images, using 0-1000 normalized bounding boxes.
  */
 data class WebpageNavigationOutput(
     val action: NavigationAction,
     val finding: String?,
     val openQuestions: List<String>,
+    val captureRegions: List<CaptureRegion>,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

@@ -9,14 +9,12 @@ import java.net.URI
  * @param url The base URL to search within
  * @param languagePattern Optional language filter pattern (e.g., "/en-us/" or "?lang=en")
  * @param ocrLanguage OCR language for Tesseract text extraction from images
- * @param includeImages When true, disables preview path and requires authoritative source before answering
  */
 data class SearchQuery(
     private val rawQuery: String, 
     val url: String,
     val languagePattern: String? = null,
-    val ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
-    val includeImages: Boolean = false
+    val ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT
 ) {
     
     /**

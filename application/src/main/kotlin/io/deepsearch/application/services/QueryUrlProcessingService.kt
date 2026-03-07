@@ -1,11 +1,15 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.exceptions.*
+import io.deepsearch.domain.models.entities.WebpageImage
 import io.deepsearch.domain.models.valueobjects.LinkSource
 import io.deepsearch.domain.models.valueobjects.OcrLanguage
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.proxy.ProxyConfiguration
+import io.deepsearch.domain.repositories.IWebpageImageRepository
+import io.deepsearch.domain.services.IImageStorageService
+import io.deepsearch.domain.services.ImageToStore
 import io.deepsearch.domain.services.INormalizeUrlService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -38,7 +42,9 @@ class QueryUrlProcessingService(
     private val agenticWebpageSearchService: IAgenticWebpageSearchService,
     private val browserPageResolver: IBrowserPageResolver,
     private val fileUrlProcessingService: IFileUrlProcessingService,
-    private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService
+    private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
+    private val imageStorageService: IImageStorageService,
+    private val webpageImageRepository: IWebpageImageRepository
 ) : IQueryUrlProcessingService {
 
     private val logger = LoggerFactory.getLogger(this::class.java)
@@ -59,10 +65,15 @@ class QueryUrlProcessingService(
 
             when (val contentTypeResult = httpContentTypeResolutionService.resolve(normalizedUrl)) {
                 is ContentTypeResult.Html -> {
-                    logger.debug("Detected HTML content for: {} ({} bytes)", normalizedUrl, contentTypeResult.bodyBytes.size)
+                    logger.debug(
+                        "Detected HTML content for: {} ({} bytes)",
+                        normalizedUrl,
+                        contentTypeResult.bodyBytes.size
+                    )
                     processHtmlAsFlow(normalizedUrl, contentTypeResult.bodyBytes, query, sessionId, proxyConfig)
                         .collect { event -> emit(event) }
                 }
+
                 is ContentTypeResult.SupportedFile -> {
                     logger.debug(
                         "Detected supported file for: {} ({} bytes, type: {})",
@@ -72,17 +83,67 @@ class QueryUrlProcessingService(
                         normalizedUrl, contentTypeResult,
                         query, null, sessionId
                     ) { markdown ->
-                        webpageLinkDiscoveryService.discoverRelevantLinksFromText(query, markdown, normalizedUrl, sessionId)
+                        webpageLinkDiscoveryService.discoverRelevantLinksFromText(
+                            query,
+                            markdown,
+                            normalizedUrl,
+                            sessionId
+                        )
                     }.collect { event -> emit(event) }
                 }
+
                 is ContentTypeResult.FileTooLarge -> {
-                    throw FileTooLargeException(normalizedUrl, contentTypeResult.contentLength, contentTypeResult.maxSizeBytes)
+                    throw FileTooLargeException(
+                        normalizedUrl,
+                        contentTypeResult.contentLength,
+                        contentTypeResult.maxSizeBytes
+                    )
                 }
+
                 is ContentTypeResult.Unsupported -> {
                     throw UnsupportedContentTypeException(normalizedUrl, contentTypeResult.contentType)
                 }
             }
         }
+    }
+
+    @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+    private suspend fun storeCapturedImages(
+        captures: List<CapturedImage>
+    ): Pair<List<String>, Map<String, String>> {
+        if (captures.isEmpty()) return emptyList<String>() to emptyMap()
+
+        val imagesToStore = captures.map { ImageToStore(it.bytesHash, it.bytes, it.mimeType) }
+        val gcsPaths = imageStorageService.storeBatch(imagesToStore)
+        logger.debug("Stored {} captured images in GCS", gcsPaths.size)
+
+        val imageIds = mutableListOf<String>()
+        val imageDescriptions = mutableMapOf<String, String>()
+        val imagesToCache = mutableListOf<WebpageImage>()
+
+        for (capture in captures) {
+            val base64Hash = kotlin.io.encoding.Base64.encode(capture.bytesHash)
+            val gcsPath = gcsPaths[base64Hash] ?: continue
+            val urlSafeHash = base64Hash.replace("+", "-").replace("/", "_").trimEnd('=')
+            val imageId = "img-$urlSafeHash"
+
+            imageIds.add(imageId)
+            imageDescriptions[imageId] = capture.relevance
+
+            imagesToCache.add(
+                WebpageImage(
+                    imageBytesHash = capture.bytesHash,
+                    gcsPath = gcsPath,
+                    mimeType = capture.mimeType,
+                    extractedText = capture.relevance
+                )
+            )
+        }
+
+        webpageImageRepository.batchUpsert(imagesToCache)
+        logger.debug("Cached {} captured images in DB", imagesToCache.size)
+
+        return imageIds to imageDescriptions
     }
 
     private fun processHtmlAsFlow(
@@ -96,7 +157,12 @@ class QueryUrlProcessingService(
             val extractedHtml = page.getFullHtml()
 
             val linkDiscoveryFlow = flow {
-                val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(query, extractedHtml, normalizedUrl, sessionId)
+                val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
+                    query,
+                    extractedHtml,
+                    normalizedUrl,
+                    sessionId
+                )
                 emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
             }
 
@@ -109,14 +175,18 @@ class QueryUrlProcessingService(
                     )
                     logger.debug("Agentic search complete for {}: success={}", normalizedUrl, agenticResult.success)
 
+                    val (imageIds, imageDescriptions) = storeCapturedImages(agenticResult.capturedImages)
+
                     emit(
                         UrlProcessingEvent.AgenticSearchComplete(
-                            normalizedUrl,
-                            agenticResult.answer,
-                            agenticResult.evidence,
-                            agenticResult.contentDate,
-                            agenticResult.observations,
-                            agenticResult.success
+                            url = normalizedUrl,
+                            answer = agenticResult.answer,
+                            evidence = agenticResult.evidence,
+                            contentDate = agenticResult.contentDate,
+                            observations = agenticResult.observations,
+                            success = agenticResult.success,
+                            imageIds = imageIds,
+                            imageDescriptions = imageDescriptions
                         )
                     )
 

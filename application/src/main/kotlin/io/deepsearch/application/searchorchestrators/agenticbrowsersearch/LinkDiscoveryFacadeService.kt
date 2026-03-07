@@ -95,8 +95,7 @@ class LinkDiscoveryFacadeService(
             rawQuery = query,
             url = baseSearchQuery.url,
             languagePattern = baseSearchQuery.languagePattern,
-            ocrLanguage = baseSearchQuery.ocrLanguage,
-            includeImages = baseSearchQuery.includeImages
+            ocrLanguage = baseSearchQuery.ocrLanguage
         )
 
         // Run all discovery mechanisms in parallel using flow composition

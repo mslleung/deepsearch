@@ -325,7 +325,9 @@ class AgenticBrowserSearchOrchestrator(
                             description = agenticAnswer.description,
                             relevantFacts = facts,
                             contentDate = agenticAnswer.contentDate,
-                            intention = "Webpage"
+                            intention = "Webpage",
+                            relevantImageIds = agenticAnswer.imageIds,
+                            imageDescriptions = agenticAnswer.imageDescriptions
                         )
                     },
 
@@ -572,7 +574,9 @@ class AgenticBrowserSearchOrchestrator(
                                     event.evidence,
                                     event.contentDate,
                                     event.observations,
-                                    event.success
+                                    event.success,
+                                    event.imageIds,
+                                    event.imageDescriptions
                                 )
 
                             else -> throw IllegalStateException("Unexpected event type")
@@ -852,7 +856,9 @@ class AgenticBrowserSearchOrchestrator(
                                             event.evidence,
                                             event.contentDate,
                                             event.observations,
-                                            event.success
+                                            event.success,
+                                            event.imageIds,
+                                            event.imageDescriptions
                                         )
 
                                     else -> throw IllegalStateException("Unexpected event type")
@@ -932,6 +938,10 @@ class AgenticBrowserSearchOrchestrator(
             sessionId.value, batch.size, additions
         )
 
+        val imageDescriptions = updatedSourcesByUrl.values
+            .flatMap { it.imageDescriptions.entries }
+            .associate { it.key to it.value }
+
         // Synthesize answer with updated sources (via facade service)
         // Uses current requirements which may have been refined in previous iterations
         val synthesis = answerSynthesisFacadeService.synthesizeAnswer(
@@ -940,7 +950,8 @@ class AgenticBrowserSearchOrchestrator(
             evaluatedSources = updatedSourcesByUrl.values.toList(),
             previouslySearchedQueries = state.searchedQueries,
             fulfillmentRequirements = state.currentRequirements,
-            sessionHistory = sessionHistory
+            sessionHistory = sessionHistory,
+            imageDescriptions = imageDescriptions
         )
 
         val newIterationNumber = state.iterationNumber + 1

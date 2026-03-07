@@ -64,7 +64,8 @@ interface IAnswerSynthesisFacadeService {
         evaluatedSources: List<EvaluatedSource>,
         previouslySearchedQueries: List<String> = emptyList(),
         fulfillmentRequirements: List<String> = emptyList(),
-        sessionHistory: SessionHistory = SessionHistory.empty()
+        sessionHistory: SessionHistory = SessionHistory.empty(),
+        imageDescriptions: Map<String, String> = emptyMap()
     ): SynthesisResult
 }
 
@@ -79,7 +80,8 @@ class AnswerSynthesisFacadeService(
         evaluatedSources: List<EvaluatedSource>,
         previouslySearchedQueries: List<String>,
         fulfillmentRequirements: List<String>,
-        sessionHistory: SessionHistory
+        sessionHistory: SessionHistory,
+        imageDescriptions: Map<String, String>
     ): SynthesisResult {
         val answerBuilder = StringBuilder()
         lateinit var status: AnswerStatus
@@ -93,6 +95,7 @@ class AnswerSynthesisFacadeService(
             StreamingAnswerSynthesisInput(
                 query = expandedQuery,
                 evaluatedSources = evaluatedSources,
+                imageDescriptions = imageDescriptions,
                 previouslySearchedQueries = previouslySearchedQueries,
                 fulfillmentRequirements = fulfillmentRequirements,
                 sessionHistory = sessionHistory

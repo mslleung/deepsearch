@@ -39,7 +39,6 @@ interface ISearchService {
         userId: UserId,
         languagePattern: String? = null,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
-        includeImages: Boolean = false,
         continueSessionId: String? = null
     ): QuerySessionDetail
 
@@ -61,7 +60,6 @@ interface ISearchService {
         userId: UserId,
         languagePattern: String? = null,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
-        includeImages: Boolean = false,
         continueSessionId: String? = null
     ): Flow<SearchEvent>
 }
@@ -85,10 +83,9 @@ class SearchService(
         userId: UserId,
         languagePattern: String?,
         ocrLanguage: OcrLanguage,
-        includeImages: Boolean,
         continueSessionId: String?
     ): QuerySessionDetail {
-        val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage, includeImages)
+        val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage)
         
         // Resolve user's proxy configuration for this URL
         // Custom/Premium proxies are used directly; None triggers adaptive bypass strategy
@@ -98,8 +95,8 @@ class SearchService(
         val sessionHistory = loadSessionHistory(continueSessionId)
         
         logger.debug(
-            "Executing {} search for query: {} with proxy: {} language pattern: {} OCR language: {} includeImages: {} continueSessionId: {} historySize: {}", 
-            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage, includeImages, continueSessionId, sessionHistory.sessions.size
+            "Executing {} search for query: {} with proxy: {} language pattern: {} OCR language: {} continueSessionId: {} historySize: {}", 
+            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage, continueSessionId, sessionHistory.sessions.size
         )
         
         val orchestrator = when (mode) {
@@ -154,10 +151,9 @@ class SearchService(
         userId: UserId,
         languagePattern: String?,
         ocrLanguage: OcrLanguage,
-        includeImages: Boolean,
         continueSessionId: String?
     ): Flow<SearchEvent> {
-        val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage, includeImages)
+        val searchQuery = SearchQuery(query, url, languagePattern, ocrLanguage)
         
         // Resolve user's proxy configuration for this URL
         val proxyConfig = proxySettingsService.resolveProxyForUrl(userId, url)
@@ -166,8 +162,8 @@ class SearchService(
         val sessionHistory = loadSessionHistory(continueSessionId)
         
         logger.debug(
-            "Starting streaming {} search for query: {} with proxy: {} language pattern: {} OCR language: {} includeImages: {} continueSessionId: {} historySize: {}", 
-            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage, includeImages, continueSessionId, sessionHistory.sessions.size
+            "Starting streaming {} search for query: {} with proxy: {} language pattern: {} OCR language: {} continueSessionId: {} historySize: {}", 
+            mode, query, proxyConfig::class.simpleName, languagePattern, ocrLanguage, continueSessionId, sessionHistory.sessions.size
         )
         
         val orchestrator = when (mode) {

@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.ElementLabel
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
@@ -19,7 +20,15 @@ import java.awt.Image
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import javax.imageio.ImageIO
+
+data class CapturedImage(
+    val bytes: ByteArray,
+    val mimeType: String,
+    val relevance: String,
+    val bytesHash: ByteArray
+)
 
 data class AgenticPageSearchResult(
     val answer: String?,
@@ -29,7 +38,8 @@ data class AgenticPageSearchResult(
     val observations: List<String>,
     val success: Boolean,
     val totalTokenUsage: TokenUsageMetrics,
-    val discoveredUrls: List<String> = emptyList()
+    val discoveredUrls: List<String> = emptyList(),
+    val capturedImages: List<CapturedImage> = emptyList()
 )
 
 interface IAgenticWebpageSearchService {
@@ -65,6 +75,7 @@ class AgenticWebpageSearchService(
         private const val SCROLL_VIEWPORT_PIXELS = 600
         private const val PEEK_MAX_HEIGHT = 3000
         private const val PEEK_JPEG_QUALITY = 0.80f
+        private const val MIN_CAPTURE_SIZE_PX = 40
     }
 
     override suspend fun searchWithinPage(
@@ -94,6 +105,8 @@ class AgenticWebpageSearchService(
         var openQuestions = listOf<String>()
         val answeredQuestions = mutableListOf<String>()
         val discoveredUrls = mutableListOf<String>()
+        val capturedImages = mutableListOf<CapturedImage>()
+        val capturedHashes = mutableSetOf<String>()
         var aggregatedTokenUsage = TokenUsageMetrics.empty("gemini-3.1-flash-lite")
 
         // Navigation Loop
@@ -219,11 +232,15 @@ class AgenticWebpageSearchService(
                 answeredQuestions.addAll(newlyAnswered)
             }
 
+            if (output.captureRegions.isNotEmpty()) {
+                cropCaptureRegions(rawScreenshot.bytes, output.captureRegions, capturedImages, capturedHashes)
+            }
+
             when (action) {
                 is NavigationAction.AnswerFound -> {
                     logger.info(
-                        "Agentic search found answer after {} iterations ({} findings) for {}: {}",
-                        iteration, observations.size, url, action.answer.take(100)
+                        "Agentic search found answer after {} iterations ({} findings, {} captures) for {}: {}",
+                        iteration, observations.size, capturedImages.size, url, action.answer.take(100)
                     )
                     return AgenticPageSearchResult(
                         answer = action.answer,
@@ -233,7 +250,8 @@ class AgenticWebpageSearchService(
                         observations = observations.toList(),
                         success = true,
                         totalTokenUsage = aggregatedTokenUsage,
-                        discoveredUrls = discoveredUrls
+                        discoveredUrls = discoveredUrls,
+                        capturedImages = capturedImages.toList()
                     )
                 }
 
@@ -250,7 +268,8 @@ class AgenticWebpageSearchService(
                         observations = observations.toList(),
                         success = false,
                         totalTokenUsage = aggregatedTokenUsage,
-                        discoveredUrls = discoveredUrls
+                        discoveredUrls = discoveredUrls,
+                        capturedImages = capturedImages.toList()
                     )
                 }
 
@@ -414,8 +433,8 @@ class AgenticWebpageSearchService(
         }
 
         logger.info(
-            "Agentic search exhausted {} iterations for {} without finding answer ({} observations collected)",
-            MAX_ITERATIONS, url, observations.size
+            "Agentic search exhausted {} iterations for {} without finding answer ({} observations, {} captures)",
+            MAX_ITERATIONS, url, observations.size, capturedImages.size
         )
         return AgenticPageSearchResult(
             answer = null,
@@ -425,8 +444,49 @@ class AgenticWebpageSearchService(
             observations = observations.toList(),
             success = false,
             totalTokenUsage = aggregatedTokenUsage,
-            discoveredUrls = discoveredUrls
+            discoveredUrls = discoveredUrls,
+            capturedImages = capturedImages.toList()
         )
+    }
+
+    private fun cropCaptureRegions(
+        screenshotBytes: ByteArray,
+        regions: List<CaptureRegion>,
+        capturedImages: MutableList<CapturedImage>,
+        capturedHashes: MutableSet<String>
+    ) {
+        val img = ImageIO.read(ByteArrayInputStream(screenshotBytes)) ?: return
+        val sha256 = MessageDigest.getInstance("SHA-256")
+
+        for (region in regions) {
+            val x = ((region.x1 / 1000.0) * img.width).toInt().coerceIn(0, img.width - 1)
+            val y = ((region.y1 / 1000.0) * img.height).toInt().coerceIn(0, img.height - 1)
+            val x2 = ((region.x2 / 1000.0) * img.width).toInt().coerceIn(x + 1, img.width)
+            val y2 = ((region.y2 / 1000.0) * img.height).toInt().coerceIn(y + 1, img.height)
+            val w = x2 - x
+            val h = y2 - y
+
+            if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) {
+                logger.debug("Skipping tiny capture region {}x{} for: {}", w, h, region.relevance)
+                continue
+            }
+
+            val cropped = img.getSubimage(x, y, w, h)
+            val buf = ByteArrayOutputStream()
+            ImageIO.write(cropped, "png", buf)
+            val bytes = buf.toByteArray()
+
+            val hash = sha256.digest(bytes)
+            val hashHex = hash.joinToString("") { "%02x".format(it) }
+            if (hashHex in capturedHashes) {
+                logger.debug("Skipping duplicate capture for: {}", region.relevance)
+                continue
+            }
+            capturedHashes.add(hashHex)
+
+            capturedImages.add(CapturedImage(bytes, "image/png", region.relevance, hash))
+            logger.info("Captured visual region ({}x{}): {}", w, h, region.relevance.take(80))
+        }
     }
 
     private fun downscaleScreenshot(imageBytes: ByteArray, maxHeight: Int): ByteArray {
