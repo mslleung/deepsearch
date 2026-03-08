@@ -1,17 +1,16 @@
 package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
-import io.deepsearch.application.config.applicationTestModule
+import io.deepsearch.application.config.applicationBenchmarkTestModule
 import io.deepsearch.application.services.IQuerySessionService
 import io.deepsearch.application.services.SearchEvent
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SearchQuery
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import io.deepsearch.domain.testing.IsolatedKoinTest
@@ -25,10 +24,9 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     @JvmField
     @RegisterExtension
     val koinTestExtension = IsolatedKoinExtension.create {
-        modules(applicationTestModule)
+        modules(applicationBenchmarkTestModule)
     }
 
-    private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val agenticBrowserSearchOrchestrator by inject<IAgenticBrowserSearchOrchestrator>()
     private val querySessionService by inject<IQuerySessionService>()
 
@@ -49,7 +47,7 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     }
 
     @Test
-    fun `test simple sample query on OT&P`() = runTest(testCoroutineDispatcher) {
+    fun `test simple sample query on OT&P`() = runBlocking {
         // Given
         val searchQuery = SearchQuery(
             rawQuery = "Tell me about the standard body check package",
@@ -67,7 +65,7 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     }
 
     @Test
-    fun `test sample query on OT&P`() = runTest(testCoroutineDispatcher) {
+    fun `test sample query on OT&P`() = runBlocking {
         // Given
         val searchQuery = SearchQuery(
             rawQuery = "Does the standard body check package include testing \"Stool: Occult Blood?\"",  // no
@@ -85,7 +83,7 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     }
 
     @Test
-    fun `test sample query on soschinmed`() = runTest(testCoroutineDispatcher) {
+    fun `test sample query on soschinmed`() = runBlocking {
         // Given
         val searchQuery = SearchQuery(
             rawQuery = "How much is a video consultation with 潘健燊醫師?",
@@ -103,7 +101,7 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     }
 
     @Test
-    fun `test sample query on HelmetKing`() = runTest(testCoroutineDispatcher) {
+    fun `test sample query on HelmetKing`() = runBlocking {
         // Given
         val url = "https://www.helmetking.com/"
         val searchQuery = SearchQuery(
@@ -122,7 +120,7 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     }
 
     @Test
-    fun `basic summary on example dot com`() = runTest(testCoroutineDispatcher) {
+    fun `basic summary on example dot com`() = runBlocking {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(
@@ -141,7 +139,7 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     }
 
     @Test
-    fun `pricing and sla question on vendor site`() = runTest(testCoroutineDispatcher) {
+    fun `pricing and sla question on vendor site`() = runBlocking {
         // Given
         val url = "https://www.egltours.com/"
         val searchQuery = SearchQuery(
@@ -160,7 +158,7 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     }
 
     @Test
-    fun `clearly unrelated query still produces grounded answer using given site`() = runTest(testCoroutineDispatcher) {
+    fun `clearly unrelated query still produces grounded answer using given site`() = runBlocking {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(
@@ -179,7 +177,7 @@ class AgenticBrowserSearchOrchestratorTest : IsolatedKoinTest() {
     }
 
     @Test
-    fun `non english query on example dot com`() = runTest(testCoroutineDispatcher) {
+    fun `non english query on example dot com`() = runBlocking {
         // Given
         val url = "https://www.example.com/"
         val searchQuery = SearchQuery(

@@ -168,6 +168,9 @@ class AgenticBrowserSearchOrchestrator(
             // Priority buffer for discovered links - maintains global ordering by score
             val priorityLinkBuffer = PriorityLinkChannel(defaultScore = DEFAULT_LINK_SCORE)
 
+            // Runtime SERP budget counter - shared across all discovery rounds
+            val serpBudgetRemaining = AtomicInteger(budget.maxSerpCalls)
+
             // Channel for recursive link discovery (links found within processed pages)
             val recursiveDiscoveredLinksChannel = Channel<DiscoveredLink>(Channel.UNLIMITED)
             
@@ -221,6 +224,7 @@ class AgenticBrowserSearchOrchestrator(
                     queryChannel,
                     priorityLinkBuffer,
                     inFlightDiscovery,
+                    serpBudgetRemaining,
                     ::checkAndCloseIfIdle
                 )
             )
@@ -589,6 +593,7 @@ class AgenticBrowserSearchOrchestrator(
         queryChannel: Channel<String>,
         priorityLinkBuffer: PriorityLinkChannel,
         inFlightDiscovery: AtomicInteger,
+        serpBudgetRemaining: AtomicInteger,
         checkAndCloseIfIdle: () -> Boolean
     ): Flow<Unit> {
         return queryChannel.receiveAsFlow()
@@ -602,7 +607,8 @@ class AgenticBrowserSearchOrchestrator(
                     sessionId = sessionId,
                     onLinkDiscovered = { discoveredLink ->
                         priorityLinkBuffer.send(discoveredLink)
-                    }
+                    },
+                    serpBudgetRemaining = serpBudgetRemaining
                 ).onCompletion {
                     val remaining = inFlightDiscovery.decrementAndGet()
                     logger.debug("[{}] Discovery completed for query '{}' (inFlightDiscovery={})", sessionId.value, query, remaining)
@@ -1294,26 +1300,6 @@ class AgenticBrowserSearchOrchestrator(
             errorCategory = categorized.category.name,
             affectedUrl = categorized.url,
             technicalDetails = categorized.technicalDetails
-        )
-    }
-
-    /**
-     * Emit DISCOVERY_SERP_COMPLETE event (timeline only, no SSE equivalent).
-     */
-    private suspend fun emitDiscoverySerperComplete(
-        sessionId: QuerySessionId,
-        query: String,
-        linksFound: Int,
-        durationMs: Long
-    ) {
-        // This event is for timeline only - no channel needed
-        searchFlowEventService.emit(
-            SearchFlowEvent.DiscoverySerpComplete(
-                sessionId = sessionId,
-                query = query,
-                linksFound = linksFound,
-                durationMs = durationMs
-            )
         )
     }
 

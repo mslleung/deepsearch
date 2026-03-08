@@ -51,6 +51,7 @@ class ExposedQuerySessionRepository(
             it[finishReason] = session.finishReason?.name
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
+            it[budgetMaxSerpCalls] = session.searchBudget.maxSerpCalls
             it[answer] = session.answer
             it[answerFound] = session.answerFound
             it[imageIds] = Json.encodeToString(session.imageIds)
@@ -83,6 +84,7 @@ class ExposedQuerySessionRepository(
             it[finishReason] = session.finishReason?.name
             it[budgetTimeLimitMs] = session.searchBudget.timeLimitMs
             it[budgetMaxLinks] = session.searchBudget.maxLinks
+            it[budgetMaxSerpCalls] = session.searchBudget.maxSerpCalls
             it[answer] = session.answer
             it[answerFound] = session.answerFound
             it[imageIds] = Json.encodeToString(session.imageIds)
@@ -285,7 +287,8 @@ class ExposedQuerySessionRepository(
             searchMode = SearchMode.valueOf(row[querySessionTable.searchMode]),
             searchBudget = SearchBudget(
                 timeLimitMs = row[querySessionTable.budgetTimeLimitMs],
-                maxLinks = row[querySessionTable.budgetMaxLinks]
+                maxLinks = row[querySessionTable.budgetMaxLinks],
+                maxSerpCalls = row[querySessionTable.budgetMaxSerpCalls]
             ),
             finishReason = row[querySessionTable.finishReason]?.let { FinishReason.valueOf(it) },
             answer = row[querySessionTable.answer],

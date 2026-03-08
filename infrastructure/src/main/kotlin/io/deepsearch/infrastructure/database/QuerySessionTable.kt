@@ -15,6 +15,7 @@ class QuerySessionTable(
     val finishReason = varchar("finish_reason", 50).nullable()
     val budgetTimeLimitMs = long("budget_time_limit_ms")
     val budgetMaxLinks = integer("budget_max_links")
+    val budgetMaxSerpCalls = integer("budget_max_serp_calls").default(1)
     val answer = text("answer").nullable()
     val answerFound = bool("answer_found") // Whether a meaningful answer was found
     val imageIds = text("image_ids").default("[]") // JSON array of image IDs

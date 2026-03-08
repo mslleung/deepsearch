@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -36,19 +37,9 @@ interface ILinkDiscoveryFacadeService {
         query: String,
         baseSearchQuery: SearchQuery,
         sessionId: QuerySessionId,
-        onLinkDiscovered: suspend (DiscoveredLink) -> Unit
+        onLinkDiscovered: suspend (DiscoveredLink) -> Unit,
+        serpBudgetRemaining: AtomicInteger
     ): Flow<Unit>
-
-    /**
-     * Discovers links via SERP search only.
-     * @param searchQuery The search query
-     * @param sessionId The session ID for tracking
-     * @return Flow of discovered WebpageLinks
-     */
-    fun discoverLinksBySerp(
-        searchQuery: SearchQuery,
-        sessionId: QuerySessionId
-    ): Flow<WebpageLink>
 
 }
 
@@ -72,7 +63,8 @@ class LinkDiscoveryFacadeService(
         query: String,
         baseSearchQuery: SearchQuery,
         sessionId: QuerySessionId,
-        onLinkDiscovered: suspend (DiscoveredLink) -> Unit
+        onLinkDiscovered: suspend (DiscoveredLink) -> Unit,
+        serpBudgetRemaining: AtomicInteger
     ): Flow<Unit> {
         // Create a SearchQuery with this query but same URL context
         val currentSearchQuery = SearchQuery(
@@ -84,16 +76,20 @@ class LinkDiscoveryFacadeService(
 
         // Run all discovery mechanisms in parallel using flow composition
         return merge(
-            // 1. SERP Search
+            // 1. SERP Search (budget-gated)
             flow {
-                try {
-                    val serpLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(currentSearchQuery, sessionId)
-                    logger.debug("[{}] SERP discovery for '{}': {} links", sessionId.value, query, serpLinks.size)
-                    serpLinks.forEach { onLinkDiscovered(DiscoveredLink(it, query)) }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    logger.error("[{}] SERP discovery for query '{}' failed: {}", sessionId.value, query, e.message)
+                if (serpBudgetRemaining.getAndDecrement() > 0) {
+                    try {
+                        val serpLinks = webpageLinkDiscoveryService.discoverRelevantLinksBySerper(currentSearchQuery, sessionId)
+                        logger.debug("[{}] SERP discovery for '{}': {} links", sessionId.value, query, serpLinks.size)
+                        serpLinks.forEach { onLinkDiscovered(DiscoveredLink(it, query)) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.error("[{}] SERP discovery for query '{}' failed: {}", sessionId.value, query, e.message)
+                    }
+                } else {
+                    logger.debug("[{}] SERP budget exhausted, skipping SERP for query '{}'", sessionId.value, query)
                 }
                 emit(Unit)
             },
@@ -200,17 +196,6 @@ class LinkDiscoveryFacadeService(
                 emit(Unit)
             }
         )
-    }
-
-    override fun discoverLinksBySerp(
-        searchQuery: SearchQuery,
-        sessionId: QuerySessionId
-    ): Flow<WebpageLink> = flow {
-        try {
-            webpageLinkDiscoveryService.discoverRelevantLinksBySerper(searchQuery, sessionId).forEach { emit(it) }
-        } catch (e: Exception) {
-            logger.error("[{}] SERP search failed: {}", sessionId.value, e.message)
-        }
     }
 
     private fun extractDomain(url: String): String {
