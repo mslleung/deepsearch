@@ -80,6 +80,57 @@ class AgenticWebpageSearchService(
         private const val PEEK_MAX_HEIGHT = 3000
         private const val PEEK_JPEG_QUALITY = 0.80f
         private const val MIN_CAPTURE_SIZE_PX = 40
+        private const val COOKIE_DISMISS_DELAY_MS = 300L
+
+        /**
+         * CSS selectors for common Consent Management Platform "Accept All" buttons.
+         * Ordered by market share so the most common CMPs are checked first.
+         */
+        private val COOKIE_ACCEPT_SELECTORS = listOf(
+            // OneTrust (used by ~30% of top sites)
+            "#onetrust-accept-btn-handler",
+            // Cookiebot
+            "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
+            "#CybotCookiebotDialogBodyButtonAccept",
+            // Osano Cookie Consent
+            ".cc-btn.cc-allow",
+            ".cc-btn.cc-dismiss",
+            // Didomi
+            "#didomi-notice-agree-button",
+            // iubenda
+            ".iubenda-cs-accept-btn",
+            // Complianz
+            "button.cmplz-accept",
+            // Usercentrics
+            "[data-testid='uc-accept-all-button']",
+            // TrustArc
+            "#truste-consent-button",
+            // Quantcast
+            ".qc-cmp2-summary-buttons button[mode='primary']",
+            // GDPR Cookie Compliance (WordPress plugin)
+            ".moove-gdpr-infobar-allow-all",
+        )
+
+        /**
+         * CSS selectors for cookie consent overlay containers to remove as a fallback.
+         * These cover both the dialog and any backdrop/underlay that blocks interaction.
+         */
+        private val COOKIE_OVERLAY_SELECTORS = listOf(
+            "#onetrust-consent-sdk",
+            "#CybotCookiebotDialog",
+            "#CybotCookiebotDialogBodyUnderlay",
+            ".cc-window",
+            ".cc-banner",
+            "#truste-consent-track",
+            ".truste_overlay",
+            "#didomi-host",
+            "#didomi-popup",
+            "#usercentrics-root",
+            ".cmplz-cookiebanner",
+            "#iubenda-cs-banner",
+            ".qc-cmp2-container",
+            ".moove-gdpr-cookie-info-bar",
+        )
     }
 
     override suspend fun searchWithinPage(
@@ -103,6 +154,8 @@ class AgenticWebpageSearchService(
         sessionId: SessionId
     ): AgenticPageSearchResult {
         logger.info("Starting agentic page search for query='{}' on url={}", query, url)
+
+        dismissCookieBanner(page, url)
 
         val actionsPerformed = mutableListOf<NavigationAction>()
         val observations = mutableListOf<String>()
@@ -310,10 +363,14 @@ class AgenticWebpageSearchService(
                             lastActionWasClick = false
                         }
                     } else {
+                        val maxLabel = interactiveElements.size - 1
                         logger.warn(
                             "VLM referenced non-existent label {}. Available: 0..{}",
-                            action.labelNumber, interactiveElements.size - 1
+                            action.labelNumber, maxLabel
                         )
+                        previousActionOutcome = "ERROR: Label [${action.labelNumber}] does NOT exist. " +
+                                "Valid labels are 0 to $maxLabel. " +
+                                "Do NOT confuse page content (prices, phone numbers) with label badges."
                     }
                 }
 
@@ -434,10 +491,14 @@ class AgenticWebpageSearchService(
                         page.typeText(action.text)
                         delay(POST_TYPE_DELAY_MS)
                     } else {
+                        val maxLabel = interactiveElements.size - 1
                         logger.warn(
                             "VLM referenced non-existent label {} for type action. Available: 0..{}",
-                            action.labelNumber, interactiveElements.size - 1
+                            action.labelNumber, maxLabel
                         )
+                        previousActionOutcome = "ERROR: Label [${action.labelNumber}] does NOT exist. " +
+                                "Valid labels are 0 to $maxLabel. " +
+                                "Do NOT confuse page content (prices, phone numbers) with label badges."
                     }
                 }
             }
@@ -458,6 +519,32 @@ class AgenticWebpageSearchService(
             discoveredUrls = discoveredUrls,
             capturedImages = capturedImages.toList()
         )
+    }
+
+    /**
+     * Auto-dismiss cookie consent banners before the VLM navigation loop.
+     *
+     * Two-phase strategy:
+     * 1. Batch-check for known CMP "Accept All" buttons and click the first match.
+     * 2. Remove any remaining overlay/backdrop containers that block interaction.
+     *
+     * Costs 2-3 CDP round-trips (~10ms) instead of 1-2 VLM iterations (~2-4s + tokens).
+     */
+    private suspend fun dismissCookieBanner(page: IBrowserPage, url: String) {
+        val existsMap = page.elementsExistByCssSelectors(COOKIE_ACCEPT_SELECTORS)
+        val acceptSelector = existsMap.entries.firstOrNull { it.value }?.key
+
+        if (acceptSelector != null) {
+            try {
+                page.clickByCssSelector(acceptSelector)
+                delay(COOKIE_DISMISS_DELAY_MS)
+                logger.debug("Dismissed cookie banner via accept click on {}: {}", url, acceptSelector)
+            } catch (e: Exception) {
+                logger.debug("Accept button click failed on {} ({}), falling back to removal", url, e.message)
+            }
+        }
+
+        page.removeElementsByCssSelectors(COOKIE_OVERLAY_SELECTORS)
     }
 
     private fun cropCaptureRegions(

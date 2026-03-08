@@ -76,6 +76,20 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             exchange.responseBody.use { it.write(html.toByteArray()) }
         }
 
+        testServer.createContext("/number-dense") { exchange ->
+            val html = NUMBER_DENSE_PAGE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
+        testServer.createContext("/crowded-labels") { exchange ->
+            val html = CROWDED_LABELS_PAGE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
         testServer.start()
         testPort = testServer.address.port
         println("Test HTTP server started on port $testPort")
@@ -207,7 +221,249 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, output=${result.totalTokenUsage.outputTokens}, total=${result.totalTokenUsage.totalTokens}")
     }
 
+    // ==================== Test: Page dense with numbers (hallucination-prone) ====================
+
+    @Test
+    fun `number-dense page does not waste iterations on label hallucination`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 180.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/number-dense",
+            query = "What is the warranty period for the ProMax model?",
+            sessionId = QuerySessionId("test-number-dense")
+        )
+
+        println("=== NUMBER-DENSE HALLUCINATION TEST ===")
+        printResult(result)
+
+        assertTrue(result.success, "Should find the answer on the number-dense page")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("36", ignoreCase = true) || result.answer!!.contains("three year", ignoreCase = true),
+            "Answer should contain the 36-month warranty: ${result.answer}"
+        )
+
+        println("Iterations used: ${result.actionsPerformed.size} (max $MAX_ITERATIONS)")
+        assertTrue(
+            result.actionsPerformed.size <= 6,
+            "Should find the answer in 6 or fewer iterations, used ${result.actionsPerformed.size}"
+        )
+    }
+
+    // ==================== Test: Many labels + overlapping page numbers (hard hallucination) ====================
+
+    @Test
+    fun `crowded labels with overlapping page numbers does not hallucinate`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 240.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/crowded-labels",
+            query = "What is the cancellation fee for the Premium plan?",
+            sessionId = QuerySessionId("test-crowded-labels")
+        )
+
+        println("=== CROWDED LABELS + OVERLAPPING NUMBERS TEST ===")
+        printResult(result)
+
+        assertTrue(result.success, "Should find the answer on the crowded page")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("75", ignoreCase = true),
+            "Answer should contain the $75 cancellation fee: ${result.answer}"
+        )
+
+        val suspectedHallucinations = result.actionsPerformed.count { action ->
+            when (action) {
+                is NavigationAction.Click -> action.labelNumber >= 25
+                is NavigationAction.Type -> action.labelNumber >= 25
+                else -> false
+            }
+        }
+        println("Suspected hallucinations (label >= 25): $suspectedHallucinations")
+        println("Iterations used: ${result.actionsPerformed.size} (max $MAX_ITERATIONS)")
+        assertTrue(
+            suspectedHallucinations == 0,
+            "Should have zero hallucinated labels (>= 25), had $suspectedHallucinations"
+        )
+        assertTrue(
+            result.actionsPerformed.size <= 6,
+            "Should find the answer in 6 or fewer iterations, used ${result.actionsPerformed.size}"
+        )
+    }
+
     companion object {
+        private const val MAX_ITERATIONS = 12
+
+        /**
+         * Hard hallucination test: 20+ interactive elements (labels 0-19+) combined with
+         * page numbers that OVERLAP with the label range (e.g., "Step 3", "Section 8",
+         * "Item 12", "#15"). The answer is behind a specific FAQ accordion click.
+         * This forces the VLM to distinguish colored label badges from inline page numbers
+         * in a visually crowded viewport.
+         */
+        val CROWDED_LABELS_PAGE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>Acme Corp — Plans & FAQ</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 0; }
+                    .layout { display: flex; max-width: 1200px; margin: 0 auto; }
+                    nav { background: #1a1a2e; color: white; padding: 8px 24px; display: flex; gap: 16px; align-items: center; }
+                    nav a { color: #ccc; text-decoration: none; font-size: 14px; }
+                    .sidebar { width: 220px; padding: 16px; border-right: 1px solid #ddd; font-size: 13px; }
+                    .sidebar a { display: block; padding: 6px 0; color: #0066c0; text-decoration: none; }
+                    .main { flex: 1; padding: 24px; }
+                    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+                    th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+                    th { background: #f5f5f5; }
+                    .faq-item { border: 1px solid #ccc; margin: 8px 0; border-radius: 6px; }
+                    .faq-q { padding: 12px 16px; cursor: pointer; background: #f8f8f8; border: none; width: 100%; text-align: left; font-size: 14px; }
+                    .faq-a { padding: 12px 16px; border-top: 1px solid #eee; }
+                    .badge { display: inline-block; background: #e74c3c; color: white; border-radius: 50%; width: 20px; height: 20px; text-align: center; line-height: 20px; font-size: 11px; margin-left: 4px; }
+                </style>
+            </head>
+            <body>
+                <nav>
+                    <a href="#">Home</a>
+                    <a href="#">Products</a>
+                    <a href="#">Pricing</a>
+                    <a href="#">Documentation</a>
+                    <a href="#">Blog</a>
+                    <a href="#">Support</a>
+                    <a href="#">Contact</a>
+                    <a href="#">Login</a>
+                </nav>
+                <div class="layout">
+                    <div class="sidebar">
+                        <strong>Quick Links</strong>
+                        <a href="#">Overview (Section 1)</a>
+                        <a href="#">Features (Section 2)</a>
+                        <a href="#">Pricing (Section 3)</a>
+                        <a href="#">Compare Plans (Section 4)</a>
+                        <a href="#">FAQ (Section 5)</a>
+                        <a href="#">Terms (Section 6)</a>
+                        <a href="#">Privacy (Section 7)</a>
+                        <a href="#">Refunds (Section 8)</a>
+                    </div>
+                    <div class="main">
+                        <h1>Pricing Plans</h1>
+                        <p>Over 15 million customers trust Acme Corp. Join plan #3 (our most popular) or explore all 8 options below.</p>
+
+                        <table>
+                            <tr>
+                                <th>Feature</th>
+                                <th>Basic (${'$'}9/mo)<br>Plan #1</th>
+                                <th>Standard (${'$'}19/mo)<br>Plan #2</th>
+                                <th>Premium (${'$'}49/mo)<br>Plan #3</th>
+                                <th>Enterprise (${'$'}99/mo)<br>Plan #4</th>
+                            </tr>
+                            <tr><td>Users</td><td>1</td><td>5</td><td>15</td><td>Unlimited</td></tr>
+                            <tr><td>Storage</td><td>5 GB</td><td>25 GB</td><td>100 GB</td><td>500 GB</td></tr>
+                            <tr><td>API calls/day</td><td>100</td><td>1,000</td><td>10,000</td><td>Unlimited</td></tr>
+                            <tr><td>Support</td><td>Email (48h)</td><td>Email (24h)</td><td>Priority (4h)</td><td>Dedicated (1h)</td></tr>
+                            <tr><td>Uptime SLA</td><td>99%</td><td>99.5%</td><td>99.9%</td><td>99.99%</td></tr>
+                        </table>
+
+                        <p>Step 1: Choose your plan. Step 2: Enter billing info. Step 3: Start your 14-day trial. Offer code #12 expires Dec 31.</p>
+
+                        <h2>Frequently Asked Questions <span class="badge">8</span></h2>
+
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">What payment methods do you accept?</button>
+                            <div class="faq-a" style="display:none">We accept Visa, MasterCard, AMEX, and PayPal. Invoice available for Plan #4.</div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">Can I switch plans mid-billing cycle?</button>
+                            <div class="faq-a" style="display:none">Yes, upgrades take effect immediately. Downgrades apply at the next billing date. See Item 12 in our Terms of Service.</div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">What is the cancellation fee for the Premium plan?</button>
+                            <div class="faq-a" style="display:none">The cancellation fee for the Premium plan (Plan #3) is <strong>${'$'}75</strong> if cancelled within the first 6 months. After 6 months, cancellation is free. Reference: Policy 15-C.</div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">Is there a free trial?</button>
+                            <div class="faq-a" style="display:none">All plans include a 14-day free trial. No credit card required for Basic (Plan #1).</div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">Do you offer educational discounts?</button>
+                            <div class="faq-a" style="display:none">Yes, 40% off for verified .edu email addresses. Apply via Form 7-B on our website.</div>
+                        </div>
+
+                        <p style="color: #888; font-size: 12px; margin-top: 32px;">
+                            Acme Corp — Founded 2019 — 8 offices worldwide — Support ticket average: 3.2 hours —
+                            Rating: 4.7/5 from 12,450 reviews — Tax ID: 15-8842091 — Page 1 of 3
+                        </p>
+                    </div>
+                </div>
+                <script>
+                    function toggle(btn) {
+                        var a = btn.nextElementSibling;
+                        a.style.display = a.style.display === 'none' ? 'block' : 'none';
+                    }
+                </script>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Page densely packed with numbers that could confuse the VLM into thinking
+         * they are element labels: product IDs (#874, #401), prices ($1,299), stock counts,
+         * and rating scores. The actual answer is behind a "Show Details" button.
+         */
+        val NUMBER_DENSE_PAGE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>Product Catalog</title>
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; }
+                    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+                    th, td { border: 1px solid #ddd; padding: 12px 16px; text-align: left; }
+                    th { background: #f5f5f5; }
+                    .product-id { font-weight: bold; color: #333; }
+                    .price { font-size: 18px; color: #b12704; font-weight: bold; }
+                    .stock { color: #007600; }
+                    .rating { color: #e47911; }
+                    .btn { padding: 8px 16px; background: #0066c0; color: white; border: none; cursor: pointer; border-radius: 4px; }
+                    .details { padding: 16px; background: #f9f9f9; border: 1px solid #ddd; margin: 8px 0; }
+                </style>
+            </head>
+            <body>
+                <h1>Electronics Product Catalog</h1>
+                <p>Showing 5 of 1,247 products. Page 3 of 125. Order #90847.</p>
+
+                <table>
+                    <tr><th>ID</th><th>Product</th><th>Price</th><th>Stock</th><th>Rating</th><th>SKU</th></tr>
+                    <tr><td class="product-id">#401</td><td>UltraView Monitor 27"</td><td class="price">${'$'}1,299</td><td class="stock">847 in stock</td><td class="rating">4.7/5 (2,341 reviews)</td><td>SKU-90124</td></tr>
+                    <tr><td class="product-id">#402</td><td>SpeedType Keyboard</td><td class="price">${'$'}189</td><td class="stock">3,421 in stock</td><td class="rating">4.5/5 (892 reviews)</td><td>SKU-90125</td></tr>
+                    <tr><td class="product-id">#403</td><td>ProMax Laptop 15"</td><td class="price">${'$'}2,499</td><td class="stock">156 in stock</td><td class="rating">4.8/5 (5,671 reviews)</td><td>SKU-90126</td></tr>
+                    <tr><td class="product-id">#404</td><td>SoundPro Headphones</td><td class="price">${'$'}349</td><td class="stock">2,108 in stock</td><td class="rating">4.6/5 (1,234 reviews)</td><td>SKU-90127</td></tr>
+                    <tr><td class="product-id">#405</td><td>PowerDock Station</td><td class="price">${'$'}279</td><td class="stock">967 in stock</td><td class="rating">4.3/5 (456 reviews)</td><td>SKU-90128</td></tr>
+                </table>
+
+                <p>Reference codes: Region 874, Warehouse 1055, Batch 2209, Shipment 663.</p>
+
+                <div>
+                    <button class="btn" onclick="document.getElementById('details-403').style.display = document.getElementById('details-403').style.display === 'none' ? 'block' : 'none'">
+                        Show ProMax Warranty Details
+                    </button>
+                    <div id="details-403" class="details" style="display:none">
+                        <h3>ProMax Laptop 15" — Warranty Information</h3>
+                        <p>Standard warranty period: <strong>36 months</strong> from date of purchase.</p>
+                        <p>Extended warranty available: 60 months for ${'$'}199. Coverage ID: WRN-90403.</p>
+                    </div>
+                </div>
+
+                <p style="margin-top: 40px; color: #666; font-size: 12px;">
+                    Customer service: 1-800-555-0199 | Fax: 1-800-555-0200 | Store #1042, Mall Level 3, Unit 874-B
+                </p>
+            </body>
+            </html>
+        """.trimIndent()
+
         /**
          * Page with the answer directly visible -- no interaction needed.
          */
