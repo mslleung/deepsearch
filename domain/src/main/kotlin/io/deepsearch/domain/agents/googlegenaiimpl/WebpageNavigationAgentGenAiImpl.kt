@@ -133,6 +133,11 @@ class WebpageNavigationAgentGenAiImpl(
         - Ignore logos, icons, navigation elements, and decorative images.
         - You may capture regions on any turn, alongside your normal action.
 
+        === LABELS ===
+        - "labelNumber" MUST be a number listed in ELEMENT_LABELS. The valid range is shown there.
+        - Numbers on the page (prices, phone numbers, addresses, counts) are NOT labels.
+        - Labels are small colored badges overlaid on interactive elements in the screenshot.
+
         === RULES ===
         - Read the screenshot fresh each turn — never carry stale data forward.
         - If a click had no visible change, try a DIFFERENT element or approach.
@@ -205,13 +210,17 @@ class WebpageNavigationAgentGenAiImpl(
             }
 
             if (input.elementLabels.isNotEmpty()) {
+                val maxLabel = input.elementLabels.maxOf { it.labelNumber }
                 appendLine()
-                appendLine("ELEMENT_LABELS:")
+                appendLine("ELEMENT_LABELS (valid range: 0–$maxLabel):")
                 input.elementLabels.forEach { el ->
                     val roleStr = el.role?.let { " ($it)" } ?: ""
                     val statesStr = if (el.states.isNotEmpty()) " [${el.states.joinToString(", ")}]" else ""
                     appendLine("  [${el.labelNumber}] ${el.tag}$roleStr$statesStr: ${el.text.take(60)}")
                 }
+            } else {
+                appendLine()
+                appendLine("ELEMENT_LABELS: None visible. Use search_text, scroll, or give_up.")
             }
         }
 
