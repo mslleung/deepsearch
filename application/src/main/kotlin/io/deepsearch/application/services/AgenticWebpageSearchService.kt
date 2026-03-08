@@ -13,7 +13,10 @@ import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import io.deepsearch.domain.services.ScreenshotAnnotationService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.awt.Image
@@ -22,6 +25,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import javax.imageio.ImageIO
+import kotlin.coroutines.cancellation.CancellationException
 
 data class CapturedImage(
     val bytes: ByteArray,
@@ -117,6 +121,7 @@ class AgenticWebpageSearchService(
         var peekScreenshotOverride: IBrowserPage.Screenshot? = null
 
         for (iteration in 1..MAX_ITERATIONS) {
+            currentCoroutineContext().ensureActive()
             logger.debug("Agentic search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
 
             val (interactiveElements, rawScreenshot) = coroutineScope {
@@ -343,6 +348,8 @@ class AgenticWebpageSearchService(
                             page.waitForLoad()
                             lastActionWasClick = false
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         logger.warn(
                             "ClickAt failed at viewport ({},{}): {}",
@@ -360,6 +367,8 @@ class AgenticWebpageSearchService(
                         }
                         page.scrollPage(delta)
                         delay(POST_SCROLL_DELAY_MS)
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         logger.warn("Scroll failed: {}", e.message)
                     }
@@ -395,6 +404,8 @@ class AgenticWebpageSearchService(
                         )
                         previousActionOutcome = "Full page overview captured. Study this image to understand " +
                                 "the overall page content and layout, then decide your next action."
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         logger.warn("Full-page screenshot failed: {}", e.message)
                         previousActionOutcome = "peek_full_page failed: ${e.message}"
