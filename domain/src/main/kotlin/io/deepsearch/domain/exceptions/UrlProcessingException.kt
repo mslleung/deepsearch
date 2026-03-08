@@ -181,6 +181,14 @@ class MarkdownExtractionException(
 ) : MarkdownConversionException(url, "Markdown extraction failed: ${cause.message}", cause)
 
 /**
+ * Agentic search within a page failed during query-time processing.
+ */
+class AgenticSearchException(
+    url: String,
+    cause: Throwable
+) : MarkdownConversionException(url, "Agentic page search failed: ${cause.message}", cause)
+
+/**
  * Parsing error during content processing.
  */
 class ParsingException(

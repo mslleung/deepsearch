@@ -205,7 +205,7 @@ class QueryUrlProcessingService(
                         emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, agenticLinks))
                     }
                 } catch (e: Exception) {
-                    throw MarkdownExtractionException(normalizedUrl, e)
+                    throw AgenticSearchException(normalizedUrl, e)
                 }
             }
 

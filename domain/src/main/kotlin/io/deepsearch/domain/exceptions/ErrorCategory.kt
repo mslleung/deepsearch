@@ -261,6 +261,7 @@ data class CategorizedError(
                 is BrowserNavigationException -> "NAVIGATION_FAILED"
                 is AllProxiesFailedException -> "ALL_PROXIES_FAILED"
                 is NoProxiesAvailableException -> "NO_PROXIES"
+                is AgenticSearchException -> "AGENTIC_SEARCH"
                 is MarkdownExtractionException -> "MARKDOWN_EXTRACTION"
                 is ParsingException -> "PARSING_ERROR"
                 is FileIngestionException -> "FILE_INGESTION"
