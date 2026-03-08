@@ -59,7 +59,6 @@ import org.slf4j.LoggerFactory
 import io.deepsearch.application.services.FeedbackLoopReport
 import io.deepsearch.application.services.IQueryProcessingService
 import io.deepsearch.domain.exceptions.UrlProcessingException
-import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import kotlinx.coroutines.FlowPreview
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -94,7 +93,6 @@ class AgenticBrowserSearchOrchestrator(
     // URL Processing
     private val queryUrlProcessingService: IQueryUrlProcessingService,
     private val adaptiveRateLimiter: IAdaptiveRateLimiter,
-    private val webpageMarkdownRepository: IWebpageMarkdownRepository,
     // Session/Tracking
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
@@ -157,10 +155,6 @@ class AgenticBrowserSearchOrchestrator(
             // Tracks URLs that have been fully processed (content fetched, markdown emitted)
             // Used for content processing dedup - each URL only gets processed once
             val processedUrls = ConcurrentHashMap.newKeySet<String>()
-
-            // Tracks (query, URL) pairs that have had link discovery done
-            // Used for link discovery dedup - allows re-analyzing same URL with different queries
-            val discoveredQueryUrls = ConcurrentHashMap.newKeySet<QueryUrlKey>()
 
             // Query channel - the top-level driver for the search flow
             // Initial query is sent first, follow-up queries are added via the feedback loop
@@ -236,7 +230,6 @@ class AgenticBrowserSearchOrchestrator(
                 sessionId,
                 searchQuery,
                 processedUrls,
-                discoveredQueryUrls,
                 priorityLinkBuffer,
                 recursiveDiscoveredLinksChannel,
                 inFlightLinkProcessing,
@@ -621,23 +614,15 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Process links from priority buffer in priority order.
      * Pulls from the priority buffer (highest score first) and processes URLs.
-     * 
-     * Implements two-level deduplication:
-     * 1. (query, URL) dedup via discoveredQueryUrls - allows re-analyzing same URL with different queries
-     * 2. URL dedup via processedUrls - ensures content is only fetched/emitted once per URL
-     * 
-     * When a URL is already processed but discovered by a new query:
-     * - Retrieves cached HTML from WebpageMarkdownRepository
-     * - Re-runs link relevance analysis with the new query context (via LinkDiscoveryFacadeService)
-     * - Discovered links are sent to recursive channel
-     * - No markdown is re-emitted (already done on first processing)
+     *
+     * Deduplication is URL-based: each URL is processed exactly once.
+     * Subsequent discoveries of the same URL (even from different queries) are skipped.
      */
     @OptIn(DelicateCoroutinesApi::class)
     private fun processPriorityLinksFlow(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        discoveredQueryUrls: ConcurrentHashMap.KeySetView<QueryUrlKey, Boolean>,
         priorityLinkBuffer: PriorityLinkChannel,
         recursiveChannel: Channel<DiscoveredLink>,
         inFlightLinkProcessing: AtomicInteger,
@@ -677,63 +662,13 @@ class AgenticBrowserSearchOrchestrator(
                         }
                     }
 
-                    // 1. Check (query, URL) dedup - skip if already handled this pair
-                    val queryUrlKey = QueryUrlKey(query, dedupKey)
-                    if (!discoveredQueryUrls.add(queryUrlKey)) {
-                        logger.debug(
-                            "[{}] Skipping already-analyzed (query, URL) pair: query='{}', url='{}'",
-                            sessionId.value,
-                            query,
-                            dedupKey
-                        )
+                    // URL-level dedup: skip if already processed
+                    if (!processedUrls.add(dedupKey)) {
+                        logger.debug("[{}] Skipping already-processed URL: {}", sessionId.value, dedupKey)
                         return@flow
                     }
 
-                    // 2. Check if URL was already processed (has cached content)
-                    if (processedUrls.contains(dedupKey)) {
-                        // Re-run link relevance analysis on CACHED HTML with new query context
-                        logger.debug(
-                            "[{}] Re-analyzing cached HTML for URL '{}' with query '{}'",
-                            sessionId.value,
-                            url,
-                            query
-                        )
-                        try {
-                            val cached = webpageMarkdownRepository.findByUrl(dedupKey)
-                            val cachedHtml = cached?.cleanedLinkRelevanceHtml
-                            if (cachedHtml != null) {
-                                val newLinks = linkDiscoveryFacadeService.reanalyzeCachedHtml(
-                                    query = query,
-                                    cachedHtml = cachedHtml,
-                                    url = dedupKey,
-                                    sessionId = sessionId
-                                )
-                                logger.debug(
-                                    "[{}] Re-analysis discovered {} links for URL '{}' with query '{}'",
-                                    sessionId.value, newLinks.size, url, query
-                                )
-                                // Send newly discovered links to recursive channel with query context
-                                newLinks.forEach { newLink ->
-                                    recursiveChannel.send(DiscoveredLink(newLink, query))
-                                }
-                            } else {
-                                logger.debug("[{}] No cached HTML available for re-analysis: {}", sessionId.value, url)
-                            }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.warn(
-                                "[{}] Failed to re-analyze cached HTML for {}: {}",
-                                sessionId.value,
-                                url,
-                                e.message
-                            )
-                        }
-                        return@flow  // Skip markdown emission (already done on first processing)
-                    }
-
-                    // 3. New URL: full processing (fetch + analyze + markdown)
-                    processedUrls.add(dedupKey)
+                    // New URL: full processing (fetch + analyze + markdown)
                     inFlight.add(url)
                     inFlightLinkProcessing.incrementAndGet()
                     emitUrlProcessingStarted(sessionId, url, eventChannel)

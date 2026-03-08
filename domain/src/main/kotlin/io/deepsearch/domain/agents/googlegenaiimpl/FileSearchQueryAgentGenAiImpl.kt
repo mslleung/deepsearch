@@ -7,6 +7,7 @@ import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
 import com.google.genai.types.Tool
+import com.google.genai.types.GenerateContentResponse
 import io.deepsearch.domain.agents.FileSearchQueryInput
 import io.deepsearch.domain.agents.FileSearchQueryOutput
 import io.deepsearch.domain.agents.IFileSearchQueryAgent
@@ -94,8 +95,7 @@ class FileSearchQueryAgentGenAiImpl(
             )
         }
 
-        val contentText = response.text() ?: ""
-        val chunks = parseResponseToChunks(contentText)
+        val chunks = extractGroundingChunks(response) ?: extractFallbackChunk(response)
 
         logger.debug("File search returned {} chunks", chunks.size)
 
@@ -105,13 +105,44 @@ class FileSearchQueryAgentGenAiImpl(
         )
     }
 
-    private fun parseResponseToChunks(content: String): List<FileSearchChunk> {
-        if (content.isBlank()) {
-            return emptyList()
+    /**
+     * Extract content chunks from grounding metadata (retrievedContext).
+     * Returns null if no grounding metadata or chunks are available.
+     *
+     * NOTE: Gemini File Search grounding metadata does NOT populate uri(), title(),
+     * or documentName() on retrievedContext -- only text() is returned. Source URL
+     * attribution is not available through this path; downstream consumers must
+     * handle blank sourceUrl (e.g., via domain fallback or filtering).
+     */
+    private fun extractGroundingChunks(response: GenerateContentResponse): List<FileSearchChunk>? {
+        val groundingMetadata = response.candidates().orElse(listOf()).firstOrNull()
+            ?.groundingMetadata()?.orElse(null) ?: return null
+
+        val groundingChunks = groundingMetadata.groundingChunks().orElse(listOf())
+        if (groundingChunks.isEmpty()) return null
+
+        val chunks = groundingChunks.mapNotNull { chunk ->
+            val rc = chunk.retrievedContext().orElse(null) ?: return@mapNotNull null
+            val content = rc.text().orElse("")
+            if (content.isBlank()) return@mapNotNull null
+            FileSearchChunk(
+                content = content,
+                sourceUrl = "",
+                fileName = "File Search Result",
+                relevanceScore = null
+            )
         }
 
-        // The response from file search is typically a synthesized answer
-        // We wrap it as a single chunk since the SDK handles the RAG internally
+        return chunks.ifEmpty { null }
+    }
+
+    /**
+     * Fallback: wrap the synthesized text as a single chunk without source URL.
+     */
+    private fun extractFallbackChunk(response: GenerateContentResponse): List<FileSearchChunk> {
+        val content = response.text() ?: ""
+        if (content.isBlank()) return emptyList()
+
         return listOf(
             FileSearchChunk(
                 content = content,

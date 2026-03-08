@@ -121,7 +121,7 @@ val applicationModule = module {
         scopedOf(::SourceEvaluationFacadeService) bind ISourceEvaluationFacadeService::class
         scopedOf(::AnswerSynthesisFacadeService) bind IAnswerSynthesisFacadeService::class
         
-        // Agentic search orchestrator (now uses facade services, reduced to 11 dependencies)
+        // Agentic search orchestrator (uses facade services, 10 dependencies)
         scopedOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
         
         scopedOf(::CacheOnlySearchOrchestrator) bind ICacheOnlySearchOrchestrator::class

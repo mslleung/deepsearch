@@ -48,7 +48,7 @@ private val applicationCommonTestModule = module {
     singleOf(::SourceEvaluationFacadeService) bind ISourceEvaluationFacadeService::class
     singleOf(::AnswerSynthesisFacadeService) bind IAnswerSynthesisFacadeService::class
     
-    // Agentic search orchestrator (now uses facade services, reduced to 11 dependencies)
+    // Agentic search orchestrator (uses facade services, 10 dependencies)
     singleOf(::AgenticBrowserSearchOrchestrator) bind IAgenticBrowserSearchOrchestrator::class
     
     singleOf(::CacheOnlySearchOrchestrator) bind ICacheOnlySearchOrchestrator::class

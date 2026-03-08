@@ -50,22 +50,6 @@ interface ILinkDiscoveryFacadeService {
         sessionId: QuerySessionId
     ): Flow<WebpageLink>
 
-    /**
-     * Re-analyzes cached HTML to discover links with a new query context.
-     * Used when a URL was already processed but discovered by a different query.
-     * 
-     * @param query The new query context
-     * @param cachedHtml The cached HTML to analyze
-     * @param url The URL of the cached page
-     * @param sessionId The session ID for tracking
-     * @return List of newly discovered links
-     */
-    suspend fun reanalyzeCachedHtml(
-        query: String,
-        cachedHtml: String,
-        url: String,
-        sessionId: QuerySessionId
-    ): List<WebpageLink>
 }
 
 class LinkDiscoveryFacadeService(
@@ -192,17 +176,19 @@ class LinkDiscoveryFacadeService(
                             searchResult.tokenUsage.modelName, searchResult.tokenUsage.promptTokens,
                             searchResult.tokenUsage.outputTokens, searchResult.tokenUsage.totalTokens
                         )
-                        val links = searchResult.chunks.map { chunk ->
-                            DiscoveredLink(
-                                link = WebpageLink(
-                                    url = chunk.sourceUrl,
-                                    source = LinkSource.FILE_SEARCH,
-                                    reason = "File search chunk for: $query",
-                                    score = DEFAULT_LINK_SCORE
-                                ),
-                                query = query
-                            )
-                        }.distinctBy { it.url }
+                        val links = searchResult.chunks
+                            .filter { it.sourceUrl.isNotBlank() }
+                            .map { chunk ->
+                                DiscoveredLink(
+                                    link = WebpageLink(
+                                        url = chunk.sourceUrl,
+                                        source = LinkSource.FILE_SEARCH,
+                                        reason = "File search chunk for: $query",
+                                        score = DEFAULT_LINK_SCORE
+                                    ),
+                                    query = query
+                                )
+                            }.distinctBy { it.url }
                         logger.debug("[{}] File search discovery for '{}': {} links", sessionId.value, query, links.size)
                         links.forEach { onLinkDiscovered(it) }
                     }
@@ -225,20 +211,6 @@ class LinkDiscoveryFacadeService(
         } catch (e: Exception) {
             logger.error("[{}] SERP search failed: {}", sessionId.value, e.message)
         }
-    }
-
-    override suspend fun reanalyzeCachedHtml(
-        query: String,
-        cachedHtml: String,
-        url: String,
-        sessionId: QuerySessionId
-    ): List<WebpageLink> {
-        return webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
-            query = query,
-            html = cachedHtml,
-            url = url,
-            sessionId = sessionId
-        )
     }
 
     private fun extractDomain(url: String): String {
