@@ -5,6 +5,7 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.PageOperationException
 import io.deepsearch.domain.browser.remote.dto.*
 import io.deepsearch.domain.constants.ImageMimeType
+import io.deepsearch.domain.ext.toSafeUri
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import kotlin.io.encoding.Base64
@@ -30,6 +31,18 @@ class RemoteBrowserPage(
     
     /** Tracks the current URL for exception reporting. Updated after successful navigation. */
     private var currentUrl: String = ""
+
+    /**
+     * Ensure navigation URLs are URI-safe before sending to deepsearch-browser.
+     * Some discovered links contain unencoded query values (e.g. spaces).
+     */
+    private fun sanitizeUrlForNavigation(url: String): String {
+        return runCatching { url.toSafeUri().toString() }
+            .getOrElse { error ->
+                logger.debug("Failed to sanitize URL for navigation, using original URL: {}", url, error)
+                url
+            }
+    }
 
     // ==================== Command Execution Helpers ====================
 
@@ -102,8 +115,9 @@ class RemoteBrowserPage(
 
     override suspend fun navigate(url: String) {
         // Set currentUrl before navigation so exceptions include the target URL
-        currentUrl = url
-        pageCmd(PageCommand.Navigate(url))
+        val safeUrl = sanitizeUrlForNavigation(url)
+        currentUrl = safeUrl
+        pageCmd(PageCommand.Navigate(safeUrl))
     }
 
     override suspend fun waitForLoad() {
@@ -111,9 +125,10 @@ class RemoteBrowserPage(
     }
 
     override suspend fun navigateWithCachedHtml(url: String, htmlBody: ByteArray) {
-        currentUrl = url
+        val safeUrl = sanitizeUrlForNavigation(url)
+        currentUrl = safeUrl
         val htmlBodyBase64 = Base64.encode(htmlBody)
-        pageCmd(PageCommand.NavigateWithCachedHtml(url, htmlBodyBase64))
+        pageCmd(PageCommand.NavigateWithCachedHtml(safeUrl, htmlBodyBase64))
     }
 
     override suspend fun getUrl(): String = pageCmd(PageCommand.GetUrl)

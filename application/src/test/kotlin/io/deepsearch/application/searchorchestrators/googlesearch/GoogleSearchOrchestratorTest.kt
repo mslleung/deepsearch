@@ -20,7 +20,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class GoogleSearchOrchestratorTest : IsolatedKoinTest() {
-    private val apiKeyId = ApiKeyId(1)
+    private lateinit var apiKeyId: ApiKeyId
 
     @JvmField
     @RegisterExtension
@@ -31,6 +31,28 @@ class GoogleSearchOrchestratorTest : IsolatedKoinTest() {
     private val testCoroutineDispatcher by inject<CoroutineDispatcher>()
     private val googleSearchOrchestrator by inject<IGoogleSearchOrchestrator>()
     private val querySessionService by inject<IQuerySessionService>()
+    private val userRepository by inject<io.deepsearch.domain.repositories.IUserRepository>()
+    private val apiKeyRepository by inject<io.deepsearch.domain.repositories.IApiKeyRepository>()
+
+    @org.junit.jupiter.api.BeforeEach
+    fun setup() {
+        kotlinx.coroutines.runBlocking {
+            val email = io.deepsearch.domain.models.valueobjects.Email("test-${java.util.UUID.randomUUID()}@example.com")
+            val user = io.deepsearch.domain.models.entities.User(
+                email = email
+            )
+            val savedUser = userRepository.save(user)
+            
+            val apiKey = io.deepsearch.domain.models.entities.ApiKey(
+                userId = savedUser.id!!,
+                keyHash = "hash-${java.util.UUID.randomUUID()}",
+                keyPrefix = "prefix",
+                name = "Test Key"
+            )
+            val savedApiKey = apiKeyRepository.save(apiKey)
+            apiKeyId = savedApiKey.id!!
+        }
+    }
 
     /**
      * Helper to collect the flow until completion and return the session ID.
