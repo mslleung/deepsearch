@@ -136,7 +136,8 @@ class SearchController(
         val responseDto = sessionDetail.session.toDetailDto(
             sessionDetail.urlAccesses,
             sessionDetail.cachedWebpages,
-            images
+            images,
+            sessionDetail.fileSearchCitations
         )
         call.respond(HttpStatusCode.OK, responseDto)
     }

@@ -37,10 +37,15 @@ data class FileQueryResult(
 
 /**
  * A citation from a file search result.
+ *
+ * For web-sourced files: sourceUrl is set, sourceText is null.
+ * For file search grounding (no document attribution from API): sourceUrl is null, sourceText
+ * contains a truncated excerpt of the grounding chunk for customer-facing citation.
  */
 data class FileCitation(
     val fileName: String,
-    val sourceUrl: String,
+    val sourceUrl: String?,
+    val sourceText: String?,
     val content: String
 )
 
@@ -244,24 +249,29 @@ class FileSearchService(
         val citations = mutableListOf<FileCitation>()
 
         chunks.forEach { chunk ->
-            val sourceUrl = chunk.sourceUrl.ifBlank { "https://$domain" }
+            if (chunk.content.isBlank()) return@forEach
+
+            val hasSourceUrl = chunk.sourceUrl.isNotBlank()
             val fileName = chunk.fileName.ifBlank { "Document" }
 
-            // Add content with citation reference
-            if (chunk.content.isNotBlank()) {
-                markdown.appendLine(chunk.content)
-                markdown.appendLine()
-                markdown.appendLine("*Source: [$fileName]($sourceUrl)*")
-                markdown.appendLine()
+            markdown.appendLine(chunk.content)
+            markdown.appendLine()
 
-                citations.add(
-                    FileCitation(
-                        fileName = fileName,
-                        sourceUrl = sourceUrl,
-                        content = chunk.content
-                    )
-                )
+            if (hasSourceUrl) {
+                markdown.appendLine("*Source: [$fileName](${chunk.sourceUrl})*")
+            } else {
+                markdown.appendLine("*Source: File search result*")
             }
+            markdown.appendLine()
+
+            citations.add(
+                FileCitation(
+                    fileName = fileName,
+                    sourceUrl = if (hasSourceUrl) chunk.sourceUrl else null,
+                    sourceText = if (!hasSourceUrl) chunk.content else null,
+                    content = chunk.content
+                )
+            )
         }
 
         return Pair(markdown.toString().trim(), citations)

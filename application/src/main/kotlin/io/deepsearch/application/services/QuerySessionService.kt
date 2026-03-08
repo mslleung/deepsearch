@@ -24,7 +24,8 @@ data class QuerySessionDetail(
     val session: QuerySession,
     val urlAccesses: List<UrlAccess>,
     val cachedWebpages: List<WebpageMarkdown>,
-    val imageIds: List<String> = emptyList() // Image IDs referenced in the answer (format: "img-xxx")
+    val imageIds: List<String> = emptyList(),
+    val fileSearchCitations: List<FileCitation> = emptyList()
 )
 
 /**

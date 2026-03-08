@@ -33,10 +33,11 @@ data class QuerySessionSummaryDto(
 
 @Serializable
 data class ContentSourceDto(
-    val url: String,
+    val url: String?,
     val title: String?,
     val description: String?,
-    val markdown: String
+    val markdown: String,
+    val sourceType: String = "WEB"
 )
 
 /**
@@ -103,7 +104,8 @@ fun QuerySession.toSummaryDto(urlCount: Int): QuerySessionSummaryDto {
 fun QuerySession.toDetailDto(
     urlAccesses: List<UrlAccess>, 
     cachedWebpages: List<io.deepsearch.domain.models.entities.WebpageMarkdown> = emptyList(),
-    images: Map<String, ImageDto> = emptyMap()
+    images: Map<String, ImageDto> = emptyMap(),
+    fileSearchCitations: List<io.deepsearch.application.services.FileCitation> = emptyList()
 ): QuerySessionDetailDto {
     val status = finishReason?.name ?: "IN_PROGRESS"
     val modeString = when (searchMode) {
@@ -115,7 +117,7 @@ fun QuerySession.toDetailDto(
     val urlToWebpage = cachedWebpages.associateBy { it.url }
     
     // Content sources: all successfully accessed URLs with their content (excluding failed)
-    val contentSources = urlAccesses
+    val webContentSources = urlAccesses
         .filterNot { it is FailedUrlAccess }
         .mapNotNull { urlAccess ->
             val webpage = urlToWebpage[urlAccess.url]
@@ -129,6 +131,18 @@ fun QuerySession.toDetailDto(
                 )
             } else null
         }
+
+    val fileSearchContentSources = fileSearchCitations.map { citation ->
+        ContentSourceDto(
+            url = citation.sourceUrl,
+            title = citation.fileName,
+            description = "From file search",
+            markdown = citation.content,
+            sourceType = "FILE_SEARCH"
+        )
+    }
+
+    val contentSources = webContentSources + fileSearchContentSources
     
     // Answer sources: URLs marked as used in answer
     val answerSources = urlAccesses

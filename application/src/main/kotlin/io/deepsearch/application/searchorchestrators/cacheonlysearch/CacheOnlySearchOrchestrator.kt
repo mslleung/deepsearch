@@ -165,20 +165,22 @@ class CacheOnlySearchOrchestrator(
             // Record URL accesses and emit URL processed events for webpages
             emitWebpageProcessedEvents(validWebpages, sessionId)
 
-            // Emit file search processed event if we have results
+            // Emit file search processed events only for citations with real source URLs
             if (fileSearchResult != null && fileSearchResult.markdown.isNotBlank()) {
-                fileSearchResult.citations.forEach { citation ->
-                    emit(
-                        SearchEvent.UrlProcessed(
-                            sessionId = sessionId,
-                            url = citation.sourceUrl,
-                            accessType = "FILE_SEARCH",
-                            title = "File Search Results",
-                            description = "Documents from $domain",
-                            markdownLength = fileSearchResult.markdown.length
+                fileSearchResult.citations
+                    .filter { it.sourceUrl != null }
+                    .forEach { citation ->
+                        emit(
+                            SearchEvent.UrlProcessed(
+                                sessionId = sessionId,
+                                url = citation.sourceUrl!!,
+                                accessType = "FILE_SEARCH",
+                                title = "File Search Results",
+                                description = "Documents from $domain",
+                                markdownLength = fileSearchResult.markdown.length
+                            )
                         )
-                    )
-                }
+                    }
             }
 
             // Combine all markdown sources (including KG facts)
@@ -272,7 +274,10 @@ class CacheOnlySearchOrchestrator(
             // Step 4: Complete session
             querySessionService.completeSessionAnswerComplete(sessionId, fullAnswer, answerFound, imageIds)
 
-            val sessionDetail = querySessionService.getSessionDetailInternal(sessionId)
+            val sessionDetail = querySessionService.getSessionDetailInternal(sessionId).let { detail ->
+                val fileCitations = fileSearchResult?.citations ?: emptyList()
+                if (fileCitations.isNotEmpty()) detail.copy(fileSearchCitations = fileCitations) else detail
+            }
             emit(
                 SearchEvent.SessionCompleted(
                     sessionId = sessionId,
@@ -364,9 +369,10 @@ class CacheOnlySearchOrchestrator(
             
             // Add file search results if available
             if (fileSearchResult != null && fileSearchResult.markdown.isNotBlank()) {
+                val firstCitationUrl = fileSearchResult.citations.firstOrNull()?.sourceUrl
                 add(
                     MarkdownSource(
-                        url = fileSearchResult.citations[0].sourceUrl,
+                        url = firstCitationUrl ?: "file-search://$domain",
                         title = "File Search Results",
                         description = "Documents from $domain",
                         markdown = fileSearchResult.markdown

@@ -139,7 +139,7 @@ class QuerySessionController(
         
         call.respond(
             HttpStatusCode.OK,
-            sessionDetail.session.toDetailDto(sessionDetail.urlAccesses, sessionDetail.cachedWebpages, images)
+            sessionDetail.session.toDetailDto(sessionDetail.urlAccesses, sessionDetail.cachedWebpages, images, sessionDetail.fileSearchCitations)
         )
     }
 

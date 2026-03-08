@@ -240,7 +240,7 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
             val urlToWebpage = cachedWebpages.associateBy { it.url }
 
             // Content sources: successfully accessed URLs with their content
-            val contentSources = urlAccesses
+            val webContentSources = urlAccesses
                 .filterNot { it is FailedUrlAccess }
                 .mapNotNull { urlAccess ->
                     val webpage = urlToWebpage[urlAccess.url]
@@ -254,6 +254,18 @@ fun SearchEvent.toDto(images: Map<String, ImageDto> = emptyMap()): SearchEventDt
                         )
                     } else null
                 }
+
+            val fileSearchContentSources = detail.fileSearchCitations.map { citation ->
+                ContentSourceDto(
+                    url = citation.sourceUrl,
+                    title = citation.fileName,
+                    description = "From file search",
+                    markdown = citation.content,
+                    sourceType = "FILE_SEARCH"
+                )
+            }
+
+            val contentSources = webContentSources + fileSearchContentSources
 
             // Answer sources: URLs marked as used in answer
             val answerSources = urlAccesses
