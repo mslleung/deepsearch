@@ -118,6 +118,20 @@ interface IBrowserPage {
     suspend fun clickAtCoordinates(x: Int, y: Int)
 
     /**
+     * Result of a guarded click that intercepts cross-page navigation.
+     * @param navigatedAwayTo the URL the click tried to navigate to, or null if same-page
+     */
+    data class GuardedClickResult(val navigatedAwayTo: String?)
+
+    /**
+     * Click at viewport coordinates with navigation interception.
+     * If the click triggers a cross-page navigation, the navigation is aborted at the CDP level
+     * and the target URL is returned. The current page remains intact.
+     * Same-page interactions (accordions, tabs, modals) pass through normally.
+     */
+    suspend fun guardedClickAtCoordinates(x: Int, y: Int): GuardedClickResult
+
+    /**
      * Type text at the current cursor/focus position using low-level input events.
      * The caller is responsible for focusing the target element first (e.g., via [clickAtCoordinates]).
      */

@@ -170,6 +170,7 @@ class AgenticWebpageSearchService(
         var previousClickScreenshot: ByteArray? = null
         var previousActionOutcome: String? = null
         val failedClickDescs = mutableMapOf<String, Int>()
+        val offPageLinkDescs = mutableListOf<String>()
         var lastActionWasClick = false
         var peekScreenshotOverride: IBrowserPage.Screenshot? = null
 
@@ -249,11 +250,20 @@ class AgenticWebpageSearchService(
             val screenshotForAgent = peekScreenshotOverride ?: annotatedScreenshot
             peekScreenshotOverride = null
 
+            val effectiveOutcome = buildString {
+                if (previousActionOutcome != null) append(previousActionOutcome)
+                if (offPageLinkDescs.isNotEmpty()) {
+                    if (isNotEmpty()) append("\n")
+                    append("OFF-PAGE LINKS (do NOT click these — they navigate away from this page): ")
+                    append(offPageLinkDescs.joinToString("; "))
+                }
+            }.ifEmpty { null }
+
             val input = WebpageNavigationInput(
                 screenshot = screenshotForAgent,
                 query = query,
                 previousActions = actionsPerformed.toList(),
-                previousActionOutcome = previousActionOutcome,
+                previousActionOutcome = effectiveOutcome,
                 elementLabels = elementLabels,
                 answeredQuestions = answeredQuestions.toList(),
                 openQuestions = openQuestions
@@ -334,7 +344,11 @@ class AgenticWebpageSearchService(
                 is NavigationAction.Click -> {
                     val targetElement = annotated.elementIndex[action.labelNumber]
                     if (targetElement != null) {
-                        val desc = "${targetElement.tag} '${targetElement.text.take(40)}'".trim()
+                        val desc = if (targetElement.text.isNotBlank()) {
+                            "${targetElement.tag} '${targetElement.text.take(40)}'".trim()
+                        } else {
+                            action.reason.take(60)
+                        }
                         actionsPerformed[actionsPerformed.lastIndex] =
                             action.copy(elementDescription = desc)
 
@@ -346,21 +360,21 @@ class AgenticWebpageSearchService(
                         )
 
                         previousClickScreenshot = rawScreenshot.bytes
-                        lastActionWasClick = true
 
-                        page.clickAtCoordinates(x, y)
-                        delay(POST_CLICK_DELAY_MS)
-
-                        val currentUrl = page.getUrl()
-                        if (currentUrl != url && !currentUrl.startsWith("about:")) {
+                        val clickResult = page.guardedClickAtCoordinates(x, y)
+                        if (clickResult.navigatedAwayTo != null) {
                             logger.info(
-                                "Click triggered navigation away from {} to {} — recording as discovered link and navigating back",
-                                url, currentUrl
+                                "Click on '{}' intercepted navigation to {} — page unchanged",
+                                desc, clickResult.navigatedAwayTo
                             )
-                            discoveredUrls.add(currentUrl)
-                            page.navigate(url)
-                            page.waitForLoad()
+                            discoveredUrls.add(clickResult.navigatedAwayTo!!)
+                            offPageLinkDescs.add("'$desc' → ${clickResult.navigatedAwayTo}")
                             lastActionWasClick = false
+                            previousActionOutcome = "Clicking '$desc' leads to ${clickResult.navigatedAwayTo} — " +
+                                    "recorded for separate investigation. " +
+                                    "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
+                        } else {
+                            lastActionWasClick = true
                         }
                     } else {
                         val maxLabel = interactiveElements.size - 1
@@ -378,7 +392,8 @@ class AgenticWebpageSearchService(
                     val img = ImageIO.read(ByteArrayInputStream(rawScreenshot.bytes))
                     val viewportX = ((action.x / 1000.0) * img.width).toInt()
                     val viewportY = ((action.y / 1000.0) * img.height).toInt()
-                    val desc = action.elementDescription ?: "unlabeled element at (${action.x},${action.y})"
+                    val desc = action.elementDescription
+                        ?: action.reason.take(60).ifEmpty { "unlabeled element at (${action.x},${action.y})" }
                     actionsPerformed[actionsPerformed.lastIndex] =
                         action.copy(elementDescription = desc)
 
@@ -388,22 +403,22 @@ class AgenticWebpageSearchService(
                     )
 
                     previousClickScreenshot = rawScreenshot.bytes
-                    lastActionWasClick = true
 
                     try {
-                        page.clickAtCoordinates(viewportX, viewportY)
-                        delay(POST_CLICK_DELAY_MS)
-
-                        val currentUrl = page.getUrl()
-                        if (currentUrl != url && !currentUrl.startsWith("about:")) {
+                        val clickResult = page.guardedClickAtCoordinates(viewportX, viewportY)
+                        if (clickResult.navigatedAwayTo != null) {
                             logger.info(
-                                "ClickAt triggered navigation away from {} to {} — recording and navigating back",
-                                url, currentUrl
+                                "ClickAt on '{}' intercepted navigation to {} — page unchanged",
+                                desc, clickResult.navigatedAwayTo
                             )
-                            discoveredUrls.add(currentUrl)
-                            page.navigate(url)
-                            page.waitForLoad()
+                            discoveredUrls.add(clickResult.navigatedAwayTo!!)
+                            offPageLinkDescs.add("'$desc' → ${clickResult.navigatedAwayTo}")
                             lastActionWasClick = false
+                            previousActionOutcome = "Clicking '$desc' leads to ${clickResult.navigatedAwayTo} — " +
+                                    "recorded for separate investigation. " +
+                                    "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
+                        } else {
+                            lastActionWasClick = true
                         }
                     } catch (e: CancellationException) {
                         throw e

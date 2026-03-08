@@ -283,6 +283,11 @@ class RemoteBrowserPage(
         pageCmd(PageCommand.ClickAtCoordinates(x, y))
     }
 
+    override suspend fun guardedClickAtCoordinates(x: Int, y: Int): IBrowserPage.GuardedClickResult {
+        val resp = pageCmdParse<GuardedClickResponse>(PageCommand.GuardedClickAtCoordinates(x, y))
+        return IBrowserPage.GuardedClickResult(navigatedAwayTo = resp.navigatedAwayTo)
+    }
+
     override suspend fun typeText(text: String) {
         pageCmd(PageCommand.TypeText(text))
     }

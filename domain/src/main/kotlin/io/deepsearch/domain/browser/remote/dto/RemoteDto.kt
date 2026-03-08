@@ -163,6 +163,9 @@ sealed class PageCommand {
     @Serializable @SerialName("clickAtCoordinates")
     data class ClickAtCoordinates(val x: Int, val y: Int) : PageCommand()
 
+    @Serializable @SerialName("guardedClickAtCoordinates")
+    data class GuardedClickAtCoordinates(val x: Int, val y: Int) : PageCommand()
+
     @Serializable @SerialName("typeText")
     data class TypeText(val text: String) : PageCommand()
 }
@@ -260,6 +263,11 @@ data class TableInterpretationDataResponse(
 data class TablesInterpretationDataResponse(
     val data: Map<String, TableInterpretationDataResponse>
 )
+
+// ==================== Guarded Click Response ====================
+
+@Serializable
+data class GuardedClickResponse(val navigatedAwayTo: String?)
 
 // ==================== Interactive Elements Response ====================
 

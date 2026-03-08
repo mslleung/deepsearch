@@ -142,6 +142,13 @@ class WebpageNavigationAgentGenAiImpl(
         - Read the screenshot fresh each turn — never carry stale data forward.
         - If a click had no visible change, try a DIFFERENT element or approach.
         - For tables/grids, carefully match row labels to column headers.
+
+        === PAGE SCOPE ===
+        - You are searching WITHIN a single page. Your job is to extract information from THIS page.
+        - Clicking in-page elements (accordions, tabs, modals, dropdowns) is encouraged — they reveal content.
+        - If a click leads to a DIFFERENT page, the navigation is automatically blocked and the URL is recorded for separate investigation by the orchestrator.
+        - When ACTION_OUTCOME lists OFF-PAGE LINKS, those elements are confirmed navigation links. Do NOT click them again.
+        - If all relevant content on this page is exhausted, use answer_found with what you have, or give_up.
     """.trimIndent()
 
     @Serializable
