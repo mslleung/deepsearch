@@ -1,5 +1,6 @@
 package io.deepsearch.application.services
 
+import io.deepsearch.domain.agents.ActionWithOutcome
 import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.ElementLabel
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
@@ -38,7 +39,7 @@ data class AgenticPageSearchResult(
     val answer: String?,
     val evidence: String?,
     val contentDate: String?,
-    val actionsPerformed: List<NavigationAction>,
+    val actionsPerformed: List<ActionWithOutcome>,
     val observations: List<String>,
     val success: Boolean,
     val totalTokenUsage: TokenUsageMetrics,
@@ -157,7 +158,7 @@ class AgenticWebpageSearchService(
 
         dismissCookieBanner(page, url)
 
-        val actionsPerformed = mutableListOf<NavigationAction>()
+        val actionsPerformed = mutableListOf<ActionWithOutcome>()
         val observations = mutableListOf<String>()
         var openQuestions = listOf<String>()
         val answeredQuestions = mutableListOf<String>()
@@ -168,9 +169,8 @@ class AgenticWebpageSearchService(
 
         // Navigation Loop
         var previousClickScreenshot: ByteArray? = null
-        var previousActionOutcome: String? = null
         val failedClickDescs = mutableMapOf<String, Int>()
-        val offPageLinkDescs = mutableListOf<String>()
+        val offPageClickedDescs = mutableSetOf<String>()
         var lastActionWasClick = false
         var peekScreenshotOverride: IBrowserPage.Screenshot? = null
 
@@ -189,7 +189,8 @@ class AgenticWebpageSearchService(
                 val changed = screenshotAnnotationService.hasVisualChange(
                     previousClickScreenshot, rawScreenshot.bytes
                 )
-                val lastAction = actionsPerformed.last()
+                val lastEntry = actionsPerformed.last()
+                val lastAction = lastEntry.action
                 val clickDesc = when (lastAction) {
                     is NavigationAction.Click -> lastAction.elementDescription ?: ""
                     is NavigationAction.ClickAt -> lastAction.elementDescription ?: "(${lastAction.x},${lastAction.y})"
@@ -197,24 +198,23 @@ class AgenticWebpageSearchService(
                     else -> ""
                 }
                 if (changed) {
-                    previousActionOutcome =
-                        "Your last action ($lastAction) caused a VISIBLE CHANGE on the page."
+                    actionsPerformed[actionsPerformed.lastIndex] = lastEntry.copy(
+                        outcome = "VISIBLE CHANGE on the page."
+                    )
                     failedClickDescs.remove(clickDesc)
                 } else {
                     val failCount = failedClickDescs.merge(clickDesc, 1, Int::plus)!!
-
-                    previousActionOutcome = if (failCount >= MAX_FAILED_CLICKS) {
-                        "Element '$clickDesc' has FAILED $failCount times — it is NOT clickable. " +
-                                "STOP trying it. Drop unanswerable questions from openQuestions and " +
-                                "use answer_found with the findings you already have."
-                    } else {
-                        "Your last action ($lastAction) did NOT produce any visible change. " +
-                                "Try a different element or approach."
-                    }
+                    actionsPerformed[actionsPerformed.lastIndex] = lastEntry.copy(
+                        outcome = if (failCount >= MAX_FAILED_CLICKS) {
+                            "Element '$clickDesc' has FAILED $failCount times — it is NOT clickable. " +
+                                    "STOP trying it. Drop unanswerable questions from openQuestions and " +
+                                    "use answer_found with the findings you already have."
+                        } else {
+                            "NO visible change. Try a different element or approach."
+                        }
+                    )
                 }
                 logger.debug("Visual diff after click: changed={}", changed)
-            } else if (!lastActionWasClick && actionsPerformed.isNotEmpty() && previousActionOutcome == null) {
-                // Don't reset outcome if already set by SearchText/PeekFullPage handlers
             }
             lastActionWasClick = false
 
@@ -250,20 +250,10 @@ class AgenticWebpageSearchService(
             val screenshotForAgent = peekScreenshotOverride ?: annotatedScreenshot
             peekScreenshotOverride = null
 
-            val effectiveOutcome = buildString {
-                if (previousActionOutcome != null) append(previousActionOutcome)
-                if (offPageLinkDescs.isNotEmpty()) {
-                    if (isNotEmpty()) append("\n")
-                    append("OFF-PAGE LINKS (do NOT click these — they navigate away from this page): ")
-                    append(offPageLinkDescs.joinToString("; "))
-                }
-            }.ifEmpty { null }
-
             val input = WebpageNavigationInput(
                 screenshot = screenshotForAgent,
                 query = query,
                 previousActions = actionsPerformed.toList(),
-                previousActionOutcome = effectiveOutcome,
                 elementLabels = elementLabels,
                 answeredQuestions = answeredQuestions.toList(),
                 openQuestions = openQuestions
@@ -282,7 +272,7 @@ class AgenticWebpageSearchService(
             )
 
             val action = output.action
-            actionsPerformed.add(action)
+            actionsPerformed.add(ActionWithOutcome(action))
 
             val finding = output.finding
             if (finding != null) {
@@ -350,31 +340,42 @@ class AgenticWebpageSearchService(
                             action.reason.take(60)
                         }
                         actionsPerformed[actionsPerformed.lastIndex] =
-                            action.copy(elementDescription = desc)
+                            ActionWithOutcome(action.copy(elementDescription = desc))
 
-                        val x = targetElement.centerX
-                        val y = targetElement.centerY
-                        logger.debug(
-                            "Clicking label {} at ({},{}) - {} (reason: {})",
-                            action.labelNumber, x, y, desc, action.reason
-                        )
-
-                        previousClickScreenshot = rawScreenshot.bytes
-
-                        val clickResult = page.guardedClickAtCoordinates(x, y)
-                        if (clickResult.navigatedAwayTo != null) {
-                            logger.info(
-                                "Click on '{}' intercepted navigation to {} — page unchanged",
-                                desc, clickResult.navigatedAwayTo
+                        if (desc in offPageClickedDescs) {
+                            logger.debug("Skipping re-click on known off-page element '{}'", desc)
+                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                outcome = "Element '$desc' already navigates OFF this page. " +
+                                        "Do NOT click it again. Find the answer elsewhere on the CURRENT page, " +
+                                        "or use answer_found / give_up."
                             )
-                            discoveredUrls.add(clickResult.navigatedAwayTo!!)
-                            offPageLinkDescs.add("'$desc' → ${clickResult.navigatedAwayTo}")
-                            lastActionWasClick = false
-                            previousActionOutcome = "Clicking '$desc' leads to ${clickResult.navigatedAwayTo} — " +
-                                    "recorded for separate investigation. " +
-                                    "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
                         } else {
-                            lastActionWasClick = true
+                            val x = targetElement.centerX
+                            val y = targetElement.centerY
+                            logger.debug(
+                                "Clicking label {} at ({},{}) - {} (reason: {})",
+                                action.labelNumber, x, y, desc, action.reason
+                            )
+
+                            previousClickScreenshot = rawScreenshot.bytes
+
+                            val clickResult = page.guardedClickAtCoordinates(x, y)
+                            if (clickResult.navigatedAwayTo != null) {
+                                logger.info(
+                                    "Click on '{}' intercepted navigation to {} — page unchanged",
+                                    desc, clickResult.navigatedAwayTo
+                                )
+                                discoveredUrls.add(clickResult.navigatedAwayTo!!)
+                                offPageClickedDescs.add(desc)
+                                lastActionWasClick = false
+                                actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                    outcome = "Navigated OFF-PAGE to ${clickResult.navigatedAwayTo} — " +
+                                            "recorded for separate investigation. " +
+                                            "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
+                                )
+                            } else {
+                                lastActionWasClick = true
+                            }
                         }
                     } else {
                         val maxLabel = interactiveElements.size - 1
@@ -382,9 +383,11 @@ class AgenticWebpageSearchService(
                             "VLM referenced non-existent label {}. Available: 0..{}",
                             action.labelNumber, maxLabel
                         )
-                        previousActionOutcome = "ERROR: Label [${action.labelNumber}] does NOT exist. " +
-                                "Valid labels are 0 to $maxLabel. " +
-                                "Do NOT confuse page content (prices, phone numbers) with label badges."
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "ERROR: Label [${action.labelNumber}] does NOT exist. " +
+                                    "Valid labels are 0 to $maxLabel. " +
+                                    "Do NOT confuse page content (prices, phone numbers) with label badges."
+                        )
                     }
                 }
 
@@ -395,38 +398,49 @@ class AgenticWebpageSearchService(
                     val desc = action.elementDescription
                         ?: action.reason.take(60).ifEmpty { "unlabeled element at (${action.x},${action.y})" }
                     actionsPerformed[actionsPerformed.lastIndex] =
-                        action.copy(elementDescription = desc)
+                        ActionWithOutcome(action.copy(elementDescription = desc))
 
-                    logger.debug(
-                        "ClickAt normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
-                        action.x, action.y, viewportX, viewportY, desc, action.reason
-                    )
-
-                    previousClickScreenshot = rawScreenshot.bytes
-
-                    try {
-                        val clickResult = page.guardedClickAtCoordinates(viewportX, viewportY)
-                        if (clickResult.navigatedAwayTo != null) {
-                            logger.info(
-                                "ClickAt on '{}' intercepted navigation to {} — page unchanged",
-                                desc, clickResult.navigatedAwayTo
-                            )
-                            discoveredUrls.add(clickResult.navigatedAwayTo!!)
-                            offPageLinkDescs.add("'$desc' → ${clickResult.navigatedAwayTo}")
-                            lastActionWasClick = false
-                            previousActionOutcome = "Clicking '$desc' leads to ${clickResult.navigatedAwayTo} — " +
-                                    "recorded for separate investigation. " +
-                                    "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
-                        } else {
-                            lastActionWasClick = true
-                        }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        logger.warn(
-                            "ClickAt failed at viewport ({},{}): {}",
-                            viewportX, viewportY, e.message
+                    if (desc in offPageClickedDescs) {
+                        logger.debug("Skipping re-click on known off-page element '{}'", desc)
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "Element '$desc' already navigates OFF this page. " +
+                                    "Do NOT click it again. Find the answer elsewhere on the CURRENT page, " +
+                                    "or use answer_found / give_up."
                         )
+                    } else {
+                        logger.debug(
+                            "ClickAt normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
+                            action.x, action.y, viewportX, viewportY, desc, action.reason
+                        )
+
+                        previousClickScreenshot = rawScreenshot.bytes
+
+                        try {
+                            val clickResult = page.guardedClickAtCoordinates(viewportX, viewportY)
+                            if (clickResult.navigatedAwayTo != null) {
+                                logger.info(
+                                    "ClickAt on '{}' intercepted navigation to {} — page unchanged",
+                                    desc, clickResult.navigatedAwayTo
+                                )
+                                discoveredUrls.add(clickResult.navigatedAwayTo!!)
+                                offPageClickedDescs.add(desc)
+                                lastActionWasClick = false
+                                actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                    outcome = "Navigated OFF-PAGE to ${clickResult.navigatedAwayTo} — " +
+                                            "recorded for separate investigation. " +
+                                            "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
+                                )
+                            } else {
+                                lastActionWasClick = true
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logger.warn(
+                                "ClickAt failed at viewport ({},{}): {}",
+                                viewportX, viewportY, e.message
+                            )
+                        }
                     }
                 }
 
@@ -455,13 +469,15 @@ class AgenticWebpageSearchService(
                             break
                         }
                     }
-                    previousActionOutcome = if (matched != null) {
-                        logger.info("search_text matched '{}' on {}", matched, url)
-                        "search_text found \"$matched\". Viewport scrolled to match."
-                    } else {
-                        logger.debug("search_text found no matches for {} on {}", action.searchTerms, url)
-                        "search_text found NO matches for: ${action.searchTerms.joinToString { "\"$it\"" }}"
-                    }
+                    actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                        outcome = if (matched != null) {
+                            logger.info("search_text matched '{}' on {}", matched, url)
+                            "Found \"$matched\". Viewport scrolled to match."
+                        } else {
+                            logger.debug("search_text found no matches for {} on {}", action.searchTerms, url)
+                            "NO matches for: ${action.searchTerms.joinToString { "\"$it\"" }}"
+                        }
+                    )
                     delay(POST_SCROLL_DELAY_MS)
                 }
 
@@ -474,13 +490,17 @@ class AgenticWebpageSearchService(
                             bytes = downscaled,
                             mimeType = ImageMimeType.JPEG
                         )
-                        previousActionOutcome = "Full page overview captured. Study this image to understand " +
-                                "the overall page content and layout, then decide your next action."
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "Full page overview captured. Study this image to understand " +
+                                    "the overall page content and layout, then decide your next action."
+                        )
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         logger.warn("Full-page screenshot failed: {}", e.message)
-                        previousActionOutcome = "peek_full_page failed: ${e.message}"
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "peek_full_page failed: ${e.message}"
+                        )
                     }
                 }
 
@@ -489,7 +509,7 @@ class AgenticWebpageSearchService(
                     if (targetElement != null) {
                         val desc = "${targetElement.tag} '${targetElement.text.take(40)}'".trim()
                         actionsPerformed[actionsPerformed.lastIndex] =
-                            action.copy(elementDescription = desc)
+                            ActionWithOutcome(action.copy(elementDescription = desc))
 
                         val x = targetElement.centerX
                         val y = targetElement.centerY
@@ -511,9 +531,11 @@ class AgenticWebpageSearchService(
                             "VLM referenced non-existent label {} for type action. Available: 0..{}",
                             action.labelNumber, maxLabel
                         )
-                        previousActionOutcome = "ERROR: Label [${action.labelNumber}] does NOT exist. " +
-                                "Valid labels are 0 to $maxLabel. " +
-                                "Do NOT confuse page content (prices, phone numbers) with label badges."
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "ERROR: Label [${action.labelNumber}] does NOT exist. " +
+                                    "Valid labels are 0 to $maxLabel. " +
+                                    "Do NOT confuse page content (prices, phone numbers) with label badges."
+                        )
                     }
                 }
             }

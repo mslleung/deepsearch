@@ -407,9 +407,9 @@ class OtpHealthcareSearchTest : IsolatedKoinTest() {
         result.actionsPerformed.forEachIndexed { idx, action ->
             println("  ${idx + 1}. $action")
         }
-        val clickCount = result.actionsPerformed.count { it is NavigationAction.Click }
-        val clickAtCount = result.actionsPerformed.count { it is NavigationAction.ClickAt }
-        val scrollCount = result.actionsPerformed.count { it is NavigationAction.Scroll }
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
+        val clickAtCount = result.actionsPerformed.count { it.action is NavigationAction.ClickAt }
+        val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
         println("Clicks: $clickCount, ClickAts: $clickAtCount, Scrolls: $scrollCount")
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, " +
                 "output=${result.totalTokenUsage.outputTokens}, " +

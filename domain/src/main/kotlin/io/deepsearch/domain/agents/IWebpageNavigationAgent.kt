@@ -5,11 +5,15 @@ import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.serialization.Serializable
 
+data class ActionWithOutcome(
+    val action: NavigationAction,
+    val outcome: String? = null
+)
+
 data class WebpageNavigationInput(
     val screenshot: IBrowserPage.Screenshot,
     val query: String,
-    val previousActions: List<NavigationAction>,
-    val previousActionOutcome: String?,
+    val previousActions: List<ActionWithOutcome>,
     val elementLabels: List<ElementLabel>,
     val answeredQuestions: List<String> = emptyList(),
     val openQuestions: List<String> = emptyList()

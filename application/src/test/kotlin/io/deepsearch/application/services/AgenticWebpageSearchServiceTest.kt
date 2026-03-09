@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import com.sun.net.httpserver.HttpServer
 import io.deepsearch.application.config.applicationBenchmarkTestModule
+import io.deepsearch.domain.agents.ActionWithOutcome
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
@@ -90,6 +91,20 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             exchange.responseBody.use { it.write(html.toByteArray()) }
         }
 
+        testServer.createContext("/nav-heavy") { exchange ->
+            val html = NAVIGATION_HEAVY_PAGE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
+        testServer.createContext("/offpage-loop") { exchange ->
+            val html = OFFPAGE_LOOP_PAGE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
         testServer.start()
         testPort = testServer.address.port
         println("Test HTTP server started on port $testPort")
@@ -125,7 +140,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             "Answer should contain the motto: ${result.answer}"
         )
 
-        val clickCount = result.actionsPerformed.count { it is NavigationAction.Click }
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
         println("Click actions: $clickCount")
         assertTrue(clickCount == 0, "Should NOT need any clicks for visible content, but had $clickCount")
     }
@@ -152,7 +167,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             result.answer!!.contains("REFUND-GAMMA-77", ignoreCase = true),
             "Answer should contain REFUND-GAMMA-77: ${result.answer}"
         )
-        val clickCount = result.actionsPerformed.count { it is NavigationAction.Click }
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
         println("Click actions: $clickCount (VLM may find answer from text without clicking)")
     }
 
@@ -178,7 +193,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             result.answer!!.contains("499", ignoreCase = true),
             "Answer should contain the enterprise price 499: ${result.answer}"
         )
-        val clickCount = result.actionsPerformed.count { it is NavigationAction.Click }
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
         println("Click actions: $clickCount (VLM may find answer from text without clicking)")
     }
 
@@ -204,7 +219,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             result.answer!!.contains("SK-DEEP-NESTED-42X", ignoreCase = true),
             "Answer should contain the secret API key: ${result.answer}"
         )
-        val clickCount = result.actionsPerformed.count { it is NavigationAction.Click }
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
         println("Click actions: $clickCount (VLM may find answer from text without clicking)")
     }
 
@@ -274,8 +289,8 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             "Answer should contain the $75 cancellation fee: ${result.answer}"
         )
 
-        val suspectedHallucinations = result.actionsPerformed.count { action ->
-            when (action) {
+        val suspectedHallucinations = result.actionsPerformed.count { entry ->
+            when (val action = entry.action) {
                 is NavigationAction.Click -> action.labelNumber >= 25
                 is NavigationAction.Type -> action.labelNumber >= 25
                 else -> false
@@ -290,6 +305,75 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         assertTrue(
             result.actionsPerformed.size <= 6,
             "Should find the answer in 6 or fewer iterations, used ${result.actionsPerformed.size}"
+        )
+    }
+
+    // ==================== Test: Navigation-heavy page with many off-page links ====================
+
+    @Test
+    fun `navigation-heavy page finds answer amid many links`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 240.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/nav-heavy",
+            query = "What is the weather cancellation policy code?",
+            sessionId = QuerySessionId("test-nav-heavy")
+        )
+
+        println("=== NAVIGATION-HEAVY PAGE TEST ===")
+        printResult(result)
+
+        assertTrue(result.success, "Should find the answer on the navigation-heavy page")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("WX-CANCEL-88R", ignoreCase = true),
+            "Answer should contain the weather cancellation code WX-CANCEL-88R: ${result.answer}"
+        )
+
+        println("Off-page links discovered: ${result.discoveredUrls.size}")
+        println("Iterations used: ${result.actionsPerformed.size} (max $MAX_ITERATIONS)")
+        assertTrue(
+            result.actionsPerformed.size <= 8,
+            "Should find the answer in 8 or fewer iterations amid many nav links, used ${result.actionsPerformed.size}"
+        )
+    }
+
+    // ==================== Test: Agent does not loop on off-page navigation links ====================
+
+    @Test
+    fun `agent does not repeatedly click same off-page navigation link`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 240.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/offpage-loop",
+            query = "What is the maximum file size for sync?",
+            sessionId = QuerySessionId("test-offpage-loop")
+        )
+
+        println("=== OFF-PAGE LOOP PREVENTION TEST ===")
+        printResult(result)
+
+        assertTrue(result.success, "Should find the answer on the off-page loop page")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("50", ignoreCase = true),
+            "Answer should mention 50 GB max file size: ${result.answer}"
+        )
+
+        val duplicateUrls = result.discoveredUrls.groupBy { it }.filter { it.value.size > 1 }
+        println("Discovered URLs: ${result.discoveredUrls}")
+        println("Duplicate off-page URLs: $duplicateUrls")
+        assertTrue(
+            duplicateUrls.isEmpty(),
+            "No off-page URL should be discovered more than once (duplicates: ${duplicateUrls.keys})"
+        )
+
+        println("Iterations used: ${result.actionsPerformed.size} (max $MAX_ITERATIONS)")
+        assertTrue(
+            result.actionsPerformed.size <= 8,
+            "Should find the answer in 8 or fewer iterations, used ${result.actionsPerformed.size}"
         )
     }
 
@@ -664,6 +748,224 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
                     function toggle(btn) {
                         var body = btn.nextElementSibling;
                         body.style.display = body.style.display === 'none' || body.style.display === '' ? 'block' : 'none';
+                    }
+                </script>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Navigation-heavy page modeled after strangersoccer.com/help.
+         * 25+ off-page <a> links in header, sidebar, and footer competing with
+         * a handful of FAQ accordion buttons. The answer is hidden behind one
+         * specific FAQ accordion click.
+         */
+        val NAVIGATION_HEAVY_PAGE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>StrangerSoccer — Help Center</title>
+                <style>
+                    * { box-sizing: border-box; margin: 0; padding: 0; }
+                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #333; }
+                    header { background: #1b2838; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+                    header .logo { color: #4fc3f7; font-size: 20px; font-weight: bold; text-decoration: none; }
+                    header nav { display: flex; gap: 18px; }
+                    header nav a { color: #ccc; text-decoration: none; font-size: 14px; }
+                    .breadcrumb { background: #f0f0f0; padding: 10px 24px; font-size: 13px; }
+                    .breadcrumb a { color: #0066c0; text-decoration: none; }
+                    .layout { display: flex; max-width: 1200px; margin: 0 auto; min-height: 600px; }
+                    .sidebar { width: 240px; padding: 20px 16px; border-right: 1px solid #e0e0e0; }
+                    .sidebar h3 { font-size: 14px; margin-bottom: 12px; color: #555; text-transform: uppercase; }
+                    .sidebar a { display: block; padding: 7px 0; color: #0066c0; text-decoration: none; font-size: 14px; }
+                    .sidebar .active { font-weight: bold; color: #333; }
+                    .main { flex: 1; padding: 24px 32px; }
+                    .main h1 { font-size: 24px; margin-bottom: 8px; }
+                    .main .subtitle { color: #666; margin-bottom: 24px; font-size: 14px; }
+                    .faq-item { border: 1px solid #ddd; margin: 8px 0; border-radius: 6px; overflow: hidden; }
+                    .faq-q { padding: 14px 18px; cursor: pointer; background: #fafafa; border: none; width: 100%; text-align: left; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
+                    .faq-q:hover { background: #f0f0f0; }
+                    .faq-q::after { content: '+'; font-size: 18px; color: #888; }
+                    .faq-a { padding: 14px 18px; border-top: 1px solid #eee; font-size: 14px; line-height: 1.6; }
+                    footer { background: #1b2838; color: #aaa; padding: 24px; font-size: 13px; }
+                    footer .footer-links { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 12px; }
+                    footer a { color: #8bb4d9; text-decoration: none; }
+                </style>
+            </head>
+            <body>
+                <header>
+                    <a class="logo" href="https://strangersoccer.com">StrangerSoccer</a>
+                    <nav>
+                        <a href="https://strangersoccer.com/games">Find Games</a>
+                        <a href="https://strangersoccer.com/leagues">Leagues</a>
+                        <a href="https://strangersoccer.com/venues">Venues</a>
+                        <a href="https://strangersoccer.com/pricing">Pricing</a>
+                        <a href="https://strangersoccer.com/about">About</a>
+                        <a href="https://strangersoccer.com/blog">Blog</a>
+                        <a href="https://strangersoccer.com/contact">Contact</a>
+                        <a href="https://strangersoccer.com/login">Log In</a>
+                        <a href="https://strangersoccer.com/signup">Sign Up</a>
+                    </nav>
+                </header>
+
+                <div class="breadcrumb">
+                    <a href="https://strangersoccer.com">Home</a> &gt;
+                    <a href="https://strangersoccer.com/help">Help Center</a> &gt;
+                    <span>Other</span>
+                </div>
+
+                <div class="layout">
+                    <div class="sidebar">
+                        <h3>Help Categories</h3>
+                        <a href="https://strangersoccer.com/help?category=getting-started">Getting Started</a>
+                        <a href="https://strangersoccer.com/help?category=account">Account & Profile</a>
+                        <a href="https://strangersoccer.com/help?category=payments">Payments & Billing</a>
+                        <a href="https://strangersoccer.com/help?category=games">Games & Scheduling</a>
+                        <a href="https://strangersoccer.com/help?category=teams">Teams & Leagues</a>
+                        <a href="https://strangersoccer.com/help?category=venues">Venues & Locations</a>
+                        <a href="https://strangersoccer.com/help?category=safety">Safety & Conduct</a>
+                        <a href="https://strangersoccer.com/help?category=mobile">Mobile App</a>
+                        <a href="https://strangersoccer.com/help?category=referrals">Referral Program</a>
+                        <a class="active" href="#">Other</a>
+                    </div>
+
+                    <div class="main">
+                        <h1>Other Questions</h1>
+                        <p class="subtitle">Can't find what you're looking for? Browse the topics below or contact support.</p>
+
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">How do I delete my account?</button>
+                            <div class="faq-a" style="display:none">Go to Settings &gt; Account &gt; Delete Account. You have 30 days to reactivate before data is permanently removed.</div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">What is the guest policy for games?</button>
+                            <div class="faq-a" style="display:none">Each registered player may bring one guest per game at no extra charge. Guests must sign a waiver at the venue. The guest limit per game is capped at 3 across all players.</div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">What is the weather cancellation policy?</button>
+                            <div class="faq-a" style="display:none">The weather cancellation policy code is <strong>WX-CANCEL-88R</strong>. Games are automatically cancelled if the National Weather Service issues a severe weather warning for the venue area within 2 hours of game time. All players receive a full credit to their account within 24 hours.</div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">Can I change the game time after creation?</button>
+                            <div class="faq-a" style="display:none">Game creators can reschedule up to 12 hours before kickoff. All registered players will be notified automatically. Rescheduling within 12 hours requires approval from at least 80% of registered players.</div>
+                        </div>
+                        <div class="faq-item">
+                            <button class="faq-q" onclick="toggle(this)">How do I report a bug or suggest a feature?</button>
+                            <div class="faq-a" style="display:none">Email feedback@strangersoccer.com with the subject line "Bug Report" or "Feature Request". Include screenshots if applicable. We review all submissions within 48 hours.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <footer>
+                    <div class="footer-links">
+                        <a href="https://strangersoccer.com/terms">Terms of Service</a>
+                        <a href="https://strangersoccer.com/privacy">Privacy Policy</a>
+                        <a href="https://strangersoccer.com/cookies">Cookie Policy</a>
+                        <a href="https://strangersoccer.com/accessibility">Accessibility</a>
+                        <a href="https://strangersoccer.com/careers">Careers</a>
+                        <a href="https://strangersoccer.com/press">Press</a>
+                        <a href="https://strangersoccer.com/investors">Investors</a>
+                    </div>
+                    <p>&copy; 2024 StrangerSoccer Inc. All rights reserved.</p>
+                </footer>
+
+                <script>
+                    function toggle(btn) {
+                        var a = btn.nextElementSibling;
+                        a.style.display = a.style.display === 'none' ? 'block' : 'none';
+                    }
+                </script>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Page designed to tempt the agent into repeatedly clicking a prominent
+         * off-page CTA link. The large hero CTA navigates away, while the actual
+         * answer is in a small FAQ accordion further down the page.
+         */
+        val OFFPAGE_LOOP_PAGE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>CloudSync — Product Page</title>
+                <style>
+                    * { box-sizing: border-box; margin: 0; padding: 0; }
+                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #333; }
+                    nav { background: #0d1b2a; padding: 12px 24px; display: flex; gap: 20px; align-items: center; }
+                    nav a { color: #8bb4d9; text-decoration: none; font-size: 14px; }
+                    nav .brand { color: #4fc3f7; font-weight: bold; font-size: 18px; }
+                    .hero { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-align: center; padding: 60px 24px; }
+                    .hero h1 { font-size: 36px; margin-bottom: 16px; }
+                    .hero p { font-size: 18px; margin-bottom: 24px; max-width: 600px; margin-left: auto; margin-right: auto; }
+                    .hero .cta { display: inline-block; background: #ff6b35; color: white; padding: 16px 48px; border-radius: 8px; text-decoration: none; font-size: 18px; font-weight: bold; }
+                    .hero .cta-secondary { display: inline-block; margin-left: 16px; color: white; padding: 16px 32px; border: 2px solid white; border-radius: 8px; text-decoration: none; font-size: 16px; }
+                    .features { display: flex; gap: 24px; max-width: 900px; margin: 40px auto; padding: 0 24px; }
+                    .feature-card { flex: 1; padding: 24px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center; }
+                    .feature-card h3 { margin-bottom: 8px; }
+                    .feature-card a { color: #667eea; text-decoration: none; font-size: 14px; }
+                    .faq-section { max-width: 700px; margin: 40px auto; padding: 0 24px; }
+                    .faq-section h2 { margin-bottom: 16px; font-size: 20px; }
+                    .faq-item { border: 1px solid #ddd; margin: 8px 0; border-radius: 6px; }
+                    .faq-q { padding: 14px 18px; cursor: pointer; background: #fafafa; border: none; width: 100%; text-align: left; font-size: 14px; }
+                    .faq-a { padding: 14px 18px; border-top: 1px solid #eee; font-size: 14px; }
+                </style>
+            </head>
+            <body>
+                <nav>
+                    <a class="brand" href="https://cloudsync.example.com">CloudSync</a>
+                    <a href="https://cloudsync.example.com/features">Features</a>
+                    <a href="https://cloudsync.example.com/pricing">Pricing</a>
+                    <a href="https://cloudsync.example.com/docs">Documentation</a>
+                    <a href="https://cloudsync.example.com/blog">Blog</a>
+                    <a href="https://cloudsync.example.com/login">Login</a>
+                </nav>
+
+                <div class="hero">
+                    <h1>Sync Everything. Everywhere.</h1>
+                    <p>CloudSync keeps your files, databases, and configurations in perfect harmony across all your environments.</p>
+                    <a class="cta" href="https://cloudsync.example.com/signup">Start Free Trial</a>
+                    <a class="cta-secondary" href="https://cloudsync.example.com/demo">Watch Demo</a>
+                </div>
+
+                <div class="features">
+                    <div class="feature-card">
+                        <h3>Real-time Sync</h3>
+                        <p>Sub-second propagation across regions.</p>
+                        <a href="https://cloudsync.example.com/features/realtime">Learn more &rarr;</a>
+                    </div>
+                    <div class="feature-card">
+                        <h3>Conflict Resolution</h3>
+                        <p>Automatic merge with manual override.</p>
+                        <a href="https://cloudsync.example.com/features/conflicts">Learn more &rarr;</a>
+                    </div>
+                    <div class="feature-card">
+                        <h3>Enterprise Security</h3>
+                        <p>SOC 2, HIPAA, and GDPR compliant.</p>
+                        <a href="https://cloudsync.example.com/features/security">Learn more &rarr;</a>
+                    </div>
+                </div>
+
+                <div class="faq-section">
+                    <h2>Frequently Asked Questions</h2>
+                    <div class="faq-item">
+                        <button class="faq-q" onclick="toggle(this)">What platforms are supported?</button>
+                        <div class="faq-a" style="display:none">CloudSync supports macOS, Windows, Linux, iOS, and Android. Browser extension available for Chrome and Firefox.</div>
+                    </div>
+                    <div class="faq-item">
+                        <button class="faq-q" onclick="toggle(this)">What is the maximum file size for sync?</button>
+                        <div class="faq-a" style="display:none">The maximum file size for sync is <strong>50 GB</strong> per file on all plans. The free tier has a total storage limit of 15 GB. Sync configuration code: <strong>SYNC-MAX-50G</strong>.</div>
+                    </div>
+                    <div class="faq-item">
+                        <button class="faq-q" onclick="toggle(this)">How do I contact support?</button>
+                        <div class="faq-a" style="display:none">Email support@cloudsync.example.com or use the in-app chat. Enterprise customers get dedicated Slack channels.</div>
+                    </div>
+                </div>
+
+                <script>
+                    function toggle(btn) {
+                        var a = btn.nextElementSibling;
+                        a.style.display = a.style.display === 'none' ? 'block' : 'none';
                     }
                 </script>
             </body>

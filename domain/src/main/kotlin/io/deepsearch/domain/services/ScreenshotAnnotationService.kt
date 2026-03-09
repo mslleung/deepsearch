@@ -59,7 +59,6 @@ class ScreenshotAnnotationService {
         private const val BOX_INNER_THICKNESS = 2
 
         private const val PIXEL_DIFF_THRESHOLD = 30.0
-        private const val CHANGED_PIXEL_RATIO_THRESHOLD = 0.005
 
         private val SHADOW = Scalar(0.0, 0.0, 0.0, 0.0)
         private val WHITE = Scalar(255.0, 255.0, 255.0, 0.0)
@@ -163,6 +162,10 @@ class ScreenshotAnnotationService {
         val curMat = decodeMat(current, IMREAD_GRAYSCALE)
 
         if (prevMat.rows() != curMat.rows() || prevMat.cols() != curMat.cols()) {
+            logger.debug(
+                "Visual diff: size mismatch prev={}x{} cur={}x{} → changed",
+                prevMat.cols(), prevMat.rows(), curMat.cols(), curMat.rows()
+            )
             prevMat.close(); curMat.close()
             return true
         }
@@ -174,9 +177,16 @@ class ScreenshotAnnotationService {
         val changedPixels = countNonZero(diff)
         val totalPixels = diff.rows() * diff.cols()
 
+        logger.debug(
+            "Visual diff: {}x{}, changedPixels={}/{} → {}",
+            prevMat.cols(), prevMat.rows(),
+            changedPixels, totalPixels,
+            if (changedPixels > 0) "CHANGED" else "unchanged"
+        )
+
         prevMat.close(); curMat.close(); diff.close()
 
-        return changedPixels.toDouble() / totalPixels > CHANGED_PIXEL_RATIO_THRESHOLD
+        return changedPixels > 0
     }
 
     private fun decodeMat(bytes: ByteArray, flags: Int): Mat {

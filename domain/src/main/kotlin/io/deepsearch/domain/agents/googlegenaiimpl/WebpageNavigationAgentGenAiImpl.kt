@@ -7,6 +7,7 @@ import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
 
+import io.deepsearch.domain.agents.ActionWithOutcome
 import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
@@ -75,7 +76,8 @@ class WebpageNavigationAgentGenAiImpl(
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
-                    .description("Final answer synthesizing all findings for answer_found.")
+                    .description("ONLY for answer_found. Final answer synthesizing all findings. Must be null/omitted for all other action types.")
+                    .nullable(true)
                     .build(),
                 "reason" to Schema.builder()
                     .type("STRING")
@@ -104,13 +106,18 @@ class WebpageNavigationAgentGenAiImpl(
             )
         )
         .required(listOf("actionType", "openQuestions"))
+        .propertyOrdering(listOf(
+            "actionType", "finding", "openQuestions", "reason",
+            "labelNumber", "clickX", "clickY", "scrollDirection", "searchTerms", "text",
+            "captureRegions", "answer"
+        ))
         .build()
 
     private val systemInstruction = """
         You are a webpage search agent. Iteratively navigate, record findings, and explore to answer the query.
 
         You see only the CURRENT VIEWPORT. The screenshot has numbered badges matching ELEMENT_LABELS.
-        ACTION_OUTCOME tells you if your last action caused a visible change. No change means try a different element.
+        PREVIOUS_ACTIONS shows your action history. Each entry may have an outcome suffix (after →) telling you what happened.
 
         === RESPONSE ===
         1. "finding": what's relevant on the current screenshot. Record data BEFORE acting — viewport changes on click/scroll. Null only if nothing relevant is visible.
@@ -124,7 +131,7 @@ class WebpageNavigationAgentGenAiImpl(
         - type: Type into labeled input. Set "labelNumber" and "text".
         - scroll: Set "scrollDirection" (DOWN/UP). Use when search_text didn't help.
         - peek_full_page: Full-page overview. Last resort before give_up.
-        - answer_found: Set "answer". ONLY when openQuestions is empty.
+        - answer_found: Set "answer". ONLY when openQuestions is empty. "answer" must be null for all other action types.
         - give_up: After exhausting all options.
 
         === VISUAL CAPTURE ===
@@ -140,14 +147,14 @@ class WebpageNavigationAgentGenAiImpl(
 
         === RULES ===
         - Read the screenshot fresh each turn — never carry stale data forward.
-        - If a click had no visible change, try a DIFFERENT element or approach.
+        - If a previous action's outcome says NO visible change, try a DIFFERENT element or approach.
         - For tables/grids, carefully match row labels to column headers.
 
         === PAGE SCOPE ===
         - You are searching WITHIN a single page. Your job is to extract information from THIS page.
         - Clicking in-page elements (accordions, tabs, modals, dropdowns) is encouraged — they reveal content.
-        - If a click leads to a DIFFERENT page, the navigation is automatically blocked and the URL is recorded for separate investigation by the orchestrator.
-        - When ACTION_OUTCOME lists OFF-PAGE LINKS, those elements are confirmed navigation links. Do NOT click them again.
+        - If a click leads to a DIFFERENT page, the navigation is automatically blocked and the URL is recorded for separate investigation by the orchestrator. The outcome will say "Navigated OFF-PAGE".
+        - Do NOT re-click elements whose outcome says they navigated off-page.
         - If all relevant content on this page is exhausted, use answer_found with what you have, or give_up.
     """.trimIndent()
 
@@ -183,12 +190,6 @@ class WebpageNavigationAgentGenAiImpl(
         val userPrompt = buildString {
             appendLine("QUERY: ${input.query}")
 
-            if (input.previousActionOutcome != null) {
-                appendLine()
-                appendLine("ACTION_OUTCOME:")
-                appendLine(input.previousActionOutcome)
-            }
-
             if (input.answeredQuestions.isNotEmpty()) {
                 appendLine()
                 appendLine("ANSWERED_QUESTIONS (already resolved — do NOT re-investigate):")
@@ -211,8 +212,8 @@ class WebpageNavigationAgentGenAiImpl(
             if (input.previousActions.isNotEmpty()) {
                 appendLine()
                 appendLine("PREVIOUS_ACTIONS:")
-                input.previousActions.forEachIndexed { idx, action ->
-                    appendLine("  ${idx + 1}. ${formatAction(action)}")
+                input.previousActions.forEachIndexed { idx, entry ->
+                    appendLine("  ${idx + 1}. ${formatActionWithOutcome(entry)}")
                 }
             }
 
@@ -271,6 +272,14 @@ class WebpageNavigationAgentGenAiImpl(
         }
 
         val action = parseAction(response)
+
+        if (action !is NavigationAction.AnswerFound && !response.answer.isNullOrBlank()) {
+            logger.warn(
+                "VLM speculatively filled answer for actionType={}, discarding: {}",
+                response.actionType, response.answer.take(80)
+            )
+        }
+
         logger.debug(
             "Navigation: {} | finding={} | openQ={} | reason={}",
             action::class.simpleName,
@@ -378,7 +387,12 @@ class WebpageNavigationAgentGenAiImpl(
         }
     }
 
-    private fun formatAction(action: NavigationAction): String = when (action) {
+    private fun formatActionWithOutcome(entry: ActionWithOutcome): String {
+        val desc = formatActionDesc(entry.action)
+        return if (entry.outcome != null) "$desc → ${entry.outcome}" else desc
+    }
+
+    private fun formatActionDesc(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> {
             val target = action.elementDescription ?: "element"
             "Clicked $target — ${action.reason}"
