@@ -35,11 +35,11 @@ interface IBrowserPage {
     suspend fun navigate(url: String)
 
     /**
-     * Wait for the page to fully load (load event fired).
-     * Call this before operations that require all resources to be loaded (e.g., full markdown extraction).
+     * Wait for the page to be visually ready (network idle or load, whichever first).
      * 
-     * Handles the race condition where the load event may have already fired before this method is called
-     * by first checking document.readyState.
+     * Returns immediately if `document.readyState` is already "complete".
+     * Timeout is 10s and non-fatal since DOMContentLoaded has already completed
+     * by the time this is called.
      */
     suspend fun waitForLoad()
 
