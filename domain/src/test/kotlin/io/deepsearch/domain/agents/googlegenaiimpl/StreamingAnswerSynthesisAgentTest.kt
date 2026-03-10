@@ -677,6 +677,162 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
         // The programmatic dedup shouldn't filter out novel integration-related queries
     }
 
+    // ==================== PRIMARY / SECONDARY Requirement Tests ====================
+
+    @Test
+    fun `should FINISH_SEARCH when all PRIMARY requirements satisfied but SECONDARY unsatisfied`() = runTest(testCoroutineDispatcher) {
+        val comprehensiveSource = EvaluatedSource(
+            url = "https://example.com/body-check/standard",
+            title = "Standard Body Check Package",
+            description = "Standard health screening details",
+            relevantFacts = listOf(
+                RelevantFact(fact = "The standard body check package includes a 45-minute consultation."),
+                RelevantFact(fact = "Tests include: complete blood count, fasting blood sugar, kidney function, liver function, coronary risk profile."),
+                RelevantFact(fact = "Infectious disease screening: Hepatitis B, HIV, Syphilis."),
+                RelevantFact(fact = "Price: HK\$5,900.")
+            ),
+            contentDate = "2025-11-01",
+            intention = "Official product page for the standard body check package"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What's in the standard body check package?",
+            evaluatedSources = listOf(comprehensiveSource),
+            fulfillmentRequirements = listOf(
+                "[PRIMARY] List of tests/screenings included in the standard package",
+                "[PRIMARY] Price of the standard package",
+                "[SECONDARY] How to book the standard package",
+                "[SECONDARY] Comparison with other package tiers"
+            )
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
+        println("=== PRIMARY/SECONDARY: Initial Synthesis ===")
+        println("Status: ${output.status}")
+        println("Assessment coverage: ${output.assessment.coverage}")
+        println("Follow-up queries: ${output.followUpQueries}")
+        println("Answer: ${output.answer.take(800)}")
+        println()
+
+        assertTrue(output.answer.contains("5,900") || output.answer.contains("5900"), "Should mention price")
+        assertTrue(
+            output.answer.contains("blood count", ignoreCase = true) ||
+            output.answer.contains("blood sugar", ignoreCase = true),
+            "Should mention specific tests"
+        )
+
+        assertEquals(
+            AnswerStatus.FINISH_SEARCH,
+            output.status,
+            "Should FINISH_SEARCH: all PRIMARY requirements (tests list + price) are satisfied. " +
+            "Unsatisfied SECONDARY requirements (booking, comparison) should NOT prevent finishing. " +
+            "Coverage rationale: ${output.assessment.coverage.rationale}"
+        )
+    }
+
+    @Test
+    fun `should CONTINUE_SEARCH when PRIMARY requirements are missing despite having some information`() = runTest(testCoroutineDispatcher) {
+        val partialSource = EvaluatedSource(
+            url = "https://example.com/body-check",
+            title = "Body Check Packages",
+            description = "Overview of available packages",
+            relevantFacts = listOf(
+                RelevantFact(fact = "The clinic offers Standard, Comprehensive, and Ultra body check packages."),
+                RelevantFact(fact = "All packages include a consultation with a GP.")
+            ),
+            contentDate = "2025-11-01",
+            intention = "Official body check landing page with package overview"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What's in the standard body check package and how much does it cost?",
+            evaluatedSources = listOf(partialSource),
+            fulfillmentRequirements = listOf(
+                "[PRIMARY] List of tests/screenings included in the standard package",
+                "[PRIMARY] Price of the standard package",
+                "[SECONDARY] Preparation instructions"
+            )
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        println("=== PRIMARY MISSING: Initial Synthesis ===")
+        println("Status: ${output.status}")
+        println("Assessment coverage: ${output.assessment.coverage}")
+        println("Follow-up queries: ${output.followUpQueries}")
+        println("Answer: ${output.answer.take(500)}")
+        println()
+
+        assertEquals(
+            AnswerStatus.CONTINUE_SEARCH,
+            output.status,
+            "Should CONTINUE_SEARCH: PRIMARY requirements (specific tests, price) are not yet satisfied. " +
+            "Coverage rationale: ${output.assessment.coverage.rationale}"
+        )
+        assertFalse(
+            output.assessment.coverage.satisfied,
+            "Coverage should NOT be satisfied when PRIMARY requirements are missing"
+        )
+        assertTrue(
+            output.followUpQueries.isNotEmpty(),
+            "Should suggest follow-up queries to find specific test list and pricing"
+        )
+    }
+
+    // ==================== NOT_FOUND Status Test ====================
+
+    @Test
+    fun `should return NOT_FOUND when sources are completely irrelevant to query`() = runTest(testCoroutineDispatcher) {
+        val irrelevantSource = EvaluatedSource(
+            url = "https://example.com/cooking-blog",
+            title = "Best Pasta Recipes 2025",
+            description = "Italian cooking tips and recipes",
+            relevantFacts = listOf(
+                RelevantFact(fact = "Use San Marzano tomatoes for the best marinara sauce."),
+                RelevantFact(fact = "Fresh pasta should be cooked for only 2-3 minutes."),
+                RelevantFact(fact = "Extra virgin olive oil is essential for authentic Italian cooking.")
+            ),
+            contentDate = "2025-08-15",
+            intention = "Recipe blog post about Italian pasta cooking techniques"
+        )
+
+        val input = StreamingAnswerSynthesisInput(
+            query = "What are the enterprise API rate limits?",
+            evaluatedSources = listOf(irrelevantSource),
+            fulfillmentRequirements = listOf(
+                "[PRIMARY] API rate limits for the enterprise plan",
+                "[PRIMARY] Rate limit unit (per second, per minute, per day)"
+            )
+        )
+
+        val output = agent.generate(input)
+
+        assertNotNull(output)
+        println("=== NOT_FOUND STATUS TEST ===")
+        println("Status: ${output.status}")
+        println("Assessment: coverage=${output.assessment.coverage}, depth=${output.assessment.depth}")
+        println("Follow-up queries: ${output.followUpQueries}")
+        println("Answer: ${output.answer.take(500)}")
+        println()
+
+        assertTrue(
+            output.status == AnswerStatus.NOT_FOUND || output.status == AnswerStatus.CONTINUE_SEARCH,
+            "Should return NOT_FOUND or CONTINUE_SEARCH when sources are completely irrelevant. Got: ${output.status}"
+        )
+        assertFalse(
+            output.assessment.coverage.satisfied,
+            "Coverage should NOT be satisfied for completely irrelevant sources"
+        )
+        assertFalse(
+            output.answer.contains("pasta", ignoreCase = true) && output.answer.contains("rate limit", ignoreCase = true),
+            "Should NOT hallucinate by mixing pasta info with rate limits"
+        )
+    }
+
     // ==================== Session Continuation Tests ====================
 
     /**

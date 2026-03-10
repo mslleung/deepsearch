@@ -11,6 +11,7 @@ import io.deepsearch.domain.repositories.IWebpageImageRepository
 import io.deepsearch.domain.services.IImageStorageService
 import io.deepsearch.domain.services.ImageToStore
 import io.deepsearch.domain.services.INormalizeUrlService
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
@@ -204,6 +205,8 @@ class QueryUrlProcessingService(
                         )
                         emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, agenticLinks))
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     throw AgenticSearchException(normalizedUrl, e)
                 }

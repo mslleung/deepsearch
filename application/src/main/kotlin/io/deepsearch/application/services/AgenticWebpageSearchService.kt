@@ -314,21 +314,35 @@ class AgenticWebpageSearchService(
                 }
 
                 is NavigationAction.GiveUp -> {
-                    logger.info(
-                        "Agentic search gave up after {} iterations for {}: {}",
-                        iteration, url, action.reason
-                    )
-                    return AgenticPageSearchResult(
-                        answer = null,
-                        evidence = null,
-                        contentDate = null,
-                        actionsPerformed = actionsPerformed,
-                        observations = observations.toList(),
-                        success = false,
-                        totalTokenUsage = aggregatedTokenUsage,
-                        discoveredUrls = discoveredUrls,
-                        capturedImages = capturedImages.toList()
-                    )
+                    val hasSearchedOrPeeked = actionsPerformed.any {
+                        it.action is NavigationAction.SearchText || it.action is NavigationAction.PeekFullPage
+                    }
+                    if (!hasSearchedOrPeeked) {
+                        logger.info(
+                            "Rejecting premature give_up at iteration {} for {} — agent must search or peek first",
+                            iteration, url
+                        )
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "REJECTED: You must use search_text or peek_full_page before giving up. " +
+                                    "The current viewport may not show all page content."
+                        )
+                    } else {
+                        logger.info(
+                            "Agentic search gave up after {} iterations for {}: {}",
+                            iteration, url, action.reason
+                        )
+                        return AgenticPageSearchResult(
+                            answer = null,
+                            evidence = null,
+                            contentDate = null,
+                            actionsPerformed = actionsPerformed,
+                            observations = observations.toList(),
+                            success = false,
+                            totalTokenUsage = aggregatedTokenUsage,
+                            discoveredUrls = discoveredUrls,
+                            capturedImages = capturedImages.toList()
+                        )
+                    }
                 }
 
                 is NavigationAction.Click -> {

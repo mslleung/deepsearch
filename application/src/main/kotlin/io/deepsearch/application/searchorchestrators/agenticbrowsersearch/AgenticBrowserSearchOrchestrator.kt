@@ -7,6 +7,7 @@ import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.application.services.IQueryUrlProcessingService
 import io.deepsearch.application.services.UrlProcessingEvent
 import io.deepsearch.application.services.SearchEvent
+import io.deepsearch.domain.agents.AnswerAssessment
 import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.RelevantFact
@@ -240,7 +241,8 @@ class AgenticBrowserSearchOrchestrator(
                 ::checkAndCloseIfIdle,
                 maxCacheAge,
                 proxyConfig,
-                channel
+                eventChannel = channel,
+                budget = budget
             )
 
             // Create a child job for source processing that can be cancelled
@@ -269,6 +271,7 @@ class AgenticBrowserSearchOrchestrator(
                         } catch (e: Exception) {
                             logger.error("[{}] Error finalizing session on source completion: {}", sessionId.value, e.message, e)
                         }
+                        sourceProcessingJob.cancel()
                     }
                 }
                 .shareIn(sourceProcessingScope, SharingStarted.Eagerly)
@@ -635,7 +638,8 @@ class AgenticBrowserSearchOrchestrator(
         checkAndCloseIfIdle: () -> Boolean,
         maxCacheAge: Long?,
         proxyConfig: ProxyConfiguration,
-        eventChannel: SendChannel<SearchEvent>
+        eventChannel: SendChannel<SearchEvent>,
+        budget: SearchBudget
     ): Flow<UrlContentResult> {
         // Track URLs currently being processed (for event status)
         val inFlight = ConcurrentHashMap.newKeySet<String>()
@@ -649,7 +653,7 @@ class AgenticBrowserSearchOrchestrator(
             },
             recursiveChannel.receiveAsFlow()
         )
-            .flatMapMerge(concurrency = 100) { discoveredLink ->
+            .flatMapMerge(concurrency = budget.maxConcurrentSessions) { discoveredLink ->
                 flow {
                     val query = discoveredLink.query
 
@@ -839,7 +843,9 @@ class AgenticBrowserSearchOrchestrator(
         /** Follow-up queries from latest synthesis to be emitted upstream */
         val pendingFollowUpQueries: List<String> = emptyList(),
         /** Current fulfillment requirements (may be refined from original based on discovered content) */
-        val currentRequirements: List<String> = emptyList()
+        val currentRequirements: List<String> = emptyList(),
+        /** Current 5-dimension assessment from last synthesis (null until first synthesis) */
+        val currentAssessment: AnswerAssessment? = null
     ) {
         /** Get all evaluated sources as a list (for synthesis agent) */
         val evaluatedSources: List<EvaluatedSource> get() = sourcesByUrl.values.toList()
@@ -865,34 +871,39 @@ class AgenticBrowserSearchOrchestrator(
             return state
         }
 
-        val updatedSourcesByUrl = state.sourcesByUrl.toMutableMap()
-        var additions = 0
+        // Filter to genuinely new sources (not already in accumulator)
+        val newSources = batch.filter { it.url !in state.sourcesByUrl }
+        if (newSources.isEmpty()) {
+            logger.debug("[{}] Batch had {} sources but all already processed, skipping synthesis", sessionId.value, batch.size)
+            return state
+        }
 
-        for (source in batch) {
-            if (updatedSourcesByUrl.putIfAbsent(source.url, source) == null) {
-                additions++
-            }
+        val updatedSourcesByUrl = state.sourcesByUrl.toMutableMap()
+        for (source in newSources) {
+            updatedSourcesByUrl.putIfAbsent(source.url, source)
         }
 
         logger.debug(
-            "[{}] Batch processing: {} sources, {} additions",
-            sessionId.value, batch.size, additions
+            "[{}] Batch processing: {} sources in batch, {} genuinely new",
+            sessionId.value, batch.size, newSources.size
         )
 
-        val imageDescriptions = updatedSourcesByUrl.values
+        val newImageDescriptions = newSources
             .flatMap { it.imageDescriptions.entries }
             .associate { it.key to it.value }
 
-        // Synthesize answer with updated sources (via facade service)
-        // Uses current requirements which may have been refined in previous iterations
+        // Facade dispatches to initial or incremental agent based on state.fullAnswer
         val synthesis = answerSynthesisFacadeService.synthesizeAnswer(
             sessionId = sessionId,
             expandedQuery = expandedQuery,
-            evaluatedSources = updatedSourcesByUrl.values.toList(),
+            evaluatedSources = newSources,
             previouslySearchedQueries = state.searchedQueries,
             fulfillmentRequirements = state.currentRequirements,
             sessionHistory = sessionHistory,
-            imageDescriptions = imageDescriptions
+            imageDescriptions = newImageDescriptions,
+            currentAnswer = state.fullAnswer,
+            currentCitedSourceUrls = state.citedSourceUrls,
+            currentAssessment = state.currentAssessment
         )
 
         val newIterationNumber = state.iterationNumber + 1
@@ -958,7 +969,8 @@ class AgenticBrowserSearchOrchestrator(
             sourcesPerIteration = updatedSourcesPerIteration,
             status = synthesis.status,
             pendingFollowUpQueries = pendingFollowUpQueries,
-            currentRequirements = updatedRequirements
+            currentRequirements = updatedRequirements,
+            currentAssessment = synthesis.assessment
         )
     }
 

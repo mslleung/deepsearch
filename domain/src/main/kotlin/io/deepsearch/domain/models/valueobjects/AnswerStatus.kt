@@ -18,5 +18,11 @@ enum class AnswerStatus {
      * The answer is partial or lacks sufficient information.
      * Search should continue to gather more information.
      */
-    CONTINUE_SEARCH
+    CONTINUE_SEARCH,
+
+    /**
+     * The sources examined do not contain the requested information.
+     * Further searching on this website is unlikely to yield results.
+     */
+    NOT_FOUND
 }

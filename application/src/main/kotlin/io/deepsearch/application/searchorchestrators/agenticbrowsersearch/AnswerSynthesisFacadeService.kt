@@ -2,13 +2,16 @@ package io.deepsearch.application.searchorchestrators.agenticbrowsersearch
 
 import io.deepsearch.application.services.ILlmTokenUsageService
 import io.deepsearch.domain.agents.AnswerAssessment
+import io.deepsearch.domain.agents.IIncrementalSynthesisAgent
 import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
+import io.deepsearch.domain.agents.IncrementalSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.models.valueobjects.AnswerStatus
 import io.deepsearch.domain.models.valueobjects.EvaluatedSource
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SessionHistory
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 
 /**
@@ -23,8 +26,8 @@ data class SynthesisResult(
     val refinedRequirements: List<String>,
     val imageIds: List<String>
 ) {
-    /** Whether the answer is complete (status=FINISH_SEARCH from synthesis agent) */
-    val isComplete: Boolean get() = status == AnswerStatus.FINISH_SEARCH
+    /** Whether the answer is complete (FINISH_SEARCH or NOT_FOUND are both terminal) */
+    val isComplete: Boolean get() = status == AnswerStatus.FINISH_SEARCH || status == AnswerStatus.NOT_FOUND
 
     /** Returns a brief summary of unsatisfied dimensions for logging */
     fun getUnsatisfiedSummary(): String {
@@ -40,22 +43,25 @@ data class SynthesisResult(
 
 /**
  * Facade service for synthesizing answers from evaluated sources.
- * Consolidates answer generation logic into a single service.
+ * Dispatches to the initial synthesis agent (first call) or incremental agent (subsequent calls)
+ * based on whether a current answer state exists.
  */
 interface IAnswerSynthesisFacadeService {
     /**
      * Synthesize an answer from evaluated sources.
-     * Handles streaming collection and token usage recording.
-     * Supports the feedback loop with previouslySearchedQueries.
-     * 
+     * If currentAnswer and currentAssessment are provided, uses the incremental agent
+     * (only processes new sources against existing answer). Otherwise uses the initial agent.
+     *
      * @param sessionId The session ID for tracking
      * @param expandedQuery The expanded/processed query
-     * @param evaluatedSources List of evaluated sources to synthesize from
+     * @param evaluatedSources Sources to synthesize from (all sources for initial, only new for incremental)
      * @param previouslySearchedQueries Queries already searched (for deduplication)
      * @param fulfillmentRequirements Requirements for answer fulfillment
-     * @param sessionHistory Full history of prior sessions in the continuation chain.
-     *                       When provided, the answer synthesis will avoid repeating
-     *                       information already provided and will build upon prior context.
+     * @param sessionHistory Full history of prior sessions in the continuation chain
+     * @param imageDescriptions Map of image IDs to their text descriptions
+     * @param currentAnswer Existing answer to update (null triggers initial synthesis)
+     * @param currentCitedSourceUrls URLs already cited in the current answer
+     * @param currentAssessment Assessment from the last synthesis (null triggers initial synthesis)
      * @return SynthesisResult containing the answer and metadata
      */
     suspend fun synthesizeAnswer(
@@ -65,12 +71,16 @@ interface IAnswerSynthesisFacadeService {
         previouslySearchedQueries: List<String> = emptyList(),
         fulfillmentRequirements: List<String> = emptyList(),
         sessionHistory: SessionHistory = SessionHistory.empty(),
-        imageDescriptions: Map<String, String> = emptyMap()
+        imageDescriptions: Map<String, String> = emptyMap(),
+        currentAnswer: String? = null,
+        currentCitedSourceUrls: List<String> = emptyList(),
+        currentAssessment: AnswerAssessment? = null
     ): SynthesisResult
 }
 
 class AnswerSynthesisFacadeService(
-    private val streamingAnswerSynthesisAgent: IStreamingAnswerSynthesisAgent,
+    private val initialSynthesisAgent: IStreamingAnswerSynthesisAgent,
+    private val incrementalSynthesisAgent: IIncrementalSynthesisAgent,
     private val tokenUsageService: ILlmTokenUsageService
 ) : IAnswerSynthesisFacadeService {
 
@@ -81,8 +91,41 @@ class AnswerSynthesisFacadeService(
         previouslySearchedQueries: List<String>,
         fulfillmentRequirements: List<String>,
         sessionHistory: SessionHistory,
-        imageDescriptions: Map<String, String>
+        imageDescriptions: Map<String, String>,
+        currentAnswer: String?,
+        currentCitedSourceUrls: List<String>,
+        currentAssessment: AnswerAssessment?
     ): SynthesisResult {
+        val streamItems: Flow<StreamingAnswerStreamItem> =
+            if (currentAnswer != null && currentAssessment != null) {
+                incrementalSynthesisAgent.generateStream(
+                    IncrementalSynthesisInput(
+                        query = expandedQuery,
+                        newSources = evaluatedSources,
+                        currentAnswer = currentAnswer,
+                        currentCitedSourceUrls = currentCitedSourceUrls,
+                        currentAssessment = currentAssessment,
+                        imageDescriptions = imageDescriptions,
+                        previouslySearchedQueries = previouslySearchedQueries,
+                        fulfillmentRequirements = fulfillmentRequirements,
+                        sessionHistory = sessionHistory
+                    )
+                )
+            } else {
+                initialSynthesisAgent.generateStream(
+                    StreamingAnswerSynthesisInput(
+                        query = expandedQuery,
+                        evaluatedSources = evaluatedSources,
+                        imageDescriptions = imageDescriptions,
+                        previouslySearchedQueries = previouslySearchedQueries,
+                        fulfillmentRequirements = fulfillmentRequirements,
+                        sessionHistory = sessionHistory
+                    )
+                )
+            }
+
+        val agentName = if (currentAnswer != null) "IncrementalSynthesisAgent" else "StreamingAnswerSynthesisAgent"
+
         val answerBuilder = StringBuilder()
         lateinit var status: AnswerStatus
         lateinit var assessment: AnswerAssessment
@@ -91,21 +134,12 @@ class AnswerSynthesisFacadeService(
         var refinedRequirements = emptyList<String>()
         var imageIds = emptyList<String>()
 
-        streamingAnswerSynthesisAgent.generateStream(
-            StreamingAnswerSynthesisInput(
-                query = expandedQuery,
-                evaluatedSources = evaluatedSources,
-                imageDescriptions = imageDescriptions,
-                previouslySearchedQueries = previouslySearchedQueries,
-                fulfillmentRequirements = fulfillmentRequirements,
-                sessionHistory = sessionHistory
-            )
-        ).collect { item ->
+        streamItems.collect { item ->
             when (item) {
                 is StreamingAnswerStreamItem.Chunk -> answerBuilder.append(item.text)
                 is StreamingAnswerStreamItem.Complete -> {
                     tokenUsageService.recordTokenUsage(
-                        sessionId, "StreamingAnswerSynthesisAgent",
+                        sessionId, agentName,
                         item.tokenUsage.modelName, item.tokenUsage.promptTokens,
                         item.tokenUsage.outputTokens, item.tokenUsage.totalTokens
                     )

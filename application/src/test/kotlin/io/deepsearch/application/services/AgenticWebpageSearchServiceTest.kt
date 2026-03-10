@@ -9,7 +9,9 @@ import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -100,6 +102,34 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
         testServer.createContext("/offpage-loop") { exchange ->
             val html = OFFPAGE_LOOP_PAGE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
+        testServer.createContext("/cookie-onetrust") { exchange ->
+            val html = COOKIE_ONETRUST_PAGE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
+        testServer.createContext("/cookie-cookiebot") { exchange ->
+            val html = COOKIE_COOKIEBOT_PAGE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
+        testServer.createContext("/cookie-custom") { exchange ->
+            val html = COOKIE_CUSTOM_PAGE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
+        testServer.createContext("/no-match") { exchange ->
+            val html = NONEXISTENT_INFO_PAGE_HTML
             exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
             exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
             exchange.responseBody.use { it.write(html.toByteArray()) }
@@ -221,6 +251,49 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         )
         val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
         println("Click actions: $clickCount (VLM may find answer from text without clicking)")
+    }
+
+    // ==================== Test: Query for non-existent information ====================
+
+    @Test
+    fun `agent terminates gracefully when queried information does not exist on page`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 240.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/no-match",
+            query = "What is the CEO's birthday?",
+            sessionId = QuerySessionId("test-no-match")
+        )
+
+        println("=== NON-EXISTENT INFORMATION TEST ===")
+        printResult(result)
+
+        val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
+        val searchTextCount = result.actionsPerformed.count { it.action is NavigationAction.SearchText }
+        val clickCount = result.actionsPerformed.count {
+            it.action is NavigationAction.Click || it.action is NavigationAction.ClickAt
+        }
+        val peekCount = result.actionsPerformed.count { it.action is NavigationAction.PeekFullPage }
+        val gaveUp = result.actionsPerformed.any { it.action is NavigationAction.GiveUp }
+        val answeredFound = result.actionsPerformed.any { it.action is NavigationAction.AnswerFound }
+        val exhaustedIterations = result.actionsPerformed.size >= MAX_ITERATIONS
+
+        println("\n--- Behavior Summary ---")
+        println("Termination: ${if (gaveUp) "GiveUp" else if (answeredFound) "AnswerFound (HALLUCINATION!)" else "Loop exhaustion ($MAX_ITERATIONS iterations)"}")
+        println("Total iterations: ${result.actionsPerformed.size} / $MAX_ITERATIONS")
+        println("Scrolls: $scrollCount")
+        println("SearchText attempts: $searchTextCount")
+        println("Clicks: $clickCount")
+        println("PeekFullPage: $peekCount")
+        println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, output=${result.totalTokenUsage.outputTokens}, total=${result.totalTokenUsage.totalTokens}")
+
+        assertFalse(result.success, "Should NOT report success when the information does not exist on the page")
+        assertNull(result.answer, "Should NOT hallucinate an answer — answer must be null")
+        assertTrue(
+            gaveUp || exhaustedIterations,
+            "Agent should terminate via GiveUp or loop exhaustion, not AnswerFound"
+        )
     }
 
     // ==================== Helpers ====================
@@ -374,6 +447,107 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         assertTrue(
             result.actionsPerformed.size <= 8,
             "Should find the answer in 8 or fewer iterations, used ${result.actionsPerformed.size}"
+        )
+    }
+
+    // ==================== Test: OneTrust cookie banner dismissed programmatically ====================
+
+    @Test
+    fun `onetrust cookie banner is dismissed without wasting VLM iterations`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 120.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/cookie-onetrust",
+            query = "What is the activation code?",
+            sessionId = QuerySessionId("test-cookie-onetrust")
+        )
+
+        println("=== ONETRUST COOKIE BANNER TEST ===")
+        printResult(result)
+
+        assertTrue(result.success, "Should find the answer despite OneTrust cookie overlay")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("ONETRUST-PASS-99", ignoreCase = true),
+            "Answer should contain the activation code ONETRUST-PASS-99: ${result.answer}"
+        )
+
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
+        println("Click actions: $clickCount")
+        assertTrue(
+            clickCount == 0,
+            "Should NOT need any clicks — OneTrust banner should be dismissed programmatically, but had $clickCount clicks"
+        )
+        assertTrue(
+            result.actionsPerformed.size <= 3,
+            "Should find the answer in 3 or fewer iterations (content is visible after banner removal), used ${result.actionsPerformed.size}"
+        )
+    }
+
+    // ==================== Test: Cookiebot cookie banner dismissed programmatically ====================
+
+    @Test
+    fun `cookiebot cookie banner is dismissed without wasting VLM iterations`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 120.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/cookie-cookiebot",
+            query = "What is the service activation key?",
+            sessionId = QuerySessionId("test-cookie-cookiebot")
+        )
+
+        println("=== COOKIEBOT COOKIE BANNER TEST ===")
+        printResult(result)
+
+        assertTrue(result.success, "Should find the answer despite Cookiebot cookie overlay")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("COOKIEBOT-PASS-55", ignoreCase = true),
+            "Answer should contain the service activation key COOKIEBOT-PASS-55: ${result.answer}"
+        )
+
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
+        println("Click actions: $clickCount")
+        assertTrue(
+            clickCount == 0,
+            "Should NOT need any clicks — Cookiebot banner should be dismissed programmatically, but had $clickCount clicks"
+        )
+        assertTrue(
+            result.actionsPerformed.size <= 3,
+            "Should find the answer in 3 or fewer iterations (content is visible after banner removal), used ${result.actionsPerformed.size}"
+        )
+    }
+
+    // ==================== Test: Unknown cookie banner handled by VLM fallback ====================
+
+    @Test
+    fun `unknown cookie banner is handled by VLM with at most one extra iteration`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 180.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/cookie-custom",
+            query = "What is today's access code?",
+            sessionId = QuerySessionId("test-cookie-custom")
+        )
+
+        println("=== CUSTOM/UNKNOWN COOKIE BANNER TEST ===")
+        printResult(result)
+
+        assertTrue(result.success, "Should find the answer even with an unknown cookie banner")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("CUSTOM-BANNER-77", ignoreCase = true),
+            "Answer should contain the access code CUSTOM-BANNER-77: ${result.answer}"
+        )
+
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click || it.action is NavigationAction.ClickAt }
+        println("Click actions (including ClickAt): $clickCount")
+        assertTrue(
+            result.actionsPerformed.size <= 5,
+            "Should find the answer in 5 or fewer iterations (1 to dismiss banner + finding answer), used ${result.actionsPerformed.size}"
         )
     }
 
@@ -961,6 +1135,198 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
                         <div class="faq-a" style="display:none">Email support@cloudsync.example.com or use the in-app chat. Enterprise customers get dedicated Slack channels.</div>
                     </div>
                 </div>
+
+                <script>
+                    function toggle(btn) {
+                        var a = btn.nextElementSibling;
+                        a.style.display = a.style.display === 'none' ? 'block' : 'none';
+                    }
+                </script>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Page with visible content behind a full-screen OneTrust-style cookie consent overlay.
+         * The overlay uses the exact CSS selectors from COOKIE_ACCEPT_SELECTORS and
+         * COOKIE_OVERLAY_SELECTORS so dismissCookieBanner should handle it programmatically.
+         */
+        val COOKIE_ONETRUST_PAGE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>TechCorp — Company Info</title>
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 24px; }
+                </style>
+            </head>
+            <body>
+                <h1>Welcome to TechCorp</h1>
+                <p>We are a technology company providing innovative solutions.</p>
+                <p>Our activation code is: <strong>ONETRUST-PASS-99</strong></p>
+                <p>Contact us at info@techcorp.example.com for more information.</p>
+
+                <div id="onetrust-consent-sdk" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:10000;">
+                    <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);"></div>
+                    <div style="position:fixed;bottom:0;left:0;width:100%;background:white;padding:24px;box-shadow:0 -2px 10px rgba(0,0,0,0.2);z-index:10001;">
+                        <h3>We value your privacy</h3>
+                        <p style="font-size:14px;color:#555;margin:12px 0;">We use cookies to enhance your browsing experience, serve personalized ads or content, and analyze our traffic.</p>
+                        <div style="display:flex;gap:12px;margin-top:16px;">
+                            <button id="onetrust-accept-btn-handler" onclick="document.getElementById('onetrust-consent-sdk').style.display='none'" style="background:#1f96f3;color:white;border:none;padding:12px 32px;border-radius:4px;cursor:pointer;font-size:14px;">Accept All</button>
+                            <button style="background:white;border:1px solid #ccc;padding:12px 32px;border-radius:4px;cursor:pointer;font-size:14px;">Reject All</button>
+                            <button style="background:white;border:1px solid #ccc;padding:12px 32px;border-radius:4px;cursor:pointer;font-size:14px;">Customize Settings</button>
+                        </div>
+                    </div>
+                </div>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Page with visible content behind a Cookiebot-style cookie consent dialog.
+         * Uses #CybotCookiebotDialog and #CybotCookiebotDialogBodyUnderlay selectors
+         * to verify that the second CMP in the selector list is also handled.
+         */
+        val COOKIE_COOKIEBOT_PAGE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>DataHub — Service Info</title>
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 24px; }
+                </style>
+            </head>
+            <body>
+                <h1>Welcome to DataHub Services</h1>
+                <p>Your trusted data processing partner since 2018.</p>
+                <p>The service activation key is: <strong>COOKIEBOT-PASS-55</strong></p>
+                <p>For enterprise inquiries, contact sales@datahub.example.com.</p>
+
+                <div id="CybotCookiebotDialogBodyUnderlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;"></div>
+                <div id="CybotCookiebotDialog" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;padding:32px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);z-index:10000;max-width:500px;width:90%;">
+                    <h3 style="margin-bottom:12px;">This website uses cookies</h3>
+                    <p style="font-size:14px;color:#555;margin-bottom:20px;">We use cookies to personalise content and ads, to provide social media features and to analyse our traffic.</p>
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                        <button id="CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll" onclick="document.getElementById('CybotCookiebotDialog').style.display='none';document.getElementById('CybotCookiebotDialogBodyUnderlay').style.display='none';" style="background:#00a050;color:white;border:none;padding:12px 24px;border-radius:4px;cursor:pointer;font-size:14px;flex:1;">Allow All</button>
+                        <button id="CybotCookiebotDialogBodyButtonDecline" style="background:white;border:1px solid #ccc;padding:12px 24px;border-radius:4px;cursor:pointer;font-size:14px;flex:1;">Deny</button>
+                    </div>
+                </div>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Page with content behind a custom cookie banner using non-standard
+         * CSS selectors that dismissCookieBanner will NOT recognize. The banner
+         * is fully opaque and covers the entire viewport so the VLM agent
+         * must click through it to find the answer — testing fallback behavior.
+         */
+        val COOKIE_CUSTOM_PAGE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>Global News Portal</title>
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 24px; }
+                    .custom-cookie-popup {
+                        position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 10000;
+                    }
+                    .custom-cookie-backdrop {
+                        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                        background: #1a202c;
+                    }
+                    .custom-cookie-dialog {
+                        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                        background: #2d3748; color: white; padding: 32px; border-radius: 12px;
+                        z-index: 10001; max-width: 500px; width: 90%; text-align: center;
+                    }
+                    .custom-cookie-dialog h2 { margin-bottom: 12px; font-size: 20px; }
+                    .custom-cookie-dialog p { font-size: 14px; color: #cbd5e0; margin-bottom: 20px; }
+                    .cookie-accept-custom {
+                        background: #48bb78; color: white; border: none; padding: 12px 32px;
+                        border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;
+                    }
+                    .cookie-decline-custom {
+                        background: transparent; border: 1px solid #718096; color: #a0aec0;
+                        padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 14px;
+                        margin-left: 8px;
+                    }
+                </style>
+            </head>
+            <body>
+                <h1>Global News Portal</h1>
+                <p>Breaking news from around the world.</p>
+                <p>Today's access code is: <strong>CUSTOM-BANNER-77</strong></p>
+                <p>Updated hourly. Subscribe for premium content.</p>
+
+                <div class="custom-cookie-popup">
+                    <div class="custom-cookie-backdrop"></div>
+                    <div class="custom-cookie-dialog">
+                        <h2>Cookie Notice</h2>
+                        <p>We use cookies to personalise your experience on our site. Please accept cookies to continue browsing.</p>
+                        <button class="cookie-accept-custom" onclick="document.querySelector('.custom-cookie-popup').style.display='none'">Accept Cookies</button>
+                        <button class="cookie-decline-custom">Manage Preferences</button>
+                    </div>
+                </div>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Page with realistic content (restaurant info) but absolutely NO mention
+         * of the query topic (CEO birthday). Includes a few interactive FAQ accordions
+         * so the agent has elements to explore before concluding the info isn't here.
+         */
+        val NONEXISTENT_INFO_PAGE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>Bella Cucina — Italian Restaurant</title>
+                <style>
+                    body { font-family: Georgia, serif; max-width: 800px; margin: 40px auto; padding: 0 24px; color: #333; }
+                    h1 { font-size: 28px; }
+                    .info-block { background: #faf7f2; border: 1px solid #e0d6c8; padding: 20px; border-radius: 8px; margin: 20px 0; }
+                    .info-block p { margin: 6px 0; font-size: 15px; }
+                    .faq-item { border: 1px solid #ddd; margin: 8px 0; border-radius: 6px; }
+                    .faq-q { padding: 14px 18px; cursor: pointer; background: #fafafa; border: none; width: 100%; text-align: left; font-size: 15px; }
+                    .faq-q:hover { background: #f0f0f0; }
+                    .faq-a { padding: 14px 18px; border-top: 1px solid #eee; font-size: 14px; line-height: 1.6; }
+                </style>
+            </head>
+            <body>
+                <h1>Bella Cucina</h1>
+                <p>Authentic Italian dining in the heart of downtown since 1998.</p>
+
+                <div class="info-block">
+                    <p><strong>Address:</strong> 742 Evergreen Terrace, Suite 4, Springfield, IL 62704</p>
+                    <p><strong>Phone:</strong> (217) 555-0142</p>
+                    <p><strong>Hours:</strong> Tue–Sun 11:30 AM – 10:00 PM, Closed Mondays</p>
+                    <p><strong>Reservations:</strong> Required for parties of 6+</p>
+                </div>
+
+                <h2>Our Menu Highlights</h2>
+                <ul>
+                    <li>Truffle Risotto — ${'$'}24</li>
+                    <li>Osso Buco Milanese — ${'$'}32</li>
+                    <li>Margherita Pizza (wood-fired) — ${'$'}16</li>
+                    <li>Tiramisu — ${'$'}10</li>
+                </ul>
+
+                <h2>Frequently Asked Questions</h2>
+                <div class="faq-item">
+                    <button class="faq-q" onclick="toggle(this)">Do you accommodate dietary restrictions?</button>
+                    <div class="faq-a" style="display:none">Yes. We offer gluten-free pasta and several vegan entrées. Please inform your server of any allergies.</div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-q" onclick="toggle(this)">Is there parking available?</button>
+                    <div class="faq-a" style="display:none">Free street parking is available on Evergreen Terrace. A paid garage is located one block east on Elm Street (${'$'}5 flat rate evenings).</div>
+                </div>
+                <div class="faq-item">
+                    <button class="faq-q" onclick="toggle(this)">Do you host private events?</button>
+                    <div class="faq-a" style="display:none">Our private dining room seats up to 30 guests. Contact events@bellacucina.example.com for availability and pricing.</div>
+                </div>
+
+                <p style="margin-top: 32px; color: #888; font-size: 12px;">© 2024 Bella Cucina LLC. All rights reserved.</p>
 
                 <script>
                     function toggle(btn) {

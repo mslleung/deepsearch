@@ -98,6 +98,7 @@ private val domainCommonTestModule = module {
     singleOf(::FileSearchQueryAgentGenAiImpl) bind IFileSearchQueryAgent::class
     singleOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
     singleOf(::StreamingAnswerSynthesisAgentGenAiImpl) bind IStreamingAnswerSynthesisAgent::class
+    singleOf(::IncrementalSynthesisAgentGenAiImpl) bind IIncrementalSynthesisAgent::class
     singleOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class
     singleOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
     singleOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class

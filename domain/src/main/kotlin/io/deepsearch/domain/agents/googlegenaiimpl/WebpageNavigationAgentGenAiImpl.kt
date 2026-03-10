@@ -119,20 +119,33 @@ class WebpageNavigationAgentGenAiImpl(
         You see only the CURRENT VIEWPORT. The screenshot has numbered badges matching ELEMENT_LABELS.
         PREVIOUS_ACTIONS shows your action history. Each entry may have an outcome suffix (after →) telling you what happened.
 
+        === SEARCH PROCESS ===
+        Follow this workflow on every page:
+        1. READ the current viewport and record any relevant findings.
+        2. INTERACT with the page — click accordions, tabs, dropdowns, or buttons that may reveal hidden content related to the query.
+        3. SEARCH BEYOND the viewport — use search_text to find keywords, or peek_full_page to see the full page layout. The viewport only shows a fraction of most pages.
+        4. DECIDE — only after you have explored the page (steps 1-3), either report your answer or give up. Never decide based solely on the initial viewport.
+
         === RESPONSE ===
         1. "finding": what's relevant on the current screenshot. Record data BEFORE acting — viewport changes on click/scroll. Null only if nothing relevant is visible.
         2. "openQuestions": gaps remaining. Empty only when fully answered.
         3. One action (below).
 
-        === ACTIONS ===
-        - search_text: Ctrl+F page search. Set "searchTerms" (tried in order). Prefer this over scrolling.
+        === ACTIONS (pick one per turn) ===
+
+        Interact — manipulate the page:
         - click: Click labeled element. Set "labelNumber".
         - click_at: Click unlabeled element. Set "clickX"/"clickY" (0-1000).
         - type: Type into labeled input. Set "labelNumber" and "text".
         - scroll: Set "scrollDirection" (DOWN/UP). Use when search_text didn't help.
-        - peek_full_page: Full-page overview. Last resort before give_up.
+
+        Read — look beyond the current viewport:
+        - search_text: Ctrl+F page search. Set "searchTerms" (tried in order). Prefer this over scrolling.
+        - peek_full_page: Full-page overview. Slow and expensive — use sparingly.
+
+        Decide — only after you have enough information:
         - answer_found: Set "answer". ONLY when openQuestions is empty. "answer" must be null for all other action types.
-        - give_up: After exhausting all options.
+        - give_up: The information is not on this page. You MUST have used search_text or peek_full_page before giving up — never give up based only on the current viewport.
 
         === VISUAL CAPTURE ===
         - If you see a visual region (chart, diagram, table image, infographic, etc.) relevant to the query, specify its bounding box in "captureRegions" using 0-1000 coordinates.

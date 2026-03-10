@@ -8,8 +8,8 @@ import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
 import io.deepsearch.domain.agents.AnswerAssessment
 import io.deepsearch.domain.agents.DimensionAssessment
-import io.deepsearch.domain.agents.IStreamingAnswerSynthesisAgent
-import io.deepsearch.domain.agents.StreamingAnswerSynthesisInput
+import io.deepsearch.domain.agents.IIncrementalSynthesisAgent
+import io.deepsearch.domain.agents.IncrementalSynthesisInput
 import io.deepsearch.domain.agents.StreamingAnswerSynthesisOutput
 import io.deepsearch.domain.agents.StreamingAnswerStreamItem
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -28,26 +28,17 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * Streaming Answer Synthesis agent that generates comprehensive answers from extracted facts.
- * Receives facts (not full markdown content) from the source eval agents and synthesizes them into an answer.
- * 
- * Uses a 5-dimension batch assessment to determine if sources are sufficient:
- * - COVERAGE: Facts address all parts of the query; multiple sources for negative conclusions
- * - DEPTH: Facts contain specific data (numbers, dates, prices) vs vague statements
- * - TEMPORALITY: Sources are recent enough for time-sensitive queries
- * - AUTHORITY: Sources are official/authoritative vs third-party/user-generated
- * - CONSISTENCY: Facts from different sources agree vs conflict
+ * Incremental synthesis agent that updates an existing answer with newly discovered sources.
+ * Instead of re-reading all sources, it receives only new sources + the current answer state
+ * and decides whether/how to update.
  */
-class StreamingAnswerSynthesisAgentGenAiImpl(
+class IncrementalSynthesisAgentGenAiImpl(
     private val client: com.google.genai.Client,
     private val dispatcherProvider: IDispatcherProvider
-) : IStreamingAnswerSynthesisAgent {
+) : IIncrementalSynthesisAgent {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    /**
-     * Schema for a single dimension assessment.
-     */
     private val dimensionAssessmentSchema: Schema = Schema.builder()
         .type("OBJECT")
         .description("Assessment of a single source batch dimension")
@@ -55,7 +46,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             mapOf(
                 "satisfied" to Schema.builder()
                     .type("BOOLEAN")
-                    .description("Whether this dimension is adequately met by the source batch")
+                    .description("Whether this dimension is adequately met")
                     .build(),
                 "rationale" to Schema.builder()
                     .type("STRING")
@@ -68,12 +59,12 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
-        .description("Source batch assessment followed by answer synthesis")
+        .description("Incremental answer update with assessment")
         .properties(
             mapOf(
                 "assessment" to Schema.builder()
                     .type("OBJECT")
-                    .description("5-dimension assessment of whether the source batch is sufficient")
+                    .description("5-dimension assessment considering existing + new information")
                     .properties(
                         mapOf(
                             "coverage" to dimensionAssessmentSchema,
@@ -87,31 +78,31 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .build(),
                 "continuation_status" to Schema.builder()
                     .type("STRING")
-                    .description("FINISH_SEARCH if confident answer found. CONTINUE_SEARCH if more information needed. NOT_FOUND if sources don't contain the requested information.")
+                    .description("FINISH_SEARCH if answer is complete. CONTINUE_SEARCH if more needed. NOT_FOUND if information unavailable.")
                     .enum_(listOf("FINISH_SEARCH", "CONTINUE_SEARCH", "NOT_FOUND"))
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
-                    .description("Comprehensive answer based on the extracted facts")
+                    .description("Complete updated answer (not a diff)")
                     .build(),
                 "citedSourceUrls" to Schema.builder()
                     .type("ARRAY")
-                    .description("URLs of sources whose facts were used in the answer")
+                    .description("ALL URLs cited in the answer (existing + new)")
                     .items(Schema.builder().type("STRING").build())
                     .build(),
                 "followUpQueries" to Schema.builder()
                     .type("ARRAY")
-                    .description("Suggested queries to gather more information and enhance the answer")
+                    .description("Suggested queries to gather more information")
                     .items(Schema.builder().type("STRING").build())
                     .build(),
                 "refinedRequirements" to Schema.builder()
                     .type("ARRAY")
-                    .description("Updated fulfillment requirements based on discovered information (max 10)")
+                    .description("Updated fulfillment requirements (max 10)")
                     .items(Schema.builder().type("STRING").build())
                     .build(),
                 "imageIds" to Schema.builder()
                     .type("ARRAY")
-                    .description("Image IDs from sources to display with answer (e.g., '1', '2')")
+                    .description("Image IDs from sources to display with answer")
                     .items(Schema.builder().type("STRING").build())
                     .build()
             )
@@ -120,15 +111,37 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         .build()
 
     private val systemInstruction = $$"""
-        Your task is to synthesize answers from extracted facts. First assess if the source batch is sufficient, then generate the answer.
+        Your task is to update an existing answer with newly discovered sources. First evaluate whether the new sources add value, then update the answer and re-assess quality.
 
         ## Session Continuation (if "Prior Session Findings" is provided)
         - Use the prior conversation as context
         - Focus on providing the most appropriate/informative answer as a continuation of the session
 
-        ## Step 1: Assess Source Batch (5 Dimensions)
+        ## Step 1: Evaluate New Sources Against Current Answer
         
-        Evaluate the collected facts. For each dimension, set satisfied=true/false.
+        For each new source, classify it as one of:
+        - NEW: Contains information not present in the current answer
+        - CONTRADICTORY: Conflicts with information in the current answer
+        - DEEPENING: Provides more specific data (numbers, dates, prices) for something covered vaguely
+        - REDUNDANT: Already covered by the current answer
+
+        If ALL new sources are REDUNDANT, return the current answer UNCHANGED with the current assessment and set continuation_status based on the current assessment state.
+
+        ## Step 2: Update the Answer
+        - Produce the COMPLETE updated answer (not a diff) incorporating useful new information
+        - Preserve all existing citations [1],[2],... from the current answer
+        - Add new citations starting from the next available number (provided in "Current Citations")
+        - Integrate new information naturally into the existing structure
+        - Eagerly provide as much information as possible
+        - Use markdown formatting (headings, lists, bold)
+        - Same language as the query
+        - Only include information from provided facts, do not invent
+        - When facts conflict, note the conflicts and present as much information as possible
+        - citedSourceUrls must include ALL URLs cited in the answer (both existing and new)
+
+        ## Step 3: Re-assess Source Quality (5 Dimensions)
+
+        Evaluate the quality of the combined answer (existing + newly incorporated information). For each dimension, set satisfied=true/false.
 
         ### COVERAGE
         - Evaluate against fulfillment requirements
@@ -139,7 +152,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - In the rationale, explicitly list which requirements are covered vs. uncovered
         - Example: "Requirements 1, 2 covered. Requirement 3 (enterprise pricing) NOT covered."
 
-        ### DEPTH  
+        ### DEPTH
         - Facts contain specific data: numbers, prices, dates, versions, concrete details
         - The facts allow the formation of a convincing deep answer
         - NOT satisfied: facts are vague without specifics, or are tangentially related, or can only serve as a surface level overview
@@ -151,7 +164,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Check "Content Date" field of each source if available
 
         ### AUTHORITY
-        - All sources come from the official website URL, you should assess authority based on the intention purpose of the webpage
+        - All sources come from the official website URL, assess authority based on the intention purpose of the webpage
         - High credibility: official docs, product pages, pricing pages, Terms of Service etc.
         - Low credibility: blog posts, press-release
         - Low credibility sources can still be used, authority matters in conflict resolution
@@ -160,34 +173,24 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Facts from different sources agree
         - Satisfied: no conflicts, or conflicts resolved by preferring authoritative sources
         - NOT satisfied: sources contradict each other without clear resolution
-        
-        ## Step 2: Determine Search Continuation Status
+
+        ## Step 4: Determine Search Continuation Status
         - FINISH_SEARCH: The answer addresses the core query with specific, authoritative data. All [PRIMARY] requirements are satisfied. Unsatisfied [SECONDARY] requirements should NOT prevent FINISH_SEARCH.
         - CONTINUE_SEARCH: Critical [PRIMARY] information is still missing.
-        - NOT_FOUND: The sources do not contain the information asked about.
+        - NOT_FOUND: Neither the current answer nor the new sources contain the information asked about.
 
-        ## Step 3: Generate Answer
-        - Synthesize facts into a comprehensive, standalone answer for answering the original query and the requirements
-        - Eagerly provide as much information as possible
-        - Use markdown formatting (headings, lists, bold)
-        - Same language as the query
-        - Only include information from provided facts, do not invent
-        - When facts conflict, note the conflicts and present as much information as possible
-        - Cite the sources by appending [1], [2] etc. where the number is the position of the source in citedSourceUrls
-        - citedSourceUrls should only cite sources that are used in the answer
-
-        ## Step 4: Generate Follow-up Queries
+        ## Step 5: Generate Follow-up Queries
         - Only suggest follow-ups when continuation_status is CONTINUE_SEARCH
         - Focus on missing [PRIMARY] requirements
         - CRITICAL: Check "Previously searched queries" section - NEVER suggest any query that appears there or is semantically equivalent
-        
-        ## Step 5: Refine Requirements
-        - Based on what you learned from the sources, update the fulfillment requirements to guide subsequent search direction.
+
+        ## Step 6: Refine Requirements
+        - Based on what you learned from the new sources, update the fulfillment requirements to guide subsequent search direction
         - Keep the list of requirements small
         - Each requirement must be atomic and verifiable
         - Always preserve the core intent of the original query
         - If FINISH_SEARCH or NOT_FOUND, output the current requirements unchanged
-        
+
         ## Output Format
         {
             "assessment": {
@@ -198,17 +201,14 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 "consistency": { "satisfied": bool, "rationale": str }
             },
             "continuation_status": "FINISH_SEARCH" | "CONTINUE_SEARCH" | "NOT_FOUND",
-            "answer": "markdown answer",
-            "citedSourceUrls": ["urls used"],
+            "answer": "complete updated markdown answer",
+            "citedSourceUrls": ["all urls cited in the answer"],
             "followUpQueries": ["queries to enhance answer"],
             "refinedRequirements": ["updated requirements for next iteration"],
             "imageIds": ["1", "2"]
         }
     """.trimIndent()
 
-    /**
-     * Internal response data class for JSON deserialization.
-     */
     @Serializable
     private data class LlmDimensionAssessment(
         val satisfied: Boolean,
@@ -239,9 +239,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val refinedRequirements: List<String> = emptyList(),
         val imageIds: List<String> = emptyList()
     ) {
-        /**
-         * Converts internal LLM response types to domain types.
-         */
         fun toAnswerAssessment(): AnswerAssessment = AnswerAssessment(
             coverage = assessment.coverage.toDomain(),
             depth = assessment.depth.toDomain(),
@@ -251,47 +248,35 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         )
     }
 
-    override suspend fun generate(input: StreamingAnswerSynthesisInput): StreamingAnswerSynthesisOutput {
+    override suspend fun generate(input: IncrementalSynthesisInput): StreamingAnswerSynthesisOutput {
         logger.debug(
-            "Generating answer synthesis for query: '{}', sources: {}, total facts: {}, previouslySearched: {}",
+            "Incremental synthesis: query='{}', newSources={}, currentAnswerLength={}, existingCitations={}",
             input.query,
-            input.evaluatedSources.size,
-            input.evaluatedSources.sumOf { it.relevantFacts.size },
-            input.previouslySearchedQueries.size
+            input.newSources.size,
+            input.currentAnswer.length,
+            input.currentCitedSourceUrls.size
         )
 
         val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
-            logger.warn("No facts provided, returning default message")
-            val emptyAssessment = AnswerAssessment(
-                coverage = DimensionAssessment(
-                    satisfied = false,
-                    rationale = "No facts available from the provided sources."
-                ),
-                depth = DimensionAssessment(satisfied = false, rationale = "No data available."),
-                temporality = DimensionAssessment(satisfied = false, rationale = "No sources to evaluate."),
-                authority = DimensionAssessment(satisfied = false, rationale = "No sources available."),
-                consistency = DimensionAssessment(satisfied = false, rationale = "No sources to compare.")
-            )
+        if (input.newSources.isEmpty() || input.newSources.all { it.relevantFacts.isEmpty() }) {
+            logger.warn("No new facts provided, returning current answer unchanged")
             return StreamingAnswerSynthesisOutput(
-                answer = "No information found to answer the query.",
-                citedSourceUrls = emptyList(),
-                assessment = emptyAssessment,
+                answer = input.currentAnswer,
+                citedSourceUrls = input.currentCitedSourceUrls,
+                assessment = input.currentAssessment,
                 status = AnswerStatus.CONTINUE_SEARCH,
-                followUpQueries = listOf(input.query),
+                followUpQueries = emptyList(),
                 tokenUsage = tokenUsage
             )
         }
 
-        // Collect all unique images across sources into a global ordered list
-        val globalImages = collectGlobalImages(input.evaluatedSources)
-
+        val globalImages = collectGlobalImages(input.newSources)
         val userPrompt = buildUserPrompt(input, globalImages)
 
         val response = withContext(dispatcherProvider.io) {
-            retryLlmCall<SynthesisResponse>(this@StreamingAnswerSynthesisAgentGenAiImpl::class.simpleName!!) {
+            retryLlmCall<SynthesisResponse>(this@IncrementalSynthesisAgentGenAiImpl::class.simpleName!!) {
                 val result = client.models.generateContent(
                     modelId,
                     userPrompt,
@@ -310,7 +295,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
 
                 result.checkFinishReason()
 
-                // Extract token usage
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
                         modelName = modelId,
@@ -324,32 +308,23 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             }
         }
 
-        logger.debug(
-            "[{}] response: {}",
-            StreamingAnswerSynthesisAgentGenAiImpl::class.simpleName,
-            response
-        )
+        logger.debug("[{}] response: {}", IncrementalSynthesisAgentGenAiImpl::class.simpleName, response)
 
-        // Map LLM-selected numbered image IDs back to original hash-based IDs
         val originalImageIds = mapSelectedImagesToOriginal(response.imageIds, globalImages)
-
         val answerAssessment = response.toAnswerAssessment()
 
-        // Programmatic deduplication as safety measure
         val dedupedFollowUpQueries = deduplicateFollowUpQueries(
             response.followUpQueries,
             input.previouslySearchedQueries
         )
 
         logger.debug(
-            "Answer synthesis complete: {} chars, status: {}, {} images, citedSources: {}, followUpQueries: {} (deduped from {}), refinedRequirements: {}",
+            "Incremental synthesis complete: {} chars, status={}, citedSources={}, followUpQueries={} (deduped from {})",
             response.answer.length,
             response.continuation_status,
-            originalImageIds.size,
             response.citedSourceUrls.size,
             dedupedFollowUpQueries.size,
-            response.followUpQueries.size,
-            response.refinedRequirements.size
+            response.followUpQueries.size
         )
 
         return StreamingAnswerSynthesisOutput(
@@ -364,43 +339,30 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         )
     }
 
-    override fun generateStream(input: StreamingAnswerSynthesisInput): Flow<StreamingAnswerStreamItem> = flow {
+    override fun generateStream(input: IncrementalSynthesisInput): Flow<StreamingAnswerStreamItem> = flow {
         logger.debug(
-            "Streaming answer synthesis for query: '{}', sources: {}, total facts: {}, previouslySearched: {}",
+            "Streaming incremental synthesis: query='{}', newSources={}, currentAnswerLength={}",
             input.query,
-            input.evaluatedSources.size,
-            input.evaluatedSources.sumOf { it.relevantFacts.size },
-            input.previouslySearchedQueries.size
+            input.newSources.size,
+            input.currentAnswer.length
         )
 
         val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
 
-        if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
-            logger.warn("No facts provided, emitting default message")
-            val emptyAssessment = AnswerAssessment(
-                coverage = DimensionAssessment(
-                    satisfied = false,
-                    rationale = "No facts available from the provided sources."
-                ),
-                depth = DimensionAssessment(satisfied = false, rationale = "No data available."),
-                temporality = DimensionAssessment(satisfied = false, rationale = "No sources to evaluate."),
-                authority = DimensionAssessment(satisfied = false, rationale = "No sources available."),
-                consistency = DimensionAssessment(satisfied = false, rationale = "No sources to compare.")
-            )
-            emit(StreamingAnswerStreamItem.Chunk("No information found to answer the query."))
+        if (input.newSources.isEmpty() || input.newSources.all { it.relevantFacts.isEmpty() }) {
+            logger.warn("No new facts provided, emitting current answer unchanged")
+            emit(StreamingAnswerStreamItem.Chunk(input.currentAnswer))
             emit(StreamingAnswerStreamItem.Complete(
                 tokenUsage = TokenUsageMetrics.empty(modelId),
-                assessment = emptyAssessment,
-                citedSourceUrls = emptyList(),
+                assessment = input.currentAssessment,
+                citedSourceUrls = input.currentCitedSourceUrls,
                 status = AnswerStatus.CONTINUE_SEARCH,
-                followUpQueries = listOf(input.query)
+                followUpQueries = emptyList()
             ))
             return@flow
         }
 
-        // Collect all unique images across sources into a global ordered list
-        val globalImages = collectGlobalImages(input.evaluatedSources)
-
+        val globalImages = collectGlobalImages(input.newSources)
         val userPrompt = buildUserPrompt(input, globalImages)
 
         val config = GenerateContentConfig.builder()
@@ -419,10 +381,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         var lastAnswerLength = 0
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        // Use flowWithRateLimitRetry to handle 429 errors by restarting the stream
-        // Run on IO dispatcher since Gemini SDK makes blocking HTTP calls
-        flowWithRateLimitRetry(this@StreamingAnswerSynthesisAgentGenAiImpl::class.simpleName!!) {
-            // Reset state on each retry attempt
+        flowWithRateLimitRetry(this@IncrementalSynthesisAgentGenAiImpl::class.simpleName!!) {
             accumulatedJson = ""
             lastAnswerLength = 0
             tokenUsage = TokenUsageMetrics.empty(modelId)
@@ -430,24 +389,17 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         }.flowOn(dispatcherProvider.io).collect { response ->
             val chunkText = response.text() ?: return@collect
             accumulatedJson += chunkText
-            logger.trace("Accumulated JSON so far ({} chars): {}", accumulatedJson.length, 
-                accumulatedJson.take(200).replace("\n", "\\n"))
 
-            // Extract answer delta from accumulated JSON: {"answer": "..."}
             val answerDelta = extractAnswerDelta(accumulatedJson, lastAnswerLength)
             if (answerDelta.isNotEmpty()) {
                 lastAnswerLength += answerDelta.length
-                logger.trace("Emitting answer chunk ({} chars): {}", answerDelta.length, 
-                    answerDelta.take(100).replace("\n", "\\n"))
                 emit(StreamingAnswerStreamItem.Chunk(answerDelta))
             }
 
-            // Token usage is available in the last chunk (per Gemini streaming docs)
             response.usageMetadata().ifPresent { metadata ->
                 val promptTokens = metadata.promptTokenCount().orElse(0)
                 val outputTokens = metadata.candidatesTokenCount().orElse(0)
                 val totalTokens = metadata.totalTokenCount().orElse(0)
-                // Only update if we got actual values (last chunk has non-zero values)
                 if (totalTokens > 0) {
                     tokenUsage = TokenUsageMetrics(
                         modelName = modelId,
@@ -459,31 +411,26 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             }
         }
 
-        logger.debug(
-            "[{}] response: {}",
-            StreamingAnswerSynthesisAgentGenAiImpl::class.simpleName,
-            accumulatedJson
-        )
+        logger.debug("[{}] response: {}", IncrementalSynthesisAgentGenAiImpl::class.simpleName, accumulatedJson)
 
-        // Extract assessment, status, citedSourceUrls, followUpQueries, refinedRequirements, and imageIds from the complete JSON
         val citedSourceUrls = extractCitedSourceUrls(accumulatedJson)
         val status = extractStatus(accumulatedJson)
         val rawFollowUpQueries = extractFollowUpQueries(accumulatedJson)
         val refinedRequirements = extractRefinedRequirements(accumulatedJson)
         val numberedImageIds = extractImageIds(accumulatedJson)
         val assessment = extractAssessment(accumulatedJson)
-        
-        // Programmatic deduplication as safety measure
+
         val followUpQueries = deduplicateFollowUpQueries(
             rawFollowUpQueries,
             input.previouslySearchedQueries
         )
-        
-        // Map LLM-selected numbered image IDs back to original hash-based IDs
+
         val originalImageIds = mapSelectedImagesToOriginal(numberedImageIds, globalImages)
-        
-        logger.debug("Streaming answer synthesis complete: {} chars total, status: {}, {} images, citedSources: {}, followUpQueries: {} (deduped from {}), refinedRequirements: {}", 
-            lastAnswerLength, status, originalImageIds.size, citedSourceUrls.size, followUpQueries.size, rawFollowUpQueries.size, refinedRequirements.size)
+
+        logger.debug(
+            "Streaming incremental synthesis complete: {} chars, status={}, citedSources={}, followUpQueries={}",
+            lastAnswerLength, status, citedSourceUrls.size, followUpQueries.size
+        )
         emit(StreamingAnswerStreamItem.Complete(
             tokenUsage = tokenUsage,
             assessment = assessment,
@@ -495,136 +442,74 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         ))
     }
 
-    /**
-     * Extract continuation_status enum from accumulated JSON.
-     * Defaults to CONTINUE_SEARCH if not found or invalid.
-     */
     private fun extractStatus(json: String): AnswerStatus {
         val regex = """"continuation_status"\s*:\s*"(FINISH_SEARCH|CONTINUE_SEARCH|NOT_FOUND)"""".toRegex(RegexOption.IGNORE_CASE)
         val match = regex.find(json) ?: return AnswerStatus.CONTINUE_SEARCH
         return AnswerStatus.valueOf(match.groupValues[1].uppercase())
     }
 
-    /**
-     * Extract followUpQueries array from accumulated JSON.
-     */
     private fun extractFollowUpQueries(json: String): List<String> {
         val regex = """"followUpQueries"\s*:\s*\[([^\]]*)\]""".toRegex()
         val match = regex.find(json) ?: return emptyList()
-        
         val arrayContent = match.groupValues[1]
         if (arrayContent.isBlank()) return emptyList()
-        
-        // Extract individual string values from the array
         val stringRegex = """"([^"]+)"""".toRegex()
-        return stringRegex.findAll(arrayContent)
-            .map { it.groupValues[1] }
-            .toList()
+        return stringRegex.findAll(arrayContent).map { it.groupValues[1] }.toList()
     }
 
-    /**
-     * Deduplicate follow-up queries against previously searched queries.
-     * Uses case-insensitive comparison and removes queries that are substrings or superstrings.
-     */
     private fun deduplicateFollowUpQueries(
         followUpQueries: List<String>,
         previouslySearchedQueries: List<String>
     ): List<String> {
         if (previouslySearchedQueries.isEmpty()) return followUpQueries
-        
         val previousLowercase = previouslySearchedQueries.map { it.lowercase().trim() }
-        
         return followUpQueries.filter { query ->
             val queryLower = query.lowercase().trim()
-            // Filter out if exact match, or if query contains/is contained by a previous query
             previousLowercase.none { prev ->
-                queryLower == prev ||
-                    queryLower.contains(prev) ||
-                    prev.contains(queryLower)
+                queryLower == prev || queryLower.contains(prev) || prev.contains(queryLower)
             }
         }
     }
 
-    /**
-     * Extract refinedRequirements array from accumulated JSON.
-     */
     private fun extractRefinedRequirements(json: String): List<String> {
         val regex = """"refinedRequirements"\s*:\s*\[([^\]]*)\]""".toRegex()
         val match = regex.find(json) ?: return emptyList()
-        
         val arrayContent = match.groupValues[1]
         if (arrayContent.isBlank()) return emptyList()
-        
-        // Extract individual string values from the array
         val stringRegex = """"([^"]+)"""".toRegex()
-        return stringRegex.findAll(arrayContent)
-            .map { it.groupValues[1] }
-            .toList()
+        return stringRegex.findAll(arrayContent).map { it.groupValues[1] }.toList()
     }
 
-    /**
-     * Extract imageIds array from accumulated JSON.
-     */
     private fun extractImageIds(json: String): List<String> {
         val regex = """"imageIds"\s*:\s*\[([^\]]*)\]""".toRegex()
         val match = regex.find(json) ?: return emptyList()
-        
         val arrayContent = match.groupValues[1]
         if (arrayContent.isBlank()) return emptyList()
-        
-        // Extract individual string values from the array
         val stringRegex = """"([^"]+)"""".toRegex()
-        return stringRegex.findAll(arrayContent)
-            .map { it.groupValues[1] }
-            .toList()
+        return stringRegex.findAll(arrayContent).map { it.groupValues[1] }.toList()
     }
 
-    /**
-     * Extract citedSourceUrls array from accumulated JSON.
-     */
     private fun extractCitedSourceUrls(json: String): List<String> {
         val regex = """"citedSourceUrls"\s*:\s*\[([^\]]*)\]""".toRegex()
         val match = regex.find(json) ?: return emptyList()
-        
         val arrayContent = match.groupValues[1]
         if (arrayContent.isBlank()) return emptyList()
-        
-        // Extract individual string values from the array
         val stringRegex = """"([^"]+)"""".toRegex()
-        return stringRegex.findAll(arrayContent)
-            .map { it.groupValues[1] }
-            .toList()
+        return stringRegex.findAll(arrayContent).map { it.groupValues[1] }.toList()
     }
 
-    /**
-     * Extract a single dimension assessment from JSON.
-     * Parses the satisfied boolean and rationale string.
-     */
     private fun extractDimensionAssessment(dimensionJson: String): DimensionAssessment {
-        // Extract satisfied boolean
         val satisfiedRegex = """"satisfied"\s*:\s*(true|false)""".toRegex(RegexOption.IGNORE_CASE)
         val satisfied = satisfiedRegex.find(dimensionJson)?.groupValues?.get(1)?.lowercase() == "true"
-        
-        // Extract rationale string
         val rationaleRegex = """"rationale"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
         val rationale = rationaleRegex.find(dimensionJson)?.groupValues?.get(1)?.let { unescapeJsonString(it) } ?: ""
-        
-        return DimensionAssessment(
-            satisfied = satisfied,
-            rationale = rationale
-        )
+        return DimensionAssessment(satisfied = satisfied, rationale = rationale)
     }
 
-    /**
-     * Extract the full 5-dimension assessment from accumulated JSON.
-     * Falls back to unsatisfied dimensions if parsing fails.
-     */
     private fun extractAssessment(json: String): AnswerAssessment {
-        // Find the assessment object in JSON
         val assessmentRegex = """"assessment"\s*:\s*\{""".toRegex()
         val assessmentStart = assessmentRegex.find(json)?.range?.last ?: return createDefaultAssessment()
-        
-        // Find matching closing brace by counting braces
+
         var braceCount = 1
         var endIndex = assessmentStart + 1
         while (endIndex < json.length && braceCount > 0) {
@@ -634,18 +519,14 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             }
             endIndex++
         }
-        
+
         val assessmentJson = json.substring(assessmentStart, endIndex)
-        
-        // Extract each dimension
+
         fun extractDimension(dimensionName: String): DimensionAssessment {
             val dimRegex = """"$dimensionName"\s*:\s*\{""".toRegex()
             val dimStart = dimRegex.find(assessmentJson)?.range?.last ?: return DimensionAssessment(
-                satisfied = false,
-                rationale = "Failed to parse $dimensionName"
+                satisfied = false, rationale = "Failed to parse $dimensionName"
             )
-            
-            // Find matching closing brace
             var count = 1
             var dimEnd = dimStart + 1
             while (dimEnd < assessmentJson.length && count > 0) {
@@ -655,11 +536,9 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 }
                 dimEnd++
             }
-            
-            val dimensionJson = assessmentJson.substring(dimStart, dimEnd)
-            return extractDimensionAssessment(dimensionJson)
+            return extractDimensionAssessment(assessmentJson.substring(dimStart, dimEnd))
         }
-        
+
         return AnswerAssessment(
             coverage = extractDimension("coverage"),
             depth = extractDimension("depth"),
@@ -669,9 +548,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         )
     }
 
-    /**
-     * Creates a default unsatisfied assessment when parsing fails.
-     */
     private fun createDefaultAssessment(): AnswerAssessment = AnswerAssessment(
         coverage = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
         depth = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment"),
@@ -680,42 +556,33 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         consistency = DimensionAssessment(satisfied = false, rationale = "Failed to parse assessment")
     )
 
-    /**
-     * Extract the new portion of the answer from accumulated JSON.
-     * The JSON format is: {"answer": "...text...", "imageIds": [...]}
-     */
     private fun extractAnswerDelta(accumulatedJson: String, previousLength: Int): String {
-        // Find the start of the answer value - handle both with and without space after colon
         val prefixNoSpace = "\"answer\":\""
         val prefixWithSpace = "\"answer\": \""
-        
+
         var startIdx = accumulatedJson.indexOf(prefixNoSpace)
         var prefixLength = prefixNoSpace.length
-        
+
         if (startIdx == -1) {
             startIdx = accumulatedJson.indexOf(prefixWithSpace)
             prefixLength = prefixWithSpace.length
         }
-        
+
         if (startIdx == -1) return ""
 
         val contentStart = startIdx + prefixLength
         if (contentStart >= accumulatedJson.length) return ""
 
-        // Get the content after the prefix
         var content = accumulatedJson.substring(contentStart)
 
-        // Find the closing quote of the answer field
         var closingIdx = -1
         var i = 0
         while (i < content.length) {
             if (content[i] == '\\') {
-                // Skip escaped character
                 i += 2
                 continue
             }
             if (content[i] == '"') {
-                // Found a potential closing quote, check what follows
                 val remaining = content.substring(i + 1).trimStart()
                 if (remaining.startsWith(",") || remaining.startsWith("}")) {
                     closingIdx = i
@@ -724,15 +591,13 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             }
             i++
         }
-        
+
         if (closingIdx >= 0) {
             content = content.substring(0, closingIdx)
         }
 
-        // Unescape JSON string escape sequences for the new content
         val unescapedContent = unescapeJsonString(content)
 
-        // Return only the new portion
         return if (unescapedContent.length > previousLength) {
             unescapedContent.substring(previousLength)
         } else {
@@ -740,9 +605,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         }
     }
 
-    /**
-     * Unescape common JSON string escape sequences.
-     */
     private fun unescapeJsonString(jsonString: String): String {
         return jsonString
             .replace("\\n", "\n")
@@ -753,28 +615,25 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
     }
 
     private fun buildUserPrompt(
-        input: StreamingAnswerSynthesisInput,
+        input: IncrementalSynthesisInput,
         globalImages: List<GlobalImage>
     ): String {
-        // Build a lookup from original image ID to global numbered ID
         val imageIdToNumbered = globalImages.withIndex()
             .associate { (index, img) -> img.originalId to (index + 1).toString() }
-        
+
+        val nextCitationNumber = input.currentCitedSourceUrls.size + 1
+
         return buildString {
-            // Static content first (for cache optimization)
             appendLine("# Query")
-            // Use expanded query if available, otherwise use original query
             appendLine(input.query)
             appendLine()
-            
-            // Session history for continuation searches (full chain context)
+
             if (input.sessionHistory.isNotEmpty()) {
                 appendLine("# Prior Session History")
                 appendLine(input.sessionHistory.toPromptSummary())
                 appendLine()
             }
-            
-            // Include fulfillment requirements if available (critical for COVERAGE evaluation)
+
             if (input.fulfillmentRequirements.isNotEmpty()) {
                 appendLine("# Fulfillment Requirements")
                 input.fulfillmentRequirements.forEachIndexed { index, req ->
@@ -782,8 +641,26 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 }
                 appendLine()
             }
-            
-            // Previously searched queries for follow-up deduplication
+
+            appendLine("# Current Answer")
+            appendLine(input.currentAnswer)
+            appendLine()
+
+            appendLine("# Current Citations")
+            input.currentCitedSourceUrls.forEachIndexed { index, url ->
+                appendLine("[${index + 1}] $url")
+            }
+            appendLine("(New citations start from [$nextCitationNumber])")
+            appendLine()
+
+            appendLine("# Current Assessment")
+            appendLine("Coverage: ${if (input.currentAssessment.coverage.satisfied) "satisfied" else "NOT satisfied"} -- \"${input.currentAssessment.coverage.rationale}\"")
+            appendLine("Depth: ${if (input.currentAssessment.depth.satisfied) "satisfied" else "NOT satisfied"} -- \"${input.currentAssessment.depth.rationale}\"")
+            appendLine("Temporality: ${if (input.currentAssessment.temporality.satisfied) "satisfied" else "NOT satisfied"} -- \"${input.currentAssessment.temporality.rationale}\"")
+            appendLine("Authority: ${if (input.currentAssessment.authority.satisfied) "satisfied" else "NOT satisfied"} -- \"${input.currentAssessment.authority.rationale}\"")
+            appendLine("Consistency: ${if (input.currentAssessment.consistency.satisfied) "satisfied" else "NOT satisfied"} -- \"${input.currentAssessment.consistency.rationale}\"")
+            appendLine()
+
             if (input.previouslySearchedQueries.isNotEmpty()) {
                 appendLine("# Previously searched queries (DO NOT suggest these again)")
                 input.previouslySearchedQueries.forEach { query ->
@@ -791,25 +668,25 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 }
                 appendLine()
             }
-            
+
             appendLine("# Current Date")
             appendLine(java.time.LocalDate.now().toString())
             appendLine()
 
-            input.evaluatedSources.forEachIndexed { index, source ->
+            appendLine("# New Sources")
+            input.newSources.forEachIndexed { index, source ->
                 if (source.relevantFacts.isNotEmpty()) {
-                    appendLine("## Source ${index + 1}")
+                    val sourceNumber = nextCitationNumber + index
+                    appendLine("## Source $sourceNumber")
                     appendLine("URL: ${source.url}")
                     appendLine("Intention: ${source.intention}")
                     appendLine("Content Date: ${source.contentDate ?: "Not found"}")
-
                     appendLine()
                     appendLine("### Facts")
                     source.relevantFacts.forEach { fact ->
                         appendLine("- ${fact.fact}")
                     }
 
-                    // Show available images for this source with descriptions from input
                     val sourceImages = source.relevantImageIds.mapNotNull { imageId ->
                         val numberedId = imageIdToNumbered[imageId]
                         val description = input.imageDescriptions[imageId]
@@ -829,37 +706,14 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     appendLine()
                 }
             }
-
-            // Dynamic content at the end (query)
-            appendLine()
-            appendLine("# Current Date")
-            appendLine(java.time.LocalDate.now().toString())
         }
     }
 
-    /**
-     * Represents an image collected from all sources with a global numbered ID.
-     * The numbered ID is derived from the position in the list (index + 1).
-     * 
-     * @property originalId The original image ID (e.g., "img-abc123")
-     */
-    private data class GlobalImage(
-        val originalId: String
-    )
+    private data class GlobalImage(val originalId: String)
 
-    /**
-     * Collects all unique image IDs from evaluated sources into a global ordered list.
-     * Each image gets a sequential numbered ID (1, 2, 3...) based on position.
-     *
-     * @param sources List of evaluated sources containing image IDs
-     * @return Ordered list of global images (index + 1 = numbered ID)
-     */
-    private fun collectGlobalImages(
-        sources: List<EvaluatedSource>
-    ): List<GlobalImage> {
+    private fun collectGlobalImages(sources: List<EvaluatedSource>): List<GlobalImage> {
         val seenIds = mutableSetOf<String>()
         val globalImages = mutableListOf<GlobalImage>()
-
         sources.forEach { source ->
             source.relevantImageIds.forEach { imageId ->
                 if (imageId !in seenIds) {
@@ -871,13 +725,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         return globalImages
     }
 
-    /**
-     * Maps LLM-selected numbered image IDs back to original hash-based IDs.
-     *
-     * @param selectedNumberedIds List of numbered IDs selected by the LLM (e.g., ["1", "3"])
-     * @param globalImages Ordered list of global images
-     * @return List of original hash-based image IDs
-     */
     private fun mapSelectedImagesToOriginal(
         selectedNumberedIds: List<String>,
         globalImages: List<GlobalImage>

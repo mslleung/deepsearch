@@ -133,6 +133,7 @@ val domainModule = module {
     requestScope {
         scopedOf(::AnswerReviewerAgentGenAiImpl) bind IAnswerReviewerAgent::class
         scopedOf(::StreamingAnswerSynthesisAgentGenAiImpl) bind IStreamingAnswerSynthesisAgent::class
+        scopedOf(::IncrementalSynthesisAgentGenAiImpl) bind IIncrementalSynthesisAgent::class
         scopedOf(::BlinkTestAgentGenAiImpl) bind IBlinkTestAgent::class
         scopedOf(::DirectAnswerAgentGenAiImpl) bind IDirectAnswerAgent::class
         scopedOf(::GenerateAnswerAgentGenAiImpl) bind IGenerateAnswerAgent::class
