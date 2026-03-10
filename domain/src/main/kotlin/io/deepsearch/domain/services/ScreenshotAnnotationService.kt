@@ -98,8 +98,8 @@ class ScreenshotAnnotationService {
 
             val boxX = bb.left.toInt().coerceIn(0, imgW - 1)
             val boxY = bb.top.toInt().coerceIn(0, imgH - 1)
-            val boxR = bb.right.toInt().coerceIn(boxX + 4, imgW)
-            val boxB = bb.bottom.toInt().coerceIn(boxY + 4, imgH)
+            val boxR = bb.right.toInt().coerceIn((boxX + 4).coerceAtMost(imgW), imgW)
+            val boxB = bb.bottom.toInt().coerceIn((boxY + 4).coerceAtMost(imgH), imgH)
 
             val paletteIdx = labelNumber % PALETTE_BGR.size
             val accentColor = PALETTE_BGR[paletteIdx]

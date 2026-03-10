@@ -274,10 +274,25 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         val validSchemes = setOf("http", "https")
         val validRelativePaths = mutableSetOf<String>()
 
+        // Bulk-remove anchors with non-HTTP schemes and empty/fragment-only hrefs before the main loop
+        val nonHttpSchemes = listOf(
+            "javascript", "mailto", "tel", "data", "blob", "ftp", "file", "sms", "geo", "market"
+        )
+        val bulkRemoveSelector = nonHttpSchemes.joinToString(", ") { scheme -> "a[href^='$scheme:']" } +
+            ", a[href=''], a[href^='#']"
+        val bulkRemoved = doc.select(bulkRemoveSelector)
+        val bulkRemovedCount = bulkRemoved.size
+        bulkRemoved.remove()
+        if (bulkRemovedCount > 0) {
+            logger.debug("Bulk-removed {} anchors with non-HTTP schemes or fragment-only hrefs", bulkRemovedCount)
+        }
+
+        var offHostRemoved = 0
+        var invalidRemoved = 0
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href").trim()
 
-            if (href.isBlank() || href.startsWith("#")) {
+            if (href.isBlank()) {
                 anchor.remove()
                 return@forEach
             }
@@ -288,9 +303,10 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                 val resolvedHost = resolvedUri.host
 
                 if (scheme !in validSchemes) {
-                    logger.debug("Removing anchor with non-HTTP scheme '{}': {}", scheme, href)
+                    invalidRemoved++
                     anchor.remove()
                 } else if (resolvedHost != null && !resolvedHost.equals(baseHost, ignoreCase = true)) {
+                    offHostRemoved++
                     anchor.remove()
                 } else {
                     val relativePath = buildString {
@@ -301,9 +317,12 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     validRelativePaths.add(relativePath)
                 }
             } catch (e: Exception) {
-                logger.debug("Removing anchor with invalid href '{}': {}", href, e.message)
+                invalidRemoved++
                 anchor.remove()
             }
+        }
+        if (offHostRemoved > 0 || invalidRemoved > 0) {
+            logger.debug("Filtered anchors: {} off-host, {} invalid scheme/href removed", offHostRemoved, invalidRemoved)
         }
         logger.debug("Filtered anchor tags to host: {}", baseHost)
 

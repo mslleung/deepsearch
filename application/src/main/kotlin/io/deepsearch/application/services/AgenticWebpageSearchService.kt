@@ -610,8 +610,8 @@ class AgenticWebpageSearchService(
         for (region in regions) {
             val x = ((region.x1 / 1000.0) * img.width).toInt().coerceIn(0, img.width - 1)
             val y = ((region.y1 / 1000.0) * img.height).toInt().coerceIn(0, img.height - 1)
-            val x2 = ((region.x2 / 1000.0) * img.width).toInt().coerceIn(x + 1, img.width)
-            val y2 = ((region.y2 / 1000.0) * img.height).toInt().coerceIn(y + 1, img.height)
+            val x2 = ((region.x2 / 1000.0) * img.width).toInt().coerceIn((x + 1).coerceAtMost(img.width), img.width)
+            val y2 = ((region.y2 / 1000.0) * img.height).toInt().coerceIn((y + 1).coerceAtMost(img.height), img.height)
             val w = x2 - x
             val h = y2 - y
 
