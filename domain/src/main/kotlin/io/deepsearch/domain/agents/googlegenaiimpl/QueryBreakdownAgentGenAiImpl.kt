@@ -12,7 +12,7 @@ import io.deepsearch.domain.agents.QueryBreakdownOutput
 import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
-import io.deepsearch.domain.models.valueobjects.RequirementPriority
+
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -44,21 +44,8 @@ class QueryBreakdownAgentGenAiImpl(
                     .description("Atomic requirements that must ALL be satisfied to fully answer the query")
                     .items(
                         Schema.builder()
-                            .type("OBJECT")
-                            .properties(
-                                mapOf(
-                                    "priority" to Schema.builder()
-                                        .type("STRING")
-                                        .description("PRIMARY if it directly answers what the user asked; SECONDARY if it's helpful context")
-                                        .enum_(RequirementPriority.entries.map { it.name })
-                                        .build(),
-                                    "text" to Schema.builder()
-                                        .type("STRING")
-                                        .description("A single atomic requirement")
-                                        .build()
-                                )
-                            )
-                            .required(listOf("priority", "text"))
+                            .type("STRING")
+                            .description("A single atomic requirement")
                             .build()
                     )
                     .build(),
@@ -96,9 +83,8 @@ class QueryBreakdownAgentGenAiImpl(
         
         ## Step 2: Generate Fulfillment Requirements
         - Based on the expanded query and page context, generate requirements needed to fully answer the query
-        - Each requirement has a priority field:
-          - PRIMARY: Directly answers what the user explicitly asked
-          - SECONDARY: Related context that enhances the answer but wasn't explicitly requested
+        - Only include requirements that directly answer what the user explicitly asked
+        - Do NOT include nice-to-have context that wasn't explicitly requested
         
         Requirements must be:
         - Atomic: Each represents a single piece of information
@@ -106,10 +92,8 @@ class QueryBreakdownAgentGenAiImpl(
         - Specific: Clear statements of what information is needed
         
         Example for "What's in the standard body check package?":
-        - PRIMARY: List of tests/screenings included in the standard package
-        - PRIMARY: Price of the standard package
-        - SECONDARY: How to book the standard package
-        - SECONDARY: Comparison with other package tiers
+        - List of tests/screenings included in the standard package
+        - Price of the standard package
         
         ## Step 3: Generate Follow-up Queries
         - Generate search queries that would help find information for each requirement
@@ -120,23 +104,17 @@ class QueryBreakdownAgentGenAiImpl(
         {
             "expandedQuery": "Clear, context-aware version of the query",
             "fulfillmentRequirements": [
-                {"priority": "PRIMARY", "text": "Requirement 1"},
-                {"priority": "SECONDARY", "text": "Requirement 2"}
+                "Requirement 1",
+                "Requirement 2"
             ],
             "followUpQueries": ["search query 1", "search query 2", ...]
         }
     """.trimIndent()
 
     @Serializable
-    private data class RequirementDto(
-        val priority: String,
-        val text: String
-    )
-
-    @Serializable
     private data class QueryBreakdownResponse(
         val expandedQuery: String,
-        val fulfillmentRequirements: List<RequirementDto>,
+        val fulfillmentRequirements: List<String>,
         val followUpQueries: List<String> = emptyList()
     )
 
@@ -193,13 +171,9 @@ class QueryBreakdownAgentGenAiImpl(
             response.followUpQueries
         )
 
-        val formattedRequirements = response.fulfillmentRequirements.map { dto ->
-            RequirementPriority.valueOf(dto.priority).formatRequirement(dto.text)
-        }
-
         return QueryBreakdownOutput(
             expandedQuery = response.expandedQuery,
-            fulfillmentRequirements = formattedRequirements,
+            fulfillmentRequirements = response.fulfillmentRequirements,
             followUpQueries = response.followUpQueries,
             tokenUsage = tokenUsage
         )

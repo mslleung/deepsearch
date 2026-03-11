@@ -145,10 +145,7 @@ class IncrementalSynthesisAgentGenAiImpl(
 
         ### COVERAGE
         - Evaluate against fulfillment requirements
-        - Requirements marked [PRIMARY] are essential
-          Requirements marked [SECONDARY] are nice-to-have
-        - Coverage is satisfied when ALL [PRIMARY] requirements have adequate fact coverage
-          Unsatisfied [SECONDARY] requirements alone do NOT make coverage unsatisfied
+        - Coverage is satisfied when ALL requirements have adequate fact coverage
         - In the rationale, explicitly list which requirements are covered vs. uncovered
         - Example: "Requirements 1, 2 covered. Requirement 3 (enterprise pricing) NOT covered."
 
@@ -175,13 +172,13 @@ class IncrementalSynthesisAgentGenAiImpl(
         - NOT satisfied: sources contradict each other without clear resolution
 
         ## Step 4: Determine Search Continuation Status
-        - FINISH_SEARCH: The answer addresses the core query with specific, authoritative data. All [PRIMARY] requirements are satisfied. Unsatisfied [SECONDARY] requirements should NOT prevent FINISH_SEARCH.
-        - CONTINUE_SEARCH: Critical [PRIMARY] information is still missing.
+        - FINISH_SEARCH: The answer addresses the core query with specific, authoritative data. All requirements are satisfied.
+        - CONTINUE_SEARCH: Critical information is still missing.
         - NOT_FOUND: Neither the current answer nor the new sources contain the information asked about.
 
         ## Step 5: Generate Follow-up Queries
         - Only suggest follow-ups when continuation_status is CONTINUE_SEARCH
-        - Focus on missing [PRIMARY] requirements
+        - Focus on missing requirements
         - CRITICAL: Check "Previously searched queries" section - NEVER suggest any query that appears there or is semantically equivalent
 
         ## Step 6: Refine Requirements

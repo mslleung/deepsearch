@@ -677,10 +677,10 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
         // The programmatic dedup shouldn't filter out novel integration-related queries
     }
 
-    // ==================== PRIMARY / SECONDARY Requirement Tests ====================
+    // ==================== Requirement Coverage Tests ====================
 
     @Test
-    fun `should FINISH_SEARCH when all PRIMARY requirements satisfied but SECONDARY unsatisfied`() = runTest(testCoroutineDispatcher) {
+    fun `should FINISH_SEARCH when all requirements are satisfied`() = runTest(testCoroutineDispatcher) {
         val comprehensiveSource = EvaluatedSource(
             url = "https://example.com/body-check/standard",
             title = "Standard Body Check Package",
@@ -699,10 +699,8 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
             query = "What's in the standard body check package?",
             evaluatedSources = listOf(comprehensiveSource),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of tests/screenings included in the standard package",
-                "[PRIMARY] Price of the standard package",
-                "[SECONDARY] How to book the standard package",
-                "[SECONDARY] Comparison with other package tiers"
+                "List of tests/screenings included in the standard package",
+                "Price of the standard package"
             )
         )
 
@@ -710,7 +708,7 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
 
         assertNotNull(output)
         assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
-        println("=== PRIMARY/SECONDARY: Initial Synthesis ===")
+        println("=== Requirements Coverage: Initial Synthesis ===")
         println("Status: ${output.status}")
         println("Assessment coverage: ${output.assessment.coverage}")
         println("Follow-up queries: ${output.followUpQueries}")
@@ -727,14 +725,13 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
         assertEquals(
             AnswerStatus.FINISH_SEARCH,
             output.status,
-            "Should FINISH_SEARCH: all PRIMARY requirements (tests list + price) are satisfied. " +
-            "Unsatisfied SECONDARY requirements (booking, comparison) should NOT prevent finishing. " +
+            "Should FINISH_SEARCH: all requirements (tests list + price) are satisfied. " +
             "Coverage rationale: ${output.assessment.coverage.rationale}"
         )
     }
 
     @Test
-    fun `should CONTINUE_SEARCH when PRIMARY requirements are missing despite having some information`() = runTest(testCoroutineDispatcher) {
+    fun `should CONTINUE_SEARCH when requirements are missing despite having some information`() = runTest(testCoroutineDispatcher) {
         val partialSource = EvaluatedSource(
             url = "https://example.com/body-check",
             title = "Body Check Packages",
@@ -751,16 +748,15 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
             query = "What's in the standard body check package and how much does it cost?",
             evaluatedSources = listOf(partialSource),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of tests/screenings included in the standard package",
-                "[PRIMARY] Price of the standard package",
-                "[SECONDARY] Preparation instructions"
+                "List of tests/screenings included in the standard package",
+                "Price of the standard package"
             )
         )
 
         val output = agent.generate(input)
 
         assertNotNull(output)
-        println("=== PRIMARY MISSING: Initial Synthesis ===")
+        println("=== Requirements Missing: Initial Synthesis ===")
         println("Status: ${output.status}")
         println("Assessment coverage: ${output.assessment.coverage}")
         println("Follow-up queries: ${output.followUpQueries}")
@@ -770,12 +766,12 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
         assertEquals(
             AnswerStatus.CONTINUE_SEARCH,
             output.status,
-            "Should CONTINUE_SEARCH: PRIMARY requirements (specific tests, price) are not yet satisfied. " +
+            "Should CONTINUE_SEARCH: requirements (specific tests, price) are not yet satisfied. " +
             "Coverage rationale: ${output.assessment.coverage.rationale}"
         )
         assertFalse(
             output.assessment.coverage.satisfied,
-            "Coverage should NOT be satisfied when PRIMARY requirements are missing"
+            "Coverage should NOT be satisfied when requirements are missing"
         )
         assertTrue(
             output.followUpQueries.isNotEmpty(),
@@ -804,8 +800,8 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
             query = "What are the enterprise API rate limits?",
             evaluatedSources = listOf(irrelevantSource),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] API rate limits for the enterprise plan",
-                "[PRIMARY] Rate limit unit (per second, per minute, per day)"
+                "API rate limits for the enterprise plan",
+                "Rate limit unit (per second, per minute, per day)"
             )
         )
 

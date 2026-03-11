@@ -75,8 +75,8 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
             currentCitedSourceUrls = listOf("https://example.com/ml-guide"),
             currentAssessment = allSatisfiedAssessment(),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] Definition of machine learning",
-                "[PRIMARY] Main types of machine learning"
+                "Definition of machine learning",
+                "Main types of machine learning"
             )
         )
 
@@ -131,10 +131,10 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
             currentCitedSourceUrls = listOf("https://example.com/pricing-overview"),
             currentAssessment = partialAssessment(),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of pricing tiers",
-                "[PRIMARY] Price of each tier",
-                "[SECONDARY] Features included in each tier",
-                "[SECONDARY] Discount information"
+                "List of pricing tiers",
+                "Price of each tier",
+                "Features included in each tier",
+                "Discount information"
             )
         )
 
@@ -196,8 +196,8 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 consistency = DimensionAssessment(satisfied = true, rationale = "Single source, no conflicts")
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] Current Pro plan price",
-                "[PRIMARY] Features included in Pro plan"
+                "Current Pro plan price",
+                "Features included in Pro plan"
             )
         )
 
@@ -250,9 +250,9 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 consistency = DimensionAssessment(satisfied = false, rationale = "No sources")
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] API rate limits for Enterprise plan",
-                "[PRIMARY] Whether limits are per-minute or per-day",
-                "[SECONDARY] Overage pricing"
+                "API rate limits for Enterprise plan",
+                "Whether limits are per-minute or per-day",
+                "Overage pricing"
             )
         )
 
@@ -280,7 +280,7 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
     // ==================== FINISH_SEARCH with Completing Sources ====================
 
     @Test
-    fun `should return FINISH_SEARCH when new sources complete all PRIMARY requirements`() = runTest(testCoroutineDispatcher) {
+    fun `should return FINISH_SEARCH when new sources complete all requirements`() = runTest(testCoroutineDispatcher) {
         val currentAnswer = """
             ## SaaS Product Features
             
@@ -315,10 +315,10 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 consistency = DimensionAssessment(satisfied = true, rationale = "No conflicts")
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of available pricing tiers",
-                "[PRIMARY] Price per tier",
-                "[SECONDARY] Free trial availability",
-                "[SECONDARY] Annual vs monthly billing difference"
+                "List of available pricing tiers",
+                "Price per tier",
+                "Free trial availability",
+                "Annual vs monthly billing difference"
             )
         )
 
@@ -386,9 +386,9 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 consistency = DimensionAssessment(satisfied = true, rationale = "No conflicts")
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] Security certifications",
-                "[PRIMARY] Data encryption methods",
-                "[SECONDARY] Access control features"
+                "Security certifications",
+                "Data encryption methods",
+                "Access control features"
             )
         )
 
@@ -416,10 +416,10 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 
-    // ==================== PRIMARY vs SECONDARY Requirements ====================
+    // ==================== Requirement Coverage Tests ====================
 
     @Test
-    fun `should FINISH_SEARCH when all PRIMARY satisfied even if SECONDARY unsatisfied`() = runTest(testCoroutineDispatcher) {
+    fun `should FINISH_SEARCH when all requirements are satisfied`() = runTest(testCoroutineDispatcher) {
         val currentAnswer = """
             ## Standard Body Check Package
             
@@ -454,10 +454,8 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 consistency = DimensionAssessment(satisfied = true, rationale = "No conflicts")
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of tests/screenings included in the standard package",
-                "[PRIMARY] Price of the standard package",
-                "[SECONDARY] How to book the standard package",
-                "[SECONDARY] Comparison with other package tiers"
+                "List of tests/screenings included in the standard package",
+                "Price of the standard package"
             )
         )
 
@@ -465,7 +463,7 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
 
         assertNotNull(output)
         assertTrue(output.answer.isNotBlank(), "Answer should not be blank")
-        println("=== PRIMARY/SECONDARY REQUIREMENTS TEST ===")
+        println("=== Requirements Coverage TEST ===")
         println("Status: ${output.status}")
         println("Assessment coverage: ${output.assessment.coverage}")
         println("Follow-up queries: ${output.followUpQueries}")
@@ -475,14 +473,14 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
         assertEquals(
             AnswerStatus.FINISH_SEARCH,
             output.status,
-            "Should FINISH_SEARCH because all PRIMARY requirements (package contents, price) are satisfied. " +
-            "Unsatisfied SECONDARY requirements (booking, comparison) should NOT prevent finishing."
+            "Should FINISH_SEARCH because all requirements (package contents, price) are satisfied. " +
+            "Coverage rationale: ${output.assessment.coverage.rationale}"
         )
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 
     @Test
-    fun `should CONTINUE_SEARCH when PRIMARY requirements are not satisfied`() = runTest(testCoroutineDispatcher) {
+    fun `should CONTINUE_SEARCH when requirements are not satisfied`() = runTest(testCoroutineDispatcher) {
         val currentAnswer = """
             ## Body Check Packages
             
@@ -514,16 +512,16 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 consistency = DimensionAssessment(satisfied = true, rationale = "No conflicts")
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of tests/screenings included in the standard package",
-                "[PRIMARY] Price of the standard package",
-                "[SECONDARY] How to book the standard package"
+                "List of tests/screenings included in the standard package",
+                "Price of the standard package",
+                "How to book the standard package"
             )
         )
 
         val output = agent.generate(input)
 
         assertNotNull(output)
-        println("=== PRIMARY NOT SATISFIED TEST ===")
+        println("=== Requirements Not Satisfied TEST ===")
         println("Status: ${output.status}")
         println("Assessment coverage: ${output.assessment.coverage}")
         println("Follow-up queries: ${output.followUpQueries}")
@@ -533,15 +531,15 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
         assertEquals(
             AnswerStatus.CONTINUE_SEARCH,
             output.status,
-            "Should CONTINUE_SEARCH because PRIMARY requirements (package contents, price) are still missing"
+            "Should CONTINUE_SEARCH because requirements (package contents, price) are still missing"
         )
         assertFalse(
             output.assessment.coverage.satisfied,
-            "Coverage should NOT be satisfied when PRIMARY requirements are missing"
+            "Coverage should NOT be satisfied when requirements are missing"
         )
         assertTrue(
             output.followUpQueries.isNotEmpty(),
-            "Should suggest follow-up queries to find missing PRIMARY information"
+            "Should suggest follow-up queries to find missing information"
         )
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
@@ -586,9 +584,9 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 "API key management"
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] Authentication methods supported",
-                "[PRIMARY] How to obtain API credentials",
-                "[SECONDARY] Rate limiting per auth method"
+                "Authentication methods supported",
+                "How to obtain API credentials",
+                "Rate limiting per auth method"
             )
         )
 
@@ -696,10 +694,10 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 consistency = DimensionAssessment(satisfied = true, rationale = "Single source")
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of tests/screenings included in the standard package",
-                "[PRIMARY] Price of the standard package",
-                "[SECONDARY] How to book the standard package",
-                "[SECONDARY] Preparation instructions"
+                "List of tests/screenings included in the standard package",
+                "Price of the standard package",
+                "How to book the standard package",
+                "Preparation instructions"
             )
         )
 
@@ -730,7 +728,7 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
         assertEquals(
             AnswerStatus.FINISH_SEARCH,
             output.status,
-            "Should FINISH_SEARCH since all PRIMARY requirements are satisfied (tests + price). " +
+            "Should FINISH_SEARCH since all requirements are satisfied (tests + price). " +
             "Assessment: ${output.assessment.coverage}"
         )
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
@@ -785,10 +783,10 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
                 consistency = DimensionAssessment(satisfied = true, rationale = "No conflicts")
             ),
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of pricing tiers",
-                "[PRIMARY] Price of each tier",
-                "[PRIMARY] Key features per tier",
-                "[SECONDARY] Flow Builder limits per tier"
+                "List of pricing tiers",
+                "Price of each tier",
+                "Key features per tier",
+                "Flow Builder limits per tier"
             )
         )
 
@@ -866,9 +864,9 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
             ),
             sessionHistory = sessionHistory,
             fulfillmentRequirements = listOf(
-                "[PRIMARY] List of pricing tiers",
-                "[PRIMARY] Price per tier",
-                "[SECONDARY] Contact limits per tier"
+                "List of pricing tiers",
+                "Price per tier",
+                "Contact limits per tier"
             )
         )
 

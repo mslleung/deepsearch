@@ -364,8 +364,6 @@ class AgenticBrowserSearchOrchestrator(
                     }
             )
 
-            // Initialize accumulator with initial requirements from query processing
-            // Requirements may be refined during synthesis based on discovered content
             accumulatorRef.set(
                 accumulatorRef.get().copy(currentRequirements = fulfillmentRequirements)
             )

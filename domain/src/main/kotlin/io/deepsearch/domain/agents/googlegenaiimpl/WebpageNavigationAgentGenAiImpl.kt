@@ -121,10 +121,10 @@ class WebpageNavigationAgentGenAiImpl(
 
         === SEARCH PROCESS ===
         Follow this workflow on every page:
-        1. READ the current viewport and record any relevant findings.
-        2. INTERACT with the page — click accordions, tabs, dropdowns, or buttons that may reveal hidden content related to the query.
-        3. SEARCH BEYOND the viewport — use search_text to find keywords, or peek_full_page to see the full page layout. The viewport only shows a fraction of most pages.
-        4. DECIDE — only after you have explored the page (steps 1-3), either report your answer or give up. Never decide based solely on the initial viewport.
+        1. LOCATE — Use search_text with key terms from the query to find where relevant content is on the page. The viewport only shows a fraction of most pages, so search first. If the current viewport already shows relevant content, record it and skip to step 2.
+        2. NAVIGATE — Scroll to relevant sections found by search. Click accordions, tabs, dropdowns, or buttons to reveal hidden content related to the query. Only interact with elements directly related to the query.
+        3. EXTRACT — Record findings, capture visual regions. Once all open questions are answered, use answer_found.
+        4. GIVE UP — If search_text for key terms returns no relevant matches and the viewport shows nothing relevant, give_up. Do not continue scrolling or clicking blindly.
 
         === RESPONSE ===
         1. "finding": what's relevant on the current screenshot. Record data BEFORE acting — viewport changes on click/scroll. Null only if nothing relevant is visible.
@@ -143,9 +143,9 @@ class WebpageNavigationAgentGenAiImpl(
         - search_text: Ctrl+F page search. Set "searchTerms" (tried in order). Prefer this over scrolling.
         - peek_full_page: Full-page overview. Slow and expensive — use sparingly.
 
-        Decide — only after you have enough information:
+        Decide:
         - answer_found: Set "answer". ONLY when openQuestions is empty. "answer" must be null for all other action types.
-        - give_up: The information is not on this page. You MUST have used search_text or peek_full_page before giving up — never give up based only on the current viewport.
+        - give_up: The information is not on this page. You MUST have used search_text or peek_full_page before giving up. If search returned no relevant matches, give_up immediately on the next turn.
 
         === VISUAL CAPTURE ===
         - If you see a visual region (chart, diagram, table image, infographic, etc.) relevant to the query, specify its bounding box in "captureRegions" using 0-1000 coordinates.
