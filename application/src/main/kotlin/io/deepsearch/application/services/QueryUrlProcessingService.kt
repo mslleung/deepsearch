@@ -26,7 +26,7 @@ interface IQueryUrlProcessingService {
      *
      * @param excludeUrls absolute URLs to exclude from on-page link analysis (already visited/queued)
      *
-     * Emits: [UrlProcessingEvent.LinkDiscoveryComplete], [UrlProcessingEvent.AgenticSearchComplete],
+     * Emits: [UrlProcessingEvent.LinksDiscovered], [UrlProcessingEvent.AgenticSearchComplete],
      * [UrlProcessingEvent.FileMarkdownExtractionComplete], [UrlProcessingEvent.PdfPreviewReady].
      */
     fun processUrlAsFlow(
@@ -170,7 +170,7 @@ class QueryUrlProcessingService(
                     sessionId,
                     excludeUrls
                 )
-                emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
+                emit(UrlProcessingEvent.LinksDiscovered(normalizedUrl, discoveredLinks))
             }
 
             val contentFlow = flow {
@@ -179,7 +179,20 @@ class QueryUrlProcessingService(
 
                     val agenticResult = agenticWebpageSearchService.searchWithinPage(
                         page, normalizedUrl, query, sessionId
-                    )
+                    ) { discoveredUrl ->
+                        this@channelFlow.send(
+                            UrlProcessingEvent.LinksDiscovered(
+                                normalizedUrl,
+                                listOf(
+                                    WebpageLink(
+                                        url = discoveredUrl,
+                                        source = LinkSource.AGENTIC_NAVIGATION,
+                                        reason = "Discovered via agentic page interaction"
+                                    )
+                                )
+                            )
+                        )
+                    }
                     logger.debug("Agentic search complete for {}: success={}", normalizedUrl, agenticResult.success)
 
                     val (imageIds, imageDescriptions) = storeCapturedImages(agenticResult.capturedImages)
@@ -196,21 +209,6 @@ class QueryUrlProcessingService(
                             imageDescriptions = imageDescriptions
                         )
                     )
-
-                    if (agenticResult.discoveredUrls.isNotEmpty()) {
-                        val agenticLinks = agenticResult.discoveredUrls.map { discoveredUrl ->
-                            WebpageLink(
-                                url = discoveredUrl,
-                                source = LinkSource.AGENTIC_NAVIGATION,
-                                reason = "Discovered via agentic page interaction"
-                            )
-                        }
-                        logger.info(
-                            "Agentic search discovered {} new URLs from {}: {}",
-                            agenticLinks.size, normalizedUrl, agenticLinks.map { it.url }
-                        )
-                        emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, agenticLinks))
-                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

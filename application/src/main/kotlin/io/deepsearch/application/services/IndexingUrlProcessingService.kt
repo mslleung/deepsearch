@@ -18,7 +18,7 @@ interface IIndexingUrlProcessingService {
      * Process a URL for periodic indexing. Discovers all links on the page (query-agnostic)
      * and produces comprehensive markdown via the DOM extraction pipeline.
      *
-     * Emits: [UrlProcessingEvent.LinkDiscoveryComplete], [UrlProcessingEvent.MarkdownExtractionComplete],
+     * Emits: [UrlProcessingEvent.LinksDiscovered], [UrlProcessingEvent.MarkdownExtractionComplete],
      * [UrlProcessingEvent.FileMarkdownExtractionComplete], [UrlProcessingEvent.PdfPreviewReady].
      */
     fun processUrlAsFlow(
@@ -109,7 +109,7 @@ class IndexingUrlProcessingService(
             emptyList()
         }
 
-        emit(UrlProcessingEvent.LinkDiscoveryComplete(originalUrl, links))
+        emit(UrlProcessingEvent.LinksDiscovered(originalUrl, links))
         emit(
             UrlProcessingEvent.MarkdownExtractionComplete(
                 originalUrl,
@@ -133,7 +133,7 @@ class IndexingUrlProcessingService(
 
             val linkDiscoveryFlow = flow {
                 val discoveredLinks = webpageLinkDiscoveryService.discoverAllLinks(extractedHtml, normalizedUrl)
-                emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
+                emit(UrlProcessingEvent.LinksDiscovered(normalizedUrl, discoveredLinks))
             }
 
             val contentFlow = flow {

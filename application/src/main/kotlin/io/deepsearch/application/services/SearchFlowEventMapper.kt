@@ -135,7 +135,7 @@ class SearchFlowEventMapper : ISearchFlowEventMapper {
         is SearchFlowEvent.DiscoveryFileSearchComplete,
         is SearchFlowEvent.QueryProcessingStarted,
         is SearchFlowEvent.QueryProcessingComplete,
-        is SearchFlowEvent.UrlLinkDiscoveryComplete,
+        is SearchFlowEvent.UrlLinksDiscovered,
         is SearchFlowEvent.SynthesisStarted -> null
     }
 
@@ -162,7 +162,7 @@ class SearchFlowEventMapper : ISearchFlowEventMapper {
         SearchFlowEventType.DISCOVERY_FILE_SEARCH_COMPLETE,
         SearchFlowEventType.QUERY_PROCESSING_STARTED,
         SearchFlowEventType.QUERY_PROCESSING_COMPLETE,
-        SearchFlowEventType.URL_LINK_DISCOVERY_COMPLETE,
+        SearchFlowEventType.URL_LINKS_DISCOVERED,
         SearchFlowEventType.SYNTHESIS_STARTED -> false
     }
 }

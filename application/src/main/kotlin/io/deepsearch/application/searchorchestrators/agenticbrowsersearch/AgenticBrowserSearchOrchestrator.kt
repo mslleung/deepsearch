@@ -504,7 +504,7 @@ class AgenticBrowserSearchOrchestrator(
                 )
                     .onEach { event ->
                         when (event) {
-                            is UrlProcessingEvent.LinkDiscoveryComplete -> {
+                            is UrlProcessingEvent.LinksDiscovered -> {
                                 event.discoveredLinks.forEach { link ->
                                     priorityLinkBuffer.send(DiscoveredLink(link, searchQuery.query))
                                 }
@@ -715,7 +715,7 @@ class AgenticBrowserSearchOrchestrator(
                             }
                             .onEach { event ->
                                 when (event) {
-                                    is UrlProcessingEvent.LinkDiscoveryComplete -> {
+                                    is UrlProcessingEvent.LinksDiscovered -> {
                                         if (!recursiveChannel.isClosedForSend) {
                                             event.discoveredLinks.forEach { newLink ->
                                                 try {

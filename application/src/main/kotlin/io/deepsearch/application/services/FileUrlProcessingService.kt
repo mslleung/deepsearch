@@ -16,7 +16,7 @@ interface IFileUrlProcessingService {
      * 3. Query the file search store for relevant content
      * 4. Emit FileMarkdownExtractionComplete with file search results
      * 5. Discover links from the extracted markdown
-     * 6. Emit LinkDiscoveryComplete with discovered links
+     * 6. Emit LinksDiscovered with discovered links
      *
      * @param discoverLinks Lambda to discover links from the extracted markdown.
      *        For relevant links: uses LLM to find query-relevant URLs.
@@ -106,7 +106,7 @@ class FileUrlProcessingService(
         )
 
         val discoveredLinks = discoverLinks(queryResult.markdown)
-        send(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
+        send(UrlProcessingEvent.LinksDiscovered(normalizedUrl, discoveredLinks))
         logger.debug("Link discovery complete for {}: {} links", normalizedUrl, discoveredLinks.size)
     }
 }

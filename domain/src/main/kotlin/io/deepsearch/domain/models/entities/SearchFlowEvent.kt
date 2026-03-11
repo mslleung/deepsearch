@@ -30,7 +30,7 @@ enum class SearchFlowEventType {
 
     // URL processing (maps to SearchEvent.UrlProcessingStarted/UrlProcessed)
     URL_PROCESSING_STARTED,
-    URL_LINK_DISCOVERY_COMPLETE,
+    URL_LINKS_DISCOVERED,
     URL_MARKDOWN_COMPLETE,
     URL_PROCESSING_FAILED,
 
@@ -210,14 +210,14 @@ sealed class SearchFlowEvent {
         override fun withId(newId: Long) = copy(id = newId)
     }
 
-    data class UrlLinkDiscoveryComplete(
+    data class UrlLinksDiscovered(
         override val id: Long = 0,
         override val sessionId: QuerySessionId,
         override val timestampMs: Long = System.currentTimeMillis(),
         override val createdAt: Instant = Clock.System.now(),
         val url: String
     ) : SearchFlowEvent() {
-        override val eventType = SearchFlowEventType.URL_LINK_DISCOVERY_COMPLETE
+        override val eventType = SearchFlowEventType.URL_LINKS_DISCOVERED
         override fun withId(newId: Long) = copy(id = newId)
     }
 

@@ -112,7 +112,7 @@ class ExposedSearchFlowEventRepository(
     private fun extractUrl(event: SearchFlowEvent): String? = when (event) {
         is SearchFlowEvent.SessionStarted -> event.url
         is SearchFlowEvent.UrlProcessingStarted -> event.url
-        is SearchFlowEvent.UrlLinkDiscoveryComplete -> event.url
+        is SearchFlowEvent.UrlLinksDiscovered -> event.url
         is SearchFlowEvent.UrlMarkdownComplete -> event.url
         is SearchFlowEvent.UrlProcessingFailed -> event.url
         is SearchFlowEvent.SessionError -> event.affectedUrl
@@ -196,7 +196,7 @@ class ExposedSearchFlowEventRepository(
                 is SearchFlowEvent.DiscoveryKgComplete,
                 is SearchFlowEvent.DiscoveryFileSearchComplete,
                 is SearchFlowEvent.UrlProcessingStarted,
-                is SearchFlowEvent.UrlLinkDiscoveryComplete,
+                is SearchFlowEvent.UrlLinksDiscovered,
                 is SearchFlowEvent.SynthesisStarted -> { /* No additional metadata */ }
             }
         }
@@ -305,7 +305,7 @@ class ExposedSearchFlowEventRepository(
                 createdAt = createdAt,
                 url = url ?: ""
             )
-            SearchFlowEventType.URL_LINK_DISCOVERY_COMPLETE -> SearchFlowEvent.UrlLinkDiscoveryComplete(
+            SearchFlowEventType.URL_LINKS_DISCOVERED -> SearchFlowEvent.UrlLinksDiscovered(
                 id = id,
                 sessionId = sessionId,
                 timestampMs = timestampMs,

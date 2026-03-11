@@ -25,21 +25,21 @@ class IndexingUrlProcessingServiceEventFlowTest : IsolatedKoinTest() {
     private val indexingUrlProcessingService by inject<IIndexingUrlProcessingService>()
 
     @Test
-    fun `processUrlAsFlow for periodic indexing emits LinkDiscoveryComplete before MarkdownExtractionComplete`() = runTest(testCoroutineDispatcher) {
+    fun `processUrlAsFlow for periodic indexing emits LinksDiscovered before MarkdownExtractionComplete`() = runTest(testCoroutineDispatcher) {
         val url = "https://www.example.com/"
 
         val events = indexingUrlProcessingService.processUrlAsFlow(url, sessionId = PeriodicIndexSessionId(1L)).toList()
 
         assertTrue(events.isNotEmpty(), "Should emit at least one event")
         
-        val linkEventIndex = events.indexOfFirst { it is UrlProcessingEvent.LinkDiscoveryComplete }
+        val linkEventIndex = events.indexOfFirst { it is UrlProcessingEvent.LinksDiscovered }
         val markdownEventIndex = events.indexOfFirst { it is UrlProcessingEvent.MarkdownExtractionComplete }
         
-        assertTrue(linkEventIndex >= 0, "Should emit LinkDiscoveryComplete event")
+        assertTrue(linkEventIndex >= 0, "Should emit LinksDiscovered event")
         assertTrue(markdownEventIndex >= 0, "Should emit MarkdownExtractionComplete event")
-        assertTrue(linkEventIndex < markdownEventIndex, "LinkDiscoveryComplete should be emitted before MarkdownExtractionComplete")
+        assertTrue(linkEventIndex < markdownEventIndex, "LinksDiscovered should be emitted before MarkdownExtractionComplete")
         
-        val linkEvent = events[linkEventIndex] as UrlProcessingEvent.LinkDiscoveryComplete
+        val linkEvent = events[linkEventIndex] as UrlProcessingEvent.LinksDiscovered
         val markdownEvent = events[markdownEventIndex] as UrlProcessingEvent.MarkdownExtractionComplete
         
         assertEquals(url, linkEvent.url)
@@ -68,10 +68,10 @@ class QueryUrlProcessingServiceEventFlowTest : IsolatedKoinTest() {
 
         assertTrue(events.isNotEmpty(), "Should emit at least one event")
         
-        val linkEvents = events.filterIsInstance<UrlProcessingEvent.LinkDiscoveryComplete>()
+        val linkEvents = events.filterIsInstance<UrlProcessingEvent.LinksDiscovered>()
         val agenticEvents = events.filterIsInstance<UrlProcessingEvent.AgenticSearchComplete>()
         
-        assertTrue(linkEvents.isNotEmpty(), "Should emit LinkDiscoveryComplete event")
+        assertTrue(linkEvents.isNotEmpty(), "Should emit LinksDiscovered event")
         assertTrue(agenticEvents.isNotEmpty(), "Should emit AgenticSearchComplete event for query sessions")
         
         val agenticEvent = agenticEvents.first()

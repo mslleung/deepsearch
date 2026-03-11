@@ -267,7 +267,7 @@ class SearchTimelineTest {
     private fun extractUrl(event: SearchFlowEvent): String? = when (event) {
         is SearchFlowEvent.SessionStarted -> event.url
         is SearchFlowEvent.UrlProcessingStarted -> event.url
-        is SearchFlowEvent.UrlLinkDiscoveryComplete -> event.url
+        is SearchFlowEvent.UrlLinksDiscovered -> event.url
         is SearchFlowEvent.UrlMarkdownComplete -> event.url
         is SearchFlowEvent.UrlProcessingFailed -> event.url
         is SearchFlowEvent.SessionError -> event.affectedUrl

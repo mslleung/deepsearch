@@ -4,13 +4,14 @@ import io.deepsearch.domain.models.valueobjects.WebpageLink
 
 /**
  * Events emitted during URL processing.
- * Links are discovered first (~5s), then content is extracted (~1min).
+ * Links may be discovered incrementally (from HTML analysis and agentic navigation),
+ * then content is extracted. Multiple [LinksDiscovered] events can be emitted per URL.
  * If processing fails, UrlProcessingException is thrown and should be caught using Flow.catch{}.
  */
 sealed interface UrlProcessingEvent {
     val url: String
 
-    data class LinkDiscoveryComplete(
+    data class LinksDiscovered(
         override val url: String,
         val discoveredLinks: List<WebpageLink>
     ) : UrlProcessingEvent

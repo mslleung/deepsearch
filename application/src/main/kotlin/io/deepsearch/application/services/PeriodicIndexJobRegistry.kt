@@ -552,7 +552,7 @@ class PeriodicIndexJobRegistry(
                 indexingUrlProcessingService.processUrlAsFlow(normalizedUrl, sessionId, job.ocrLanguage, proxyConfig)
                     .collect { event ->
                         when (event) {
-                            is UrlProcessingEvent.LinkDiscoveryComplete -> {
+                            is UrlProcessingEvent.LinksDiscovered -> {
                                 logger.debug("[{}] URL {} discovered {} links", jobId, normalizedUrl, event.discoveredLinks.size)
                                 
                                 event.discoveredLinks

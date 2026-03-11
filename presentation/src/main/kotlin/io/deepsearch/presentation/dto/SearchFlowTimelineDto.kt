@@ -155,7 +155,7 @@ fun SearchFlowEvent.toDto(): SearchFlowEventDto {
         is SearchFlowEvent.UrlProcessingStarted -> {
             url = this.url
         }
-        is SearchFlowEvent.UrlLinkDiscoveryComplete -> {
+        is SearchFlowEvent.UrlLinksDiscovered -> {
             url = this.url
         }
         is SearchFlowEvent.UrlMarkdownComplete -> {

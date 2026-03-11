@@ -58,7 +58,8 @@ interface IAgenticWebpageSearchService {
         page: IBrowserPage,
         url: String,
         query: String,
-        sessionId: SessionId
+        sessionId: SessionId,
+        onLinkDiscovered: (suspend (String) -> Unit)? = null
     ): AgenticPageSearchResult
 }
 
@@ -152,7 +153,8 @@ class AgenticWebpageSearchService(
         page: IBrowserPage,
         url: String,
         query: String,
-        sessionId: SessionId
+        sessionId: SessionId,
+        onLinkDiscovered: (suspend (String) -> Unit)?
     ): AgenticPageSearchResult {
         logger.info("Starting agentic page search for query='{}' on url={}", query, url)
 
@@ -379,11 +381,13 @@ class AgenticWebpageSearchService(
                                     "Click on '{}' intercepted navigation to {} — page unchanged",
                                     desc, clickResult.navigatedAwayTo
                                 )
-                                discoveredUrls.add(clickResult.navigatedAwayTo!!)
+                                val targetUrl = clickResult.navigatedAwayTo!!
+                                discoveredUrls.add(targetUrl)
+                                onLinkDiscovered?.invoke(targetUrl)
                                 offPageClickedDescs.add(desc)
                                 lastActionWasClick = false
                                 actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = "Navigated OFF-PAGE to ${clickResult.navigatedAwayTo} — " +
+                                    outcome = "Navigated OFF-PAGE to $targetUrl — " +
                                             "recorded for separate investigation. " +
                                             "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
                                 )
@@ -436,11 +440,13 @@ class AgenticWebpageSearchService(
                                     "ClickAt on '{}' intercepted navigation to {} — page unchanged",
                                     desc, clickResult.navigatedAwayTo
                                 )
-                                discoveredUrls.add(clickResult.navigatedAwayTo!!)
+                                val targetUrl = clickResult.navigatedAwayTo!!
+                                discoveredUrls.add(targetUrl)
+                                onLinkDiscovered?.invoke(targetUrl)
                                 offPageClickedDescs.add(desc)
                                 lastActionWasClick = false
                                 actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = "Navigated OFF-PAGE to ${clickResult.navigatedAwayTo} — " +
+                                    outcome = "Navigated OFF-PAGE to $targetUrl — " +
                                             "recorded for separate investigation. " +
                                             "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
                                 )
