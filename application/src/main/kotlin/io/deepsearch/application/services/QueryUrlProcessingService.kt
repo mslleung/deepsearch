@@ -24,6 +24,8 @@ interface IQueryUrlProcessingService {
      * Process a URL for query-time search. Discovers links relevant to the query
      * and performs agentic VLM search on HTML pages.
      *
+     * @param excludeUrls absolute URLs to exclude from on-page link analysis (already visited/queued)
+     *
      * Emits: [UrlProcessingEvent.LinkDiscoveryComplete], [UrlProcessingEvent.AgenticSearchComplete],
      * [UrlProcessingEvent.FileMarkdownExtractionComplete], [UrlProcessingEvent.PdfPreviewReady].
      */
@@ -32,7 +34,8 @@ interface IQueryUrlProcessingService {
         query: String,
         sessionId: QuerySessionId,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
-        proxyConfig: ProxyConfiguration = ProxyConfiguration.None
+        proxyConfig: ProxyConfiguration = ProxyConfiguration.None,
+        excludeUrls: Set<String> = emptySet()
     ): Flow<UrlProcessingEvent>
 }
 
@@ -55,7 +58,8 @@ class QueryUrlProcessingService(
         query: String,
         sessionId: QuerySessionId,
         ocrLanguage: OcrLanguage,
-        proxyConfig: ProxyConfiguration
+        proxyConfig: ProxyConfiguration,
+        excludeUrls: Set<String>
     ): Flow<UrlProcessingEvent> = flow {
         logger.debug("Processing URL for query: {}", url)
 
@@ -71,7 +75,7 @@ class QueryUrlProcessingService(
                         normalizedUrl,
                         contentTypeResult.bodyBytes.size
                     )
-                    processHtmlAsFlow(normalizedUrl, contentTypeResult.bodyBytes, query, sessionId, proxyConfig)
+                    processHtmlAsFlow(normalizedUrl, contentTypeResult.bodyBytes, query, sessionId, proxyConfig, excludeUrls)
                         .collect { event -> emit(event) }
                 }
 
@@ -152,7 +156,8 @@ class QueryUrlProcessingService(
         cachedHtmlBody: ByteArray,
         query: String,
         sessionId: QuerySessionId,
-        proxyConfig: ProxyConfiguration
+        proxyConfig: ProxyConfiguration,
+        excludeUrls: Set<String> = emptySet()
     ): Flow<UrlProcessingEvent> = channelFlow {
         browserPageResolver.withPageForCachedHtml(normalizedUrl, cachedHtmlBody, proxyConfig) { page ->
             val extractedHtml = page.getFullHtml()
@@ -162,7 +167,8 @@ class QueryUrlProcessingService(
                     query,
                     extractedHtml,
                     normalizedUrl,
-                    sessionId
+                    sessionId,
+                    excludeUrls
                 )
                 emit(UrlProcessingEvent.LinkDiscoveryComplete(normalizedUrl, discoveredLinks))
             }

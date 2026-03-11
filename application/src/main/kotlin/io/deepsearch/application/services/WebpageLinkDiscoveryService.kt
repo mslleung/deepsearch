@@ -43,9 +43,10 @@ interface IWebpageLinkDiscoveryService {
     suspend fun discoverRelevantLinksBySerper(searchQuery: SearchQuery, sessionId: SessionId? = null): List<WebpageLink>
 
     /**
-     * Discovers relevant links by analyzing links on the current webpage
+     * Discovers relevant links by analyzing links on the current webpage.
+     * @param excludeUrls absolute URLs to exclude from analysis (already visited/queued)
      */
-    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId): List<WebpageLink>
+    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, excludeUrls: Set<String> = emptySet()): List<WebpageLink>
 
     /**
      * Discovers all links on the page regardless of relevance.
@@ -146,8 +147,8 @@ class WebpageLinkDiscoveryService(
         return links
     }
 
-    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId): List<WebpageLink> {
-        logger.debug("Discovering links via on-page analysis for query: '{}'", query)
+    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, excludeUrls: Set<String>): List<WebpageLink> {
+        logger.debug("Discovering links via on-page analysis for query: '{}' (excluding {} already-visited URLs)", query, excludeUrls.size)
 
         val baseDomain = extractBaseDomain(url)
         if (baseDomain == null) {
@@ -159,7 +160,8 @@ class WebpageLinkDiscoveryService(
             LinkRelevanceAnalysisInput(
                 html = html,
                 query = query,
-                url = url
+                url = url,
+                excludeUrls = excludeUrls
             )
         )
 

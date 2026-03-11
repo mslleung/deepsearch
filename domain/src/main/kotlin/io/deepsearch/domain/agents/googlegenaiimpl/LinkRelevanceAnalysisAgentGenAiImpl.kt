@@ -138,7 +138,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     override suspend fun generate(input: LinkRelevanceAnalysisInput): LinkRelevanceAnalysisOutput {
         logger.debug("Analyzing link relevance for query: '{}'", input.query)
 
-        val extraction = extractLinks(input.html, input.url)
+        val extraction = extractLinks(input.html, input.url, input.excludeUrls)
         logger.debug("Extracted {} unique links", extraction.validRelativePaths.size)
 
         if (extraction.validRelativePaths.isEmpty()) {
@@ -255,8 +255,10 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     /**
      * Parses HTML, filters anchors to same-host relative paths, and extracts a compact
      * [LinkDescriptor] for each unique link (display text, section, surrounding context).
+     *
+     * @param excludeUrls absolute URLs to exclude from analysis (already visited/processed)
      */
-    private fun extractLinks(rawHtml: String, url: String): LinkExtractionResult {
+    private fun extractLinks(rawHtml: String, url: String, excludeUrls: Set<String> = emptySet()): LinkExtractionResult {
         val doc = Jsoup.parse(rawHtml)
         val baseUri = url.toSafeUri()
         val baseHost = baseUri.host
@@ -289,6 +291,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
         var offHostRemoved = 0
         var invalidRemoved = 0
+        var excludedCount = 0
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href").trim()
 
@@ -308,6 +311,9 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                 } else if (resolvedHost != null && !resolvedHost.equals(baseHost, ignoreCase = true)) {
                     offHostRemoved++
                     anchor.remove()
+                } else if (excludeUrls.isNotEmpty() && resolvedUri.toString() in excludeUrls) {
+                    excludedCount++
+                    anchor.remove()
                 } else {
                     val relativePath = buildString {
                         append(resolvedUri.rawPath ?: "/")
@@ -323,6 +329,9 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         }
         if (offHostRemoved > 0 || invalidRemoved > 0) {
             logger.debug("Filtered anchors: {} off-host, {} invalid scheme/href removed", offHostRemoved, invalidRemoved)
+        }
+        if (excludedCount > 0) {
+            logger.debug("Excluded {} already-visited links from analysis", excludedCount)
         }
         logger.debug("Filtered anchor tags to host: {}", baseHost)
 
