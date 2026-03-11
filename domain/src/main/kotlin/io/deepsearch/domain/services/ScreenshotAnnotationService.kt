@@ -14,16 +14,20 @@ import org.bytedeco.opencv.global.opencv_imgcodecs.imdecode
 import org.bytedeco.opencv.global.opencv_imgcodecs.imencode
 import org.bytedeco.opencv.global.opencv_imgproc.FILLED
 import org.bytedeco.opencv.global.opencv_imgproc.FONT_HERSHEY_DUPLEX
+import org.bytedeco.opencv.global.opencv_imgproc.INTER_AREA
 import org.bytedeco.opencv.global.opencv_imgproc.LINE_8
 import org.bytedeco.opencv.global.opencv_imgproc.LINE_AA
 import org.bytedeco.opencv.global.opencv_imgproc.THRESH_BINARY
 import org.bytedeco.opencv.global.opencv_imgproc.getTextSize
 import org.bytedeco.opencv.global.opencv_imgproc.putText
 import org.bytedeco.opencv.global.opencv_imgproc.rectangle
+import org.bytedeco.opencv.global.opencv_imgproc.resize
 import org.bytedeco.opencv.global.opencv_imgproc.threshold
 import org.bytedeco.opencv.opencv_core.Mat
 import org.bytedeco.opencv.opencv_core.Point
+import org.bytedeco.opencv.opencv_core.Rect
 import org.bytedeco.opencv.opencv_core.Scalar
+import org.bytedeco.opencv.opencv_core.Size
 import org.slf4j.LoggerFactory
 
 data class AnnotatedScreenshot(
@@ -157,6 +161,41 @@ class ScreenshotAnnotationService {
         )
     }
 
+    fun getImageDimensions(imageBytes: ByteArray): Pair<Int, Int> {
+        val mat = decodeMat(imageBytes, IMREAD_COLOR)
+        val dims = Pair(mat.cols(), mat.rows())
+        mat.close()
+        return dims
+    }
+
+    fun downscaleToJpeg(imageBytes: ByteArray, maxHeight: Int, jpegQuality: Int): ByteArray {
+        val image = decodeMat(imageBytes, IMREAD_COLOR)
+        if (image.rows() <= maxHeight) {
+            val result = encodeJpeg(image, jpegQuality)
+            image.close()
+            return result
+        }
+
+        val scale = maxHeight.toDouble() / image.rows()
+        val newWidth = (image.cols() * scale).toInt().coerceAtLeast(1)
+        val resized = Mat()
+        resize(image, resized, Size(newWidth, maxHeight))
+        image.close()
+
+        val result = encodeJpeg(resized, jpegQuality)
+        resized.close()
+        return result
+    }
+
+    fun cropToPng(imageBytes: ByteArray, x: Int, y: Int, width: Int, height: Int): ByteArray {
+        val image = decodeMat(imageBytes, IMREAD_COLOR)
+        val roi = Mat(image, Rect(x, y, width, height))
+        val result = encodePng(roi)
+        roi.close()
+        image.close()
+        return result
+    }
+
     fun hasVisualChange(previous: ByteArray, current: ByteArray): Boolean {
         val prevMat = decodeMat(previous, IMREAD_GRAYSCALE)
         val curMat = decodeMat(current, IMREAD_GRAYSCALE)
@@ -211,6 +250,16 @@ class ScreenshotAnnotationService {
         buf.get(outputBytes, 0, size)
         buf.close()
         params.close()
+        return outputBytes
+    }
+
+    private fun encodePng(image: Mat): ByteArray {
+        val buf = BytePointer()
+        imencode(BytePointer(".png"), image, buf)
+        val size = buf.limit().toInt()
+        val outputBytes = ByteArray(size)
+        buf.get(outputBytes, 0, size)
+        buf.close()
         return outputBytes
     }
 }

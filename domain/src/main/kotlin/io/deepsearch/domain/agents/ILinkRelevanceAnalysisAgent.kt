@@ -13,6 +13,7 @@ data class LinkRelevanceAnalysisInput(
 
 data class LinkRelevanceAnalysisOutput(
     val links: List<WebpageLink>,
+    val allEvaluatedUrls: Set<String>,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

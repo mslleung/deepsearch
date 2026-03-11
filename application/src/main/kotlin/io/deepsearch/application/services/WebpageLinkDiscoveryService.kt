@@ -29,6 +29,11 @@ import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
+data class OnPageLinkDiscoveryResult(
+    val links: List<WebpageLink>,
+    val allEvaluatedUrls: Set<String>
+)
+
 interface IWebpageLinkDiscoveryService {
     /**
      * Discovers relevant links using Google search
@@ -45,8 +50,9 @@ interface IWebpageLinkDiscoveryService {
     /**
      * Discovers relevant links by analyzing links on the current webpage.
      * @param excludeUrls absolute URLs to exclude from analysis (already visited/queued)
+     * @return relevant links and the full set of URLs that were evaluated on this page
      */
-    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, excludeUrls: Set<String> = emptySet()): List<WebpageLink>
+    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, excludeUrls: Set<String> = emptySet()): OnPageLinkDiscoveryResult
 
     /**
      * Discovers all links on the page regardless of relevance.
@@ -147,13 +153,13 @@ class WebpageLinkDiscoveryService(
         return links
     }
 
-    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, excludeUrls: Set<String>): List<WebpageLink> {
-        logger.debug("Discovering links via on-page analysis for query: '{}' (excluding {} already-visited URLs)", query, excludeUrls.size)
+    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, excludeUrls: Set<String>): OnPageLinkDiscoveryResult {
+        logger.debug("Discovering links via on-page analysis for query: '{}' (excluding {} already-evaluated URLs)", query, excludeUrls.size)
 
         val baseDomain = extractBaseDomain(url)
         if (baseDomain == null) {
             logger.warn("Could not extract base domain from URL: {}", url)
-            return emptyList()
+            return OnPageLinkDiscoveryResult(links = emptyList(), allEvaluatedUrls = emptySet())
         }
 
         val output = linkRelevanceAnalysisAgent.generate(
@@ -181,7 +187,7 @@ class WebpageLinkDiscoveryService(
             normalizedLinkBaseDomain == baseDomain
         }
         logger.debug("Discovered {} links from on-page analysis (filtered to {} same-domain links)", output.links.size, filteredLinks.size)
-        return filteredLinks
+        return OnPageLinkDiscoveryResult(links = filteredLinks, allEvaluatedUrls = output.allEvaluatedUrls)
     }
 
     override suspend fun discoverAllLinks(html: String, url: String): List<WebpageLink> {

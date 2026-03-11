@@ -163,14 +163,14 @@ class QueryUrlProcessingService(
             val extractedHtml = page.getFullHtml()
 
             val linkDiscoveryFlow = flow {
-                val discoveredLinks = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
+                val result = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
                     query,
                     extractedHtml,
                     normalizedUrl,
                     sessionId,
                     excludeUrls
                 )
-                emit(UrlProcessingEvent.LinksDiscovered(normalizedUrl, discoveredLinks))
+                emit(UrlProcessingEvent.LinksDiscovered(normalizedUrl, result.links, result.allEvaluatedUrls))
             }
 
             val contentFlow = flow {

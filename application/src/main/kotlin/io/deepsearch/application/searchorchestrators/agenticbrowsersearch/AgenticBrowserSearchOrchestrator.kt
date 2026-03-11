@@ -157,6 +157,10 @@ class AgenticBrowserSearchOrchestrator(
             // Used for content processing dedup - each URL only gets processed once
             val processedUrls = ConcurrentHashMap.newKeySet<String>()
 
+            // Tracks all URLs seen during on-page link relevance analysis across the session.
+            // Repeated header/footer links are excluded from subsequent analyses to reduce prompt tokens.
+            val evaluatedLinkUrls = ConcurrentHashMap.newKeySet<String>()
+
             // Query channel - the top-level driver for the search flow
             // Initial query is sent first, follow-up queries are added via the feedback loop
             val queryChannel = Channel<String>(Channel.UNLIMITED)
@@ -212,6 +216,7 @@ class AgenticBrowserSearchOrchestrator(
                     sessionId,
                     searchQuery,
                     processedUrls,
+                    evaluatedLinkUrls,
                     priorityLinkBuffer,
                     maxCacheAge,
                     proxyConfig,
@@ -235,6 +240,7 @@ class AgenticBrowserSearchOrchestrator(
                 sessionId,
                 searchQuery,
                 processedUrls,
+                evaluatedLinkUrls,
                 priorityLinkBuffer,
                 recursiveDiscoveredLinksChannel,
                 inFlightLinkProcessing,
@@ -477,6 +483,7 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        evaluatedLinkUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         priorityLinkBuffer: PriorityLinkChannel,
         maxCacheAge: Long?,
         proxyConfig: ProxyConfiguration,
@@ -498,11 +505,12 @@ class AgenticBrowserSearchOrchestrator(
                     sessionId,
                     searchQuery.ocrLanguage,
                     proxyConfig,
-                    excludeUrls = processedUrls.toSet()
+                    excludeUrls = processedUrls.toSet() + evaluatedLinkUrls
                 )
                     .onEach { event ->
                         when (event) {
                             is UrlProcessingEvent.LinksDiscovered -> {
+                                evaluatedLinkUrls.addAll(event.allEvaluatedUrls)
                                 event.discoveredLinks.forEach { link ->
                                     priorityLinkBuffer.send(DiscoveredLink(link, searchQuery.query))
                                 }
@@ -631,6 +639,7 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        evaluatedLinkUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
         priorityLinkBuffer: PriorityLinkChannel,
         recursiveChannel: Channel<DiscoveredLink>,
         inFlightLinkProcessing: AtomicInteger,
@@ -690,7 +699,7 @@ class AgenticBrowserSearchOrchestrator(
                             sessionId,
                             searchQuery.ocrLanguage,
                             proxyConfig,
-                            excludeUrls = processedUrls.toSet()
+                            excludeUrls = processedUrls.toSet() + evaluatedLinkUrls
                         )
                             .catch { e ->
                                 when (e) {
@@ -714,6 +723,7 @@ class AgenticBrowserSearchOrchestrator(
                             .onEach { event ->
                                 when (event) {
                                     is UrlProcessingEvent.LinksDiscovered -> {
+                                        evaluatedLinkUrls.addAll(event.allEvaluatedUrls)
                                         if (!recursiveChannel.isClosedForSend) {
                                             event.discoveredLinks.forEach { newLink ->
                                                 try {

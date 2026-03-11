@@ -4,7 +4,7 @@ data class SearchBudget(
     val timeLimitMs: Long = 60_000,
     val maxLinks: Int = 100,
     val maxSerpCalls: Int = 1,
-    val maxConcurrentSessions: Int = 8
+    val maxConcurrentSessions: Int = 30
 ) {
     init {
         require(timeLimitMs > 1000) { "Time limit must be > 1 second" }

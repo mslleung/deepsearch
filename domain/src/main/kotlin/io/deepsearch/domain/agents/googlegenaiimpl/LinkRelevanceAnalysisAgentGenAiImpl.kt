@@ -48,7 +48,8 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         val pageTitle: String?,
         val pageDescription: String?,
         val links: List<LinkDescriptor>,
-        val validRelativePaths: Set<String>
+        val validRelativePaths: Set<String>,
+        val allAbsoluteUrls: Set<String>
     )
 
     private val relevantLinkSchema: Schema = Schema.builder()
@@ -146,6 +147,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
             return LinkRelevanceAnalysisOutput(
                 links = emptyList(),
+                allEvaluatedUrls = emptySet(),
                 tokenUsage = TokenUsageMetrics.empty()
             )
         }
@@ -221,6 +223,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
         return LinkRelevanceAnalysisOutput(
             links = links,
+            allEvaluatedUrls = extraction.allAbsoluteUrls,
             tokenUsage = tokenUsage
         )
     }
@@ -275,6 +278,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
         val validSchemes = setOf("http", "https")
         val validRelativePaths = mutableSetOf<String>()
+        val allAbsoluteUrls = mutableSetOf<String>()
 
         // Bulk-remove anchors with non-HTTP schemes and empty/fragment-only hrefs before the main loop
         val nonHttpSchemes = listOf(
@@ -315,6 +319,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                     excludedCount++
                     anchor.remove()
                 } else {
+                    allAbsoluteUrls.add(resolvedUri.toString())
                     val relativePath = buildString {
                         append(resolvedUri.rawPath ?: "/")
                         resolvedUri.rawQuery?.let { append("?").append(it) }
@@ -363,7 +368,8 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
             pageTitle = pageTitle,
             pageDescription = pageDescription,
             links = links,
-            validRelativePaths = validRelativePaths
+            validRelativePaths = validRelativePaths,
+            allAbsoluteUrls = allAbsoluteUrls
         )
     }
 

@@ -20,12 +20,7 @@ import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.awt.Image
-import java.awt.image.BufferedImage
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
-import javax.imageio.ImageIO
 import kotlin.coroutines.cancellation.CancellationException
 
 data class CapturedImage(
@@ -410,9 +405,9 @@ class AgenticWebpageSearchService(
                 }
 
                 is NavigationAction.ClickAt -> {
-                    val img = ImageIO.read(ByteArrayInputStream(rawScreenshot.bytes))
-                    val viewportX = ((action.x / 1000.0) * img.width).toInt()
-                    val viewportY = ((action.y / 1000.0) * img.height).toInt()
+                    val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(rawScreenshot.bytes)
+                    val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
+                    val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
                     val desc = action.elementDescription
                         ?: action.reason.take(60).ifEmpty { "unlabeled element at (${action.x},${action.y})" }
                     actionsPerformed[actionsPerformed.lastIndex] =
@@ -610,14 +605,14 @@ class AgenticWebpageSearchService(
         capturedImages: MutableList<CapturedImage>,
         capturedHashes: MutableSet<String>
     ) {
-        val img = ImageIO.read(ByteArrayInputStream(screenshotBytes)) ?: return
+        val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(screenshotBytes)
         val sha256 = MessageDigest.getInstance("SHA-256")
 
         for (region in regions) {
-            val x = ((region.x1 / 1000.0) * img.width).toInt().coerceIn(0, img.width - 1)
-            val y = ((region.y1 / 1000.0) * img.height).toInt().coerceIn(0, img.height - 1)
-            val x2 = ((region.x2 / 1000.0) * img.width).toInt().coerceIn((x + 1).coerceAtMost(img.width), img.width)
-            val y2 = ((region.y2 / 1000.0) * img.height).toInt().coerceIn((y + 1).coerceAtMost(img.height), img.height)
+            val x = ((region.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
+            val y = ((region.y1 / 1000.0) * imgHeight).toInt().coerceIn(0, imgHeight - 1)
+            val x2 = ((region.x2 / 1000.0) * imgWidth).toInt().coerceIn((x + 1).coerceAtMost(imgWidth), imgWidth)
+            val y2 = ((region.y2 / 1000.0) * imgHeight).toInt().coerceIn((y + 1).coerceAtMost(imgHeight), imgHeight)
             val w = x2 - x
             val h = y2 - y
 
@@ -626,10 +621,7 @@ class AgenticWebpageSearchService(
                 continue
             }
 
-            val cropped = img.getSubimage(x, y, w, h)
-            val buf = ByteArrayOutputStream()
-            ImageIO.write(cropped, "png", buf)
-            val bytes = buf.toByteArray()
+            val bytes = screenshotAnnotationService.cropToPng(screenshotBytes, x, y, w, h)
 
             val hash = sha256.digest(bytes)
             val hashHex = hash.joinToString("") { "%02x".format(it) }
@@ -645,29 +637,10 @@ class AgenticWebpageSearchService(
     }
 
     private fun downscaleScreenshot(imageBytes: ByteArray, maxHeight: Int): ByteArray {
-        val original = ImageIO.read(ByteArrayInputStream(imageBytes)) ?: return imageBytes
-        val needsResize = original.height > maxHeight
-
-        val buffered = if (needsResize) {
-            val scale = maxHeight.toDouble() / original.height
-            val newWidth = (original.width * scale).toInt().coerceAtLeast(1)
-            val scaled = original.getScaledInstance(newWidth, maxHeight, Image.SCALE_SMOOTH)
-            BufferedImage(newWidth, maxHeight, BufferedImage.TYPE_INT_RGB).also {
-                it.graphics.drawImage(scaled, 0, 0, null)
-            }
-        } else {
-            original
-        }
-
-        val output = ByteArrayOutputStream()
-        val writer = ImageIO.getImageWritersByFormatName("jpg").next()
-        val param = writer.defaultWriteParam.apply {
-            compressionMode = javax.imageio.ImageWriteParam.MODE_EXPLICIT
-            compressionQuality = PEEK_JPEG_QUALITY
-        }
-        writer.output = ImageIO.createImageOutputStream(output)
-        writer.write(null, javax.imageio.IIOImage(buffered, null, null), param)
-        writer.dispose()
-        return output.toByteArray()
+        return screenshotAnnotationService.downscaleToJpeg(
+            imageBytes,
+            maxHeight,
+            (PEEK_JPEG_QUALITY * 100).toInt()
+        )
     }
 }

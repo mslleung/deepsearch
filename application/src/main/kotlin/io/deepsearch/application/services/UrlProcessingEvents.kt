@@ -13,7 +13,8 @@ sealed interface UrlProcessingEvent {
 
     data class LinksDiscovered(
         override val url: String,
-        val discoveredLinks: List<WebpageLink>
+        val discoveredLinks: List<WebpageLink>,
+        val allEvaluatedUrls: Set<String> = emptySet()
     ) : UrlProcessingEvent
 
     /**
