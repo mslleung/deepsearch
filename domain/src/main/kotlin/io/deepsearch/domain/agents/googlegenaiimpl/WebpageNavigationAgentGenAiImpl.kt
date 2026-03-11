@@ -137,11 +137,11 @@ class WebpageNavigationAgentGenAiImpl(
         - click: Click labeled element. Set "labelNumber".
         - click_at: Click unlabeled element. Set "clickX"/"clickY" (0-1000).
         - type: Type into labeled input. Set "labelNumber" and "text".
-        - scroll: Set "scrollDirection" (DOWN/UP). Use when search_text didn't help.
 
         Read — look beyond the current viewport:
         - search_text: Ctrl+F page search. Set "searchTerms" (tried in order). Prefer this over scrolling.
-        - peek_full_page: Full-page overview. Slow and expensive — use sparingly.
+        - scroll: Set "scrollDirection" (DOWN/UP). Use when search_text didn't help.
+        - peek_full_page: Full-page overview. Slow and expensive. Use as last resort if the other read actions are inconclusive.
 
         Decide:
         - answer_found: Set "answer". ONLY when openQuestions is empty. "answer" must be null for all other action types.
