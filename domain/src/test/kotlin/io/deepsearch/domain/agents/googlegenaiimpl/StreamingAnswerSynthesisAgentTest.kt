@@ -779,10 +779,10 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
         )
     }
 
-    // ==================== NOT_FOUND Status Test ====================
+    // ==================== Irrelevant Sources Test ====================
 
     @Test
-    fun `should return NOT_FOUND when sources are completely irrelevant to query`() = runTest(testCoroutineDispatcher) {
+    fun `should return CONTINUE_SEARCH when sources are completely irrelevant to query`() = runTest(testCoroutineDispatcher) {
         val irrelevantSource = EvaluatedSource(
             url = "https://example.com/cooking-blog",
             title = "Best Pasta Recipes 2025",
@@ -808,16 +808,16 @@ class StreamingAnswerSynthesisAgentTest : IsolatedKoinTest() {
         val output = agent.generate(input)
 
         assertNotNull(output)
-        println("=== NOT_FOUND STATUS TEST ===")
+        println("=== IRRELEVANT SOURCES TEST ===")
         println("Status: ${output.status}")
         println("Assessment: coverage=${output.assessment.coverage}, depth=${output.assessment.depth}")
         println("Follow-up queries: ${output.followUpQueries}")
         println("Answer: ${output.answer.take(500)}")
         println()
 
-        assertTrue(
-            output.status == AnswerStatus.NOT_FOUND || output.status == AnswerStatus.CONTINUE_SEARCH,
-            "Should return NOT_FOUND or CONTINUE_SEARCH when sources are completely irrelevant. Got: ${output.status}"
+        assertEquals(
+            AnswerStatus.CONTINUE_SEARCH, output.status,
+            "Should return CONTINUE_SEARCH when sources are completely irrelevant. Got: ${output.status}"
         )
         assertFalse(
             output.assessment.coverage.satisfied,

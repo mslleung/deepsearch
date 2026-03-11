@@ -219,10 +219,10 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
         assertTrue(output.tokenUsage.totalTokens > 0, "Should track token usage")
     }
 
-    // ==================== NOT_FOUND Status ====================
+    // ==================== Irrelevant Sources ====================
 
     @Test
-    fun `should return NOT_FOUND when neither current answer nor new sources have relevant info`() = runTest(testCoroutineDispatcher) {
+    fun `should return CONTINUE_SEARCH when neither current answer nor new sources have relevant info`() = runTest(testCoroutineDispatcher) {
         val currentAnswer = "No information found to answer the query."
 
         val irrelevantSource = EvaluatedSource(
@@ -259,16 +259,16 @@ class IncrementalSynthesisAgentTest : IsolatedKoinTest() {
         val output = agent.generate(input)
 
         assertNotNull(output)
-        println("=== NOT_FOUND STATUS TEST ===")
+        println("=== IRRELEVANT SOURCES TEST ===")
         println("Status: ${output.status}")
         println("Assessment: coverage=${output.assessment.coverage}")
         println("Follow-up queries: ${output.followUpQueries}")
         println("Answer: ${output.answer.take(500)}")
         println()
 
-        assertTrue(
-            output.status == AnswerStatus.NOT_FOUND || output.status == AnswerStatus.CONTINUE_SEARCH,
-            "Should return NOT_FOUND or CONTINUE_SEARCH for irrelevant sources, got: ${output.status}"
+        assertEquals(
+            AnswerStatus.CONTINUE_SEARCH, output.status,
+            "Should return CONTINUE_SEARCH for irrelevant sources, got: ${output.status}"
         )
         assertFalse(
             output.assessment.coverage.satisfied,

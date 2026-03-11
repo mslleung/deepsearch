@@ -26,8 +26,7 @@ data class SynthesisResult(
     val refinedRequirements: List<String>,
     val imageIds: List<String>
 ) {
-    /** Whether the answer is complete (FINISH_SEARCH or NOT_FOUND are both terminal) */
-    val isComplete: Boolean get() = status == AnswerStatus.FINISH_SEARCH || status == AnswerStatus.NOT_FOUND
+    val isComplete: Boolean get() = status == AnswerStatus.FINISH_SEARCH
 
     /** Returns a brief summary of unsatisfied dimensions for logging */
     fun getUnsatisfiedSummary(): String {

@@ -87,8 +87,8 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     .build(),
                 "continuation_status" to Schema.builder()
                     .type("STRING")
-                    .description("FINISH_SEARCH if confident answer found. CONTINUE_SEARCH if more information needed. NOT_FOUND if sources don't contain the requested information.")
-                    .enum_(listOf("FINISH_SEARCH", "CONTINUE_SEARCH", "NOT_FOUND"))
+                    .description("FINISH_SEARCH if confident answer found. CONTINUE_SEARCH if more information needed.")
+                    .enum_(listOf("FINISH_SEARCH", "CONTINUE_SEARCH"))
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
@@ -160,8 +160,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         
         ## Step 2: Determine Search Continuation Status
         - FINISH_SEARCH: The answer addresses the core query with specific, authoritative data. All requirements are satisfied.
-        - CONTINUE_SEARCH: Critical information is still missing.
-        - NOT_FOUND: The sources do not contain the information asked about.
+        - CONTINUE_SEARCH: Critical information is still missing or sources are insufficient.
 
         ## Step 3: Generate Answer
         - Synthesize facts into a comprehensive, standalone answer for answering the original query and the requirements
@@ -183,7 +182,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         - Keep the list of requirements small
         - Each requirement must be atomic and verifiable
         - Always preserve the core intent of the original query
-        - If FINISH_SEARCH or NOT_FOUND, output the current requirements unchanged
+        - If FINISH_SEARCH, output the current requirements unchanged
         
         ## Output Format
         {
@@ -194,7 +193,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                 "authority": { "satisfied": bool, "rationale": str },
                 "consistency": { "satisfied": bool, "rationale": str }
             },
-            "continuation_status": "FINISH_SEARCH" | "CONTINUE_SEARCH" | "NOT_FOUND",
+            "continuation_status": "FINISH_SEARCH" | "CONTINUE_SEARCH",
             "answer": "markdown answer",
             "citedSourceUrls": ["urls used"],
             "followUpQueries": ["queries to enhance answer"],
@@ -497,7 +496,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
      * Defaults to CONTINUE_SEARCH if not found or invalid.
      */
     private fun extractStatus(json: String): AnswerStatus {
-        val regex = """"continuation_status"\s*:\s*"(FINISH_SEARCH|CONTINUE_SEARCH|NOT_FOUND)"""".toRegex(RegexOption.IGNORE_CASE)
+        val regex = """"continuation_status"\s*:\s*"(FINISH_SEARCH|CONTINUE_SEARCH)"""".toRegex(RegexOption.IGNORE_CASE)
         val match = regex.find(json) ?: return AnswerStatus.CONTINUE_SEARCH
         return AnswerStatus.valueOf(match.groupValues[1].uppercase())
     }

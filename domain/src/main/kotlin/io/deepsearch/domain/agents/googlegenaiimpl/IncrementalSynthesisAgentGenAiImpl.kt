@@ -78,8 +78,8 @@ class IncrementalSynthesisAgentGenAiImpl(
                     .build(),
                 "continuation_status" to Schema.builder()
                     .type("STRING")
-                    .description("FINISH_SEARCH if answer is complete. CONTINUE_SEARCH if more needed. NOT_FOUND if information unavailable.")
-                    .enum_(listOf("FINISH_SEARCH", "CONTINUE_SEARCH", "NOT_FOUND"))
+                    .description("FINISH_SEARCH if answer is complete. CONTINUE_SEARCH if more needed.")
+                    .enum_(listOf("FINISH_SEARCH", "CONTINUE_SEARCH"))
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
@@ -173,8 +173,7 @@ class IncrementalSynthesisAgentGenAiImpl(
 
         ## Step 4: Determine Search Continuation Status
         - FINISH_SEARCH: The answer addresses the core query with specific, authoritative data. All requirements are satisfied.
-        - CONTINUE_SEARCH: Critical information is still missing.
-        - NOT_FOUND: Neither the current answer nor the new sources contain the information asked about.
+        - CONTINUE_SEARCH: Critical information is still missing or sources are insufficient.
 
         ## Step 5: Generate Follow-up Queries
         - Only suggest follow-ups when continuation_status is CONTINUE_SEARCH
@@ -186,7 +185,7 @@ class IncrementalSynthesisAgentGenAiImpl(
         - Keep the list of requirements small
         - Each requirement must be atomic and verifiable
         - Always preserve the core intent of the original query
-        - If FINISH_SEARCH or NOT_FOUND, output the current requirements unchanged
+        - If FINISH_SEARCH, output the current requirements unchanged
 
         ## Output Format
         {
@@ -197,7 +196,7 @@ class IncrementalSynthesisAgentGenAiImpl(
                 "authority": { "satisfied": bool, "rationale": str },
                 "consistency": { "satisfied": bool, "rationale": str }
             },
-            "continuation_status": "FINISH_SEARCH" | "CONTINUE_SEARCH" | "NOT_FOUND",
+            "continuation_status": "FINISH_SEARCH" | "CONTINUE_SEARCH",
             "answer": "complete updated markdown answer",
             "citedSourceUrls": ["all urls cited in the answer"],
             "followUpQueries": ["queries to enhance answer"],
@@ -440,7 +439,7 @@ class IncrementalSynthesisAgentGenAiImpl(
     }
 
     private fun extractStatus(json: String): AnswerStatus {
-        val regex = """"continuation_status"\s*:\s*"(FINISH_SEARCH|CONTINUE_SEARCH|NOT_FOUND)"""".toRegex(RegexOption.IGNORE_CASE)
+        val regex = """"continuation_status"\s*:\s*"(FINISH_SEARCH|CONTINUE_SEARCH)"""".toRegex(RegexOption.IGNORE_CASE)
         val match = regex.find(json) ?: return AnswerStatus.CONTINUE_SEARCH
         return AnswerStatus.valueOf(match.groupValues[1].uppercase())
     }
