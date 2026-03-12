@@ -65,6 +65,10 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("STRING")
                     .enum_(listOf("DOWN", "UP"))
                     .build(),
+                "scrollPercent" to Schema.builder()
+                    .type("INTEGER")
+                    .description("Percentage of viewport to scroll (10-100). 100 = full viewport. Use less to reveal content just below/above the visible area.")
+                    .build(),
                 "searchTerms" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
@@ -108,7 +112,7 @@ class WebpageNavigationAgentGenAiImpl(
         .required(listOf("actionType", "openQuestions"))
         .propertyOrdering(listOf(
             "actionType", "finding", "openQuestions", "reason",
-            "labelNumber", "clickX", "clickY", "scrollDirection", "searchTerms", "text",
+            "labelNumber", "clickX", "clickY", "scrollDirection", "scrollPercent", "searchTerms", "text",
             "captureRegions", "answer"
         ))
         .build()
@@ -140,7 +144,7 @@ class WebpageNavigationAgentGenAiImpl(
 
         Read — look beyond the current viewport:
         - search_text: Ctrl+F page search. Set "searchTerms" (tried in order). Prefer this over scrolling.
-        - scroll: Set "scrollDirection" (DOWN/UP). Use when search_text didn't help.
+        - scroll: Set "scrollDirection" (DOWN/UP) and "scrollPercent" (10-100, percentage of viewport to scroll; 100 = full viewport, default). Use when search_text didn't help.
         - peek_full_page: Full-page overview. Slow and expensive. Use as last resort if the other read actions are inconclusive.
 
         Decide:
@@ -189,6 +193,7 @@ class WebpageNavigationAgentGenAiImpl(
         val clickX: Int? = null,
         val clickY: Int? = null,
         val scrollDirection: String? = null,
+        val scrollPercent: Int? = null,
         val searchTerms: List<String>? = null,
         val text: String? = null,
         val answer: String? = null,
@@ -350,7 +355,8 @@ class WebpageNavigationAgentGenAiImpl(
                 direction = when (response.scrollDirection?.uppercase()) {
                     "UP" -> ScrollDirection.UP
                     else -> ScrollDirection.DOWN
-                }
+                },
+                scrollPercent = (response.scrollPercent ?: 100).coerceIn(10, 100)
             )
             "answer_found" -> {
                 val answer = response.answer
@@ -414,7 +420,7 @@ class WebpageNavigationAgentGenAiImpl(
             val target = action.elementDescription ?: "unlabeled element"
             "Clicked at (${action.x},${action.y}) on $target — ${action.reason}"
         }
-        is NavigationAction.Scroll -> "Scrolled ${action.direction.name.lowercase()}"
+        is NavigationAction.Scroll -> "Scrolled ${action.direction.name.lowercase()} ${action.scrollPercent}%"
         is NavigationAction.SearchText -> "Searched for: ${action.searchTerms.joinToString()}"
         is NavigationAction.PeekFullPage -> "Peeked at full page overview"
         is NavigationAction.Type -> {

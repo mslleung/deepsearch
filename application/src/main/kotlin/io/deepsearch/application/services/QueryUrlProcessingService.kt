@@ -35,7 +35,7 @@ interface IQueryUrlProcessingService {
         sessionId: QuerySessionId,
         ocrLanguage: OcrLanguage = OcrLanguage.DEFAULT,
         proxyConfig: ProxyConfiguration = ProxyConfiguration.None,
-        excludeUrls: Set<String> = emptySet()
+        sharedEvaluatedUrls: MutableSet<String>? = null
     ): Flow<UrlProcessingEvent>
 }
 
@@ -59,7 +59,7 @@ class QueryUrlProcessingService(
         sessionId: QuerySessionId,
         ocrLanguage: OcrLanguage,
         proxyConfig: ProxyConfiguration,
-        excludeUrls: Set<String>
+        sharedEvaluatedUrls: MutableSet<String>?
     ): Flow<UrlProcessingEvent> = flow {
         logger.debug("Processing URL for query: {}", url)
 
@@ -75,7 +75,7 @@ class QueryUrlProcessingService(
                         normalizedUrl,
                         contentTypeResult.bodyBytes.size
                     )
-                    processHtmlAsFlow(normalizedUrl, contentTypeResult.bodyBytes, query, sessionId, proxyConfig, excludeUrls)
+                    processHtmlAsFlow(normalizedUrl, contentTypeResult.bodyBytes, query, sessionId, proxyConfig, sharedEvaluatedUrls)
                         .collect { event -> emit(event) }
                 }
 
@@ -157,7 +157,7 @@ class QueryUrlProcessingService(
         query: String,
         sessionId: QuerySessionId,
         proxyConfig: ProxyConfiguration,
-        excludeUrls: Set<String> = emptySet()
+        sharedEvaluatedUrls: MutableSet<String>? = null
     ): Flow<UrlProcessingEvent> = channelFlow {
         browserPageResolver.withPageForCachedHtml(normalizedUrl, cachedHtmlBody, proxyConfig) { page ->
             val extractedHtml = page.getFullHtml()
@@ -168,7 +168,7 @@ class QueryUrlProcessingService(
                     extractedHtml,
                     normalizedUrl,
                     sessionId,
-                    excludeUrls
+                    sharedEvaluatedUrls
                 )
                 emit(UrlProcessingEvent.LinksDiscovered(normalizedUrl, result.links, result.allEvaluatedUrls))
             }

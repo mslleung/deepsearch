@@ -1,0 +1,9 @@
+---
+alwaysApply: false
+---
+
+Given a query log. 
+
+Perform a timing analysis. Visualize the timeline as an ASCII graph.
+Trace the iterations and steps that produces the answer, if any.
+Record the token cost.

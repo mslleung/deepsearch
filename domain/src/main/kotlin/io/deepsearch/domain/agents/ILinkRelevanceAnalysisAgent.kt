@@ -8,7 +8,13 @@ data class LinkRelevanceAnalysisInput(
     val html: String,
     val query: String,
     val url: String,
-    val excludeUrls: Set<String> = emptySet()
+    /**
+     * Thread-safe shared set for cross-page link deduplication during concurrent processing.
+     * When provided, each extracted URL is atomically claimed via [MutableSet.add];
+     * only newly claimed URLs are included in the LLM prompt, preventing the same link
+     * from being analyzed on multiple pages processed in parallel.
+     */
+    val sharedEvaluatedUrls: MutableSet<String>? = null
 ) : IAgent.IAgentInput
 
 data class LinkRelevanceAnalysisOutput(

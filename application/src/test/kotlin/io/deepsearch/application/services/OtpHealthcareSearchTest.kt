@@ -414,5 +414,11 @@ class OtpHealthcareSearchTest : IsolatedKoinTest() {
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, " +
                 "output=${result.totalTokenUsage.outputTokens}, " +
                 "total=${result.totalTokenUsage.totalTokens}")
+
+        val report = ActionEfficiencyAnalyzer.analyze(result, result.actionsPerformed.size)
+        println("\n--- Efficiency Summary ---")
+        println("Scroll: ${report.scrollCount}, SearchText: ${report.searchTextCount} (hits=${report.searchTextHits}, misses=${report.searchTextMisses})")
+        println("Wasted scrolls: ${report.wastedScrolls}, Scrolls before 1st search: ${report.scrollBeforeFirstSearch}")
+        println("SearchText used first: ${report.searchTextUsedFirst}")
     }
 }

@@ -49,7 +49,8 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         val pageDescription: String?,
         val links: List<LinkDescriptor>,
         val validRelativePaths: Set<String>,
-        val allAbsoluteUrls: Set<String>
+        val allAbsoluteUrls: Set<String>,
+        val pathToAbsoluteUrl: Map<String, String>
     )
 
     private val relevantLinkSchema: Schema = Schema.builder()
@@ -139,7 +140,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     override suspend fun generate(input: LinkRelevanceAnalysisInput): LinkRelevanceAnalysisOutput {
         logger.debug("Analyzing link relevance for query: '{}'", input.query)
 
-        val extraction = extractLinks(input.html, input.url, input.excludeUrls)
+        val extraction = extractLinks(input.html, input.url)
         logger.debug("Extracted {} unique links", extraction.validRelativePaths.size)
 
         if (extraction.validRelativePaths.isEmpty()) {
@@ -152,7 +153,33 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
             )
         }
 
-        val userPrompt = buildPrompt(input.query, extraction)
+        // Concurrent cross-page dedup: atomically claim URLs via the shared set.
+        // Only URLs successfully added (not already present) are included in the prompt.
+        val effectiveExtraction = if (input.sharedEvaluatedUrls != null) {
+            val newAbsoluteUrls = extraction.allAbsoluteUrls.filter { input.sharedEvaluatedUrls.add(it) }.toSet()
+            val filteredLinks = extraction.links.filter { link ->
+                val absoluteUrl = extraction.pathToAbsoluteUrl[link.path]
+                absoluteUrl != null && absoluteUrl in newAbsoluteUrls
+            }
+            val filteredPaths = filteredLinks.map { it.path }.toSet()
+            val skippedCount = extraction.links.size - filteredLinks.size
+            if (skippedCount > 0) {
+                logger.debug("Cross-page dedup: {}/{} links already claimed by concurrent calls", skippedCount, extraction.links.size)
+            }
+            if (filteredLinks.isEmpty()) {
+                logger.debug("All links already claimed by concurrent calls, skipping LLM analysis")
+                return LinkRelevanceAnalysisOutput(
+                    links = emptyList(),
+                    allEvaluatedUrls = extraction.allAbsoluteUrls,
+                    tokenUsage = TokenUsageMetrics.empty()
+                )
+            }
+            extraction.copy(links = filteredLinks, validRelativePaths = filteredPaths)
+        } else {
+            extraction
+        }
+
+        val userPrompt = buildPrompt(input.query, effectiveExtraction)
 
         val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
@@ -193,7 +220,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
             val baseUri = input.url.toSafeUri()
             val validatedLinks = response.links.distinctBy { it.url }.mapNotNull { linkJson ->
-                if (linkJson.url in extraction.validRelativePaths) {
+                if (linkJson.url in effectiveExtraction.validRelativePaths) {
                     val absoluteUrl = baseUri.resolve(linkJson.url).toString()
                     val clampedScore = linkJson.score.coerceIn(1, 10)
                     WebpageLink(
@@ -258,10 +285,8 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
     /**
      * Parses HTML, filters anchors to same-host relative paths, and extracts a compact
      * [LinkDescriptor] for each unique link (display text, section, surrounding context).
-     *
-     * @param excludeUrls absolute URLs to exclude from analysis (already visited/processed)
      */
-    private fun extractLinks(rawHtml: String, url: String, excludeUrls: Set<String> = emptySet()): LinkExtractionResult {
+    private fun extractLinks(rawHtml: String, url: String): LinkExtractionResult {
         val doc = Jsoup.parse(rawHtml)
         val baseUri = url.toSafeUri()
         val baseHost = baseUri.host
@@ -279,6 +304,7 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         val validSchemes = setOf("http", "https")
         val validRelativePaths = mutableSetOf<String>()
         val allAbsoluteUrls = mutableSetOf<String>()
+        val pathToAbsoluteUrl = mutableMapOf<String, String>()
 
         // Bulk-remove anchors with non-HTTP schemes and empty/fragment-only hrefs before the main loop
         val nonHttpSchemes = listOf(
@@ -295,7 +321,6 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
 
         var offHostRemoved = 0
         var invalidRemoved = 0
-        var excludedCount = 0
         doc.select("a[href]").forEach { anchor ->
             val href = anchor.attr("href").trim()
 
@@ -315,15 +340,14 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
                 } else if (resolvedHost != null && !resolvedHost.equals(baseHost, ignoreCase = true)) {
                     offHostRemoved++
                     anchor.remove()
-                } else if (excludeUrls.isNotEmpty() && resolvedUri.toString() in excludeUrls) {
-                    excludedCount++
-                    anchor.remove()
                 } else {
-                    allAbsoluteUrls.add(resolvedUri.toString())
+                    val absoluteUrl = resolvedUri.toString()
                     val relativePath = buildString {
                         append(resolvedUri.rawPath ?: "/")
                         resolvedUri.rawQuery?.let { append("?").append(it) }
                     }
+                    allAbsoluteUrls.add(absoluteUrl)
+                    pathToAbsoluteUrl[relativePath] = absoluteUrl
                     anchor.attr("href", relativePath)
                     validRelativePaths.add(relativePath)
                 }
@@ -334,9 +358,6 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
         }
         if (offHostRemoved > 0 || invalidRemoved > 0) {
             logger.debug("Filtered anchors: {} off-host, {} invalid scheme/href removed", offHostRemoved, invalidRemoved)
-        }
-        if (excludedCount > 0) {
-            logger.debug("Excluded {} already-visited links from analysis", excludedCount)
         }
         logger.debug("Filtered anchor tags to host: {}", baseHost)
 
@@ -369,7 +390,8 @@ class LinkRelevanceAnalysisAgentGenAiImpl(
             pageDescription = pageDescription,
             links = links,
             validRelativePaths = validRelativePaths,
-            allAbsoluteUrls = allAbsoluteUrls
+            allAbsoluteUrls = allAbsoluteUrls,
+            pathToAbsoluteUrl = pathToAbsoluteUrl
         )
     }
 

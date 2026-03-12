@@ -49,10 +49,11 @@ interface IWebpageLinkDiscoveryService {
 
     /**
      * Discovers relevant links by analyzing links on the current webpage.
-     * @param excludeUrls absolute URLs to exclude from analysis (already visited/queued)
+     * @param sharedEvaluatedUrls thread-safe set for cross-page dedup during concurrent processing;
+     *        extracted URLs are atomically claimed so each link is analyzed at most once across parallel calls
      * @return relevant links and the full set of URLs that were evaluated on this page
      */
-    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, excludeUrls: Set<String> = emptySet()): OnPageLinkDiscoveryResult
+    suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, sharedEvaluatedUrls: MutableSet<String>? = null): OnPageLinkDiscoveryResult
 
     /**
      * Discovers all links on the page regardless of relevance.
@@ -153,8 +154,8 @@ class WebpageLinkDiscoveryService(
         return links
     }
 
-    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, excludeUrls: Set<String>): OnPageLinkDiscoveryResult {
-        logger.debug("Discovering links via on-page analysis for query: '{}' (excluding {} already-evaluated URLs)", query, excludeUrls.size)
+    override suspend fun discoverRelevantLinksByAgent(query: String, html: String, url: String, sessionId: SessionId, sharedEvaluatedUrls: MutableSet<String>?): OnPageLinkDiscoveryResult {
+        logger.debug("Discovering links via on-page analysis for query: '{}'", query)
 
         val baseDomain = extractBaseDomain(url)
         if (baseDomain == null) {
@@ -167,7 +168,7 @@ class WebpageLinkDiscoveryService(
                 html = html,
                 query = query,
                 url = url,
-                excludeUrls = excludeUrls
+                sharedEvaluatedUrls = sharedEvaluatedUrls
             )
         )
 

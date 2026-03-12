@@ -41,7 +41,10 @@ sealed class NavigationAction {
     ) : NavigationAction()
 
     @Serializable
-    data class Scroll(val direction: ScrollDirection) : NavigationAction()
+    data class Scroll(
+        val direction: ScrollDirection,
+        val scrollPercent: Int = 100
+    ) : NavigationAction()
 
     @Serializable
     data class AnswerFound(

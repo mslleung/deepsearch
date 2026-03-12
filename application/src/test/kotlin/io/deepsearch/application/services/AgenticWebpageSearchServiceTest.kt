@@ -135,6 +135,27 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             exchange.responseBody.use { it.write(html.toByteArray()) }
         }
 
+        testServer.createContext("/long-page-bottom") { exchange ->
+            val html = LONG_PAGE_BOTTOM_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
+        testServer.createContext("/long-page-accordion-bottom") { exchange ->
+            val html = LONG_PAGE_ACCORDION_BOTTOM_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
+        testServer.createContext("/searchable-table") { exchange ->
+            val html = SEARCHABLE_TABLE_HTML
+            exchange.responseHeaders.add("Content-Type", "text/html; charset=utf-8")
+            exchange.sendResponseHeaders(200, html.toByteArray().size.toLong())
+            exchange.responseBody.use { it.write(html.toByteArray()) }
+        }
+
         testServer.start()
         testPort = testServer.address.port
         println("Test HTTP server started on port $testPort")
@@ -298,7 +319,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
     // ==================== Helpers ====================
 
-    private fun printResult(result: AgenticPageSearchResult) {
+    private fun printResult(result: AgenticPageSearchResult, optimalIterations: Int? = null) {
         println("Success: ${result.success}")
         println("Answer: ${result.answer}")
         println("Evidence: ${result.evidence}")
@@ -307,6 +328,12 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             println("  ${idx + 1}. $action")
         }
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, output=${result.totalTokenUsage.outputTokens}, total=${result.totalTokenUsage.totalTokens}")
+
+        val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations ?: result.actionsPerformed.size)
+        println("\n--- Efficiency Summary ---")
+        println("Scroll: ${report.scrollCount}, SearchText: ${report.searchTextCount} (hits=${report.searchTextHits}, misses=${report.searchTextMisses})")
+        println("Wasted scrolls: ${report.wastedScrolls}, Scrolls before 1st search: ${report.scrollBeforeFirstSearch}")
+        println("SearchText used first: ${report.searchTextUsedFirst}")
     }
 
     // ==================== Test: Page dense with numbers (hallucination-prone) ====================
@@ -548,6 +575,97 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         assertTrue(
             result.actionsPerformed.size <= 5,
             "Should find the answer in 5 or fewer iterations (1 to dismiss banner + finding answer), used ${result.actionsPerformed.size}"
+        )
+    }
+
+    // ==================== Efficiency Tests: scroll vs search_text ====================
+
+    @Test
+    fun `long page - answer at bottom found via search_text not excessive scrolling`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 180.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/long-page-bottom",
+            query = "What is the system maintenance code?",
+            sessionId = QuerySessionId("test-long-page-bottom")
+        )
+
+        println("=== LONG PAGE BOTTOM (EFFICIENCY) ===")
+        printResult(result)
+        val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations = 2)
+        ActionEfficiencyAnalyzer.printReport(report, "long-page-bottom")
+
+        assertTrue(result.success, "Should find the answer")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("MAINT-PHOENIX-2024-X9", ignoreCase = true),
+            "Answer should contain MAINT-PHOENIX-2024-X9: ${result.answer}"
+        )
+
+        assertTrue(
+            result.actionsPerformed.size <= 6,
+            "Should find the answer in 6 or fewer iterations, used ${result.actionsPerformed.size}"
+        )
+    }
+
+    @Test
+    fun `long page accordion - answer behind FAQ at bottom found efficiently`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 240.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/long-page-accordion-bottom",
+            query = "What is the emergency shutdown procedure?",
+            sessionId = QuerySessionId("test-long-page-accordion-bottom")
+        )
+
+        println("=== LONG PAGE ACCORDION BOTTOM (EFFICIENCY) ===")
+        printResult(result)
+        val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations = 3)
+        ActionEfficiencyAnalyzer.printReport(report, "long-page-accordion-bottom")
+
+        assertTrue(result.success, "Should find the answer")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("ESHUT-DELTA-7X", ignoreCase = true),
+            "Answer should contain ESHUT-DELTA-7X: ${result.answer}"
+        )
+
+        assertTrue(
+            result.actionsPerformed.size <= 8,
+            "Should find the answer in 8 or fewer iterations, used ${result.actionsPerformed.size}"
+        )
+    }
+
+    @Test
+    fun `searchable table - find specific row via search_text not scrolling`() = runTest(
+        testCoroutineDispatcher,
+        timeout = 180.seconds
+    ) {
+        val result = agenticSearchService.searchWithinPage(
+            url = "http://localhost:$testPort/searchable-table",
+            query = "What is the processing time for platinum-tier orders?",
+            sessionId = QuerySessionId("test-searchable-table")
+        )
+
+        println("=== SEARCHABLE TABLE (EFFICIENCY) ===")
+        printResult(result)
+        val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations = 2)
+        ActionEfficiencyAnalyzer.printReport(report, "searchable-table")
+
+        assertTrue(result.success, "Should find the answer")
+        assertNotNull(result.answer, "Answer should not be null")
+        assertTrue(
+            result.answer!!.contains("2 hour", ignoreCase = true) ||
+                    result.answer!!.contains("2h", ignoreCase = true) ||
+                    result.answer!!.contains("120 min", ignoreCase = true),
+            "Answer should mention 2 hours processing time for Platinum: ${result.answer}"
+        )
+
+        assertTrue(
+            result.actionsPerformed.size <= 5,
+            "Should find the answer in 5 or fewer iterations, used ${result.actionsPerformed.size}"
         )
     }
 
@@ -1277,6 +1395,272 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
          * of the query topic (CEO birthday). Includes a few interactive FAQ accordions
          * so the agent has elements to explore before concluding the info isn't here.
          */
+        /**
+         * Long page (~3500px) with the answer buried at the very bottom, after
+         * many sections of filler content. Tests whether the VLM uses search_text
+         * to jump directly to the answer vs. scrolling 5+ times.
+         * Optimal: search_text("maintenance code") -> answer_found (2 iterations).
+         */
+        val LONG_PAGE_BOTTOM_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>InfraOps — System Administration Guide</title>
+                <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 24px; color: #333; line-height: 1.7; }
+                    h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 12px; }
+                    h2 { color: #2c3e50; margin-top: 40px; }
+                    .section { margin: 24px 0; padding: 20px; background: #f8f9fa; border-left: 4px solid #3498db; }
+                    table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+                    th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+                    th { background: #ecf0f1; }
+                    .answer-section { margin-top: 40px; padding: 20px; background: #e8f5e9; border: 1px solid #4caf50; border-radius: 8px; }
+                </style>
+            </head>
+            <body>
+                <h1>InfraOps System Administration Guide</h1>
+                <p>Version 4.2.1 — Last updated March 2024</p>
+
+                <h2>1. Network Configuration</h2>
+                <div class="section">
+                    <p>The default gateway is configured at 10.0.0.1 with a subnet mask of 255.255.255.0. DNS servers should point to 10.0.1.53 (primary) and 10.0.1.54 (secondary). VLAN tagging is enabled on ports 1-24 of the core switch.</p>
+                    <table>
+                        <tr><th>Parameter</th><th>Value</th></tr>
+                        <tr><td>Gateway</td><td>10.0.0.1</td></tr>
+                        <tr><td>Subnet</td><td>255.255.255.0</td></tr>
+                        <tr><td>DNS Primary</td><td>10.0.1.53</td></tr>
+                        <tr><td>DNS Secondary</td><td>10.0.1.54</td></tr>
+                        <tr><td>MTU</td><td>9000 (jumbo frames)</td></tr>
+                    </table>
+                </div>
+
+                <h2>2. Storage Management</h2>
+                <div class="section">
+                    <p>The primary NAS cluster operates on ZFS with RAIDZ2 redundancy across 12 disks. Total raw capacity is 144 TB with 96 TB usable. Snapshots are taken every 15 minutes and retained for 30 days. The backup target is an off-site S3-compatible store at us-west-2.</p>
+                    <table>
+                        <tr><th>Pool</th><th>Type</th><th>Raw</th><th>Usable</th><th>Used</th></tr>
+                        <tr><td>pool-main</td><td>RAIDZ2</td><td>144 TB</td><td>96 TB</td><td>61 TB (64%)</td></tr>
+                        <tr><td>pool-archive</td><td>Mirror</td><td>48 TB</td><td>24 TB</td><td>18 TB (75%)</td></tr>
+                        <tr><td>pool-scratch</td><td>Stripe</td><td>8 TB</td><td>8 TB</td><td>2 TB (25%)</td></tr>
+                    </table>
+                </div>
+
+                <h2>3. User Access Policies</h2>
+                <div class="section">
+                    <p>All user accounts are managed through LDAP with Kerberos authentication. Password policy requires minimum 16 characters, at least one uppercase, one lowercase, one number, and one special character. Passwords expire every 90 days. Failed login attempts are locked after 5 tries for 30 minutes.</p>
+                    <p>Role assignments follow the principle of least privilege. Admin access requires approval from two senior engineers and is logged to an immutable audit trail. SSH keys must be ed25519 and rotated annually.</p>
+                </div>
+
+                <h2>4. Monitoring & Alerting</h2>
+                <div class="section">
+                    <p>Prometheus scrapes metrics every 15 seconds from all 247 endpoints. Grafana dashboards are organized by team: Platform (12 dashboards), Data (8 dashboards), Security (6 dashboards). AlertManager routes to PagerDuty for P1/P2 and Slack for P3/P4.</p>
+                    <table>
+                        <tr><th>Severity</th><th>Response Time</th><th>Channel</th></tr>
+                        <tr><td>P1 — Critical</td><td>5 minutes</td><td>PagerDuty + Phone</td></tr>
+                        <tr><td>P2 — High</td><td>30 minutes</td><td>PagerDuty</td></tr>
+                        <tr><td>P3 — Medium</td><td>4 hours</td><td>Slack #alerts</td></tr>
+                        <tr><td>P4 — Low</td><td>Next business day</td><td>Slack #alerts-low</td></tr>
+                    </table>
+                </div>
+
+                <h2>5. Deployment Procedures</h2>
+                <div class="section">
+                    <p>All deployments follow the blue-green strategy. The CI/CD pipeline runs on Jenkins with parallel test stages. Code coverage must exceed 80% for merge approval. Canary releases are used for user-facing services with a 5% traffic ramp over 2 hours.</p>
+                    <p>Rollback procedures: Automatic rollback triggers if error rate exceeds 1% or p99 latency exceeds 500ms during canary. Manual rollback requires running <code>deploy rollback --env production --revision PREV</code>.</p>
+                </div>
+
+                <h2>6. Disaster Recovery</h2>
+                <div class="section">
+                    <p>RPO (Recovery Point Objective): 15 minutes for Tier 1 services, 1 hour for Tier 2. RTO (Recovery Time Objective): 30 minutes for Tier 1, 4 hours for Tier 2. DR drills are conducted quarterly. The failover site is in a separate availability zone with hot standby for Tier 1 databases.</p>
+                </div>
+
+                <h2>7. System Maintenance</h2>
+                <div class="answer-section">
+                    <p>Scheduled maintenance windows are every Sunday 02:00–06:00 UTC. Emergency maintenance requires VP-level approval.</p>
+                    <p>The system maintenance code is: <strong>MAINT-PHOENIX-2024-X9</strong></p>
+                    <p>Use this code when filing maintenance tickets in ServiceNow. Include the affected service name, expected downtime, and rollback plan.</p>
+                </div>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Long page with a FAQ accordion section placed well below the fold (~3000px down).
+         * The answer is hidden behind one of the accordion buttons.
+         * Optimal: search_text("emergency shutdown") -> click accordion -> answer_found (3 iterations).
+         */
+        val LONG_PAGE_ACCORDION_BOTTOM_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>AcmePower — Safety Operations Manual</title>
+                <style>
+                    body { font-family: Georgia, serif; max-width: 800px; margin: 0 auto; padding: 24px; color: #333; line-height: 1.7; }
+                    h1 { color: #c0392b; border-bottom: 3px solid #c0392b; padding-bottom: 12px; }
+                    h2 { color: #2c3e50; margin-top: 36px; }
+                    .content-block { margin: 20px 0; padding: 16px; background: #fdf2e9; border-radius: 8px; }
+                    .warning-box { background: #fdedec; border: 2px solid #e74c3c; padding: 16px; border-radius: 8px; margin: 16px 0; }
+                    .faq-section { margin-top: 40px; }
+                    .faq-item { border: 1px solid #bdc3c7; margin: 10px 0; border-radius: 6px; overflow: hidden; }
+                    .faq-q { padding: 14px 18px; cursor: pointer; background: #ecf0f1; border: none; width: 100%; text-align: left; font-size: 15px; font-weight: 600; }
+                    .faq-q:hover { background: #d5dbdb; }
+                    .faq-a { padding: 14px 18px; border-top: 1px solid #ddd; font-size: 14px; line-height: 1.6; }
+                    table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+                    th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+                    th { background: #2c3e50; color: white; }
+                </style>
+            </head>
+            <body>
+                <h1>AcmePower Safety Operations Manual</h1>
+                <p>Document ID: SOM-2024-R3 | Classification: Internal | Effective: January 1, 2024</p>
+
+                <h2>1. General Safety Principles</h2>
+                <div class="content-block">
+                    <p>All personnel must complete the Annual Safety Certification (ASC) before operating any equipment rated above 480V. The certification consists of a 40-hour classroom module, 16 hours of hands-on training, and a written exam (minimum passing score: 85%).</p>
+                    <p>Personal Protective Equipment (PPE) requirements vary by zone classification. Zone A (high voltage): Arc flash suit, insulated gloves, face shield, and steel-toe boots. Zone B (medium voltage): Safety glasses, insulated gloves, and steel-toe boots. Zone C (low voltage): Safety glasses and closed-toe shoes.</p>
+                </div>
+
+                <h2>2. Equipment Inspection Schedule</h2>
+                <div class="content-block">
+                    <table>
+                        <tr><th>Equipment</th><th>Inspection Frequency</th><th>Responsible Team</th><th>Form ID</th></tr>
+                        <tr><td>Main Transformer (T1-T4)</td><td>Monthly</td><td>HV Engineering</td><td>INS-001</td></tr>
+                        <tr><td>Circuit Breakers (CB series)</td><td>Quarterly</td><td>Protection Team</td><td>INS-002</td></tr>
+                        <tr><td>Backup Generators (G1-G8)</td><td>Weekly</td><td>Facilities</td><td>INS-003</td></tr>
+                        <tr><td>UPS Systems</td><td>Monthly</td><td>IT Infrastructure</td><td>INS-004</td></tr>
+                        <tr><td>Fire Suppression</td><td>Semi-annual</td><td>Safety Officer</td><td>INS-005</td></tr>
+                        <tr><td>Cooling Systems (HVAC)</td><td>Monthly</td><td>Facilities</td><td>INS-006</td></tr>
+                        <tr><td>Emergency Lighting</td><td>Monthly</td><td>Facilities</td><td>INS-007</td></tr>
+                    </table>
+                </div>
+
+                <h2>3. Incident Classification</h2>
+                <div class="content-block">
+                    <p>Incidents are classified into four severity levels based on impact scope and potential harm.</p>
+                    <table>
+                        <tr><th>Level</th><th>Description</th><th>Response Time</th><th>Notification</th></tr>
+                        <tr><td>Level 1 — Critical</td><td>Immediate danger to life or major equipment failure</td><td>Immediate</td><td>CEO, COO, Safety Director</td></tr>
+                        <tr><td>Level 2 — Serious</td><td>Significant equipment damage or safety system failure</td><td>15 minutes</td><td>Plant Manager, Safety Officer</td></tr>
+                        <tr><td>Level 3 — Moderate</td><td>Minor equipment malfunction, no safety impact</td><td>1 hour</td><td>Shift Supervisor</td></tr>
+                        <tr><td>Level 4 — Minor</td><td>Documentation error, minor non-compliance</td><td>Next shift</td><td>Team Lead</td></tr>
+                    </table>
+                </div>
+
+                <h2>4. Environmental Compliance</h2>
+                <div class="content-block">
+                    <p>All operations must comply with EPA regulations 40 CFR Parts 260-273. Emissions monitoring stations are positioned at coordinates NE-4, SW-7, and C-12. Monthly emissions reports are filed electronically through the CEDRI system. The annual compliance audit is scheduled for Q3 each year.</p>
+                    <p>Waste handling: PCB-containing equipment must be stored in designated containment areas (Building 7, Section C). Disposal follows DOT shipping requirements and must use licensed haulers. Mercury-containing items are cataloged in the HMIS database.</p>
+                </div>
+
+                <h2>5. Training Requirements</h2>
+                <div class="content-block">
+                    <p>New hire orientation includes 3 days of safety training covering: lockout/tagout (LOTO), confined space entry, hot work permits, fall protection, and hazardous material handling. Refresher training is required annually for all certifications. Specialized training for high-voltage switching operations requires an additional 80 hours and is conducted by certified instructors only.</p>
+                </div>
+
+                <div class="warning-box">
+                    <strong>IMPORTANT:</strong> All personnel must review and acknowledge the updated safety protocols before their next shift. Failure to comply will result in temporary suspension of operational privileges.
+                </div>
+
+                <h2>6. Frequently Asked Questions — Emergency Procedures</h2>
+                <div class="faq-section">
+                    <div class="faq-item">
+                        <button class="faq-q" onclick="toggle(this)">What is the evacuation route for Building 3?</button>
+                        <div class="faq-a" style="display:none">Exit through the east corridor to Assembly Point C (parking lot C). Alternate route: south stairwell to Assembly Point D. Do not use elevators. Mobility-impaired personnel should proceed to designated rescue assistance areas on each floor.</div>
+                    </div>
+                    <div class="faq-item">
+                        <button class="faq-q" onclick="toggle(this)">What is the emergency shutdown procedure?</button>
+                        <div class="faq-a" style="display:none">The emergency shutdown procedure code is <strong>ESHUT-DELTA-7X</strong>. Steps: (1) Press the Emergency Power Off (EPO) button — red mushroom button located at each exit. (2) Call the Control Room at ext. 5555. (3) Announce "Emergency Shutdown initiated" on the PA system. (4) Evacuate all non-essential personnel. (5) Wait for the All-Clear from the Safety Director before re-entering.</div>
+                    </div>
+                    <div class="faq-item">
+                        <button class="faq-q" onclick="toggle(this)">How do I report a near-miss incident?</button>
+                        <div class="faq-a" style="display:none">File a Near-Miss Report (Form NMR-100) within 24 hours of the event. Include: date/time, location, personnel involved, description of the event, and potential consequences. Submit to your Shift Supervisor and the Safety Office. All near-miss reports are reviewed in the weekly safety committee meeting.</div>
+                    </div>
+                    <div class="faq-item">
+                        <button class="faq-q" onclick="toggle(this)">Where are the first aid kits located?</button>
+                        <div class="faq-a" style="display:none">First aid kits are located at: Building 1 — Lobby, Floor 2 break room, Floor 3 break room. Building 2 — Each lab entrance. Building 3 — Control room, Generator hall entrance. Outdoor — Assembly Points A, C, and D. AED devices are located next to each first aid kit.</div>
+                    </div>
+                </div>
+
+                <p style="margin-top: 40px; color: #888; font-size: 12px;">AcmePower Inc. — Document Control: Safety Operations — Rev 3.0 — Approved by: J. Martinez, VP Safety</p>
+
+                <script>
+                    function toggle(btn) {
+                        var a = btn.nextElementSibling;
+                        a.style.display = a.style.display === 'none' ? 'block' : 'none';
+                    }
+                </script>
+            </body>
+            </html>
+        """.trimIndent()
+
+        /**
+         * Large table with 25 rows where the answer is in one specific row (platinum tier).
+         * Tests whether the VLM uses search_text to jump to the target row vs.
+         * scrolling through the entire table.
+         * Optimal: search_text("platinum") -> answer_found (2 iterations).
+         */
+        val SEARCHABLE_TABLE_HTML = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <title>OrderFlow — Service Tier SLAs</title>
+                <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1000px; margin: 0 auto; padding: 24px; color: #333; }
+                    h1 { color: #1a237e; }
+                    .intro { background: #e8eaf6; padding: 16px; border-radius: 8px; margin: 16px 0; }
+                    table { width: 100%; border-collapse: collapse; margin: 24px 0; }
+                    th { background: #1a237e; color: white; padding: 12px; text-align: left; position: sticky; top: 0; }
+                    td { border: 1px solid #ddd; padding: 10px 12px; }
+                    tr:nth-child(even) { background: #f5f5f5; }
+                    tr:hover { background: #e3f2fd; }
+                    .highlight { background: #fff9c4 !important; font-weight: bold; }
+                    .footer { margin-top: 32px; color: #888; font-size: 12px; }
+                </style>
+            </head>
+            <body>
+                <h1>OrderFlow — Service Tier SLA Reference</h1>
+                <div class="intro">
+                    <p>This document lists all service tiers and their processing time guarantees. Processing times are measured from order confirmation to dispatch notification. All times are in business hours unless otherwise noted.</p>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr><th>#</th><th>Tier Name</th><th>Monthly Volume</th><th>Processing Time</th><th>Priority Queue</th><th>Dedicated Rep</th><th>SLA Penalty</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>1</td><td>Micro</td><td>1–10 orders</td><td>72 hours</td><td>No</td><td>No</td><td>None</td></tr>
+                        <tr><td>2</td><td>Starter</td><td>11–50 orders</td><td>48 hours</td><td>No</td><td>No</td><td>None</td></tr>
+                        <tr><td>3</td><td>Basic</td><td>51–100 orders</td><td>36 hours</td><td>No</td><td>No</td><td>5% credit</td></tr>
+                        <tr><td>4</td><td>Basic Plus</td><td>101–200 orders</td><td>30 hours</td><td>No</td><td>No</td><td>5% credit</td></tr>
+                        <tr><td>5</td><td>Standard</td><td>201–350 orders</td><td>24 hours</td><td>No</td><td>No</td><td>10% credit</td></tr>
+                        <tr><td>6</td><td>Standard Plus</td><td>351–500 orders</td><td>20 hours</td><td>No</td><td>No</td><td>10% credit</td></tr>
+                        <tr><td>7</td><td>Professional</td><td>501–750 orders</td><td>16 hours</td><td>Yes</td><td>No</td><td>10% credit</td></tr>
+                        <tr><td>8</td><td>Professional Plus</td><td>751–1,000 orders</td><td>14 hours</td><td>Yes</td><td>No</td><td>10% credit</td></tr>
+                        <tr><td>9</td><td>Business</td><td>1,001–1,500 orders</td><td>12 hours</td><td>Yes</td><td>No</td><td>15% credit</td></tr>
+                        <tr><td>10</td><td>Business Plus</td><td>1,501–2,000 orders</td><td>10 hours</td><td>Yes</td><td>No</td><td>15% credit</td></tr>
+                        <tr><td>11</td><td>Growth</td><td>2,001–3,000 orders</td><td>8 hours</td><td>Yes</td><td>No</td><td>15% credit</td></tr>
+                        <tr><td>12</td><td>Growth Plus</td><td>3,001–4,000 orders</td><td>7 hours</td><td>Yes</td><td>Shared</td><td>15% credit</td></tr>
+                        <tr><td>13</td><td>Scale</td><td>4,001–5,000 orders</td><td>6 hours</td><td>Yes</td><td>Shared</td><td>20% credit</td></tr>
+                        <tr><td>14</td><td>Scale Plus</td><td>5,001–7,500 orders</td><td>5 hours</td><td>Yes</td><td>Shared</td><td>20% credit</td></tr>
+                        <tr><td>15</td><td>Silver</td><td>7,501–10,000 orders</td><td>4 hours</td><td>Yes</td><td>Shared</td><td>20% credit</td></tr>
+                        <tr><td>16</td><td>Silver Plus</td><td>10,001–15,000 orders</td><td>3.5 hours</td><td>Yes</td><td>Shared</td><td>20% credit</td></tr>
+                        <tr><td>17</td><td>Gold</td><td>15,001–20,000 orders</td><td>3 hours</td><td>Yes</td><td>Yes</td><td>25% credit</td></tr>
+                        <tr><td>18</td><td>Gold Plus</td><td>20,001–30,000 orders</td><td>2.5 hours</td><td>Yes</td><td>Yes</td><td>25% credit</td></tr>
+                        <tr><td>19</td><td>Platinum</td><td>30,001–50,000 orders</td><td>2 hours</td><td>Yes</td><td>Yes</td><td>30% credit</td></tr>
+                        <tr><td>20</td><td>Platinum Plus</td><td>50,001–75,000 orders</td><td>1.5 hours</td><td>Yes</td><td>Yes</td><td>30% credit</td></tr>
+                        <tr><td>21</td><td>Diamond</td><td>75,001–100,000 orders</td><td>1 hour</td><td>Yes</td><td>Yes</td><td>35% credit</td></tr>
+                        <tr><td>22</td><td>Diamond Plus</td><td>100,001–150,000 orders</td><td>45 minutes</td><td>Yes</td><td>Yes</td><td>35% credit</td></tr>
+                        <tr><td>23</td><td>Elite</td><td>150,001–250,000 orders</td><td>30 minutes</td><td>Yes</td><td>Yes</td><td>40% credit</td></tr>
+                        <tr><td>24</td><td>Elite Plus</td><td>250,001–500,000 orders</td><td>20 minutes</td><td>Yes</td><td>Yes</td><td>40% credit</td></tr>
+                        <tr><td>25</td><td>Ultimate</td><td>500,001+ orders</td><td>15 minutes</td><td>Yes</td><td>Yes</td><td>50% credit</td></tr>
+                    </tbody>
+                </table>
+
+                <p class="footer">OrderFlow Inc. — SLA Document v3.7 — Effective January 2024 — Contact: sla@orderflow.example.com</p>
+            </body>
+            </html>
+        """.trimIndent()
+
         val NONEXISTENT_INFO_PAGE_HTML = """
             <!DOCTYPE html>
             <html lang="en">

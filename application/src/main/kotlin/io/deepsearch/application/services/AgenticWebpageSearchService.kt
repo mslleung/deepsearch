@@ -73,7 +73,6 @@ class AgenticWebpageSearchService(
         private const val POST_CLICK_DELAY_MS = 350L
         private const val POST_SCROLL_DELAY_MS = 150L
         private const val POST_TYPE_DELAY_MS = 500L
-        private const val SCROLL_VIEWPORT_PIXELS = 600
         private const val PEEK_MAX_HEIGHT = 3000
         private const val PEEK_JPEG_QUALITY = 0.80f
         private const val MIN_CAPTURE_SIZE_PX = 40
@@ -291,6 +290,8 @@ class AgenticWebpageSearchService(
                 cropCaptureRegions(rawScreenshot.bytes, output.captureRegions, capturedImages, capturedHashes)
             }
 
+            val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(rawScreenshot.bytes)
+
             when (action) {
                 is NavigationAction.AnswerFound -> {
                     logger.info(
@@ -405,7 +406,6 @@ class AgenticWebpageSearchService(
                 }
 
                 is NavigationAction.ClickAt -> {
-                    val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(rawScreenshot.bytes)
                     val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
                     val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
                     val desc = action.elementDescription
@@ -460,11 +460,12 @@ class AgenticWebpageSearchService(
                 }
 
                 is NavigationAction.Scroll -> {
-                    logger.debug("Scrolling {}", action.direction)
+                    logger.debug("Scrolling {} {}%", action.direction, action.scrollPercent)
                     try {
+                        val scrollPx = (imgHeight * action.scrollPercent / 100.0).toInt()
                         val delta = when (action.direction) {
-                            io.deepsearch.domain.agents.ScrollDirection.DOWN -> SCROLL_VIEWPORT_PIXELS
-                            io.deepsearch.domain.agents.ScrollDirection.UP -> -SCROLL_VIEWPORT_PIXELS
+                            io.deepsearch.domain.agents.ScrollDirection.DOWN -> scrollPx
+                            io.deepsearch.domain.agents.ScrollDirection.UP -> -scrollPx
                         }
                         page.scrollPage(delta)
                         delay(POST_SCROLL_DELAY_MS)

@@ -505,7 +505,7 @@ class AgenticBrowserSearchOrchestrator(
                     sessionId,
                     searchQuery.ocrLanguage,
                     proxyConfig,
-                    excludeUrls = processedUrls.toSet() + evaluatedLinkUrls
+                    sharedEvaluatedUrls = evaluatedLinkUrls
                 )
                     .onEach { event ->
                         when (event) {
@@ -699,7 +699,7 @@ class AgenticBrowserSearchOrchestrator(
                             sessionId,
                             searchQuery.ocrLanguage,
                             proxyConfig,
-                            excludeUrls = processedUrls.toSet() + evaluatedLinkUrls
+                            sharedEvaluatedUrls = evaluatedLinkUrls
                         )
                             .catch { e ->
                                 when (e) {
