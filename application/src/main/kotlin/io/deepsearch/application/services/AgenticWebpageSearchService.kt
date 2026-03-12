@@ -5,6 +5,7 @@ import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.ElementLabel
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
+import io.deepsearch.domain.agents.ScrollDirection
 import io.deepsearch.domain.agents.WebpageNavigationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
@@ -174,11 +175,30 @@ class AgenticWebpageSearchService(
             currentCoroutineContext().ensureActive()
             logger.debug("Agentic search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
 
-            val (interactiveElements, rawScreenshot) = coroutineScope {
+            data class IterationContext(
+                val elements: List<IBrowserPage.InteractiveElementInfo>,
+                val screenshot: IBrowserPage.Screenshot,
+                val pageTitle: String,
+                val pageDescription: String?,
+                val scrollPercent: Int
+            )
+
+            val ctx = coroutineScope {
                 val elementsDeferred = async { page.getInteractiveElements() }
                 val screenshotDeferred = async { page.takeScreenshot() }
-                Pair(elementsDeferred.await(), screenshotDeferred.await())
+                val titleDeferred = async { page.getTitle() }
+                val descDeferred = async { page.getDescription() }
+                val scrollDeferred = async { page.getScrollPosition() }
+                IterationContext(
+                    elements = elementsDeferred.await(),
+                    screenshot = screenshotDeferred.await(),
+                    pageTitle = titleDeferred.await(),
+                    pageDescription = descDeferred.await(),
+                    scrollPercent = scrollDeferred.await()
+                )
             }
+            val interactiveElements = ctx.elements
+            val rawScreenshot = ctx.screenshot
             logger.debug("Found {} interactive elements", interactiveElements.size)
 
             if (previousClickScreenshot != null && lastActionWasClick) {
@@ -252,7 +272,11 @@ class AgenticWebpageSearchService(
                 previousActions = actionsPerformed.toList(),
                 elementLabels = elementLabels,
                 answeredQuestions = answeredQuestions.toList(),
-                openQuestions = openQuestions
+                openQuestions = openQuestions,
+                pageUrl = url,
+                pageTitle = ctx.pageTitle,
+                pageDescription = ctx.pageDescription,
+                scrollPercent = ctx.scrollPercent
             )
 
             val output = webpageNavigationAgent.generate(input)
@@ -312,16 +336,19 @@ class AgenticWebpageSearchService(
                 }
 
                 is NavigationAction.GiveUp -> {
-                    val hasSearchedOrPeeked = actionsPerformed.any {
-                        it.action is NavigationAction.SearchText || it.action is NavigationAction.PeekFullPage
+                    val hasExplored = actionsPerformed.any {
+                        it.action is NavigationAction.FindOnPage ||
+                        it.action is NavigationAction.Scroll ||
+                        it.action is NavigationAction.ScrollToText ||
+                        it.action is NavigationAction.PeekFullPage
                     }
-                    if (!hasSearchedOrPeeked) {
+                    if (!hasExplored) {
                         logger.info(
-                            "Rejecting premature give_up at iteration {} for {} — agent must search or peek first",
+                            "Rejecting premature give_up at iteration {} for {} — agent must explore first",
                             iteration, url
                         )
                         actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                            outcome = "REJECTED: You must use search_text or peek_full_page before giving up. " +
+                            outcome = "REJECTED: You must use find_on_page or scroll before giving up. " +
                                     "The current viewport may not show all page content."
                         )
                     } else {
@@ -459,42 +486,75 @@ class AgenticWebpageSearchService(
                     }
                 }
 
+                is NavigationAction.FindOnPage -> {
+                    logger.debug("FindOnPage: keywords={}", action.keywords)
+                    try {
+                        if (action.keywords.isEmpty()) {
+                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                outcome = "No keywords provided. Provide keywords to search for."
+                            )
+                        } else {
+                            val counts = page.countTextMatches(action.keywords)
+                            val countsDesc = counts.entries.joinToString(", ") { "${it.key}: ${it.value}" }
+                            logger.info("find_on_page results for {}: {}", url, countsDesc)
+                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                outcome = "Match counts — $countsDesc"
+                            )
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.warn("FindOnPage failed: {}", e.message)
+                    }
+                }
+
+                is NavigationAction.ScrollToText -> {
+                    logger.debug("ScrollToText: text='{}', occurrence={}", action.searchText, action.occurrence)
+                    try {
+                        if (action.searchText.isBlank()) {
+                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                outcome = "No searchText provided."
+                            )
+                        } else {
+                            val found = page.scrollToTextContent(action.searchText, action.occurrence)
+                            if (found) {
+                                logger.info("scroll_to_text found '{}' occurrence {} on {}", action.searchText, action.occurrence, url)
+                                actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                    outcome = "Scrolled to occurrence ${action.occurrence} of \"${action.searchText}\"."
+                                )
+                            } else {
+                                logger.debug("scroll_to_text: '{}' occurrence {} not found on {}", action.searchText, action.occurrence, url)
+                                actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                    outcome = "\"${action.searchText}\" occurrence ${action.occurrence} not found on page."
+                                )
+                            }
+                        }
+                        delay(POST_SCROLL_DELAY_MS)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.warn("ScrollToText failed: {}", e.message)
+                    }
+                }
+
                 is NavigationAction.Scroll -> {
-                    logger.debug("Scrolling {} {}%", action.direction, action.scrollPercent)
+                    logger.debug("Scroll: {} {}%", action.scrollDirection, action.scrollPercent)
                     try {
                         val scrollPx = (imgHeight * action.scrollPercent / 100.0).toInt()
-                        val delta = when (action.direction) {
-                            io.deepsearch.domain.agents.ScrollDirection.DOWN -> scrollPx
-                            io.deepsearch.domain.agents.ScrollDirection.UP -> -scrollPx
+                        val delta = when (action.scrollDirection) {
+                            ScrollDirection.DOWN -> scrollPx
+                            ScrollDirection.UP -> -scrollPx
                         }
                         page.scrollPage(delta)
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
+                        )
                         delay(POST_SCROLL_DELAY_MS)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         logger.warn("Scroll failed: {}", e.message)
                     }
-                }
-
-                is NavigationAction.SearchText -> {
-                    logger.debug("Searching for text: {}", action.searchTerms)
-                    var matched: String? = null
-                    for (term in action.searchTerms) {
-                        if (page.scrollToTextContent(term)) {
-                            matched = term
-                            break
-                        }
-                    }
-                    actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                        outcome = if (matched != null) {
-                            logger.info("search_text matched '{}' on {}", matched, url)
-                            "Found \"$matched\". Viewport scrolled to match."
-                        } else {
-                            logger.debug("search_text found no matches for {} on {}", action.searchTerms, url)
-                            "NO matches for: ${action.searchTerms.joinToString { "\"$it\"" }}"
-                        }
-                    )
-                    delay(POST_SCROLL_DELAY_MS)
                 }
 
                 is NavigationAction.PeekFullPage -> {

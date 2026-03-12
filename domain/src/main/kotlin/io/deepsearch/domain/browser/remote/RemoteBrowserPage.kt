@@ -307,9 +307,17 @@ class RemoteBrowserPage(
     override suspend fun scrollToTextContent(searchText: String, occurrence: Int): Boolean =
         pageCmd(PageCommand.ScrollToTextContent(searchText, occurrence)).toBoolean()
 
+    override suspend fun countTextMatches(keywords: List<String>): Map<String, Int> {
+        val json = pageCmd(PageCommand.CountTextMatches(keywords))
+        return Json.decodeFromString(json)
+    }
+
     override suspend fun scrollToPercentage(percent: Int) {
         pageCmd(PageCommand.ScrollToPercentage(percent))
     }
+
+    override suspend fun getScrollPosition(): Int =
+        pageCmd(PageCommand.GetScrollPosition).toInt()
 
     override suspend fun scrollPage(deltaY: Int) {
         pageCmd(PageCommand.ScrollPage(deltaY))

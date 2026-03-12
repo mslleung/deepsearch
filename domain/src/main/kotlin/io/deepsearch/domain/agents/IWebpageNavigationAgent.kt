@@ -16,7 +16,11 @@ data class WebpageNavigationInput(
     val previousActions: List<ActionWithOutcome>,
     val elementLabels: List<ElementLabel>,
     val answeredQuestions: List<String> = emptyList(),
-    val openQuestions: List<String> = emptyList()
+    val openQuestions: List<String> = emptyList(),
+    val pageUrl: String,
+    val pageTitle: String,
+    val pageDescription: String?,
+    val scrollPercent: Int
 ) : IAgent.IAgentInput
 
 /**
@@ -42,8 +46,22 @@ sealed class NavigationAction {
 
     @Serializable
     data class Scroll(
-        val direction: ScrollDirection,
-        val scrollPercent: Int = 100
+        val scrollDirection: ScrollDirection,
+        val scrollPercent: Int = 100,
+        val reason: String
+    ) : NavigationAction()
+
+    @Serializable
+    data class FindOnPage(
+        val keywords: List<String>,
+        val reason: String
+    ) : NavigationAction()
+
+    @Serializable
+    data class ScrollToText(
+        val searchText: String,
+        val occurrence: Int = 1,
+        val reason: String
     ) : NavigationAction()
 
     @Serializable
@@ -62,12 +80,6 @@ sealed class NavigationAction {
 
     @Serializable
     data class GiveUp(val reason: String) : NavigationAction()
-
-    @Serializable
-    data class SearchText(
-        val searchTerms: List<String>,
-        val reason: String
-    ) : NavigationAction()
 
     @Serializable
     data class PeekFullPage(

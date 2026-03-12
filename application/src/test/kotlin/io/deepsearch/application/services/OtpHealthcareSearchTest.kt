@@ -409,16 +409,16 @@ class OtpHealthcareSearchTest : IsolatedKoinTest() {
         }
         val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
         val clickAtCount = result.actionsPerformed.count { it.action is NavigationAction.ClickAt }
+        val findCount = result.actionsPerformed.count { it.action is NavigationAction.FindOnPage }
+        val scrollToTextCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollToText }
         val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
-        println("Clicks: $clickCount, ClickAts: $clickAtCount, Scrolls: $scrollCount")
+        println("Clicks: $clickCount, ClickAts: $clickAtCount, Finds: $findCount, ScrollToText: $scrollToTextCount, Scrolls: $scrollCount")
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, " +
                 "output=${result.totalTokenUsage.outputTokens}, " +
                 "total=${result.totalTokenUsage.totalTokens}")
 
         val report = ActionEfficiencyAnalyzer.analyze(result, result.actionsPerformed.size)
         println("\n--- Efficiency Summary ---")
-        println("Scroll: ${report.scrollCount}, SearchText: ${report.searchTextCount} (hits=${report.searchTextHits}, misses=${report.searchTextMisses})")
-        println("Wasted scrolls: ${report.wastedScrolls}, Scrolls before 1st search: ${report.scrollBeforeFirstSearch}")
-        println("SearchText used first: ${report.searchTextUsedFirst}")
+        println("find_on_page: ${report.findOnPageCount} | scroll_to_text: ${report.scrollToTextCount} | scroll: ${report.scrollCount}")
     }
 }

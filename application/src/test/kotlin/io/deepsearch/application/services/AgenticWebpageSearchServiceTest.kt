@@ -290,8 +290,9 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         println("=== NON-EXISTENT INFORMATION TEST ===")
         printResult(result)
 
+        val findCount = result.actionsPerformed.count { it.action is NavigationAction.FindOnPage }
+        val scrollToTextCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollToText }
         val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
-        val searchTextCount = result.actionsPerformed.count { it.action is NavigationAction.SearchText }
         val clickCount = result.actionsPerformed.count {
             it.action is NavigationAction.Click || it.action is NavigationAction.ClickAt
         }
@@ -303,9 +304,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         println("\n--- Behavior Summary ---")
         println("Termination: ${if (gaveUp) "GiveUp" else if (answeredFound) "AnswerFound (HALLUCINATION!)" else "Loop exhaustion ($MAX_ITERATIONS iterations)"}")
         println("Total iterations: ${result.actionsPerformed.size} / $MAX_ITERATIONS")
-        println("Scrolls: $scrollCount")
-        println("SearchText attempts: $searchTextCount")
-        println("Clicks: $clickCount")
+        println("Clicks: $clickCount, Finds: $findCount, ScrollToText: $scrollToTextCount, Scrolls: $scrollCount")
         println("PeekFullPage: $peekCount")
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, output=${result.totalTokenUsage.outputTokens}, total=${result.totalTokenUsage.totalTokens}")
 
@@ -331,9 +330,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
         val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations ?: result.actionsPerformed.size)
         println("\n--- Efficiency Summary ---")
-        println("Scroll: ${report.scrollCount}, SearchText: ${report.searchTextCount} (hits=${report.searchTextHits}, misses=${report.searchTextMisses})")
-        println("Wasted scrolls: ${report.wastedScrolls}, Scrolls before 1st search: ${report.scrollBeforeFirstSearch}")
-        println("SearchText used first: ${report.searchTextUsedFirst}")
+        println("find_on_page: ${report.findOnPageCount} | scroll_to_text: ${report.scrollToTextCount} | scroll: ${report.scrollCount}")
     }
 
     // ==================== Test: Page dense with numbers (hallucination-prone) ====================

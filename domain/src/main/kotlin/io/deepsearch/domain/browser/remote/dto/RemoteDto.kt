@@ -58,8 +58,14 @@ sealed class PageCommand {
     @Serializable @SerialName("scrollToTextContent")
     data class ScrollToTextContent(val searchText: String, val occurrence: Int = 1) : PageCommand()
 
+    @Serializable @SerialName("countTextMatches")
+    data class CountTextMatches(val keywords: List<String>) : PageCommand()
+
     @Serializable @SerialName("scrollToPercentage")
     data class ScrollToPercentage(val percent: Int) : PageCommand()
+
+    @Serializable @SerialName("getScrollPosition")
+    data object GetScrollPosition : PageCommand()
     
     @Serializable @SerialName("scrollPage")
     data class ScrollPage(val deltaY: Int) : PageCommand()

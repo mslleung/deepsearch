@@ -161,6 +161,11 @@ interface IBrowserPage {
     suspend fun scrollToPercentage(percent: Int)
 
     /**
+     * Get the current vertical scroll position as a percentage (0 = top, 100 = bottom).
+     */
+    suspend fun getScrollPosition(): Int
+
+    /**
      * Scroll the page by a pixel delta. Positive values scroll down, negative scroll up.
      */
     suspend fun scrollPage(deltaY: Int)
@@ -470,6 +475,14 @@ interface IBrowserPage {
      * @return true if the text was found and scrolled into view; false if not found
      */
     suspend fun scrollToTextContent(searchText: String, occurrence: Int = 1): Boolean
+
+    /**
+     * Count visible text matches for each keyword on the page (like Ctrl+F match counts).
+     * Only counts matches in visible DOM text nodes.
+     * @param keywords List of keywords to search for (case-insensitive)
+     * @return Map of keyword to match count
+     */
+    suspend fun countTextMatches(keywords: List<String>): Map<String, Int>
 
     /**
      * Extract text content from specific element, identified by their XPath.
