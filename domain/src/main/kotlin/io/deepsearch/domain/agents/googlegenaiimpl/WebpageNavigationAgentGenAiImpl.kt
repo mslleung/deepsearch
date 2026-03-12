@@ -64,7 +64,7 @@ class WebpageNavigationAgentGenAiImpl(
                 "keywords" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
-                    .description("For find_on_page: keywords to count on the page. The system returns how many times each keyword appears in visible text.")
+                    .description("For find_on_page: keywords to search for. Returns visible and hidden match counts per keyword.")
                     .build(),
                 "searchText" to Schema.builder()
                     .type("STRING")
@@ -132,39 +132,26 @@ class WebpageNavigationAgentGenAiImpl(
 
         You see the CURRENT VIEWPORT as an annotated screenshot. Numbered badges match ELEMENT_LABELS.
 
-        === HIDDEN CONTENT — READ THIS FIRST ===
-        Web pages hide content behind collapsible sections (accordions, "Learn more", "Show more", FAQ items, expandable rows).
-        ELEMENT_LABELS marks these as [collapsed]. You MUST click [collapsed] elements to reveal what's inside.
-        NEVER conclude information is absent without first expanding [collapsed] elements that could be relevant.
-
         === EACH TURN ===
-        1. OBSERVE — What content is visible? Check ELEMENT_LABELS for any [collapsed] elements. Check SCROLL_POSITION.
+        1. OBSERVE — Study the screenshot. Note ELEMENT_LABELS (especially any [collapsed] elements) and SCROLL_POSITION.
         2. RECORD — Set "finding" with data extracted from the current screenshot. Do this BEFORE acting — the viewport changes after your action.
-        3. ACT — Pick ONE action. Priority order:
-           a. Click any [collapsed] element that might contain relevant content.
-           b. find_on_page to Ctrl+F search for keywords — you get match counts showing how many times each keyword appears on the page. Use this to assess relevance before scrolling.
-           c. scroll_to_text to jump to a specific match (by keyword and occurrence number).
-           d. scroll to browse content by direction and percentage.
-           e. Click links that look relevant to the query — if they lead off-page, the URL is recorded for later investigation.
-           f. peek_full_page as a last resort to see the full page layout.
-           g. answer_found when all openQuestions are answered.
-           h. give_up — LAST RESORT. Only after you have used find_on_page, expanded relevant [collapsed] elements, AND scrolled through the page.
+        3. ACT — Pick ONE action from the list below.
 
         === ACTIONS ===
         Interact:
-        - click: Click a labeled element. Set "labelNumber".
+        - click: Click a labeled element. Set "labelNumber". Elements marked [collapsed] hide content — click them to reveal what's inside before concluding info is absent. Click links relevant to the query — off-page URLs are recorded for later investigation.
         - click_at: Click an unlabeled element by coordinates. Set "clickX"/"clickY" (0–1000 scale).
         - type: Type into a labeled input. Set "labelNumber" and "text".
 
         Explore:
-        - find_on_page: Ctrl+F search. Set "keywords" (list of terms). Returns match counts for each keyword in visible page text. Use this FIRST to assess whether the page contains what you need, then scroll_to_text to navigate to matches.
-        - scroll_to_text: Jump to a keyword match. Set "searchText" and "occurrence" (1 = first match, 2 = second, etc.). Use after find_on_page tells you matches exist.
+        - find_on_page: Search page text for keywords. Set "keywords" (list). Returns match counts per keyword. Hidden matches (e.g. "price: 0 (2 hidden)") mean the content exists behind collapsed/hidden elements — expand them. Use to assess page relevance before scrolling.
+        - scroll_to_text: Jump to a keyword match. Set "searchText" and "occurrence" (1 = first, 2 = second, etc.). Use after find_on_page confirms visible matches exist.
         - scroll: Scroll the viewport. Set "scrollDirection" (DOWN/UP) and "scrollPercent" (10–100, default 100).
         - peek_full_page: Full-page overview screenshot. Last resort — use find_on_page first.
 
         Conclude:
         - answer_found: Set "answer". Only when openQuestions is empty. "answer" must be null for all other actions.
-        - give_up: Only after using find_on_page, expanding relevant [collapsed] elements, AND scrolling through the page.
+        - give_up: Only after using find_on_page, expanding [collapsed] elements, AND scrolling through the page.
 
         === RESPONSE FORMAT ===
         - "finding": data from the current screenshot. Null only if nothing relevant is visible.

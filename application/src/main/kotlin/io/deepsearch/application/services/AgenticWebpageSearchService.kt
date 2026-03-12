@@ -495,7 +495,10 @@ class AgenticWebpageSearchService(
                             )
                         } else {
                             val counts = page.countTextMatches(action.keywords)
-                            val countsDesc = counts.entries.joinToString(", ") { "${it.key}: ${it.value}" }
+                            val countsDesc = counts.entries.joinToString(", ") { (kw, c) ->
+                                val hidden = c.total - c.visible
+                                if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
+                            }
                             logger.info("find_on_page results for {}: {}", url, countsDesc)
                             actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
                                 outcome = "Match counts — $countsDesc"

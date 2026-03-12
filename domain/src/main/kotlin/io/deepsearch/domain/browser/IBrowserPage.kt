@@ -476,13 +476,17 @@ interface IBrowserPage {
      */
     suspend fun scrollToTextContent(searchText: String, occurrence: Int = 1): Boolean
 
+    @Serializable
+    data class TextMatchCounts(val visible: Int, val total: Int)
+
     /**
-     * Count visible text matches for each keyword on the page (like Ctrl+F match counts).
-     * Only counts matches in visible DOM text nodes.
+     * Count text matches for each keyword on the page (like Ctrl+F match counts).
+     * Returns both visible and total (including hidden) counts per keyword so the
+     * caller can detect content hidden behind collapsed/invisible elements.
      * @param keywords List of keywords to search for (case-insensitive)
-     * @return Map of keyword to match count
+     * @return Map of keyword to [TextMatchCounts] with visible and total counts
      */
-    suspend fun countTextMatches(keywords: List<String>): Map<String, Int>
+    suspend fun countTextMatches(keywords: List<String>): Map<String, TextMatchCounts>
 
     /**
      * Extract text content from specific element, identified by their XPath.
