@@ -27,6 +27,7 @@ import io.deepsearch.domain.models.valueobjects.SearchMode
 import io.deepsearch.domain.models.valueobjects.SearchQuery
 import io.deepsearch.domain.models.valueobjects.SessionHistory
 import io.deepsearch.domain.models.valueobjects.UncachedUrlAccess
+import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.domain.services.INormalizeUrlService
 import io.deepsearch.domain.ext.chunkedWithTimeout
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -101,7 +102,9 @@ class AgenticBrowserSearchOrchestrator(
     // Event tracking (for timeline visualization)
     private val searchFlowEventService: ISearchFlowEventService,
     // URL utilities
-    private val normalizeUrlService: INormalizeUrlService
+    private val normalizeUrlService: INormalizeUrlService,
+    // Repository for reading cached link-relevance HTML during follow-up query re-analysis
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository
 ) : IAgenticBrowserSearchOrchestrator {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -157,9 +160,12 @@ class AgenticBrowserSearchOrchestrator(
             // Used for content processing dedup - each URL only gets processed once
             val processedUrls = ConcurrentHashMap.newKeySet<String>()
 
-            // Tracks all URLs seen during on-page link relevance analysis across the session.
-            // Repeated header/footer links are excluded from subsequent analyses to reduce prompt tokens.
-            val evaluatedLinkUrls = ConcurrentHashMap.newKeySet<String>()
+            // Per-query tracking of URLs seen during on-page link relevance analysis.
+            // Each follow-up query gets its own set so that link relevance is re-evaluated
+            // for every (query, URL) pair -- prevents missing links relevant to new queries.
+            val evaluatedLinkUrlsByQuery = ConcurrentHashMap<String, MutableSet<String>>()
+            fun getEvaluatedUrlsForQuery(query: String): MutableSet<String> =
+                evaluatedLinkUrlsByQuery.computeIfAbsent(query) { ConcurrentHashMap.newKeySet() }
 
             // Query channel - the top-level driver for the search flow
             // Initial query is sent first, follow-up queries are added via the feedback loop
@@ -216,18 +222,20 @@ class AgenticBrowserSearchOrchestrator(
                     sessionId,
                     searchQuery,
                     processedUrls,
-                    evaluatedLinkUrls,
+                    ::getEvaluatedUrlsForQuery,
                     priorityLinkBuffer,
                     maxCacheAge,
                     proxyConfig,
                     channel
                 ),
                 // Query-driven discovery - triggers for ALL queries (initial + follow-up)
-                // Runs SERP + Hybrid + KG + File search in parallel for each query
+                // Runs SERP + Hybrid + KG + File search + re-analysis of already-visited pages
                 processQueryDrivenDiscoveryFlow(
                     sessionId,
                     searchQuery,
                     queryChannel,
+                    processedUrls,
+                    evaluatedLinkUrlsByQuery,
                     priorityLinkBuffer,
                     inFlightDiscovery,
                     serpBudgetRemaining,
@@ -240,7 +248,7 @@ class AgenticBrowserSearchOrchestrator(
                 sessionId,
                 searchQuery,
                 processedUrls,
-                evaluatedLinkUrls,
+                ::getEvaluatedUrlsForQuery,
                 priorityLinkBuffer,
                 recursiveDiscoveredLinksChannel,
                 inFlightLinkProcessing,
@@ -483,7 +491,7 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        evaluatedLinkUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        getEvaluatedUrlsForQuery: (String) -> MutableSet<String>,
         priorityLinkBuffer: PriorityLinkChannel,
         maxCacheAge: Long?,
         proxyConfig: ProxyConfiguration,
@@ -492,25 +500,22 @@ class AgenticBrowserSearchOrchestrator(
         return flowOf(searchQuery.url)
             .flatMapMerge { url ->
                 val normalizedUrl = normalizeUrlService.normalize(url) ?: url
-                // Add URL to processedUrls before processing to prevent duplicate processing
-                // This must happen before processUrlAsFlow, not on each event, because
-                // multiple events (LinkDiscovery, AgenticSearch, MarkdownExtraction)
-                // share the same URL and would filter out subsequent events
                 processedUrls.add(normalizedUrl)
                 emitUrlProcessingStarted(sessionId, normalizedUrl, eventChannel)
 
+                val queryEvaluatedUrls = getEvaluatedUrlsForQuery(searchQuery.query)
                 queryUrlProcessingService.processUrlAsFlow(
                     normalizedUrl,
                     searchQuery.query,
                     sessionId,
                     searchQuery.ocrLanguage,
                     proxyConfig,
-                    sharedEvaluatedUrls = evaluatedLinkUrls
+                    sharedEvaluatedUrls = queryEvaluatedUrls
                 )
                     .onEach { event ->
                         when (event) {
                             is UrlProcessingEvent.LinksDiscovered -> {
-                                evaluatedLinkUrls.addAll(event.allEvaluatedUrls)
+                                queryEvaluatedUrls.addAll(event.allEvaluatedUrls)
                                 event.discoveredLinks.forEach { link ->
                                     priorityLinkBuffer.send(DiscoveredLink(link, searchQuery.query))
                                 }
@@ -595,12 +600,15 @@ class AgenticBrowserSearchOrchestrator(
     /**
      * Process queries from the query channel and trigger full link discovery.
      * Each query gets the same treatment as the initial query: SERP + Hybrid + KG + File Search.
+     * Additionally, for follow-up queries, re-analyzes links on already-visited pages from the DB.
      * Delegates to LinkDiscoveryFacadeService for the actual discovery.
      */
     private fun processQueryDrivenDiscoveryFlow(
         sessionId: QuerySessionId,
         baseSearchQuery: SearchQuery,
         queryChannel: Channel<String>,
+        processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        evaluatedLinkUrlsByQuery: ConcurrentHashMap<String, MutableSet<String>>,
         priorityLinkBuffer: PriorityLinkChannel,
         inFlightDiscovery: AtomicInteger,
         serpBudgetRemaining: AtomicInteger,
@@ -611,20 +619,68 @@ class AgenticBrowserSearchOrchestrator(
                 inFlightDiscovery.incrementAndGet()
                 logger.info("[{}] Triggering full discovery for query: '{}' (inFlightDiscovery={})", sessionId.value, query, inFlightDiscovery.get())
 
-                linkDiscoveryFacadeService.discoverLinksForQuery(
-                    query = query,
-                    baseSearchQuery = baseSearchQuery,
-                    sessionId = sessionId,
-                    onLinkDiscovered = { discoveredLink ->
-                        priorityLinkBuffer.send(discoveredLink)
-                    },
-                    serpBudgetRemaining = serpBudgetRemaining
+                merge(
+                    linkDiscoveryFacadeService.discoverLinksForQuery(
+                        query = query,
+                        baseSearchQuery = baseSearchQuery,
+                        sessionId = sessionId,
+                        onLinkDiscovered = { discoveredLink ->
+                            priorityLinkBuffer.send(discoveredLink)
+                        },
+                        serpBudgetRemaining = serpBudgetRemaining
+                    ),
+                    reAnalyzeLinksFlow(
+                        query = query,
+                        sessionId = sessionId,
+                        processedUrls = processedUrls,
+                        evaluatedLinkUrlsByQuery = evaluatedLinkUrlsByQuery,
+                        priorityLinkBuffer = priorityLinkBuffer
+                    )
                 ).onCompletion {
                     val remaining = inFlightDiscovery.decrementAndGet()
                     logger.debug("[{}] Discovery completed for query '{}' (inFlightDiscovery={})", sessionId.value, query, remaining)
                     checkAndCloseIfIdle()
                 }
             }
+    }
+
+    /**
+     * Re-analyze links on already-visited pages for a new/follow-up query.
+     * Reads cleanedLinkRelevanceHtml from the DB, re-runs link relevance analysis
+     * with the new query, and emits any newly discovered links to the priority buffer.
+     *
+     * For the initial query this is a no-op (processedUrls is empty).
+     */
+    private fun reAnalyzeLinksFlow(
+        query: String,
+        sessionId: QuerySessionId,
+        processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        evaluatedLinkUrlsByQuery: ConcurrentHashMap<String, MutableSet<String>>,
+        priorityLinkBuffer: PriorityLinkChannel
+    ): Flow<Unit> = flow {
+        val urls = processedUrls.toList()
+        if (urls.isEmpty()) return@flow
+
+        val queryEvaluatedUrls = evaluatedLinkUrlsByQuery
+            .computeIfAbsent(query) { ConcurrentHashMap.newKeySet() }
+
+        val cachedPages = webpageMarkdownRepository.findByUrls(urls)
+        logger.info(
+            "[{}] Re-analyzing links on {} cached pages for follow-up query: '{}'",
+            sessionId.value, cachedPages.size, query
+        )
+
+        for (page in cachedPages) {
+            val html = page.cleanedLinkRelevanceHtml ?: continue
+            val result = queryUrlProcessingService.reDiscoverLinksForQuery(
+                query, html, page.url, sessionId, queryEvaluatedUrls
+            )
+            queryEvaluatedUrls.addAll(result.allEvaluatedUrls)
+            result.links.forEach { link ->
+                priorityLinkBuffer.send(DiscoveredLink(link, query))
+            }
+        }
+        emit(Unit)
     }
 
     /**
@@ -639,7 +695,7 @@ class AgenticBrowserSearchOrchestrator(
         sessionId: QuerySessionId,
         searchQuery: SearchQuery,
         processedUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
-        evaluatedLinkUrls: ConcurrentHashMap.KeySetView<String, Boolean>,
+        getEvaluatedUrlsForQuery: (String) -> MutableSet<String>,
         priorityLinkBuffer: PriorityLinkChannel,
         recursiveChannel: Channel<DiscoveredLink>,
         inFlightLinkProcessing: AtomicInteger,
@@ -692,14 +748,15 @@ class AgenticBrowserSearchOrchestrator(
                     emitUrlProcessingStarted(sessionId, url, eventChannel)
 
                     // Use adaptive rate limiter to respect website rate limits
+                    val queryEvaluatedUrls = getEvaluatedUrlsForQuery(query)
                     adaptiveRateLimiter.withRateLimit(url) {
                         queryUrlProcessingService.processUrlAsFlow(
                             url,
-                            searchQuery.query,
+                            query,
                             sessionId,
                             searchQuery.ocrLanguage,
                             proxyConfig,
-                            sharedEvaluatedUrls = evaluatedLinkUrls
+                            sharedEvaluatedUrls = queryEvaluatedUrls
                         )
                             .catch { e ->
                                 when (e) {
@@ -723,7 +780,7 @@ class AgenticBrowserSearchOrchestrator(
                             .onEach { event ->
                                 when (event) {
                                     is UrlProcessingEvent.LinksDiscovered -> {
-                                        evaluatedLinkUrls.addAll(event.allEvaluatedUrls)
+                                        queryEvaluatedUrls.addAll(event.allEvaluatedUrls)
                                         if (!recursiveChannel.isClosedForSend) {
                                             event.discoveredLinks.forEach { newLink ->
                                                 try {

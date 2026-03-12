@@ -127,6 +127,36 @@ class ExposedWebpageMarkdownRepository(
         )
     }
 
+    override suspend fun upsertLinkRelevanceHtml(url: String, cleanedHtml: String): Unit =
+        transactionService.withTransaction {
+            webpageMarkdownTable.upsert(
+                keys = arrayOf(webpageMarkdownTable.url),
+                onUpdateExclude = listOf(
+                    webpageMarkdownTable.title,
+                    webpageMarkdownTable.description,
+                    webpageMarkdownTable.markdown,
+                    webpageMarkdownTable.markdownSanitized,
+                    webpageMarkdownTable.markdownSearchVector,
+                    webpageMarkdownTable.httpStatus,
+                    webpageMarkdownTable.httpReason,
+                    webpageMarkdownTable.mimeType,
+                    webpageMarkdownTable.embedding,
+                    webpageMarkdownTable.fileSearchDocumentName,
+                    webpageMarkdownTable.imageMapping,
+                    webpageMarkdownTable.contentMapJson,
+                    webpageMarkdownTable.createdAtEpochMs,
+                    webpageMarkdownTable.updatedAtEpochMs,
+                    webpageMarkdownTable.version
+                )
+            ) {
+                it[this.url] = url
+                it[this.cleanedLinkRelevanceHtml] = cleanedHtml
+                it[createdAtEpochMs] = Clock.System.now().toEpochMilliseconds()
+                it[updatedAtEpochMs] = Clock.System.now().toEpochMilliseconds()
+                it[version] = 1
+            }
+        }
+
     override suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown> =
         transactionService.withTransaction {
             webpageMarkdownTable

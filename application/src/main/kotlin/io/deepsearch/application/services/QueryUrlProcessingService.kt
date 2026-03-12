@@ -8,6 +8,7 @@ import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.WebpageLink
 import io.deepsearch.domain.proxy.ProxyConfiguration
 import io.deepsearch.domain.repositories.IWebpageImageRepository
+import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import io.deepsearch.domain.services.IImageStorageService
 import io.deepsearch.domain.services.ImageToStore
 import io.deepsearch.domain.services.INormalizeUrlService
@@ -37,6 +38,19 @@ interface IQueryUrlProcessingService {
         proxyConfig: ProxyConfiguration = ProxyConfiguration.None,
         sharedEvaluatedUrls: MutableSet<String>? = null
     ): Flow<UrlProcessingEvent>
+
+    /**
+     * Re-run on-page link relevance analysis for a different query using cached HTML.
+     * No browser page is opened -- this uses previously persisted cleanedLinkRelevanceHtml.
+     * Used by the outer loop when a follow-up query needs to re-evaluate links on already-visited pages.
+     */
+    suspend fun reDiscoverLinksForQuery(
+        query: String,
+        cleanedHtml: String,
+        url: String,
+        sessionId: QuerySessionId,
+        sharedEvaluatedUrls: MutableSet<String>?
+    ): OnPageLinkDiscoveryResult
 }
 
 class QueryUrlProcessingService(
@@ -48,7 +62,9 @@ class QueryUrlProcessingService(
     private val fileUrlProcessingService: IFileUrlProcessingService,
     private val webpageLinkDiscoveryService: IWebpageLinkDiscoveryService,
     private val imageStorageService: IImageStorageService,
-    private val webpageImageRepository: IWebpageImageRepository
+    private val webpageImageRepository: IWebpageImageRepository,
+    private val linkRelevanceHtmlService: ILinkRelevanceHtmlService,
+    private val webpageMarkdownRepository: IWebpageMarkdownRepository
 ) : IQueryUrlProcessingService {
 
     private val logger = LoggerFactory.getLogger(this::class.java)
@@ -112,6 +128,18 @@ class QueryUrlProcessingService(
         }
     }
 
+    override suspend fun reDiscoverLinksForQuery(
+        query: String,
+        cleanedHtml: String,
+        url: String,
+        sessionId: QuerySessionId,
+        sharedEvaluatedUrls: MutableSet<String>?
+    ): OnPageLinkDiscoveryResult {
+        return webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
+            query, cleanedHtml, url, sessionId, sharedEvaluatedUrls
+        )
+    }
+
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     private suspend fun storeCapturedImages(
         captures: List<CapturedImage>
@@ -161,6 +189,10 @@ class QueryUrlProcessingService(
     ): Flow<UrlProcessingEvent> = channelFlow {
         browserPageResolver.withPageForCachedHtml(normalizedUrl, cachedHtmlBody, proxyConfig) { page ->
             val extractedHtml = page.getFullHtml()
+
+            // Persist cleaned HTML so follow-up queries can re-run link relevance analysis from DB
+            val cleanedHtml = linkRelevanceHtmlService.prepareLinkRelevanceHtml(extractedHtml, normalizedUrl).cleanedHtml
+            webpageMarkdownRepository.upsertLinkRelevanceHtml(normalizedUrl, cleanedHtml)
 
             val linkDiscoveryFlow = flow {
                 val result = webpageLinkDiscoveryService.discoverRelevantLinksByAgent(

@@ -13,6 +13,14 @@ interface IWebpageMarkdownRepository {
     suspend fun findByUrls(urls: List<String>): List<WebpageMarkdown>
     
     suspend fun upsert(webpage: WebpageMarkdown)
+
+    /**
+     * Lightweight partial upsert that only sets the link_relevance_cleaned_html column.
+     * If the row does not exist, inserts a minimal row with only url + cleanedHtml.
+     * Does not overwrite any other columns (title, markdown, embeddings, etc.).
+     */
+    suspend fun upsertLinkRelevanceHtml(url: String, cleanedHtml: String)
+
     suspend fun listByDomainPrefix(prefix: String, offset: Int, limit: Int): List<WebpageMarkdown>
     suspend fun countByDomainPrefix(prefix: String): Long
     suspend fun searchByUrl(query: String, offset: Int, limit: Int): List<WebpageMarkdown>
