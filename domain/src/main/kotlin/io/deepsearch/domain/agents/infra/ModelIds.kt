@@ -40,8 +40,9 @@ enum class ModelIds(
     GEMINI_2_0_FLASH("gemini-2.0-flash", 0.10, 0.40),
     GEMINI_2_0_FLASH_LITE("gemini-2.0-flash-lite", 0.075, 0.30),
 
-    // Embedding models (free for text input)
-    GEMINI_EMBEDDING_001("gemini-embedding-001", 0.0, 0.0);
+    // Embedding models
+    GEMINI_EMBEDDING_001("gemini-embedding-001", 0.15, 0.0),
+    GEMINI_EMBEDDING_2_PREVIEW("gemini-embedding-2-preview", 0.20, 0.0);
 
     companion object {
         private val byModelId: Map<String, ModelIds> = entries.associateBy { it.modelId }

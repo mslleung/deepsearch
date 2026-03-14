@@ -25,7 +25,7 @@ class GeminiTextEmbeddingServiceImpl(
 ) : ITextEmbeddingService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
-    private val modelName = "gemini-embedding-001"
+    private val modelName = "gemini-embedding-2-preview"
 
     override suspend fun embedDocuments(texts: List<String>): EmbeddingResult {
         if (texts.isEmpty()) {

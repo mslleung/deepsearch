@@ -65,7 +65,7 @@ class HybridSearchIndexingService(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     companion object {
-        private const val EMBEDDING_MODEL = "gemini-embedding-001"
+        private const val EMBEDDING_MODEL = "gemini-embedding-2-preview"
         private const val EMBEDDING_DIMENSIONALITY = 1536
     }
 

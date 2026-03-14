@@ -116,7 +116,7 @@ class KgEntityEmbeddingsHandler(
             batchTokenUsageRecorder.recordBatchTokenUsage(
                 jobId,
                 "KgEntityEmbeddingBatch",
-                "gemini-embedding-001",
+                "gemini-embedding-2-preview",
                 batchResults
             )
 

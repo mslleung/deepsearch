@@ -12,7 +12,7 @@ class KgEntityEmbeddingsTable : Table("kg_entity_embeddings") {
     val name = text("name")
     val type = varchar("type", length = 50)
     val canonicalName = varchar("canonical_name", length = 512)
-    val embedding = vector("embedding", dimensions = 1536)  // Entity name embeddings (gemini-embedding-001)
+    val embedding = vector("embedding", dimensions = 1536)  // Entity name embeddings (gemini-embedding-2-preview)
     val createdAtEpochMs = long("created_at_epoch_ms")
     val updatedAtEpochMs = long("updated_at_epoch_ms")
     

@@ -103,7 +103,7 @@ data class BatchContentRequest(
 data class BatchEmbeddingRequest(
     /** Unique identifier for this request (used to match results) */
     val requestId: String,
-    /** The model to use (e.g., "gemini-embedding-001") */
+    /** The model to use (e.g., "gemini-embedding-2-preview") */
     val modelId: String,
     /** Text to embed */
     val text: String,

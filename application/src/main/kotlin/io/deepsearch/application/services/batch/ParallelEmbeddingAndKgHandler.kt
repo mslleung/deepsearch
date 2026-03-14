@@ -331,7 +331,7 @@ class ParallelEmbeddingAndKgHandler(
             logger.info("[{}] Retrieved {} embedding batch results", jobId, batchResults.size)
 
             // Record token usage
-            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "PageEmbeddingBatch", "gemini-embedding-001", batchResults)
+            batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "PageEmbeddingBatch", "gemini-embedding-2-preview", batchResults)
 
             batchResults.forEachIndexed { index, result ->
                 val requestId = embeddingRequests.getOrNull(index)?.requestId ?: return@forEachIndexed

@@ -17,7 +17,7 @@ class WebpageMarkdownCacheTable(
     val httpStatus = integer("http_status").nullable()
     val httpReason = text("http_reason").nullable()
     val mimeType = varchar("mime_type", length = 256).nullable()
-    val embedding = vector("embedding", dimensions = 1536).nullable() // gemini-embedding-001 produces 1536-dim vectors
+    val embedding = vector("embedding", dimensions = 1536).nullable() // gemini-embedding-2-preview produces 1536-dim vectors
     val markdownSearchVector = tsvector("markdown_search_vector").nullable() // tsvector for full-text search
     /** For FILE type URLs: Gemini File Search document name for deletion */
     val fileSearchDocumentName = varchar("file_search_document_name", length = 512).nullable()

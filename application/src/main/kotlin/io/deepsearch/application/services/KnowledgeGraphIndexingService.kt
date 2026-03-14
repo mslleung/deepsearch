@@ -285,7 +285,7 @@ class KnowledgeGraphIndexingService(
     }
 
     companion object {
-        private const val EMBEDDING_MODEL = "gemini-embedding-001"
+        private const val EMBEDDING_MODEL = "gemini-embedding-2-preview"
         private const val EMBEDDING_DIMENSIONALITY = 1536
         private const val SEMANTIC_SIMILARITY_TASK = "SEMANTIC_SIMILARITY"
     }
