@@ -34,9 +34,13 @@ class WebpageNavigationAgentGenAiImpl(
         .type("OBJECT")
         .properties(
             mapOf(
+                "thinking" to Schema.builder()
+                    .type("STRING")
+                    .description("Chain-of-thought reasoning: (1) what happened from your last action, (2) what you observe on the current screen, (3) your plan for the next action and why.")
+                    .build(),
                 "finding" to Schema.builder()
                     .type("STRING")
-                    .description("Relevant data visible on the current screenshot. Record BEFORE acting.")
+                    .description("Query-relevant data extracted from the current screenshot. Null only if nothing relevant is visible.")
                     .nullable(true)
                     .build(),
                 "openQuestions" to Schema.builder()
@@ -69,10 +73,6 @@ class WebpageNavigationAgentGenAiImpl(
                 "searchText" to Schema.builder()
                     .type("STRING")
                     .description("For scroll_to_text: the keyword to scroll to.")
-                    .build(),
-                "occurrence" to Schema.builder()
-                    .type("INTEGER")
-                    .description("For scroll_to_text: which match to scroll to (1 = first, 2 = second, etc.). Default 1.")
                     .build(),
                 "scrollDirection" to Schema.builder()
                     .type("STRING")
@@ -118,10 +118,10 @@ class WebpageNavigationAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("actionType", "openQuestions"))
+        .required(listOf("actionType", "thinking", "openQuestions"))
         .propertyOrdering(listOf(
-            "actionType", "finding", "openQuestions", "reason",
-            "labelNumber", "clickX", "clickY", "keywords", "searchText", "occurrence",
+            "actionType", "thinking", "finding", "openQuestions", "reason",
+            "labelNumber", "clickX", "clickY", "keywords", "searchText",
             "scrollDirection", "scrollPercent", "text",
             "captureRegions", "answer"
         ))
@@ -133,28 +133,47 @@ class WebpageNavigationAgentGenAiImpl(
         You see the CURRENT VIEWPORT as an annotated screenshot. Numbered badges match ELEMENT_LABELS.
 
         === EACH TURN ===
-        1. OBSERVE — Study the screenshot. Note ELEMENT_LABELS (especially any [collapsed] elements) and SCROLL_POSITION.
-        2. RECORD — Set "finding" with data extracted from the current screenshot. Do this BEFORE acting — the viewport changes after your action.
+        1. THINK — Set "thinking" with your chain-of-thought: what happened from your last action, what you observe on the current screen, and your plan for the next action. This is fed back to you on subsequent turns as your memory — be specific and useful to your future self.
+        2. RECORD — Set "finding" with query-relevant data extracted from the current screenshot. Null only if nothing relevant is visible.
         3. ACT — Pick ONE action from the list below.
+
+        === STRATEGY (follow this order — MANDATORY) ===
+        On a new page, follow this preferred sequence:
+        1. Check if the answer is already visible in the current viewport.
+        2. ALWAYS use find_on_page FIRST (before scrolling or clicking) with relevant keywords to assess whether the page contains the information. This is your most important action — do NOT skip it.
+        3. If find_on_page shows visible matches, use scroll_to_text to jump directly to them (much faster than scrolling).
+        4. If find_on_page shows hidden matches, use scroll_to_text to jump to them (the browser reveals hidden content) or expand [collapsed] elements.
+        5. Only use scroll as a last resort when find_on_page returned no matches but the page may have visual-only content (images, canvas elements).
+        6. Expand [collapsed] accordions/tabs/dropdowns — the answer is often hidden behind them.
+        7. Do NOT click off-page links as a first strategy. Explore the CURRENT page thoroughly first.
+
+        === KEYWORD TIPS for find_on_page ===
+        Choose keywords that match ACTUAL PAGE TEXT, not abstract concepts:
+        - For prices: search "$", "HK$", "£", "€", or specific amounts like "5,900" — NOT "price" or "cost".
+        - For scroll_to_text: prefer currency symbols over product names — product names appear in menus/headers far from prices, currency symbols appear in price tables.
+        - For features: search the exact feature name, e.g. "Stress Test", "role-based".
+        - If first keywords return 0 matches, try synonyms or shorter fragments.
+        - Always include at least one highly specific keyword AND one broader keyword.
 
         === ACTIONS ===
         Interact:
-        - click: Click a labeled element. Set "labelNumber". Elements marked [collapsed] hide content — click them to reveal what's inside before concluding info is absent. Click links relevant to the query — off-page URLs are recorded for later investigation.
+        - click: Click a labeled element. Set "labelNumber". Elements marked [collapsed] hide content — click them to reveal what's inside before concluding info is absent.
         - click_at: Click an unlabeled element by coordinates. Set "clickX"/"clickY" (0–1000 scale).
         - type: Type into a labeled input. Set "labelNumber" and "text".
 
         Explore:
-        - find_on_page: Search page text for keywords. Set "keywords" (list). Returns match counts per keyword. Hidden matches (e.g. "price: 0 (2 hidden)") mean the content exists behind collapsed/hidden elements — expand them. Use to assess page relevance before scrolling.
-        - scroll_to_text: Jump to a keyword match. Set "searchText" and "occurrence" (1 = first, 2 = second, etc.). Use after find_on_page confirms visible matches exist.
-        - scroll: Scroll the viewport. Set "scrollDirection" (DOWN/UP) and "scrollPercent" (10–100, default 100).
+        - find_on_page: Search page text for keywords. Set "keywords" (list). Returns match counts per keyword. Hidden matches (e.g. "keyword: 0 (2 hidden)") mean the content exists behind collapsed/hidden elements — expand them or use scroll_to_text to navigate there. ALWAYS use this before scrolling or giving up. Use ACTUAL text that would appear on the page (e.g. "$" or "HK$" for prices, not "price").
+        - scroll_to_text: Jump directly to a keyword match. Set "searchText". PREFERRED over scroll when you know the text to look for. Use after find_on_page confirms matches exist. Works even for hidden matches — the browser will scroll to and reveal the text.
+        - scroll: Scroll the viewport. Set "scrollDirection" (DOWN/UP) and "scrollPercent" (10–100, default 100). Only use when scroll_to_text is not applicable (e.g. looking for visual content, or no keywords to search).
         - peek_full_page: Full-page overview screenshot. Last resort — use find_on_page first.
 
         Conclude:
         - answer_found: Set "answer". Only when openQuestions is empty. "answer" must be null for all other actions.
-        - give_up: Only after using find_on_page, expanding [collapsed] elements, AND scrolling through the page.
+        - give_up: ABSOLUTE LAST RESORT. You must have done ALL of: (1) find_on_page with multiple keyword variations, (2) expanded any [collapsed] elements, (3) scrolled through or used scroll_to_text on the page. If find_on_page showed hidden matches, you MUST expand those hidden elements before giving up.
 
         === RESPONSE FORMAT ===
-        - "finding": data from the current screenshot. Null only if nothing relevant is visible.
+        - "thinking": REQUIRED. Your reasoning — what happened, what you see, what you'll do next. This becomes your memory across turns.
+        - "finding": query-relevant data from the current screenshot. Null only if nothing relevant is visible.
         - "openQuestions": gaps remaining. Empty only when fully answered.
         - One action with its required fields.
 
@@ -167,7 +186,9 @@ class WebpageNavigationAgentGenAiImpl(
         - Study the screenshot fresh each turn — never carry stale data forward.
         - If a previous outcome says NO visible change → try a DIFFERENT element or approach.
         - For tables/grids, match row labels to column headers carefully.
-        - Off-page clicks are automatically blocked. The outcome will say "Navigated OFF-PAGE". Do NOT re-click such elements.
+        - Off-page clicks are automatically blocked. The outcome will say "Navigated OFF-PAGE". Do NOT re-click such elements. Focus on the current page instead.
+        - NEVER click the same off-page element twice. After an off-page outcome, switch to exploring the current page.
+        - Prefer find_on_page + scroll_to_text over blind scrolling. This is faster and more reliable.
 
         === VISUAL CAPTURE ===
         - If you see a relevant chart, diagram, or table image, set "captureRegions" with bounding box (0–1000 coordinates) and "relevance" description.
@@ -185,6 +206,7 @@ class WebpageNavigationAgentGenAiImpl(
 
     @Serializable
     private data class NavigationResponse(
+        val thinking: String? = null,
         val finding: String? = null,
         val openQuestions: List<String>? = null,
         val actionType: String,
@@ -325,6 +347,7 @@ class WebpageNavigationAgentGenAiImpl(
         return WebpageNavigationOutput(
             action = action,
             finding = response.finding,
+            thinking = response.thinking,
             openQuestions = response.openQuestions ?: emptyList(),
             captureRegions = captureRegions,
             tokenUsage = tokenUsage
@@ -371,7 +394,7 @@ class WebpageNavigationAgentGenAiImpl(
             )
             "scroll_to_text" -> NavigationAction.ScrollToText(
                 searchText = response.searchText ?: "",
-                occurrence = (response.occurrence ?: 1).coerceAtLeast(1),
+                occurrence = 1,
                 reason = response.reason ?: ""
             )
             "answer_found" -> {
@@ -418,9 +441,10 @@ class WebpageNavigationAgentGenAiImpl(
         }
     }
 
-    private fun formatActionWithOutcome(entry: ActionWithOutcome): String {
-        val desc = formatActionDesc(entry.action)
-        return if (entry.outcome != null) "$desc → ${entry.outcome}" else desc
+    private fun formatActionWithOutcome(entry: ActionWithOutcome): String = buildString {
+        if (entry.thinking != null) append("Thinking: ${entry.thinking}\n     ")
+        append("Action: ${formatActionDesc(entry.action)}")
+        if (entry.outcome != null) append(" → ${entry.outcome}")
     }
 
     private fun formatActionDesc(action: NavigationAction): String = when (action) {
@@ -434,7 +458,7 @@ class WebpageNavigationAgentGenAiImpl(
         }
         is NavigationAction.Scroll -> "Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
         is NavigationAction.FindOnPage -> "Ctrl+F: [${action.keywords.joinToString { "\"$it\"" }}]"
-        is NavigationAction.ScrollToText -> "Scroll to \"${action.searchText}\" (occurrence ${action.occurrence})"
+        is NavigationAction.ScrollToText -> "Scroll to \"${action.searchText}\""
         is NavigationAction.PeekFullPage -> "Peeked at full page overview"
         is NavigationAction.Type -> {
             val target = action.elementDescription ?: "element"

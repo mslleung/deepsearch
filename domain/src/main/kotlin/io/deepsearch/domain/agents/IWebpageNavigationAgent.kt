@@ -7,7 +7,8 @@ import kotlinx.serialization.Serializable
 
 data class ActionWithOutcome(
     val action: NavigationAction,
-    val outcome: String? = null
+    val outcome: String? = null,
+    val thinking: String? = null
 )
 
 data class WebpageNavigationInput(
@@ -109,9 +110,13 @@ data class CaptureRegion(
 )
 
 /**
- * Every VLM response includes [finding] (what's relevant on the current screenshot)
- * and [openQuestions] (gaps that remain), alongside the page [action].
- * This ensures the agent observes AND acts in every iteration — no wasted turns.
+ * Every VLM response includes [thinking] (chain-of-thought navigation reasoning),
+ * [finding] (query-relevant data from the current screenshot), and [openQuestions]
+ * (gaps that remain), alongside the page [action].
+ *
+ * [thinking] is fed back in PREVIOUS_ACTIONS so the agent maintains reasoning
+ * continuity across turns. [finding] is stored as an observation for downstream
+ * consumers (answer synthesis, relevance scoring).
  *
  * [captureRegions] allows the agent to flag visual regions (charts, diagrams, tables, etc.)
  * worth capturing as images, using 0-1000 normalized bounding boxes.
@@ -119,6 +124,7 @@ data class CaptureRegion(
 data class WebpageNavigationOutput(
     val action: NavigationAction,
     val finding: String?,
+    val thinking: String?,
     val openQuestions: List<String>,
     val captureRegions: List<CaptureRegion>,
     val tokenUsage: TokenUsageMetrics

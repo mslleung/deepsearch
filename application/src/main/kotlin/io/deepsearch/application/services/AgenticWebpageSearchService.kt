@@ -106,6 +106,8 @@ class AgenticWebpageSearchService(
             ".qc-cmp2-summary-buttons button[mode='primary']",
             // GDPR Cookie Compliance (WordPress plugin)
             ".moove-gdpr-infobar-allow-all",
+            // HubSpot
+            "#hs-eu-confirmation-button",
         )
 
         /**
@@ -127,6 +129,7 @@ class AgenticWebpageSearchService(
             "#iubenda-cs-banner",
             ".qc-cmp2-container",
             ".moove-gdpr-cookie-info-bar",
+            "#hs-eu-cookie-confirmation",
         )
     }
 
@@ -170,6 +173,7 @@ class AgenticWebpageSearchService(
         val offPageClickedDescs = mutableSetOf<String>()
         var lastActionWasClick = false
         var peekScreenshotOverride: IBrowserPage.Screenshot? = null
+        var lastFindCounts: Map<String, IBrowserPage.TextMatchCounts> = emptyMap()
 
         for (iteration in 1..MAX_ITERATIONS) {
             currentCoroutineContext().ensureActive()
@@ -244,15 +248,22 @@ class AgenticWebpageSearchService(
             java.io.File(debugDir, "annotated-iter$iteration.jpg").writeBytes(annotated.imageBytes)
             logger.debug("Saved debug screenshot to /tmp/deepsearch-debug/annotated-iter$iteration.jpg")
 
-            val elementLabels = interactiveElements.map { el ->
-                ElementLabel(
-                    labelNumber = el.index,
-                    tag = el.tag,
-                    text = el.text.take(60),
-                    role = el.role,
-                    states = el.states
-                )
-            }
+            val elementLabels = interactiveElements
+                .filter { el ->
+                    val elDesc = if (el.text.isNotBlank()) {
+                        "${el.tag} '${el.text.take(40)}'".trim()
+                    } else ""
+                    elDesc !in offPageClickedDescs && failedClickDescs.getOrDefault(elDesc, 0) < MAX_FAILED_CLICKS
+                }
+                .map { el ->
+                    ElementLabel(
+                        labelNumber = el.index,
+                        tag = el.tag,
+                        text = el.text.take(60),
+                        role = el.role,
+                        states = el.states
+                    )
+                }
 
             logger.debug("Element labels: {}", elementLabels.joinToString("\n") { el ->
                 "  [${el.labelNumber}] ${el.tag} (${el.role ?: "no-role"}) ${el.states}: ${el.text}"
@@ -292,7 +303,7 @@ class AgenticWebpageSearchService(
             )
 
             val action = output.action
-            actionsPerformed.add(ActionWithOutcome(action))
+            actionsPerformed.add(ActionWithOutcome(action, thinking = output.thinking))
 
             val finding = output.finding
             if (finding != null) {
@@ -336,20 +347,22 @@ class AgenticWebpageSearchService(
                 }
 
                 is NavigationAction.GiveUp -> {
-                    val hasExplored = actionsPerformed.any {
-                        it.action is NavigationAction.FindOnPage ||
-                        it.action is NavigationAction.Scroll ||
-                        it.action is NavigationAction.ScrollToText ||
-                        it.action is NavigationAction.PeekFullPage
-                    }
-                    if (!hasExplored) {
+                    val consecutiveGiveUps = actionsPerformed.takeLastWhile {
+                        it.action is NavigationAction.GiveUp
+                    }.size
+                    val rejectionReason = evaluateGiveUpReadiness(actionsPerformed, ctx.scrollPercent)
+                    if (rejectionReason != null) {
                         logger.info(
-                            "Rejecting premature give_up at iteration {} for {} — agent must explore first",
-                            iteration, url
+                            "Rejecting premature give_up at iteration {} for {} (attempt #{}) — {}",
+                            iteration, url, consecutiveGiveUps, rejectionReason
                         )
+                        val escalation = if (consecutiveGiveUps >= 2) {
+                            " STOP trying give_up. You have been rejected $consecutiveGiveUps times. " +
+                                    "Instead: use answer_found with whatever partial information you have gathered so far, " +
+                                    "even if incomplete. Your findings and observations contain useful data."
+                        } else ""
                         actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                            outcome = "REJECTED: You must use find_on_page or scroll before giving up. " +
-                                    "The current viewport may not show all page content."
+                            outcome = "REJECTED: $rejectionReason$escalation"
                         )
                     } else {
                         logger.info(
@@ -409,10 +422,9 @@ class AgenticWebpageSearchService(
                                 onLinkDiscovered?.invoke(targetUrl)
                                 offPageClickedDescs.add(desc)
                                 lastActionWasClick = false
+                                val usedFind = actionsPerformed.any { it.action is NavigationAction.FindOnPage }
                                 actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = "Navigated OFF-PAGE to $targetUrl — " +
-                                            "recorded for separate investigation. " +
-                                            "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
+                                    outcome = buildOffPageOutcome(targetUrl, offPageClickedDescs.size, usedFind)
                                 )
                             } else {
                                 lastActionWasClick = true
@@ -467,10 +479,9 @@ class AgenticWebpageSearchService(
                                 onLinkDiscovered?.invoke(targetUrl)
                                 offPageClickedDescs.add(desc)
                                 lastActionWasClick = false
+                                val usedFind = actionsPerformed.any { it.action is NavigationAction.FindOnPage }
                                 actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = "Navigated OFF-PAGE to $targetUrl — " +
-                                            "recorded for separate investigation. " +
-                                            "Look for the information elsewhere on the CURRENT page, or use answer_found / give_up."
+                                    outcome = buildOffPageOutcome(targetUrl, offPageClickedDescs.size, usedFind)
                                 )
                             } else {
                                 lastActionWasClick = true
@@ -495,13 +506,15 @@ class AgenticWebpageSearchService(
                             )
                         } else {
                             val counts = page.countTextMatches(action.keywords)
+                            lastFindCounts = lastFindCounts + counts
                             val countsDesc = counts.entries.joinToString(", ") { (kw, c) ->
                                 val hidden = c.total - c.visible
                                 if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
                             }
                             logger.info("find_on_page results for {}: {}", url, countsDesc)
+                            val hint = buildFindOnPageHint(counts, action.keywords)
                             actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "Match counts — $countsDesc"
+                                outcome = "Match counts — $countsDesc$hint"
                             )
                         }
                     } catch (e: CancellationException) {
@@ -521,14 +534,22 @@ class AgenticWebpageSearchService(
                         } else {
                             val found = page.scrollToTextContent(action.searchText, action.occurrence)
                             if (found) {
-                                logger.info("scroll_to_text found '{}' occurrence {} on {}", action.searchText, action.occurrence, url)
+                                logger.info("scroll_to_text found '{}' on {}", action.searchText, url)
+                                val priorMatch = lastFindCounts[action.searchText]
+                                val totalMatches = priorMatch?.total ?: 0
+                                val outcomeText = buildString {
+                                    append("Scrolled to \"${action.searchText}\".")
+                                    if (totalMatches > 1) {
+                                        append(" There are $totalMatches total matches on this page.")
+                                    }
+                                }
                                 actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = "Scrolled to occurrence ${action.occurrence} of \"${action.searchText}\"."
+                                    outcome = outcomeText
                                 )
                             } else {
-                                logger.debug("scroll_to_text: '{}' occurrence {} not found on {}", action.searchText, action.occurrence, url)
+                                logger.debug("scroll_to_text: '{}' not found on {}", action.searchText, url)
                                 actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = "\"${action.searchText}\" occurrence ${action.occurrence} not found on page."
+                                    outcome = "\"${action.searchText}\" not found on page."
                                 )
                             }
                         }
@@ -549,8 +570,28 @@ class AgenticWebpageSearchService(
                             ScrollDirection.UP -> -scrollPx
                         }
                         page.scrollPage(delta)
+                        val hasUsedFindOnPageBefore = actionsPerformed.any {
+                            it.action is NavigationAction.FindOnPage
+                        }
+                        val scrollOutcome = buildString {
+                            append("Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%")
+                            if (!hasUsedFindOnPageBefore) {
+                                append(". IMPORTANT: You have not used find_on_page yet. Use find_on_page NEXT to search for relevant keywords before scrolling further.")
+                            } else {
+                                val priorFindWithMatches = actionsPerformed.any {
+                                    it.action is NavigationAction.FindOnPage &&
+                                            it.outcome?.let { o -> !o.contains(": 0") || o.contains("hidden") } == true
+                                }
+                                val hasUsedScrollToText = actionsPerformed.any {
+                                    it.action is NavigationAction.ScrollToText
+                                }
+                                if (priorFindWithMatches && !hasUsedScrollToText) {
+                                    append(". HINT: find_on_page found matches earlier — use scroll_to_text to jump directly to them instead of scrolling.")
+                                }
+                            }
+                        }
                         actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                            outcome = "Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
+                            outcome = scrollOutcome
                         )
                         delay(POST_SCROLL_DELAY_MS)
                     } catch (e: CancellationException) {
@@ -635,6 +676,129 @@ class AgenticWebpageSearchService(
             discoveredUrls = discoveredUrls,
             capturedImages = capturedImages.toList()
         )
+    }
+
+    private fun buildFindOnPageHint(
+        counts: Map<String, IBrowserPage.TextMatchCounts>,
+        keywords: List<String>
+    ): String {
+        val currencySymbols = setOf("$", "HK$", "£", "€", "¥", "US$", "A$", "S$")
+        val visibleCurrencyMatches = counts.entries
+            .filter { (kw, c) -> kw in currencySymbols && c.visible > 0 }
+        val hiddenOnlyKeywords = counts.entries
+            .filter { (_, c) -> c.visible == 0 && c.total > 0 }
+            .map { it.key }
+        val allZero = counts.values.all { it.total == 0 }
+        val priceKeywords = setOf("price", "cost", "pricing", "fee", "fees", "rate")
+        val searchedForPrice = keywords.any { it.lowercase() in priceKeywords }
+
+        return buildString {
+            if (visibleCurrencyMatches.isNotEmpty()) {
+                val best = visibleCurrencyMatches.maxBy { it.value.visible }
+                append(". ACTION REQUIRED: \"${best.key}\" has ${best.value.visible} visible match(es). " +
+                        "Use scroll_to_text with \"${best.key}\" to jump directly to price information " +
+                        "— this is more reliable than scrolling to product names which may land on navigation menus.")
+            }
+            if (hiddenOnlyKeywords.isNotEmpty()) {
+                val examples = hiddenOnlyKeywords.take(3).joinToString(", ") { "\"$it\"" }
+                append(". TIP: $examples have hidden-only matches (behind collapsed/expandable elements). " +
+                        "Use scroll_to_text with those keywords — the browser will scroll to and reveal hidden content. " +
+                        "Or click nearby [collapsed] elements to expand them.")
+            }
+            if (allZero && searchedForPrice) {
+                append(". TIP: No matches for price-related words. Prices on web pages are usually shown as currency amounts " +
+                        "(e.g. \"$\", \"HK$\", \"£\"). Try find_on_page with \"$\" or specific amounts instead.")
+            }
+        }
+    }
+
+    private fun buildOffPageOutcome(
+        targetUrl: String,
+        offPageCount: Int,
+        hasUsedFindOnPage: Boolean
+    ): String = buildString {
+        append("Navigated OFF-PAGE to $targetUrl — recorded for separate investigation. ")
+        if (offPageCount >= 2) {
+            append("STOP clicking links — you have tried $offPageCount off-page links already. ")
+            if (!hasUsedFindOnPage) {
+                append("You have NOT searched the current page yet. ")
+            }
+            append("Use find_on_page with relevant keywords to search the CURRENT page content.")
+        } else if (!hasUsedFindOnPage) {
+            append("Do NOT click more links. Use find_on_page first to check if the information exists on this page.")
+        } else {
+            append("Look for the information elsewhere on the CURRENT page using scroll_to_text or by expanding [collapsed] elements.")
+        }
+    }
+
+    /**
+     * Returns null if give-up is acceptable, or a rejection reason if the agent
+     * hasn't explored the page thoroughly enough.
+     *
+     * Requirements escalate to prevent premature give-up:
+     * 1. find_on_page must have been used at least once.
+     * 2. If find_on_page found visible matches, scroll_to_text must have been used.
+     * 3. If find_on_page reported hidden matches, scroll_to_text or click must follow.
+     * 4. The page must have been navigated beyond the initial viewport
+     *    (via scroll, scroll_to_text, or reaching high scroll%).
+     */
+    private fun evaluateGiveUpReadiness(
+        actions: List<ActionWithOutcome>,
+        scrollPercent: Int
+    ): String? {
+        val usedFindOnPage = actions.any { it.action is NavigationAction.FindOnPage }
+        if (!usedFindOnPage) {
+            return "You must use find_on_page to search for relevant keywords before giving up. " +
+                    "The current viewport may not show all page content."
+        }
+
+        val findOutcomes = actions.filter { it.action is NavigationAction.FindOnPage }
+        val allZeroMatches = findOutcomes.all { entry ->
+            val outcome = entry.outcome ?: ""
+            !outcome.contains("hidden") && Regex("""\w+: (\d+)""").findAll(outcome).all { it.groupValues[1] == "0" }
+        }
+
+        if (allZeroMatches && findOutcomes.size >= 1) {
+            return null
+        }
+
+        val hasAnyVisibleMatches = findOutcomes.any { entry ->
+            val outcome = entry.outcome ?: ""
+            Regex("""\w+: (\d+)""").findAll(outcome).any { it.groupValues[1] != "0" }
+        }
+        val hasHiddenMatches = findOutcomes.any { entry ->
+            (entry.outcome ?: "").contains("hidden", ignoreCase = true)
+        }
+        val usedScrollToText = actions.any { it.action is NavigationAction.ScrollToText }
+
+        if (hasAnyVisibleMatches && !usedScrollToText) {
+            return "find_on_page found visible matches on this page but you haven't used scroll_to_text to navigate to them. " +
+                    "Use scroll_to_text with a matched keyword (e.g. a currency symbol like \"HK$\" or \"$\") to jump directly to the content."
+        }
+
+        if (hasHiddenMatches) {
+            val lastFindIndex = actions.indexOfLast { it.action is NavigationAction.FindOnPage }
+            val triedToReveal = actions.drop(lastFindIndex + 1).any {
+                it.action is NavigationAction.Click || it.action is NavigationAction.ClickAt || it.action is NavigationAction.ScrollToText
+            }
+            if (!triedToReveal) {
+                return "find_on_page reported hidden matches behind collapsed elements. " +
+                        "You must use scroll_to_text to jump to hidden content, or click to expand collapsed elements, before giving up."
+            }
+        }
+
+        val hasScrolled = actions.any {
+            it.action is NavigationAction.Scroll || it.action is NavigationAction.ScrollToText
+        }
+        val pageFullyInViewport = scrollPercent >= 95
+
+        if (!hasScrolled && !pageFullyInViewport) {
+            return "You have not scrolled or used scroll_to_text yet. " +
+                    "The page extends beyond the current viewport (scroll position: $scrollPercent%). " +
+                    "Use scroll_to_text with relevant keywords, or scroll to explore more of the page."
+        }
+
+        return null
     }
 
     /**
