@@ -477,7 +477,7 @@ interface IBrowserPage {
     suspend fun scrollToTextContent(searchText: String, occurrence: Int = 1): Boolean
 
     @Serializable
-    data class TextMatchCounts(val visible: Int, val total: Int)
+    data class TextMatchCounts(val visible: Int, val total: Int, val firstContext: String? = null)
 
     /**
      * Count text matches for each keyword on the page (like Ctrl+F match counts).

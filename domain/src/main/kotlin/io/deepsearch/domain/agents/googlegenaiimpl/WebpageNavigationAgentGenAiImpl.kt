@@ -169,18 +169,17 @@ class WebpageNavigationAgentGenAiImpl(
 
         ### Strategy (mandatory priority order)
         1. Check if the answer is already visible in the current viewport.
-        2. ALWAYS use find_on_page FIRST (before scrolling or clicking) to assess whether the page contains the information. This is your most important action.
-        3. If find_on_page shows visible matches → use scroll_to_text to jump directly to them.
-        4. If find_on_page shows hidden matches → use scroll_to_text (reveals hidden content) or expand [collapsed] elements.
+        2. ALWAYS use find_on_page FIRST (before scrolling or clicking) to assess whether the page contains the information. This is your most important action. find_on_page automatically scrolls to the best match, so you'll see new content in the next turn.
+        3. If find_on_page auto-scrolled, examine the new viewport for the answer. Use scroll_to_text only to jump to a DIFFERENT match or occurrence.
+        4. If find_on_page shows hidden matches → expand [collapsed] elements or use scroll_to_text (which reveals hidden content).
         5. Expand [collapsed] accordions/tabs/dropdowns — the answer is often hidden behind them.
         6. Only use scroll as a last resort when find_on_page returned no matches but the page may have visual-only content.
         7. Do NOT click off-page links as a first strategy. Explore the CURRENT page thoroughly first.
 
         ### Keyword tips
-        Choose keywords that match ACTUAL PAGE TEXT, not abstract concepts:
-        - For prices: search "$", "HK$", "£", "€", or specific amounts like "5,900" — NOT "price" or "cost".
-        - For scroll_to_text: prefer currency symbols over product names — product names appear in menus/headers far from prices, currency symbols appear near price tables.
-        - For features: search the exact feature name, e.g. "Stress Test", "role-based".
+        Keywords don't need to be exact — the system handles stemming (e.g. "pricing" matches "prices", "running" matches "runs"). Choose keywords that are likely to appear on the page:
+        - For prices: include currency symbols like "$", "HK$", "£", "€", or specific amounts like "5,900".
+        - For features: search the feature name, e.g. "Stress Test", "role-based".
         - If first keywords return 0 matches, try synonyms or shorter fragments.
         - Always include at least one highly specific keyword AND one broader keyword.
 
@@ -192,8 +191,8 @@ class WebpageNavigationAgentGenAiImpl(
         - type: Type into a labeled input.
 
         Explore:
-        - find_on_page: Search page text for keywords. Returns match counts per keyword. Hidden matches (e.g. "keyword: 0 (2 hidden)") mean content exists behind collapsed/hidden elements — expand them or use scroll_to_text. ALWAYS use this before scrolling or giving up.
-        - scroll_to_text: Jump directly to a keyword match. PREFERRED over scroll when you know the text to look for. Works even for hidden matches — the browser will scroll to and reveal the text.
+        - find_on_page: Search page text for keywords with stemming (morphological matching). Returns match counts per keyword with context snippets. Automatically scrolls to the best visible match, so you see new content next turn. Hidden matches (e.g. "keyword: 0 (2 hidden)") mean content exists behind collapsed/hidden elements — expand them or use scroll_to_text. ALWAYS use this before scrolling or giving up.
+        - scroll_to_text: Jump directly to specific text. Use AFTER find_on_page when you want to navigate to a DIFFERENT match than the auto-scrolled one, or to a specific occurrence.
         - scroll: Scroll the viewport. Only use when scroll_to_text is not applicable.
         - peek_full_page: Full-page overview screenshot. Last resort — use find_on_page first.
 
@@ -207,7 +206,7 @@ class WebpageNavigationAgentGenAiImpl(
         - For tables/grids, match row labels to column headers carefully.
         - Off-page clicks are automatically blocked. The outcome will say "Navigated OFF-PAGE". Do NOT re-click such elements.
         - NEVER click the same off-page element twice. After an off-page outcome, switch to exploring the current page.
-        - Prefer find_on_page + scroll_to_text over blind scrolling.
+        - Prefer find_on_page over blind scrolling. After find_on_page auto-scrolls, use scroll_to_text only for different matches.
         - Label numbers come from ELEMENTS. Do not confuse page content (prices, phone numbers) with label badges.
 
         ### Visual capture

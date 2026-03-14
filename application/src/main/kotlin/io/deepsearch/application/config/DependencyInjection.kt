@@ -57,6 +57,7 @@ val applicationModule = module {
     singleOf(::FileSearchService) bind IFileSearchService::class
     singleOf(::HttpContentTypeResolutionService) bind IHttpContentTypeResolutionService::class
     singleOf(::PdfPreviewService) bind IPdfPreviewService::class
+    singleOf(::PageTextSearchService) bind IPageTextSearchService::class
     singleOf(::LinkRelevanceHtmlService) bind ILinkRelevanceHtmlService::class
     singleOf(::ProxyResolutionService) bind IProxyResolutionService::class
     singleOf(::BrowserPageResolver) bind IBrowserPageResolver::class

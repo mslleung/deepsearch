@@ -63,7 +63,8 @@ class AgenticWebpageSearchService(
     private val browserPool: IBrowserPool,
     private val webpageNavigationAgent: IWebpageNavigationAgent,
     private val screenshotAnnotationService: ScreenshotAnnotationService,
-    private val tokenUsageService: ILlmTokenUsageService
+    private val tokenUsageService: ILlmTokenUsageService,
+    private val pageTextSearchService: IPageTextSearchService
 ) : IAgenticWebpageSearchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -505,17 +506,52 @@ class AgenticWebpageSearchService(
                                 outcome = "No keywords provided. Provide keywords to search for."
                             )
                         } else {
-                            val counts = page.countTextMatches(action.keywords)
+                            val (counts, stemmedMatches) = coroutineScope {
+                                val countsDeferred = async { page.countTextMatches(action.keywords) }
+                                val stemmedDeferred = async {
+                                    try {
+                                        val pageText = page.extractTextContent()
+                                        pageTextSearchService.search(pageText, action.keywords)
+                                    } catch (e: Exception) {
+                                        logger.debug("Stemmed text search failed, proceeding with exact only: {}", e.message)
+                                        emptyMap()
+                                    }
+                                }
+                                Pair(countsDeferred.await(), stemmedDeferred.await())
+                            }
                             lastFindCounts = lastFindCounts + counts
+
                             val countsDesc = counts.entries.joinToString(", ") { (kw, c) ->
                                 val hidden = c.total - c.visible
-                                if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
+                                val base = if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
+                                val ctx = c.firstContext
+                                if (ctx != null && c.total > 0) "$base (e.g. '$ctx')" else base
                             }
                             logger.info("find_on_page results for {}: {}", url, countsDesc)
-                            val hint = buildFindOnPageHint(counts, action.keywords)
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "Match counts — $countsDesc$hint"
+
+                            val outcome = buildFindOnPageOutcome(
+                                counts, stemmedMatches, action.keywords, countsDesc
                             )
+
+                            val scrollTarget = pickAutoScrollTarget(counts, stemmedMatches, action.keywords)
+                            if (scrollTarget != null) {
+                                val scrolled = page.scrollToTextContent(scrollTarget)
+                                if (scrolled) {
+                                    logger.info("find_on_page auto-scrolled to '{}' on {}", scrollTarget, url)
+                                    actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                        outcome = "$outcome Auto-scrolled to \"$scrollTarget\"."
+                                    )
+                                } else {
+                                    actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                        outcome = outcome
+                                    )
+                                }
+                                delay(POST_SCROLL_DELAY_MS)
+                            } else {
+                                actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                                    outcome = outcome
+                                )
+                            }
                         }
                     } catch (e: CancellationException) {
                         throw e
@@ -576,18 +612,7 @@ class AgenticWebpageSearchService(
                         val scrollOutcome = buildString {
                             append("Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%")
                             if (!hasUsedFindOnPageBefore) {
-                                append(". IMPORTANT: You have not used find_on_page yet. Use find_on_page NEXT to search for relevant keywords before scrolling further.")
-                            } else {
-                                val priorFindWithMatches = actionsPerformed.any {
-                                    it.action is NavigationAction.FindOnPage &&
-                                            it.outcome?.let { o -> !o.contains(": 0") || o.contains("hidden") } == true
-                                }
-                                val hasUsedScrollToText = actionsPerformed.any {
-                                    it.action is NavigationAction.ScrollToText
-                                }
-                                if (priorFindWithMatches && !hasUsedScrollToText) {
-                                    append(". HINT: find_on_page found matches earlier — use scroll_to_text to jump directly to them instead of scrolling.")
-                                }
+                                append(". IMPORTANT: You have not used find_on_page yet. Use find_on_page NEXT — it searches with stemming/fuzzy matching and auto-scrolls to the best match.")
                             }
                         }
                         actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
@@ -678,36 +703,55 @@ class AgenticWebpageSearchService(
         )
     }
 
-    private fun buildFindOnPageHint(
+    private val currencySymbols = setOf("$", "HK$", "£", "€", "¥", "US$", "A$", "S$")
+    private val priceKeywords = setOf("price", "cost", "pricing", "fee", "fees", "rate")
+
+    /**
+     * Picks the best keyword to auto-scroll to after find_on_page. Returns null if no
+     * suitable scroll target exists (e.g., only hidden matches or zero matches everywhere).
+     */
+    internal fun pickAutoScrollTarget(
         counts: Map<String, IBrowserPage.TextMatchCounts>,
+        stemmedMatches: Map<String, List<TextMatch>>,
         keywords: List<String>
-    ): String {
-        val currencySymbols = setOf("$", "HK$", "£", "€", "¥", "US$", "A$", "S$")
-        val visibleCurrencyMatches = counts.entries
+    ): String? {
+        val visibleCurrency = counts.entries
             .filter { (kw, c) -> kw in currencySymbols && c.visible > 0 }
+            .maxByOrNull { it.value.visible }
+        if (visibleCurrency != null) return visibleCurrency.key
+
+        val firstVisibleExact = keywords.firstOrNull { kw ->
+            counts[kw]?.visible?.let { it > 0 } == true
+        }
+        if (firstVisibleExact != null) return firstVisibleExact
+
+        val bestStemmed = stemmedMatches.values.flatten().maxByOrNull { it.score }
+        return bestStemmed?.matchedText?.take(60)
+    }
+
+    internal fun buildFindOnPageOutcome(
+        counts: Map<String, IBrowserPage.TextMatchCounts>,
+        stemmedMatches: Map<String, List<TextMatch>>,
+        keywords: List<String>,
+        countsDesc: String
+    ): String = buildString {
+        append("Match counts — $countsDesc.")
+
         val hiddenOnlyKeywords = counts.entries
             .filter { (_, c) -> c.visible == 0 && c.total > 0 }
             .map { it.key }
-        val allZero = counts.values.all { it.total == 0 }
-        val priceKeywords = setOf("price", "cost", "pricing", "fee", "fees", "rate")
-        val searchedForPrice = keywords.any { it.lowercase() in priceKeywords }
+        if (hiddenOnlyKeywords.isNotEmpty()) {
+            val examples = hiddenOnlyKeywords.take(3).joinToString(", ") { "\"$it\"" }
+            append(" TIP: $examples have hidden-only matches — expand [collapsed] elements or use scroll_to_text.")
+        }
 
-        return buildString {
-            if (visibleCurrencyMatches.isNotEmpty()) {
-                val best = visibleCurrencyMatches.maxBy { it.value.visible }
-                append(". ACTION REQUIRED: \"${best.key}\" has ${best.value.visible} visible match(es). " +
-                        "Use scroll_to_text with \"${best.key}\" to jump directly to price information " +
-                        "— this is more reliable than scrolling to product names which may land on navigation menus.")
-            }
-            if (hiddenOnlyKeywords.isNotEmpty()) {
-                val examples = hiddenOnlyKeywords.take(3).joinToString(", ") { "\"$it\"" }
-                append(". TIP: $examples have hidden-only matches (behind collapsed/expandable elements). " +
-                        "Use scroll_to_text with those keywords — the browser will scroll to and reveal hidden content. " +
-                        "Or click nearby [collapsed] elements to expand them.")
-            }
-            if (allZero && searchedForPrice) {
-                append(". TIP: No matches for price-related words. Prices on web pages are usually shown as currency amounts " +
-                        "(e.g. \"$\", \"HK$\", \"£\"). Try find_on_page with \"$\" or specific amounts instead.")
+        val allZero = counts.values.all { it.total == 0 } && stemmedMatches.isEmpty()
+        if (allZero) {
+            val searchedForPrice = keywords.any { it.lowercase() in priceKeywords }
+            if (searchedForPrice) {
+                append(" No matches. Try currency symbols (\"$\", \"HK$\", \"£\") or specific amounts.")
+            } else {
+                append(" No matches. Try different keywords or synonyms.")
             }
         }
     }
