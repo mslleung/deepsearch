@@ -68,7 +68,10 @@ sealed class PageCommand {
     data object GetScrollPosition : PageCommand()
     
     @Serializable @SerialName("scrollPage")
-    data class ScrollPage(val deltaY: Int) : PageCommand()
+    data class ScrollPage(val deltaX: Int = 0, val deltaY: Int = 0) : PageCommand()
+
+    @Serializable @SerialName("scrollElementAtCoordinates")
+    data class ScrollElementAtCoordinates(val x: Int, val y: Int, val deltaX: Int, val deltaY: Int) : PageCommand()
     
     @Serializable @SerialName("removeElement")
     data class RemoveElement(val xpath: String) : PageCommand()

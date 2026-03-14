@@ -50,7 +50,7 @@ class WebpageNavigationAgentGenAiImpl(
             mapOf(
                 "action" to Schema.builder()
                     .type("STRING")
-                    .enum_(listOf("click", "click_at", "scroll", "find_on_page", "scroll_to_text", "peek_full_page", "type", "answer_found", "give_up"))
+                    .enum_(listOf("click", "scroll", "scroll_at", "find_on_page", "scroll_to_text", "peek_full_page", "type", "answer_found", "give_up"))
                     .build(),
                 "reason" to Schema.builder()
                     .type("STRING")
@@ -60,16 +60,8 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("OBJECT")
                     .nullable(true)
                     .properties(mapOf(
-                        "label" to Schema.builder().type("INTEGER").description("Element label number from ELEMENTS list.").build()
-                    ))
-                    .required(listOf("label"))
-                    .build(),
-                "clickAt" to Schema.builder()
-                    .type("OBJECT")
-                    .nullable(true)
-                    .properties(mapOf(
-                        "x" to Schema.builder().type("INTEGER").description("X coordinate (0-1000).").build(),
-                        "y" to Schema.builder().type("INTEGER").description("Y coordinate (0-1000).").build()
+                        "x" to Schema.builder().type("INTEGER").description("X coordinate (0-1000, where 0=left edge).").build(),
+                        "y" to Schema.builder().type("INTEGER").description("Y coordinate (0-1000, where 0=top edge).").build()
                     ))
                     .required(listOf("x", "y"))
                     .build(),
@@ -77,10 +69,21 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("OBJECT")
                     .nullable(true)
                     .properties(mapOf(
-                        "direction" to Schema.builder().type("STRING").enum_(listOf("DOWN", "UP")).build(),
+                        "direction" to Schema.builder().type("STRING").enum_(listOf("DOWN", "UP", "LEFT", "RIGHT")).build(),
                         "percent" to Schema.builder().type("INTEGER").description("Viewport percentage to scroll (10-100). Default 100.").build()
                     ))
                     .required(listOf("direction"))
+                    .build(),
+                "scrollAt" to Schema.builder()
+                    .type("OBJECT")
+                    .nullable(true)
+                    .properties(mapOf(
+                        "x" to Schema.builder().type("INTEGER").description("X coordinate of scrollable container (0-1000).").build(),
+                        "y" to Schema.builder().type("INTEGER").description("Y coordinate of scrollable container (0-1000).").build(),
+                        "direction" to Schema.builder().type("STRING").enum_(listOf("DOWN", "UP", "LEFT", "RIGHT")).build(),
+                        "percent" to Schema.builder().type("INTEGER").description("Scroll amount as viewport percentage (10-100). Default 100.").build()
+                    ))
+                    .required(listOf("x", "y", "direction"))
                     .build(),
                 "findOnPage" to Schema.builder()
                     .type("OBJECT")
@@ -103,10 +106,11 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("OBJECT")
                     .nullable(true)
                     .properties(mapOf(
-                        "label" to Schema.builder().type("INTEGER").description("Element label number for the input field.").build(),
+                        "x" to Schema.builder().type("INTEGER").description("X coordinate of input field (0-1000).").build(),
+                        "y" to Schema.builder().type("INTEGER").description("Y coordinate of input field (0-1000).").build(),
                         "text" to Schema.builder().type("STRING").description("Text to type.").build()
                     ))
-                    .required(listOf("label", "text"))
+                    .required(listOf("x", "y", "text"))
                     .build(),
                 "answerFound" to Schema.builder()
                     .type("OBJECT")
@@ -119,7 +123,7 @@ class WebpageNavigationAgentGenAiImpl(
             )
         )
         .required(listOf("action", "reason"))
-        .propertyOrdering(listOf("action", "reason", "click", "clickAt", "scroll", "findOnPage", "scrollToText", "type", "answerFound"))
+        .propertyOrdering(listOf("action", "reason", "click", "scroll", "scrollAt", "findOnPage", "scrollToText", "type", "answerFound"))
         .build()
 
     private val outputSchema: Schema = Schema.builder()
@@ -159,55 +163,61 @@ class WebpageNavigationAgentGenAiImpl(
         ## Input
 
         You receive on each turn:
-        - An annotated screenshot of the current viewport (numbered badges = interactive elements)
+        - A screenshot of the current viewport
+        - ITERATION: current turn / max turns (budget awareness)
         - FINDINGS: accumulated facts discovered so far across all turns
         - OPEN QUESTIONS: what still needs to be found
         - TURNS: your previous observations, findings, decisions, and their outcomes
-        - ELEMENTS: interactive element labels (numbered badges on the screenshot)
+        - ELEMENTS: interactive elements on the page (role, state, text)
+        - SEARCH RESULTS: summary of prior find_on_page outcomes (if any)
 
         ## Instructions
 
-        ### Strategy (mandatory priority order)
+        ### Strategy
         1. Check if the answer is already visible in the current viewport.
-        2. ALWAYS use find_on_page FIRST (before scrolling or clicking) to assess whether the page contains the information. This is your most important action. find_on_page automatically scrolls to the best match, so you'll see new content in the next turn.
-        3. If find_on_page auto-scrolled, examine the new viewport for the answer. Use scroll_to_text only to jump to a DIFFERENT match or occurrence.
+        2. Use find_on_page to assess whether the page contains the information. find_on_page searches with stemming and automatically scrolls to the best match.
+        3. If find_on_page auto-scrolled, examine the new viewport for the answer. Use scroll_to_text to jump to a DIFFERENT match or occurrence.
         4. If find_on_page shows hidden matches → expand [collapsed] elements or use scroll_to_text (which reveals hidden content).
         5. Expand [collapsed] accordions/tabs/dropdowns — the answer is often hidden behind them.
         6. Only use scroll as a last resort when find_on_page returned no matches but the page may have visual-only content.
         7. Do NOT click off-page links as a first strategy. Explore the CURRENT page thoroughly first.
+        8. If a table or panel is cut off horizontally, use scroll_at to scroll that specific container LEFT or RIGHT.
 
         ### Keyword tips
-        Keywords don't need to be exact — the system handles stemming (e.g. "pricing" matches "prices", "running" matches "runs"). Choose keywords that are likely to appear on the page:
-        - For prices: include currency symbols like "$", "HK$", "£", "€", or specific amounts like "5,900".
-        - For features: search the feature name, e.g. "Stress Test", "role-based".
-        - If first keywords return 0 matches, try synonyms or shorter fragments.
+        Keywords must match ACTUAL TEXT on the page, not conceptual descriptions. The system handles stemming (e.g. "pricing" matches "prices").
+        - For numeric data: search for the numbers themselves ("45", "60", "5,900"), not descriptions ("duration", "price").
+        - For prices: include currency symbols like "$", "HK$", "£", "€", or specific amounts.
+        - For features: search exact feature names ("Stress Test", "ECG"), not categories ("features", "tests").
+        - If all keywords return 0 matches: try SHORTER prefixes (e.g., "consult" instead of "consultation") or NUMERIC values you expect to find.
         - Always include at least one highly specific keyword AND one broader keyword.
+        - When find_on_page already found matches in a prior turn (see SEARCH RESULTS), do NOT re-search the same keywords. Act on the results you already have.
 
         ### Actions
 
         Interact:
-        - click: Click a labeled element. Elements marked [collapsed] hide content — click them to reveal what's inside before concluding info is absent.
-        - click_at: Click an unlabeled element by coordinates (0–1000 scale).
-        - type: Type into a labeled input.
+        - click: Click any element visible on screen by specifying (x, y) coordinates (0-1000 scale, where 0,0 is top-left). Point at the CENTER of the element you want to click. The ELEMENTS list tells you what interactive elements exist and their states.
+        - type: Type into an input field. Specify the field location with (x, y) coordinates and the text to type.
 
         Explore:
-        - find_on_page: Search page text for keywords with stemming (morphological matching). Returns match counts per keyword with context snippets. Automatically scrolls to the best visible match, so you see new content next turn. Hidden matches (e.g. "keyword: 0 (2 hidden)") mean content exists behind collapsed/hidden elements — expand them or use scroll_to_text. ALWAYS use this before scrolling or giving up.
-        - scroll_to_text: Jump directly to specific text. Use AFTER find_on_page when you want to navigate to a DIFFERENT match than the auto-scrolled one, or to a specific occurrence.
-        - scroll: Scroll the viewport. Only use when scroll_to_text is not applicable.
+        - find_on_page: Search page text for keywords with stemming (morphological matching). Returns match counts per keyword with context snippets. Automatically scrolls to the best visible match. Hidden matches mean content exists behind collapsed/hidden elements — expand them or use scroll_to_text.
+        - scroll_to_text: Jump directly to specific text. Use AFTER find_on_page when you want to navigate to a DIFFERENT match than the auto-scrolled one.
+        - scroll: Scroll the full page viewport (UP/DOWN/LEFT/RIGHT). Use when scroll_to_text is not applicable.
+        - scroll_at: Scroll a specific container element on the page. Point at the scrollable area using (x, y) coordinates (0-1000 scale) and specify direction (LEFT/RIGHT/UP/DOWN). Use this when a table, panel, or modal has content cut off horizontally or vertically.
         - peek_full_page: Full-page overview screenshot. Last resort — use find_on_page first.
 
         Conclude:
-        - answer_found: Only when openQuestions is empty. Set the answer in decision.answerFound.
-        - give_up: ABSOLUTE LAST RESORT. You must have done ALL of: (1) find_on_page with multiple keyword variations, (2) expanded any [collapsed] elements, (3) scrolled through or used scroll_to_text. If find_on_page showed hidden matches, you MUST expand those hidden elements before giving up.
+        - answer_found: When you have gathered enough information to answer the query. If you are running low on iterations and have gathered partial information, use answer_found with what you have. A partial answer is ALWAYS better than no answer. Prefix partial answers with "Based on available information:" when incomplete.
+        - give_up: ABSOLUTE LAST RESORT. Before giving up, check your FINDINGS. If you have gathered ANY relevant facts, use answer_found instead. give_up should only be used when FINDINGS is completely empty and you've exhausted search strategies. You must have done ALL of: (1) find_on_page with multiple keyword variations, (2) expanded any [collapsed] elements, (3) scrolled through or used scroll_to_text.
 
         ### Rules
+        - Use the ELEMENTS list to understand what is interactive (buttons, links, accordions). Use the screenshot to identify WHERE they are visually.
+        - Elements marked [collapsed] hide content — click them to reveal what's inside.
         - Study the screenshot fresh each turn — never carry stale data forward.
         - If a previous outcome says NO visible change → try a DIFFERENT element or approach.
-        - For tables/grids, match row labels to column headers carefully.
+        - For tables/grids, match row labels to column headers carefully. If columns are cut off, use scroll_at to scroll the table container horizontally.
         - Off-page clicks are automatically blocked. The outcome will say "Navigated OFF-PAGE". Do NOT re-click such elements.
         - NEVER click the same off-page element twice. After an off-page outcome, switch to exploring the current page.
-        - Prefer find_on_page over blind scrolling. After find_on_page auto-scrolls, use scroll_to_text only for different matches.
-        - Label numbers come from ELEMENTS. Do not confuse page content (prices, phone numbers) with label badges.
+        - Prefer find_on_page over blind scrolling.
 
         ### Visual capture
         If you see a relevant chart, diagram, or table image, include captureRegions with bounding box (0–1000 coordinates) and relevance description. Ignore logos, icons, and navigation images.
@@ -222,7 +232,7 @@ class WebpageNavigationAgentGenAiImpl(
           "decision": {
             "action": "click",
             "reason": "Why this action",
-            "click": { "label": 41 }
+            "click": { "x": 500, "y": 300 }
           }
         }
 
@@ -239,13 +249,13 @@ class WebpageNavigationAgentGenAiImpl(
     )
 
     @Serializable
-    private data class ClickParams(val label: Int)
-
-    @Serializable
-    private data class ClickAtParams(val x: Int, val y: Int)
+    private data class ClickParams(val x: Int, val y: Int)
 
     @Serializable
     private data class ScrollParams(val direction: String? = null, val percent: Int? = null)
+
+    @Serializable
+    private data class ScrollAtParams(val x: Int? = null, val y: Int? = null, val direction: String? = null, val percent: Int? = null)
 
     @Serializable
     private data class FindOnPageParams(val keywords: List<String>? = null)
@@ -254,7 +264,7 @@ class WebpageNavigationAgentGenAiImpl(
     private data class ScrollToTextParams(val text: String? = null)
 
     @Serializable
-    private data class TypeParams(val label: Int? = null, val text: String? = null)
+    private data class TypeParams(val x: Int? = null, val y: Int? = null, val text: String? = null)
 
     @Serializable
     private data class AnswerFoundParams(val answer: String? = null)
@@ -264,8 +274,8 @@ class WebpageNavigationAgentGenAiImpl(
         val action: String,
         val reason: String? = null,
         val click: ClickParams? = null,
-        val clickAt: ClickAtParams? = null,
         val scroll: ScrollParams? = null,
+        val scrollAt: ScrollAtParams? = null,
         val findOnPage: FindOnPageParams? = null,
         val scrollToText: ScrollToTextParams? = null,
         val type: TypeParams? = null,
@@ -290,7 +300,7 @@ class WebpageNavigationAgentGenAiImpl(
         val response = withContext(dispatcherProvider.io) {
             retryLlmCall<NavigationResponse>(this@WebpageNavigationAgentGenAiImpl::class.simpleName!!) {
                 val contentParts = listOf(
-                    Part.fromText("ANNOTATED_VIEWPORT:"),
+                    Part.fromText("VIEWPORT:"),
                     Part.fromBytes(input.screenshot.bytes, input.screenshot.mimeType.value),
                     Part.fromText(userPrompt)
                 )
@@ -367,6 +377,7 @@ class WebpageNavigationAgentGenAiImpl(
     private fun buildUserPrompt(input: WebpageNavigationInput): String = buildString {
         appendLine("PAGE: ${input.pageTitle} — ${input.pageUrl}")
         appendLine("SCROLL: ${input.scrollPercent}%")
+        appendLine("ITERATION: ${input.currentIteration} / ${input.maxIterations}")
         appendLine()
         appendLine("QUERY: ${input.query}")
 
@@ -389,6 +400,16 @@ class WebpageNavigationAgentGenAiImpl(
             appendLine("OPEN QUESTIONS: None — all questions resolved. You may use answer_found.")
         }
 
+        if (input.searchResults.isNotEmpty()) {
+            appendLine()
+            appendLine("SEARCH RESULTS (from prior find_on_page — do NOT re-search these keywords):")
+            input.searchResults.forEach { (keyword, counts) ->
+                val hidden = counts.total - counts.visible
+                val hiddenStr = if (hidden > 0) ", $hidden hidden" else ""
+                appendLine("  \"$keyword\": ${counts.visible} visible$hiddenStr")
+            }
+        }
+
         if (input.previousActions.isNotEmpty()) {
             appendLine()
             appendLine("TURNS:")
@@ -398,13 +419,12 @@ class WebpageNavigationAgentGenAiImpl(
         }
 
         if (input.elementLabels.isNotEmpty()) {
-            val maxLabel = input.elementLabels.maxOf { it.labelNumber }
             appendLine()
-            appendLine("ELEMENTS (label range 0–$maxLabel):")
+            appendLine("ELEMENTS:")
             input.elementLabels.forEach { el ->
                 val roleStr = el.role?.let { " ($it)" } ?: ""
                 val statesStr = if (el.states.isNotEmpty()) " [${el.states.joinToString(", ")}]" else ""
-                appendLine("  [${el.labelNumber}] ${el.tag}$roleStr$statesStr: ${el.text.take(60)}")
+                appendLine("  ${el.tag}$roleStr$statesStr: ${el.text.take(60)}")
             }
         } else {
             appendLine()
@@ -416,22 +436,12 @@ class WebpageNavigationAgentGenAiImpl(
         val reason = decision.reason ?: ""
         return when (decision.action) {
             "click" -> {
-                val label = decision.click?.label?.takeIf { it >= 0 }
-                    ?: extractLabelFromText(reason)
-                if (label == null) {
-                    logger.warn("VLM returned click without label, falling back to scroll")
-                    scrollFallback()
-                } else {
-                    NavigationAction.Click(labelNumber = label, reason = reason)
-                }
-            }
-            "click_at" -> {
-                val params = decision.clickAt
+                val params = decision.click
                 if (params == null) {
-                    logger.warn("VLM returned click_at without clickAt params, falling back to scroll")
+                    logger.warn("VLM returned click without coordinates, falling back to scroll")
                     scrollFallback()
                 } else {
-                    NavigationAction.ClickAt(
+                    NavigationAction.Click(
                         x = params.x.coerceIn(0, 1000),
                         y = params.y.coerceIn(0, 1000),
                         reason = reason
@@ -441,13 +451,25 @@ class WebpageNavigationAgentGenAiImpl(
             "scroll" -> {
                 val params = decision.scroll
                 NavigationAction.Scroll(
-                    scrollDirection = when (params?.direction?.uppercase()) {
-                        "UP" -> ScrollDirection.UP
-                        else -> ScrollDirection.DOWN
-                    },
+                    scrollDirection = parseScrollDirection(params?.direction),
                     scrollPercent = (params?.percent ?: 100).coerceIn(10, 100),
                     reason = reason
                 )
+            }
+            "scroll_at" -> {
+                val params = decision.scrollAt
+                if (params?.x == null || params.y == null || params.direction == null) {
+                    logger.warn("VLM returned scroll_at with missing params, falling back to scroll")
+                    scrollFallback()
+                } else {
+                    NavigationAction.ScrollAt(
+                        x = params.x.coerceIn(0, 1000),
+                        y = params.y.coerceIn(0, 1000),
+                        scrollDirection = parseScrollDirection(params.direction),
+                        scrollPercent = (params.percent ?: 100).coerceIn(10, 100),
+                        reason = reason
+                    )
+                }
             }
             "find_on_page" -> NavigationAction.FindOnPage(
                 keywords = decision.findOnPage?.keywords ?: emptyList(),
@@ -470,13 +492,19 @@ class WebpageNavigationAgentGenAiImpl(
             "peek_full_page" -> NavigationAction.PeekFullPage(reason = reason)
             "type" -> {
                 val params = decision.type
-                val label = params?.label?.takeIf { it >= 0 }
+                val x = params?.x
+                val y = params?.y
                 val text = params?.text
-                if (label == null || text.isNullOrBlank()) {
-                    logger.warn("VLM returned type without label or text, falling back to scroll")
+                if (x == null || y == null || text.isNullOrBlank()) {
+                    logger.warn("VLM returned type without coordinates or text, falling back to scroll")
                     scrollFallback()
                 } else {
-                    NavigationAction.Type(labelNumber = label, text = text, reason = reason)
+                    NavigationAction.Type(
+                        x = x.coerceIn(0, 1000),
+                        y = y.coerceIn(0, 1000),
+                        text = text,
+                        reason = reason
+                    )
                 }
             }
             "give_up" -> NavigationAction.GiveUp(reason = reason.ifEmpty { "No reason provided" })
@@ -484,18 +512,17 @@ class WebpageNavigationAgentGenAiImpl(
         }
     }
 
+    private fun parseScrollDirection(direction: String?): ScrollDirection = when (direction?.uppercase()) {
+        "UP" -> ScrollDirection.UP
+        "LEFT" -> ScrollDirection.LEFT
+        "RIGHT" -> ScrollDirection.RIGHT
+        else -> ScrollDirection.DOWN
+    }
+
     private fun scrollFallback() = NavigationAction.Scroll(
         scrollDirection = ScrollDirection.DOWN,
         reason = "fallback"
     )
-
-    private fun extractLabelFromText(text: String?): Int? {
-        if (text == null) return null
-        val match = Regex("""\blabel\s*(?:#\s*)?(\d+)\b""", RegexOption.IGNORE_CASE).find(text)
-        return match?.groupValues?.get(1)?.toIntOrNull()?.also {
-            logger.debug("Extracted label={} from reason text as fallback", it)
-        }
-    }
 
     private fun formatTurnEntry(turnNumber: Int, entry: ActionWithOutcome): String = buildString {
         appendLine("  [$turnNumber] observation: ${entry.observation ?: "(none)"}")
@@ -511,19 +538,16 @@ class WebpageNavigationAgentGenAiImpl(
 
     private fun formatDecisionDesc(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> {
-            val target = action.elementDescription ?: "label ${action.labelNumber}"
+            val target = action.elementDescription ?: "(${action.x},${action.y})"
             "click $target"
         }
-        is NavigationAction.ClickAt -> {
-            val target = action.elementDescription ?: "unlabeled element"
-            "click_at (${action.x},${action.y}) on $target"
-        }
         is NavigationAction.Scroll -> "scroll ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
+        is NavigationAction.ScrollAt -> "scroll_at (${action.x},${action.y}) ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
         is NavigationAction.FindOnPage -> "find_on_page [${action.keywords.joinToString(", ") { "\"$it\"" }}]"
         is NavigationAction.ScrollToText -> "scroll_to_text \"${action.searchText}\""
         is NavigationAction.PeekFullPage -> "peek_full_page"
         is NavigationAction.Type -> {
-            val target = action.elementDescription ?: "label ${action.labelNumber}"
+            val target = action.elementDescription ?: "(${action.x},${action.y})"
             "type '${action.text.take(30)}' into $target"
         }
         is NavigationAction.AnswerFound -> "answer_found: ${action.answer.take(80)}"

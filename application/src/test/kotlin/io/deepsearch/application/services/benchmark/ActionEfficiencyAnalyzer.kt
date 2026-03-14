@@ -12,7 +12,7 @@ object ActionEfficiencyAnalyzer {
         val scrollToTextCount: Int,
         val scrollCount: Int,
         val clickCount: Int,
-        val clickAtCount: Int,
+        val scrollAtCount: Int,
         val typeCount: Int,
         val peekFullPageCount: Int,
         val totalIterations: Int,
@@ -29,13 +29,13 @@ object ActionEfficiencyAnalyzer {
         val scrollToTextCount = actions.count { it.action is NavigationAction.ScrollToText }
         val scrollCount = actions.count { it.action is NavigationAction.Scroll }
         val clickCount = actions.count { it.action is NavigationAction.Click }
-        val clickAtCount = actions.count { it.action is NavigationAction.ClickAt }
+        val scrollAtCount = actions.count { it.action is NavigationAction.ScrollAt }
         val typeCount = actions.count { it.action is NavigationAction.Type }
         val peekFullPageCount = actions.count { it.action is NavigationAction.PeekFullPage }
         val totalIterations = actions.size
 
         val failedClickCount = actions.count { entry ->
-            (entry.action is NavigationAction.Click || entry.action is NavigationAction.ClickAt) &&
+            entry.action is NavigationAction.Click &&
                     entry.outcome?.contains("NO visible change", ignoreCase = true) == true
         }
         val offPageClickCount = actions.count { entry ->
@@ -54,7 +54,7 @@ object ActionEfficiencyAnalyzer {
             scrollToTextCount = scrollToTextCount,
             scrollCount = scrollCount,
             clickCount = clickCount,
-            clickAtCount = clickAtCount,
+            scrollAtCount = scrollAtCount,
             typeCount = typeCount,
             peekFullPageCount = peekFullPageCount,
             totalIterations = totalIterations,
@@ -72,7 +72,7 @@ object ActionEfficiencyAnalyzer {
         println("Efficiency ratio: ${"%.0f".format(report.efficiencyRatio * 100)}%")
         println("Wasted iterations: ${report.wastedIterations}")
         println("Actions: find_on_page=${report.findOnPageCount}, scroll_to_text=${report.scrollToTextCount}, " +
-                "scroll=${report.scrollCount}, click=${report.clickCount}, click_at=${report.clickAtCount}, " +
+                "scroll=${report.scrollCount}, click=${report.clickCount}, scroll_at=${report.scrollAtCount}, " +
                 "type=${report.typeCount}, peek=${report.peekFullPageCount}")
         println("Failed clicks: ${report.failedClickCount}, Off-page clicks: ${report.offPageClickCount}")
     }
@@ -177,15 +177,12 @@ object ActionEfficiencyAnalyzer {
 
         val failedClickGroups = actions
             .filter { entry ->
-                (entry.action is NavigationAction.Click || entry.action is NavigationAction.ClickAt) &&
+                entry.action is NavigationAction.Click &&
                         entry.outcome?.contains("NO visible change", ignoreCase = true) == true
             }
             .groupBy { entry ->
-                when (val a = entry.action) {
-                    is NavigationAction.Click -> a.elementDescription ?: "label-${a.labelNumber}"
-                    is NavigationAction.ClickAt -> a.elementDescription ?: "(${a.x},${a.y})"
-                    else -> "unknown"
-                }
+                val a = entry.action as NavigationAction.Click
+                a.elementDescription ?: "(${a.x},${a.y})"
             }
         for ((desc, entries) in failedClickGroups) {
             if (entries.size >= 2) {
@@ -286,9 +283,7 @@ object ActionEfficiencyAnalyzer {
         }
 
         constraints.maxClickCount?.let { max ->
-            val clicks = actions.count {
-                it.action is NavigationAction.Click || it.action is NavigationAction.ClickAt
-            }
+            val clicks = actions.count { it.action is NavigationAction.Click }
             if (clicks > max) {
                 violations.add("Exceeded max click count: $clicks > $max")
             }
@@ -312,13 +307,13 @@ object ActionEfficiencyAnalyzer {
     }
 
     private fun actionTypeName(action: NavigationAction): String = when (action) {
-        is NavigationAction.Click -> "click[${action.labelNumber}]"
-        is NavigationAction.ClickAt -> "click_at(${action.x},${action.y})"
+        is NavigationAction.Click -> "click(${action.x},${action.y})"
         is NavigationAction.Scroll -> "scroll_${action.scrollDirection.name.lowercase()}"
+        is NavigationAction.ScrollAt -> "scroll_at(${action.x},${action.y})_${action.scrollDirection.name.lowercase()}"
         is NavigationAction.FindOnPage -> "find_on_page"
         is NavigationAction.ScrollToText -> "scroll_to_text"
         is NavigationAction.PeekFullPage -> "peek_full_page"
-        is NavigationAction.Type -> "type[${action.labelNumber}]"
+        is NavigationAction.Type -> "type(${action.x},${action.y})"
         is NavigationAction.AnswerFound -> "answer_found"
         is NavigationAction.GiveUp -> "give_up"
     }

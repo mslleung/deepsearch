@@ -213,9 +213,8 @@ class AgenticWebpageSearchService(
                 val lastEntry = actionsPerformed.last()
                 val lastAction = lastEntry.action
                 val clickDesc = when (lastAction) {
-                    is NavigationAction.Click -> lastAction.elementDescription ?: ""
-                    is NavigationAction.ClickAt -> lastAction.elementDescription ?: "(${lastAction.x},${lastAction.y})"
-                    is NavigationAction.Type -> lastAction.elementDescription ?: ""
+                    is NavigationAction.Click -> lastAction.elementDescription ?: "(${lastAction.x},${lastAction.y})"
+                    is NavigationAction.Type -> lastAction.elementDescription ?: "(${lastAction.x},${lastAction.y})"
                     else -> ""
                 }
                 if (changed) {
@@ -239,6 +238,7 @@ class AgenticWebpageSearchService(
             }
             lastActionWasClick = false
 
+            // Keep annotation for debug screenshots only; agent receives raw screenshot
             val annotated = screenshotAnnotationService.annotate(
                 rawScreenshot.bytes,
                 interactiveElements
@@ -270,12 +270,10 @@ class AgenticWebpageSearchService(
                 "  [${el.labelNumber}] ${el.tag} (${el.role ?: "no-role"}) ${el.states}: ${el.text}"
             })
 
-            val annotatedScreenshot = IBrowserPage.Screenshot(
-                bytes = annotated.imageBytes,
-                mimeType = ImageMimeType.JPEG
+            val screenshotForAgent = peekScreenshotOverride ?: IBrowserPage.Screenshot(
+                bytes = rawScreenshot.bytes,
+                mimeType = rawScreenshot.mimeType
             )
-
-            val screenshotForAgent = peekScreenshotOverride ?: annotatedScreenshot
             peekScreenshotOverride = null
 
             val input = WebpageNavigationInput(
@@ -289,7 +287,10 @@ class AgenticWebpageSearchService(
                 pageUrl = url,
                 pageTitle = ctx.pageTitle,
                 pageDescription = ctx.pageDescription,
-                scrollPercent = ctx.scrollPercent
+                scrollPercent = ctx.scrollPercent,
+                currentIteration = iteration,
+                maxIterations = MAX_ITERATIONS,
+                searchResults = lastFindCounts
             )
 
             val output = webpageNavigationAgent.generate(input)
@@ -385,71 +386,10 @@ class AgenticWebpageSearchService(
                 }
 
                 is NavigationAction.Click -> {
-                    val targetElement = annotated.elementIndex[action.labelNumber]
-                    if (targetElement != null) {
-                        val desc = if (targetElement.text.isNotBlank()) {
-                            "${targetElement.tag} '${targetElement.text.take(40)}'".trim()
-                        } else {
-                            action.reason.take(60)
-                        }
-                        actionsPerformed[actionsPerformed.lastIndex] =
-                            actionsPerformed.last().copy(action = action.copy(elementDescription = desc))
-
-                        if (desc in offPageClickedDescs) {
-                            logger.debug("Skipping re-click on known off-page element '{}'", desc)
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "Element '$desc' already navigates OFF this page. " +
-                                        "Do NOT click it again. Find the answer elsewhere on the CURRENT page, " +
-                                        "or use answer_found / give_up."
-                            )
-                        } else {
-                            val x = targetElement.centerX
-                            val y = targetElement.centerY
-                            logger.debug(
-                                "Clicking label {} at ({},{}) - {} (reason: {})",
-                                action.labelNumber, x, y, desc, action.reason
-                            )
-
-                            previousClickScreenshot = rawScreenshot.bytes
-
-                            val clickResult = page.guardedClickAtCoordinates(x, y)
-                            if (clickResult.navigatedAwayTo != null) {
-                                logger.info(
-                                    "Click on '{}' intercepted navigation to {} — page unchanged",
-                                    desc, clickResult.navigatedAwayTo
-                                )
-                                val targetUrl = clickResult.navigatedAwayTo!!
-                                discoveredUrls.add(targetUrl)
-                                onLinkDiscovered?.invoke(targetUrl)
-                                offPageClickedDescs.add(desc)
-                                lastActionWasClick = false
-                                val usedFind = actionsPerformed.any { it.action is NavigationAction.FindOnPage }
-                                actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = buildOffPageOutcome(targetUrl, offPageClickedDescs.size, usedFind)
-                                )
-                            } else {
-                                lastActionWasClick = true
-                            }
-                        }
-                    } else {
-                        val maxLabel = interactiveElements.size - 1
-                        logger.warn(
-                            "VLM referenced non-existent label {}. Available: 0..{}",
-                            action.labelNumber, maxLabel
-                        )
-                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                            outcome = "ERROR: Label [${action.labelNumber}] does NOT exist. " +
-                                    "Valid labels are 0 to $maxLabel. " +
-                                    "Do NOT confuse page content (prices, phone numbers) with label badges."
-                        )
-                    }
-                }
-
-                is NavigationAction.ClickAt -> {
                     val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
                     val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
                     val desc = action.elementDescription
-                        ?: action.reason.take(60).ifEmpty { "unlabeled element at (${action.x},${action.y})" }
+                        ?: action.reason.take(60).ifEmpty { "element at (${action.x},${action.y})" }
                     actionsPerformed[actionsPerformed.lastIndex] =
                         actionsPerformed.last().copy(action = action.copy(elementDescription = desc))
 
@@ -462,7 +402,7 @@ class AgenticWebpageSearchService(
                         )
                     } else {
                         logger.debug(
-                            "ClickAt normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
+                            "Click normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
                             action.x, action.y, viewportX, viewportY, desc, action.reason
                         )
 
@@ -472,7 +412,7 @@ class AgenticWebpageSearchService(
                             val clickResult = page.guardedClickAtCoordinates(viewportX, viewportY)
                             if (clickResult.navigatedAwayTo != null) {
                                 logger.info(
-                                    "ClickAt on '{}' intercepted navigation to {} — page unchanged",
+                                    "Click on '{}' intercepted navigation to {} — page unchanged",
                                     desc, clickResult.navigatedAwayTo
                                 )
                                 val targetUrl = clickResult.navigatedAwayTo!!
@@ -491,7 +431,7 @@ class AgenticWebpageSearchService(
                             throw e
                         } catch (e: Exception) {
                             logger.warn(
-                                "ClickAt failed at viewport ({},{}): {}",
+                                "Click failed at viewport ({},{}): {}",
                                 viewportX, viewportY, e.message
                             )
                         }
@@ -600,12 +540,17 @@ class AgenticWebpageSearchService(
                 is NavigationAction.Scroll -> {
                     logger.debug("Scroll: {} {}%", action.scrollDirection, action.scrollPercent)
                     try {
-                        val scrollPx = (imgHeight * action.scrollPercent / 100.0).toInt()
-                        val delta = when (action.scrollDirection) {
-                            ScrollDirection.DOWN -> scrollPx
-                            ScrollDirection.UP -> -scrollPx
+                        val isHorizontal = action.scrollDirection == ScrollDirection.LEFT ||
+                                action.scrollDirection == ScrollDirection.RIGHT
+                        val dimension = if (isHorizontal) imgWidth else imgHeight
+                        val scrollPx = (dimension * action.scrollPercent / 100.0).toInt()
+                        val (deltaX, deltaY) = when (action.scrollDirection) {
+                            ScrollDirection.DOWN -> 0 to scrollPx
+                            ScrollDirection.UP -> 0 to -scrollPx
+                            ScrollDirection.RIGHT -> scrollPx to 0
+                            ScrollDirection.LEFT -> -scrollPx to 0
                         }
-                        page.scrollPage(delta)
+                        page.scrollPage(deltaX, deltaY)
                         val hasUsedFindOnPageBefore = actionsPerformed.any {
                             it.action is NavigationAction.FindOnPage
                         }
@@ -623,6 +568,36 @@ class AgenticWebpageSearchService(
                         throw e
                     } catch (e: Exception) {
                         logger.warn("Scroll failed: {}", e.message)
+                    }
+                }
+
+                is NavigationAction.ScrollAt -> {
+                    logger.debug("ScrollAt: ({},{}) {} {}%", action.x, action.y, action.scrollDirection, action.scrollPercent)
+                    try {
+                        val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
+                        val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
+                        val isHorizontal = action.scrollDirection == ScrollDirection.LEFT ||
+                                action.scrollDirection == ScrollDirection.RIGHT
+                        val dimension = if (isHorizontal) imgWidth else imgHeight
+                        val scrollPx = (dimension * action.scrollPercent / 100.0).toInt()
+                        val (deltaX, deltaY) = when (action.scrollDirection) {
+                            ScrollDirection.DOWN -> 0 to scrollPx
+                            ScrollDirection.UP -> 0 to -scrollPx
+                            ScrollDirection.RIGHT -> scrollPx to 0
+                            ScrollDirection.LEFT -> -scrollPx to 0
+                        }
+                        page.scrollElementAtCoordinates(viewportX, viewportY, deltaX, deltaY)
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "Scrolled container at (${action.x},${action.y}) ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
+                        )
+                        delay(POST_SCROLL_DELAY_MS)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.warn("ScrollAt failed: {}", e.message)
+                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
+                            outcome = "scroll_at failed: ${e.message}"
+                        )
                     }
                 }
 
@@ -650,37 +625,30 @@ class AgenticWebpageSearchService(
                 }
 
                 is NavigationAction.Type -> {
-                    val targetElement = annotated.elementIndex[action.labelNumber]
-                    if (targetElement != null) {
-                        val desc = "${targetElement.tag} '${targetElement.text.take(40)}'".trim()
-                        actionsPerformed[actionsPerformed.lastIndex] =
-                            actionsPerformed.last().copy(action = action.copy(elementDescription = desc))
+                    val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
+                    val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
+                    val desc = action.elementDescription
+                        ?: action.reason.take(60).ifEmpty { "input at (${action.x},${action.y})" }
+                    actionsPerformed[actionsPerformed.lastIndex] =
+                        actionsPerformed.last().copy(action = action.copy(elementDescription = desc))
 
-                        val x = targetElement.centerX
-                        val y = targetElement.centerY
-                        logger.debug(
-                            "Typing '{}' into label {} at ({},{}) - {} (reason: {})",
-                            action.text.take(30), action.labelNumber, x, y, desc, action.reason
-                        )
+                    logger.debug(
+                        "Typing '{}' at normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
+                        action.text.take(30), action.x, action.y, viewportX, viewportY, desc, action.reason
+                    )
 
-                        previousClickScreenshot = rawScreenshot.bytes
-                        lastActionWasClick = true
+                    previousClickScreenshot = rawScreenshot.bytes
+                    lastActionWasClick = true
 
-                        page.clickAtCoordinates(x, y)
+                    try {
+                        page.clickAtCoordinates(viewportX, viewportY)
                         delay(POST_CLICK_DELAY_MS)
                         page.typeText(action.text)
                         delay(POST_TYPE_DELAY_MS)
-                    } else {
-                        val maxLabel = interactiveElements.size - 1
-                        logger.warn(
-                            "VLM referenced non-existent label {} for type action. Available: 0..{}",
-                            action.labelNumber, maxLabel
-                        )
-                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                            outcome = "ERROR: Label [${action.labelNumber}] does NOT exist. " +
-                                    "Valid labels are 0 to $maxLabel. " +
-                                    "Do NOT confuse page content (prices, phone numbers) with label badges."
-                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.warn("Type failed at viewport ({},{}): {}", viewportX, viewportY, e.message)
                     }
                 }
             }
@@ -690,6 +658,23 @@ class AgenticWebpageSearchService(
             "Agentic search exhausted {} iterations for {} without finding answer ({} observations, {} captures)",
             MAX_ITERATIONS, url, observations.size, capturedImages.size
         )
+
+        if (observations.isNotEmpty()) {
+            val synthesized = observations.joinToString("; ")
+            logger.info("Synthesizing partial answer from {} observations for {}", observations.size, url)
+            return AgenticPageSearchResult(
+                answer = synthesized,
+                evidence = observations.lastOrNull(),
+                contentDate = null,
+                actionsPerformed = actionsPerformed,
+                observations = observations.toList(),
+                success = true,
+                totalTokenUsage = aggregatedTokenUsage,
+                discoveredUrls = discoveredUrls,
+                capturedImages = capturedImages.toList()
+            )
+        }
+
         return AgenticPageSearchResult(
             answer = null,
             evidence = null,
@@ -823,7 +808,7 @@ class AgenticWebpageSearchService(
         if (hasHiddenMatches) {
             val lastFindIndex = actions.indexOfLast { it.action is NavigationAction.FindOnPage }
             val triedToReveal = actions.drop(lastFindIndex + 1).any {
-                it.action is NavigationAction.Click || it.action is NavigationAction.ClickAt || it.action is NavigationAction.ScrollToText
+                it.action is NavigationAction.Click || it.action is NavigationAction.ScrollToText
             }
             if (!triedToReveal) {
                 return "find_on_page reported hidden matches behind collapsed elements. " +
@@ -832,7 +817,7 @@ class AgenticWebpageSearchService(
         }
 
         val hasScrolled = actions.any {
-            it.action is NavigationAction.Scroll || it.action is NavigationAction.ScrollToText
+            it.action is NavigationAction.Scroll || it.action is NavigationAction.ScrollToText || it.action is NavigationAction.ScrollAt
         }
         val pageFullyInViewport = scrollPercent >= 95
 

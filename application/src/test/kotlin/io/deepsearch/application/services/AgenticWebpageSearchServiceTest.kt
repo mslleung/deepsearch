@@ -294,9 +294,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         val findCount = result.actionsPerformed.count { it.action is NavigationAction.FindOnPage }
         val scrollToTextCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollToText }
         val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
-        val clickCount = result.actionsPerformed.count {
-            it.action is NavigationAction.Click || it.action is NavigationAction.ClickAt
-        }
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
         val peekCount = result.actionsPerformed.count { it.action is NavigationAction.PeekFullPage }
         val gaveUp = result.actionsPerformed.any { it.action is NavigationAction.GiveUp }
         val answeredFound = result.actionsPerformed.any { it.action is NavigationAction.AnswerFound }
@@ -389,8 +387,8 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
         val suspectedHallucinations = result.actionsPerformed.count { entry ->
             when (val action = entry.action) {
-                is NavigationAction.Click -> action.labelNumber >= 25
-                is NavigationAction.Type -> action.labelNumber >= 25
+                is NavigationAction.Click -> action.x >= 25
+                is NavigationAction.Type -> action.x >= 25
                 else -> false
             }
         }
@@ -568,8 +566,8 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             "Answer should contain the access code CUSTOM-BANNER-77: ${result.answer}"
         )
 
-        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click || it.action is NavigationAction.ClickAt }
-        println("Click actions (including ClickAt): $clickCount")
+        val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
+        println("Click actions: $clickCount")
         assertTrue(
             result.actionsPerformed.size <= 5,
             "Should find the answer in 5 or fewer iterations (1 to dismiss banner + finding answer), used ${result.actionsPerformed.size}"

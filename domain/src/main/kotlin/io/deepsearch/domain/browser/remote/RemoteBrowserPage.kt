@@ -319,8 +319,12 @@ class RemoteBrowserPage(
     override suspend fun getScrollPosition(): Int =
         pageCmd(PageCommand.GetScrollPosition).toInt()
 
-    override suspend fun scrollPage(deltaY: Int) {
-        pageCmd(PageCommand.ScrollPage(deltaY))
+    override suspend fun scrollPage(deltaX: Int, deltaY: Int) {
+        pageCmd(PageCommand.ScrollPage(deltaX, deltaY))
+    }
+
+    override suspend fun scrollElementAtCoordinates(x: Int, y: Int, deltaX: Int, deltaY: Int) {
+        pageCmd(PageCommand.ScrollElementAtCoordinates(x, y, deltaX, deltaY))
     }
 
     // ==================== Query Operations (return boolean, throw PageOperationException) ====================

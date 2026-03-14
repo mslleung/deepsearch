@@ -166,9 +166,18 @@ interface IBrowserPage {
     suspend fun getScrollPosition(): Int
 
     /**
-     * Scroll the page by a pixel delta. Positive values scroll down, negative scroll up.
+     * Scroll the page by pixel deltas. Positive deltaY scrolls down, negative up.
+     * Positive deltaX scrolls right, negative left.
      */
-    suspend fun scrollPage(deltaY: Int)
+    suspend fun scrollPage(deltaX: Int = 0, deltaY: Int = 0)
+
+    /**
+     * Scroll a container element located at the given viewport coordinates.
+     * Walks up from the element at (x, y) to find the nearest scrollable ancestor
+     * and scrolls it by (deltaX, deltaY). Falls back to page scroll if no scrollable
+     * container is found.
+     */
+    suspend fun scrollElementAtCoordinates(x: Int, y: Int, deltaX: Int, deltaY: Int)
 
     /**
      * Remove the DOM element matched by the provided XPath selector from the document.

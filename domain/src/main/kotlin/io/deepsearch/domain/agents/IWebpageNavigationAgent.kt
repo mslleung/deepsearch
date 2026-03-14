@@ -23,7 +23,10 @@ data class WebpageNavigationInput(
     val pageUrl: String,
     val pageTitle: String,
     val pageDescription: String?,
-    val scrollPercent: Int
+    val scrollPercent: Int,
+    val currentIteration: Int = 1,
+    val maxIterations: Int = 12,
+    val searchResults: Map<String, IBrowserPage.TextMatchCounts> = emptyMap()
 ) : IAgent.IAgentInput
 
 /**
@@ -42,7 +45,8 @@ data class ElementLabel(
 sealed class NavigationAction {
     @Serializable
     data class Click(
-        val labelNumber: Int,
+        val x: Int,
+        val y: Int,
         val reason: String,
         val elementDescription: String? = null
     ) : NavigationAction()
@@ -74,11 +78,12 @@ sealed class NavigationAction {
     ) : NavigationAction()
 
     @Serializable
-    data class ClickAt(
+    data class ScrollAt(
         val x: Int,
         val y: Int,
-        val reason: String,
-        val elementDescription: String? = null
+        val scrollDirection: ScrollDirection,
+        val scrollPercent: Int = 100,
+        val reason: String
     ) : NavigationAction()
 
     @Serializable
@@ -91,7 +96,8 @@ sealed class NavigationAction {
 
     @Serializable
     data class Type(
-        val labelNumber: Int,
+        val x: Int,
+        val y: Int,
         val text: String,
         val reason: String,
         val elementDescription: String? = null
@@ -100,7 +106,7 @@ sealed class NavigationAction {
 
 @Serializable
 enum class ScrollDirection {
-    DOWN, UP
+    DOWN, UP, LEFT, RIGHT
 }
 
 data class CaptureRegion(
