@@ -8,7 +8,8 @@ import kotlinx.serialization.Serializable
 data class ActionWithOutcome(
     val action: NavigationAction,
     val outcome: String? = null,
-    val thinking: String? = null
+    val observation: String? = null,
+    val findings: List<String> = emptyList()
 )
 
 data class WebpageNavigationInput(
@@ -18,6 +19,7 @@ data class WebpageNavigationInput(
     val elementLabels: List<ElementLabel>,
     val answeredQuestions: List<String> = emptyList(),
     val openQuestions: List<String> = emptyList(),
+    val accumulatedFindings: List<String> = emptyList(),
     val pageUrl: String,
     val pageTitle: String,
     val pageDescription: String?,
@@ -110,21 +112,21 @@ data class CaptureRegion(
 )
 
 /**
- * Every VLM response includes [thinking] (chain-of-thought navigation reasoning),
- * [finding] (query-relevant data from the current screenshot), and [openQuestions]
- * (gaps that remain), alongside the page [action].
+ * Every VLM response includes [observation] (what the agent sees and its reasoning),
+ * [findings] (query-relevant facts extracted from the current screenshot), and
+ * [openQuestions] (gaps that remain), alongside the page [action].
  *
- * [thinking] is fed back in PREVIOUS_ACTIONS so the agent maintains reasoning
- * continuity across turns. [finding] is stored as an observation for downstream
- * consumers (answer synthesis, relevance scoring).
+ * [observation] is fed back in the turn history so the agent maintains reasoning
+ * continuity across turns. [findings] are accumulated and shown as knowledge state
+ * for downstream consumers (answer synthesis, relevance scoring).
  *
  * [captureRegions] allows the agent to flag visual regions (charts, diagrams, tables, etc.)
  * worth capturing as images, using 0-1000 normalized bounding boxes.
  */
 data class WebpageNavigationOutput(
     val action: NavigationAction,
-    val finding: String?,
-    val thinking: String?,
+    val findings: List<String>,
+    val observation: String?,
     val openQuestions: List<String>,
     val captureRegions: List<CaptureRegion>,
     val tokenUsage: TokenUsageMetrics

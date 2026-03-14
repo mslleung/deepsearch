@@ -284,6 +284,7 @@ class AgenticWebpageSearchService(
                 elementLabels = elementLabels,
                 answeredQuestions = answeredQuestions.toList(),
                 openQuestions = openQuestions,
+                accumulatedFindings = observations.toList(),
                 pageUrl = url,
                 pageTitle = ctx.pageTitle,
                 pageDescription = ctx.pageDescription,
@@ -303,14 +304,13 @@ class AgenticWebpageSearchService(
             )
 
             val action = output.action
-            actionsPerformed.add(ActionWithOutcome(action, thinking = output.thinking))
+            actionsPerformed.add(ActionWithOutcome(action, observation = output.observation, findings = output.findings))
 
-            val finding = output.finding
-            if (finding != null) {
-                observations.add(finding)
+            if (output.findings.isNotEmpty()) {
+                observations.addAll(output.findings)
                 logger.info(
-                    "Agentic search finding #{} for {}: {}",
-                    observations.size, url, finding.take(100)
+                    "Agentic search findings ({}) for {}: {}",
+                    output.findings.size, url, output.findings.joinToString("; ") { it.take(80) }
                 )
             }
 
@@ -335,7 +335,7 @@ class AgenticWebpageSearchService(
                     )
                     return AgenticPageSearchResult(
                         answer = action.answer,
-                        evidence = finding ?: observations.lastOrNull(),
+                        evidence = output.findings.lastOrNull() ?: observations.lastOrNull(),
                         contentDate = action.contentDate,
                         actionsPerformed = actionsPerformed,
                         observations = observations.toList(),
@@ -392,7 +392,7 @@ class AgenticWebpageSearchService(
                             action.reason.take(60)
                         }
                         actionsPerformed[actionsPerformed.lastIndex] =
-                            ActionWithOutcome(action.copy(elementDescription = desc))
+                            actionsPerformed.last().copy(action = action.copy(elementDescription = desc))
 
                         if (desc in offPageClickedDescs) {
                             logger.debug("Skipping re-click on known off-page element '{}'", desc)
@@ -450,7 +450,7 @@ class AgenticWebpageSearchService(
                     val desc = action.elementDescription
                         ?: action.reason.take(60).ifEmpty { "unlabeled element at (${action.x},${action.y})" }
                     actionsPerformed[actionsPerformed.lastIndex] =
-                        ActionWithOutcome(action.copy(elementDescription = desc))
+                        actionsPerformed.last().copy(action = action.copy(elementDescription = desc))
 
                     if (desc in offPageClickedDescs) {
                         logger.debug("Skipping re-click on known off-page element '{}'", desc)
@@ -629,7 +629,7 @@ class AgenticWebpageSearchService(
                     if (targetElement != null) {
                         val desc = "${targetElement.tag} '${targetElement.text.take(40)}'".trim()
                         actionsPerformed[actionsPerformed.lastIndex] =
-                            ActionWithOutcome(action.copy(elementDescription = desc))
+                            actionsPerformed.last().copy(action = action.copy(elementDescription = desc))
 
                         val x = targetElement.centerX
                         val y = targetElement.centerY

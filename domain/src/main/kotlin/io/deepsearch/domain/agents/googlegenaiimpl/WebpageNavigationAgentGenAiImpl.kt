@@ -30,169 +30,204 @@ class WebpageNavigationAgentGenAiImpl(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
+    private val captureRegionSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .properties(
+            mapOf(
+                "x1" to Schema.builder().type("INTEGER").description("Left edge (0-1000).").build(),
+                "y1" to Schema.builder().type("INTEGER").description("Top edge (0-1000).").build(),
+                "x2" to Schema.builder().type("INTEGER").description("Right edge (0-1000).").build(),
+                "y2" to Schema.builder().type("INTEGER").description("Bottom edge (0-1000).").build(),
+                "relevance" to Schema.builder().type("STRING").description("Why this visual region is relevant to the query.").build()
+            )
+        )
+        .required(listOf("x1", "y1", "x2", "y2", "relevance"))
+        .build()
+
+    private val decisionSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .properties(
+            mapOf(
+                "action" to Schema.builder()
+                    .type("STRING")
+                    .enum_(listOf("click", "click_at", "scroll", "find_on_page", "scroll_to_text", "peek_full_page", "type", "answer_found", "give_up"))
+                    .build(),
+                "reason" to Schema.builder()
+                    .type("STRING")
+                    .description("Brief reason for the chosen action.")
+                    .build(),
+                "click" to Schema.builder()
+                    .type("OBJECT")
+                    .nullable(true)
+                    .properties(mapOf(
+                        "label" to Schema.builder().type("INTEGER").description("Element label number from ELEMENTS list.").build()
+                    ))
+                    .required(listOf("label"))
+                    .build(),
+                "clickAt" to Schema.builder()
+                    .type("OBJECT")
+                    .nullable(true)
+                    .properties(mapOf(
+                        "x" to Schema.builder().type("INTEGER").description("X coordinate (0-1000).").build(),
+                        "y" to Schema.builder().type("INTEGER").description("Y coordinate (0-1000).").build()
+                    ))
+                    .required(listOf("x", "y"))
+                    .build(),
+                "scroll" to Schema.builder()
+                    .type("OBJECT")
+                    .nullable(true)
+                    .properties(mapOf(
+                        "direction" to Schema.builder().type("STRING").enum_(listOf("DOWN", "UP")).build(),
+                        "percent" to Schema.builder().type("INTEGER").description("Viewport percentage to scroll (10-100). Default 100.").build()
+                    ))
+                    .required(listOf("direction"))
+                    .build(),
+                "findOnPage" to Schema.builder()
+                    .type("OBJECT")
+                    .nullable(true)
+                    .properties(mapOf(
+                        "keywords" to Schema.builder().type("ARRAY").items(Schema.builder().type("STRING").build())
+                            .description("Keywords to search for. Use actual page text, not abstract concepts.").build()
+                    ))
+                    .required(listOf("keywords"))
+                    .build(),
+                "scrollToText" to Schema.builder()
+                    .type("OBJECT")
+                    .nullable(true)
+                    .properties(mapOf(
+                        "text" to Schema.builder().type("STRING").description("The text to scroll to on the page.").build()
+                    ))
+                    .required(listOf("text"))
+                    .build(),
+                "type" to Schema.builder()
+                    .type("OBJECT")
+                    .nullable(true)
+                    .properties(mapOf(
+                        "label" to Schema.builder().type("INTEGER").description("Element label number for the input field.").build(),
+                        "text" to Schema.builder().type("STRING").description("Text to type.").build()
+                    ))
+                    .required(listOf("label", "text"))
+                    .build(),
+                "answerFound" to Schema.builder()
+                    .type("OBJECT")
+                    .nullable(true)
+                    .properties(mapOf(
+                        "answer" to Schema.builder().type("STRING").description("Final answer synthesizing all findings.").build()
+                    ))
+                    .required(listOf("answer"))
+                    .build()
+            )
+        )
+        .required(listOf("action", "reason"))
+        .propertyOrdering(listOf("action", "reason", "click", "clickAt", "scroll", "findOnPage", "scrollToText", "type", "answerFound"))
+        .build()
+
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
         .properties(
             mapOf(
-                "thinking" to Schema.builder()
+                "observation" to Schema.builder()
                     .type("STRING")
-                    .description("Chain-of-thought reasoning: (1) what happened from your last action, (2) what you observe on the current screen, (3) your plan for the next action and why.")
+                    .description("What you see on the current screen, what happened from your last action, and your plan. This is your memory across turns.")
                     .build(),
-                "finding" to Schema.builder()
-                    .type("STRING")
-                    .description("Query-relevant data extracted from the current screenshot. Null only if nothing relevant is visible.")
-                    .nullable(true)
+                "findings" to Schema.builder()
+                    .type("ARRAY")
+                    .items(Schema.builder().type("STRING").build())
+                    .description("Query-relevant facts extracted from the current viewport. Each string is one discrete fact. Empty array if nothing relevant is visible.")
                     .build(),
                 "openQuestions" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
                     .description("Questions still needing answers. Empty when fully resolved.")
                     .build(),
-                "actionType" to Schema.builder()
-                    .type("STRING")
-                    .enum_(listOf("click", "click_at", "scroll", "find_on_page", "scroll_to_text", "peek_full_page", "type", "answer_found", "give_up"))
-                    .build(),
-                "labelNumber" to Schema.builder()
-                    .type("INTEGER")
-                    .description("Element label number for click/type actions.")
-                    .nullable(true)
-                    .build(),
-                "clickX" to Schema.builder()
-                    .type("INTEGER")
-                    .description("X coordinate (0-1000) for click_at.")
-                    .build(),
-                "clickY" to Schema.builder()
-                    .type("INTEGER")
-                    .description("Y coordinate (0-1000) for click_at.")
-                    .build(),
-                "keywords" to Schema.builder()
-                    .type("ARRAY")
-                    .items(Schema.builder().type("STRING").build())
-                    .description("For find_on_page: keywords to search for. Returns visible and hidden match counts per keyword.")
-                    .build(),
-                "searchText" to Schema.builder()
-                    .type("STRING")
-                    .description("For scroll_to_text: the keyword to scroll to.")
-                    .build(),
-                "scrollDirection" to Schema.builder()
-                    .type("STRING")
-                    .enum_(listOf("DOWN", "UP"))
-                    .description("For scroll: direction to scroll.")
-                    .build(),
-                "scrollPercent" to Schema.builder()
-                    .type("INTEGER")
-                    .description("For scroll: amount as percentage of viewport (10-100). Default 100.")
-                    .build(),
-                "text" to Schema.builder()
-                    .type("STRING")
-                    .description("Text to type for type actions.")
-                    .build(),
-                "answer" to Schema.builder()
-                    .type("STRING")
-                    .description("ONLY for answer_found. Final answer synthesizing all findings. Must be null/omitted for all other action types.")
-                    .nullable(true)
-                    .build(),
-                "reason" to Schema.builder()
-                    .type("STRING")
-                    .description("Brief reason for the chosen action.")
-                    .build(),
                 "captureRegions" to Schema.builder()
                     .type("ARRAY")
-                    .items(
-                        Schema.builder()
-                            .type("OBJECT")
-                            .properties(
-                                mapOf(
-                                    "x1" to Schema.builder().type("INTEGER").description("Left edge (0-1000).").build(),
-                                    "y1" to Schema.builder().type("INTEGER").description("Top edge (0-1000).").build(),
-                                    "x2" to Schema.builder().type("INTEGER").description("Right edge (0-1000).").build(),
-                                    "y2" to Schema.builder().type("INTEGER").description("Bottom edge (0-1000).").build(),
-                                    "relevance" to Schema.builder().type("STRING").description("Why this visual region is relevant to the query.").build()
-                                )
-                            )
-                            .required(listOf("x1", "y1", "x2", "y2", "relevance"))
-                            .build()
-                    )
-                    .description("Bounding boxes of visual regions (charts, diagrams, table images, etc.) relevant to the query. Use 0-1000 coordinates. Omit or leave empty if nothing visual is worth capturing.")
+                    .items(captureRegionSchema)
+                    .description("Bounding boxes of visual regions (charts, diagrams, tables) worth capturing. Use 0-1000 coordinates. Empty if nothing visual to capture.")
                     .nullable(true)
-                    .build()
+                    .build(),
+                "decision" to decisionSchema
             )
         )
-        .required(listOf("actionType", "thinking", "openQuestions"))
-        .propertyOrdering(listOf(
-            "actionType", "thinking", "finding", "openQuestions", "reason",
-            "labelNumber", "clickX", "clickY", "keywords", "searchText",
-            "scrollDirection", "scrollPercent", "text",
-            "captureRegions", "answer"
-        ))
+        .required(listOf("observation", "findings", "openQuestions", "decision"))
+        .propertyOrdering(listOf("observation", "findings", "openQuestions", "captureRegions", "decision"))
         .build()
 
     private val systemInstruction = """
-        You are a webpage exploration agent. You examine a single page to find information.
+        You are a webpage exploration agent. You examine a single web page to find specific information requested in QUERY.
 
-        You see the CURRENT VIEWPORT as an annotated screenshot. Numbered badges match ELEMENT_LABELS.
+        ## Input
 
-        === EACH TURN ===
-        1. THINK — Set "thinking" with your chain-of-thought: what happened from your last action, what you observe on the current screen, and your plan for the next action. This is fed back to you on subsequent turns as your memory — be specific and useful to your future self.
-        2. RECORD — Set "finding" with query-relevant data extracted from the current screenshot. Null only if nothing relevant is visible.
-        3. ACT — Pick ONE action from the list below.
+        You receive on each turn:
+        - An annotated screenshot of the current viewport (numbered badges = interactive elements)
+        - FINDINGS: accumulated facts discovered so far across all turns
+        - OPEN QUESTIONS: what still needs to be found
+        - TURNS: your previous observations, findings, decisions, and their outcomes
+        - ELEMENTS: interactive element labels (numbered badges on the screenshot)
 
-        === STRATEGY (follow this order — MANDATORY) ===
-        On a new page, follow this preferred sequence:
+        ## Instructions
+
+        ### Strategy (mandatory priority order)
         1. Check if the answer is already visible in the current viewport.
-        2. ALWAYS use find_on_page FIRST (before scrolling or clicking) with relevant keywords to assess whether the page contains the information. This is your most important action — do NOT skip it.
-        3. If find_on_page shows visible matches, use scroll_to_text to jump directly to them (much faster than scrolling).
-        4. If find_on_page shows hidden matches, use scroll_to_text to jump to them (the browser reveals hidden content) or expand [collapsed] elements.
-        5. Only use scroll as a last resort when find_on_page returned no matches but the page may have visual-only content (images, canvas elements).
-        6. Expand [collapsed] accordions/tabs/dropdowns — the answer is often hidden behind them.
+        2. ALWAYS use find_on_page FIRST (before scrolling or clicking) to assess whether the page contains the information. This is your most important action.
+        3. If find_on_page shows visible matches → use scroll_to_text to jump directly to them.
+        4. If find_on_page shows hidden matches → use scroll_to_text (reveals hidden content) or expand [collapsed] elements.
+        5. Expand [collapsed] accordions/tabs/dropdowns — the answer is often hidden behind them.
+        6. Only use scroll as a last resort when find_on_page returned no matches but the page may have visual-only content.
         7. Do NOT click off-page links as a first strategy. Explore the CURRENT page thoroughly first.
 
-        === KEYWORD TIPS for find_on_page ===
+        ### Keyword tips
         Choose keywords that match ACTUAL PAGE TEXT, not abstract concepts:
         - For prices: search "$", "HK$", "£", "€", or specific amounts like "5,900" — NOT "price" or "cost".
-        - For scroll_to_text: prefer currency symbols over product names — product names appear in menus/headers far from prices, currency symbols appear in price tables.
+        - For scroll_to_text: prefer currency symbols over product names — product names appear in menus/headers far from prices, currency symbols appear near price tables.
         - For features: search the exact feature name, e.g. "Stress Test", "role-based".
         - If first keywords return 0 matches, try synonyms or shorter fragments.
         - Always include at least one highly specific keyword AND one broader keyword.
 
-        === ACTIONS ===
+        ### Actions
+
         Interact:
-        - click: Click a labeled element. Set "labelNumber". Elements marked [collapsed] hide content — click them to reveal what's inside before concluding info is absent.
-        - click_at: Click an unlabeled element by coordinates. Set "clickX"/"clickY" (0–1000 scale).
-        - type: Type into a labeled input. Set "labelNumber" and "text".
+        - click: Click a labeled element. Elements marked [collapsed] hide content — click them to reveal what's inside before concluding info is absent.
+        - click_at: Click an unlabeled element by coordinates (0–1000 scale).
+        - type: Type into a labeled input.
 
         Explore:
-        - find_on_page: Search page text for keywords. Set "keywords" (list). Returns match counts per keyword. Hidden matches (e.g. "keyword: 0 (2 hidden)") mean the content exists behind collapsed/hidden elements — expand them or use scroll_to_text to navigate there. ALWAYS use this before scrolling or giving up. Use ACTUAL text that would appear on the page (e.g. "$" or "HK$" for prices, not "price").
-        - scroll_to_text: Jump directly to a keyword match. Set "searchText". PREFERRED over scroll when you know the text to look for. Use after find_on_page confirms matches exist. Works even for hidden matches — the browser will scroll to and reveal the text.
-        - scroll: Scroll the viewport. Set "scrollDirection" (DOWN/UP) and "scrollPercent" (10–100, default 100). Only use when scroll_to_text is not applicable (e.g. looking for visual content, or no keywords to search).
+        - find_on_page: Search page text for keywords. Returns match counts per keyword. Hidden matches (e.g. "keyword: 0 (2 hidden)") mean content exists behind collapsed/hidden elements — expand them or use scroll_to_text. ALWAYS use this before scrolling or giving up.
+        - scroll_to_text: Jump directly to a keyword match. PREFERRED over scroll when you know the text to look for. Works even for hidden matches — the browser will scroll to and reveal the text.
+        - scroll: Scroll the viewport. Only use when scroll_to_text is not applicable.
         - peek_full_page: Full-page overview screenshot. Last resort — use find_on_page first.
 
         Conclude:
-        - answer_found: Set "answer". Only when openQuestions is empty. "answer" must be null for all other actions.
-        - give_up: ABSOLUTE LAST RESORT. You must have done ALL of: (1) find_on_page with multiple keyword variations, (2) expanded any [collapsed] elements, (3) scrolled through or used scroll_to_text on the page. If find_on_page showed hidden matches, you MUST expand those hidden elements before giving up.
+        - answer_found: Only when openQuestions is empty. Set the answer in decision.answerFound.
+        - give_up: ABSOLUTE LAST RESORT. You must have done ALL of: (1) find_on_page with multiple keyword variations, (2) expanded any [collapsed] elements, (3) scrolled through or used scroll_to_text. If find_on_page showed hidden matches, you MUST expand those hidden elements before giving up.
 
-        === RESPONSE FORMAT ===
-        - "thinking": REQUIRED. Your reasoning — what happened, what you see, what you'll do next. This becomes your memory across turns.
-        - "finding": query-relevant data from the current screenshot. Null only if nothing relevant is visible.
-        - "openQuestions": gaps remaining. Empty only when fully answered.
-        - One action with its required fields.
-
-        === LABELS ===
-        - "labelNumber" must be a number from ELEMENT_LABELS. The valid range is shown there.
-        - Numbers on the page (prices, phone numbers, addresses) are NOT labels.
-        - Labels are small colored badges overlaid on interactive elements.
-
-        === RULES ===
+        ### Rules
         - Study the screenshot fresh each turn — never carry stale data forward.
         - If a previous outcome says NO visible change → try a DIFFERENT element or approach.
         - For tables/grids, match row labels to column headers carefully.
-        - Off-page clicks are automatically blocked. The outcome will say "Navigated OFF-PAGE". Do NOT re-click such elements. Focus on the current page instead.
+        - Off-page clicks are automatically blocked. The outcome will say "Navigated OFF-PAGE". Do NOT re-click such elements.
         - NEVER click the same off-page element twice. After an off-page outcome, switch to exploring the current page.
-        - Prefer find_on_page + scroll_to_text over blind scrolling. This is faster and more reliable.
+        - Prefer find_on_page + scroll_to_text over blind scrolling.
+        - Label numbers come from ELEMENTS. Do not confuse page content (prices, phone numbers) with label badges.
 
-        === VISUAL CAPTURE ===
-        - If you see a relevant chart, diagram, or table image, set "captureRegions" with bounding box (0–1000 coordinates) and "relevance" description.
-        - Ignore logos, icons, and navigation images.
+        ### Visual capture
+        If you see a relevant chart, diagram, or table image, include captureRegions with bounding box (0–1000 coordinates) and relevance description. Ignore logos, icons, and navigation images.
+
+        ## Output
+
+        Return JSON with this structure:
+        {
+          "observation": "What you see on the current screen and your reasoning about what to do next",
+          "findings": ["Fact 1 extracted from viewport", "Fact 2"],
+          "openQuestions": ["Question still needing an answer"],
+          "decision": {
+            "action": "click",
+            "reason": "Why this action",
+            "click": { "label": 41 }
+          }
+        }
+
+        Only populate the decision sub-object that matches the action. For give_up and peek_full_page, reason alone suffices (no sub-object needed).
     """.trimIndent()
 
     @Serializable
@@ -205,78 +240,53 @@ class WebpageNavigationAgentGenAiImpl(
     )
 
     @Serializable
-    private data class NavigationResponse(
-        val thinking: String? = null,
-        val finding: String? = null,
-        val openQuestions: List<String>? = null,
-        val actionType: String,
-        val labelNumber: Int? = null,
-        val clickX: Int? = null,
-        val clickY: Int? = null,
-        val keywords: List<String>? = null,
-        val searchText: String? = null,
-        val occurrence: Int? = null,
-        val scrollDirection: String? = null,
-        val scrollPercent: Int? = null,
-        val text: String? = null,
-        val answer: String? = null,
+    private data class ClickParams(val label: Int)
+
+    @Serializable
+    private data class ClickAtParams(val x: Int, val y: Int)
+
+    @Serializable
+    private data class ScrollParams(val direction: String? = null, val percent: Int? = null)
+
+    @Serializable
+    private data class FindOnPageParams(val keywords: List<String>? = null)
+
+    @Serializable
+    private data class ScrollToTextParams(val text: String? = null)
+
+    @Serializable
+    private data class TypeParams(val label: Int? = null, val text: String? = null)
+
+    @Serializable
+    private data class AnswerFoundParams(val answer: String? = null)
+
+    @Serializable
+    private data class DecisionResponse(
+        val action: String,
         val reason: String? = null,
-        val captureRegions: List<CaptureRegionResponse>? = null
+        val click: ClickParams? = null,
+        val clickAt: ClickAtParams? = null,
+        val scroll: ScrollParams? = null,
+        val findOnPage: FindOnPageParams? = null,
+        val scrollToText: ScrollToTextParams? = null,
+        val type: TypeParams? = null,
+        val answerFound: AnswerFoundParams? = null
+    )
+
+    @Serializable
+    private data class NavigationResponse(
+        val observation: String? = null,
+        val findings: List<String>? = null,
+        val openQuestions: List<String>? = null,
+        val captureRegions: List<CaptureRegionResponse>? = null,
+        val decision: DecisionResponse
     )
 
     override suspend fun generate(input: WebpageNavigationInput): WebpageNavigationOutput {
         val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val userPrompt = buildString {
-            appendLine("PAGE: ${input.pageTitle} — ${input.pageUrl}")
-            val desc = input.pageDescription?.take(200) ?: "none"
-            appendLine("DESCRIPTION: $desc")
-            appendLine("SCROLL_POSITION: ${input.scrollPercent}% (0% = top, 100% = bottom)")
-            appendLine()
-            appendLine("QUERY: ${input.query}")
-
-            if (input.answeredQuestions.isNotEmpty()) {
-                appendLine()
-                appendLine("ANSWERED_QUESTIONS (already resolved — do NOT re-investigate):")
-                input.answeredQuestions.forEachIndexed { idx, q ->
-                    appendLine("  ${idx + 1}. $q")
-                }
-            }
-
-            if (input.openQuestions.isNotEmpty()) {
-                appendLine()
-                appendLine("OPEN_QUESTIONS (must resolve before answer_found):")
-                input.openQuestions.forEachIndexed { idx, q ->
-                    appendLine("  ${idx + 1}. $q")
-                }
-            } else if (input.answeredQuestions.isNotEmpty()) {
-                appendLine()
-                appendLine("OPEN_QUESTIONS: None — all questions resolved. You may use answer_found.")
-            }
-
-            if (input.previousActions.isNotEmpty()) {
-                appendLine()
-                appendLine("PREVIOUS_ACTIONS:")
-                input.previousActions.forEachIndexed { idx, entry ->
-                    appendLine("  ${idx + 1}. ${formatActionWithOutcome(entry)}")
-                }
-            }
-
-            if (input.elementLabels.isNotEmpty()) {
-                val maxLabel = input.elementLabels.maxOf { it.labelNumber }
-                appendLine()
-                appendLine("ELEMENT_LABELS (valid range: 0–$maxLabel):")
-                input.elementLabels.forEach { el ->
-                    val roleStr = el.role?.let { " ($it)" } ?: ""
-                    val statesStr = if (el.states.isNotEmpty()) " [${el.states.joinToString(", ")}]" else ""
-                    appendLine("  [${el.labelNumber}] ${el.tag}$roleStr$statesStr: ${el.text.take(60)}")
-                }
-            } else {
-                appendLine()
-                appendLine("ELEMENT_LABELS: None visible. Use scroll, find_on_page, or give_up.")
-            }
-        }
+        val userPrompt = buildUserPrompt(input)
 
         val response = withContext(dispatcherProvider.io) {
             retryLlmCall<NavigationResponse>(this@WebpageNavigationAgentGenAiImpl::class.simpleName!!) {
@@ -317,21 +327,22 @@ class WebpageNavigationAgentGenAiImpl(
             }
         }
 
-        val action = parseAction(response)
+        val decision = response.decision
+        val action = parseAction(decision)
 
-        if (action !is NavigationAction.AnswerFound && !response.answer.isNullOrBlank()) {
+        if (action !is NavigationAction.AnswerFound && decision.answerFound?.answer != null) {
             logger.warn(
-                "VLM speculatively filled answer for actionType={}, discarding: {}",
-                response.actionType, response.answer.take(80)
+                "VLM speculatively filled answerFound for action={}, discarding: {}",
+                decision.action, decision.answerFound.answer.take(80)
             )
         }
 
         logger.debug(
-            "Navigation: {} | finding={} | openQ={} | reason={}",
+            "Navigation: {} | findings={} | openQ={} | reason={}",
             action::class.simpleName,
-            response.finding?.take(80),
+            response.findings?.size ?: 0,
             response.openQuestions?.size ?: 0,
-            response.reason
+            decision.reason
         )
 
         val captureRegions = response.captureRegions?.map { r ->
@@ -346,85 +357,131 @@ class WebpageNavigationAgentGenAiImpl(
 
         return WebpageNavigationOutput(
             action = action,
-            finding = response.finding,
-            thinking = response.thinking,
+            findings = response.findings ?: emptyList(),
+            observation = response.observation,
             openQuestions = response.openQuestions ?: emptyList(),
             captureRegions = captureRegions,
             tokenUsage = tokenUsage
         )
     }
 
-    private fun parseAction(response: NavigationResponse): NavigationAction {
-        return when (response.actionType) {
+    private fun buildUserPrompt(input: WebpageNavigationInput): String = buildString {
+        appendLine("PAGE: ${input.pageTitle} — ${input.pageUrl}")
+        appendLine("SCROLL: ${input.scrollPercent}%")
+        appendLine()
+        appendLine("QUERY: ${input.query}")
+
+        if (input.accumulatedFindings.isNotEmpty()) {
+            appendLine()
+            appendLine("FINDINGS (what we know so far):")
+            input.accumulatedFindings.forEachIndexed { idx, f ->
+                appendLine("  ${idx + 1}. $f")
+            }
+        }
+
+        if (input.openQuestions.isNotEmpty()) {
+            appendLine()
+            appendLine("OPEN QUESTIONS (must resolve before answer_found):")
+            input.openQuestions.forEachIndexed { idx, q ->
+                appendLine("  ${idx + 1}. $q")
+            }
+        } else if (input.answeredQuestions.isNotEmpty()) {
+            appendLine()
+            appendLine("OPEN QUESTIONS: None — all questions resolved. You may use answer_found.")
+        }
+
+        if (input.previousActions.isNotEmpty()) {
+            appendLine()
+            appendLine("TURNS:")
+            input.previousActions.forEachIndexed { idx, entry ->
+                appendLine(formatTurnEntry(idx + 1, entry))
+            }
+        }
+
+        if (input.elementLabels.isNotEmpty()) {
+            val maxLabel = input.elementLabels.maxOf { it.labelNumber }
+            appendLine()
+            appendLine("ELEMENTS (label range 0–$maxLabel):")
+            input.elementLabels.forEach { el ->
+                val roleStr = el.role?.let { " ($it)" } ?: ""
+                val statesStr = if (el.states.isNotEmpty()) " [${el.states.joinToString(", ")}]" else ""
+                appendLine("  [${el.labelNumber}] ${el.tag}$roleStr$statesStr: ${el.text.take(60)}")
+            }
+        } else {
+            appendLine()
+            appendLine("ELEMENTS: None visible. Use scroll, find_on_page, or give_up.")
+        }
+    }
+
+    private fun parseAction(decision: DecisionResponse): NavigationAction {
+        val reason = decision.reason ?: ""
+        return when (decision.action) {
             "click" -> {
-                val label = response.labelNumber?.takeIf { it >= 0 }
-                    ?: extractLabelFromText(response.reason)
+                val label = decision.click?.label?.takeIf { it >= 0 }
+                    ?: extractLabelFromText(reason)
                 if (label == null) {
-                    logger.warn("VLM returned click without labelNumber, falling back to scroll")
+                    logger.warn("VLM returned click without label, falling back to scroll")
                     scrollFallback()
                 } else {
-                    NavigationAction.Click(labelNumber = label, reason = response.reason ?: "")
+                    NavigationAction.Click(labelNumber = label, reason = reason)
                 }
             }
             "click_at" -> {
-                val x = response.clickX
-                val y = response.clickY
-                if (x == null || y == null) {
-                    logger.warn("VLM returned click_at without coordinates (x={}, y={}), falling back to scroll", x, y)
+                val params = decision.clickAt
+                if (params == null) {
+                    logger.warn("VLM returned click_at without clickAt params, falling back to scroll")
                     scrollFallback()
                 } else {
                     NavigationAction.ClickAt(
-                        x = x.coerceIn(0, 1000),
-                        y = y.coerceIn(0, 1000),
-                        reason = response.reason ?: ""
+                        x = params.x.coerceIn(0, 1000),
+                        y = params.y.coerceIn(0, 1000),
+                        reason = reason
                     )
                 }
             }
-            "scroll" -> NavigationAction.Scroll(
-                scrollDirection = when (response.scrollDirection?.uppercase()) {
-                    "UP" -> ScrollDirection.UP
-                    else -> ScrollDirection.DOWN
-                },
-                scrollPercent = (response.scrollPercent ?: 100).coerceIn(10, 100),
-                reason = response.reason ?: ""
-            )
+            "scroll" -> {
+                val params = decision.scroll
+                NavigationAction.Scroll(
+                    scrollDirection = when (params?.direction?.uppercase()) {
+                        "UP" -> ScrollDirection.UP
+                        else -> ScrollDirection.DOWN
+                    },
+                    scrollPercent = (params?.percent ?: 100).coerceIn(10, 100),
+                    reason = reason
+                )
+            }
             "find_on_page" -> NavigationAction.FindOnPage(
-                keywords = response.keywords ?: emptyList(),
-                reason = response.reason ?: ""
+                keywords = decision.findOnPage?.keywords ?: emptyList(),
+                reason = reason
             )
             "scroll_to_text" -> NavigationAction.ScrollToText(
-                searchText = response.searchText ?: "",
+                searchText = decision.scrollToText?.text ?: "",
                 occurrence = 1,
-                reason = response.reason ?: ""
+                reason = reason
             )
             "answer_found" -> {
-                val answer = response.answer
-                if (answer == null) {
+                val answer = decision.answerFound?.answer
+                if (answer.isNullOrBlank()) {
                     logger.warn("VLM returned answer_found without answer text, treating as give_up")
                     NavigationAction.GiveUp(reason = "Model claimed answer_found but provided no answer")
                 } else {
                     NavigationAction.AnswerFound(answer = answer)
                 }
             }
-            "peek_full_page" -> NavigationAction.PeekFullPage(
-                reason = response.reason ?: ""
-            )
+            "peek_full_page" -> NavigationAction.PeekFullPage(reason = reason)
             "type" -> {
-                val label = response.labelNumber?.takeIf { it >= 0 }
-                val text = response.text
+                val params = decision.type
+                val label = params?.label?.takeIf { it >= 0 }
+                val text = params?.text
                 if (label == null || text.isNullOrBlank()) {
-                    logger.warn("VLM returned type without labelNumber or text, falling back to scroll")
+                    logger.warn("VLM returned type without label or text, falling back to scroll")
                     scrollFallback()
                 } else {
-                    NavigationAction.Type(labelNumber = label, text = text, reason = response.reason ?: "")
+                    NavigationAction.Type(labelNumber = label, text = text, reason = reason)
                 }
             }
-            "give_up" -> NavigationAction.GiveUp(
-                reason = response.reason ?: "No reason provided"
-            )
-            else -> NavigationAction.GiveUp(
-                reason = "Unknown action type: ${response.actionType}"
-            )
+            "give_up" -> NavigationAction.GiveUp(reason = reason.ifEmpty { "No reason provided" })
+            else -> NavigationAction.GiveUp(reason = "Unknown action type: ${decision.action}")
         }
     }
 
@@ -437,34 +494,40 @@ class WebpageNavigationAgentGenAiImpl(
         if (text == null) return null
         val match = Regex("""\blabel\s*(?:#\s*)?(\d+)\b""", RegexOption.IGNORE_CASE).find(text)
         return match?.groupValues?.get(1)?.toIntOrNull()?.also {
-            logger.debug("Extracted labelNumber={} from reason text as fallback", it)
+            logger.debug("Extracted label={} from reason text as fallback", it)
         }
     }
 
-    private fun formatActionWithOutcome(entry: ActionWithOutcome): String = buildString {
-        if (entry.thinking != null) append("Thinking: ${entry.thinking}\n     ")
-        append("Action: ${formatActionDesc(entry.action)}")
-        if (entry.outcome != null) append(" → ${entry.outcome}")
+    private fun formatTurnEntry(turnNumber: Int, entry: ActionWithOutcome): String = buildString {
+        appendLine("  [$turnNumber] observation: ${entry.observation ?: "(none)"}")
+        if (entry.findings.isNotEmpty()) {
+            appendLine("      findings: [${entry.findings.joinToString(", ") { "\"$it\"" }}]")
+        }
+        append("      decision: ${formatDecisionDesc(entry.action)}")
+        if (entry.outcome != null) {
+            appendLine()
+            append("      outcome: ${entry.outcome}")
+        }
     }
 
-    private fun formatActionDesc(action: NavigationAction): String = when (action) {
+    private fun formatDecisionDesc(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> {
-            val target = action.elementDescription ?: "element"
-            "Clicked $target — ${action.reason}"
+            val target = action.elementDescription ?: "label ${action.labelNumber}"
+            "click $target"
         }
         is NavigationAction.ClickAt -> {
             val target = action.elementDescription ?: "unlabeled element"
-            "Clicked at (${action.x},${action.y}) on $target — ${action.reason}"
+            "click_at (${action.x},${action.y}) on $target"
         }
-        is NavigationAction.Scroll -> "Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
-        is NavigationAction.FindOnPage -> "Ctrl+F: [${action.keywords.joinToString { "\"$it\"" }}]"
-        is NavigationAction.ScrollToText -> "Scroll to \"${action.searchText}\""
-        is NavigationAction.PeekFullPage -> "Peeked at full page overview"
+        is NavigationAction.Scroll -> "scroll ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
+        is NavigationAction.FindOnPage -> "find_on_page [${action.keywords.joinToString(", ") { "\"$it\"" }}]"
+        is NavigationAction.ScrollToText -> "scroll_to_text \"${action.searchText}\""
+        is NavigationAction.PeekFullPage -> "peek_full_page"
         is NavigationAction.Type -> {
-            val target = action.elementDescription ?: "element"
-            "Typed '${action.text.take(30)}' into $target"
+            val target = action.elementDescription ?: "label ${action.labelNumber}"
+            "type '${action.text.take(30)}' into $target"
         }
-        is NavigationAction.AnswerFound -> "Reported answer: ${action.answer.take(80)}"
-        is NavigationAction.GiveUp -> "Gave up: ${action.reason}"
+        is NavigationAction.AnswerFound -> "answer_found: ${action.answer.take(80)}"
+        is NavigationAction.GiveUp -> "give_up: ${action.reason}"
     }
 }

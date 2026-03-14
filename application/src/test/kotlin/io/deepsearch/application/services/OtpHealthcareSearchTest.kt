@@ -1,6 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationBenchmarkTestModule
+import io.deepsearch.application.services.benchmark.ActionEfficiencyAnalyzer
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.models.valueobjects.QuerySessionId

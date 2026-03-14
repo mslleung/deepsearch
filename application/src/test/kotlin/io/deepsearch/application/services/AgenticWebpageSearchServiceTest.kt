@@ -2,6 +2,7 @@ package io.deepsearch.application.services
 
 import com.sun.net.httpserver.HttpServer
 import io.deepsearch.application.config.applicationBenchmarkTestModule
+import io.deepsearch.application.services.benchmark.ActionEfficiencyAnalyzer
 import io.deepsearch.domain.agents.ActionWithOutcome
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.config.IApplicationCoroutineScope
