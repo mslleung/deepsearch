@@ -8,6 +8,7 @@ import io.deepsearch.domain.agents.ScrollDirection
 import io.deepsearch.domain.agents.SearchKeywordsResult
 import io.deepsearch.domain.agents.TrackedQuestion
 import io.deepsearch.domain.agents.WebpageNavigationInput
+import io.deepsearch.domain.agents.WebpageNavigationOutput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.constants.ImageMimeType
@@ -19,7 +20,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlin.coroutines.coroutineContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
@@ -135,6 +135,40 @@ class AgenticWebpageSearchService(
         )
     }
 
+    // --- Inner types ---
+
+    private data class IterationContext(
+        val elements: List<IBrowserPage.InteractiveElementInfo>,
+        val screenshot: IBrowserPage.Screenshot,
+        val pageTitle: String,
+        val pageDescription: String?,
+        val scrollPercent: Int
+    )
+
+    private class NavigationLoopState(
+        val url: String,
+        val query: String,
+        val sessionId: SessionId,
+        val onLinkDiscovered: (suspend (String) -> Unit)?,
+        val actionsPerformed: MutableList<ActionWithOutcome> = mutableListOf(),
+        var trackedQuestions: List<TrackedQuestion> = emptyList(),
+        var generalFindings: List<String> = emptyList(),
+        val discoveredUrls: MutableList<String> = mutableListOf(),
+        val capturedImages: MutableList<CapturedImage> = mutableListOf(),
+        val capturedHashes: MutableSet<String> = mutableSetOf(),
+        var aggregatedTokenUsage: TokenUsageMetrics = TokenUsageMetrics.empty("gemini-3.1-flash-lite"),
+        var lastFindCounts: Map<String, IBrowserPage.TextMatchCounts> = emptyMap(),
+        var previousClickScreenshot: ByteArray? = null,
+        val failedClickDescs: MutableMap<String, Int> = mutableMapOf(),
+        val offPageClickedDescs: MutableSet<String> = mutableSetOf(),
+        var lastActionWasClick: Boolean = false,
+        var peekScreenshotOverride: IBrowserPage.Screenshot? = null,
+        var lastCtx: IterationContext? = null,
+        var skipContextFetch: Boolean = false
+    )
+
+    // --- Public API ---
+
     override suspend fun searchWithinPage(
         url: String,
         query: String,
@@ -167,6 +201,8 @@ class AgenticWebpageSearchService(
         onLinkDiscovered: (suspend (String) -> Unit)?
     ): AgenticPageSearchResult = doSearchWithinPage(page, url, query, sessionId, onLinkDiscovered)
 
+    // --- Core navigation loop ---
+
     private suspend fun doSearchWithinPage(
         page: IBrowserPage,
         url: String,
@@ -179,181 +215,46 @@ class AgenticWebpageSearchService(
 
         dismissCookieBanner(page, url)
 
-        val actionsPerformed = mutableListOf<ActionWithOutcome>()
-        var trackedQuestions = listOf<TrackedQuestion>()
-        var generalFindings = listOf<String>()
-        val discoveredUrls = mutableListOf<String>()
-        val capturedImages = mutableListOf<CapturedImage>()
-        val capturedHashes = mutableSetOf<String>()
-        var aggregatedTokenUsage = TokenUsageMetrics.empty("gemini-3.1-flash-lite")
-        var lastFindCounts: Map<String, IBrowserPage.TextMatchCounts> = emptyMap()
-
-        // Pre-scan: run find_on_page with LLM-generated keywords before the first VLM call
-        if (preScanKeywords != null && preScanKeywords.keywords.isNotEmpty()) {
-            aggregatedTokenUsage = aggregatedTokenUsage + preScanKeywords.tokenUsage
-            tokenUsageService.recordTokenUsage(
-                sessionId = sessionId,
-                agentName = "WebpageNavigationAgent.keywords",
-                modelName = preScanKeywords.tokenUsage.modelName,
-                promptTokens = preScanKeywords.tokenUsage.promptTokens,
-                outputTokens = preScanKeywords.tokenUsage.outputTokens,
-                totalTokens = preScanKeywords.tokenUsage.totalTokens
-            )
-
-            try {
-                val keywords = preScanKeywords.keywords
-                val (counts, stemmedMatches) = coroutineScope {
-                    val countsDeferred = async { page.countTextMatches(keywords) }
-                    val stemmedDeferred = async {
-                        val pageText = page.extractTextContent()
-                        pageTextSearchService.search(pageText, keywords)
-                    }
-                    Pair(countsDeferred.await(), stemmedDeferred.await())
-                }
-
-                val countsDesc = counts.entries.joinToString(", ") { (kw, c) ->
-                    val hidden = c.total - c.visible
-                    val base = if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
-                    val ctx = c.firstContext
-                    if (ctx != null && c.total > 0) "$base (e.g. '$ctx')" else base
-                }
-                logger.info("Pre-scan find_on_page for {}: {}", url, countsDesc)
-
-                val outcome = buildFindOnPageOutcome(counts, stemmedMatches, keywords, countsDesc)
-
-                val scrollTarget = pickAutoScrollTarget(counts, stemmedMatches, keywords)
-                val finalOutcome = if (scrollTarget != null) {
-                    val scrolled = page.scrollToTextContent(scrollTarget)
-                    if (scrolled) {
-                        logger.info("Pre-scan auto-scrolled to '{}' on {}", scrollTarget, url)
-                        "$outcome Auto-scrolled to \"$scrollTarget\"."
-                    } else outcome
-                } else outcome
-
-                actionsPerformed.add(
-                    ActionWithOutcome(
-                        NavigationAction.FindOnPage(keywords = keywords, reason = "pre-scan"),
-                        outcome = finalOutcome,
-                        observation = "Pre-scan keyword search before first visual analysis."
-                    )
-                )
-                lastFindCounts = counts
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logger.warn("Pre-scan find_on_page failed: {}", e.message)
-            }
-        }
-
-        // Navigation Loop
-        var previousClickScreenshot: ByteArray? = null
-        val failedClickDescs = mutableMapOf<String, Int>()
-        val offPageClickedDescs = mutableSetOf<String>()
-        var lastActionWasClick = false
-        var peekScreenshotOverride: IBrowserPage.Screenshot? = null
-        var skipContextFetch = false
-
-        data class IterationContext(
-            val elements: List<IBrowserPage.InteractiveElementInfo>,
-            val screenshot: IBrowserPage.Screenshot,
-            val pageTitle: String,
-            val pageDescription: String?,
-            val scrollPercent: Int
+        val state = NavigationLoopState(
+            url = url,
+            query = query,
+            sessionId = sessionId,
+            onLinkDiscovered = onLinkDiscovered
         )
 
-        var lastCtx: IterationContext? = null
+        if (preScanKeywords != null && preScanKeywords.keywords.isNotEmpty()) {
+            executePreScan(page, preScanKeywords, state)
+        }
 
         for (iteration in 1..MAX_ITERATIONS) {
             currentCoroutineContext().ensureActive()
             logger.debug("Agentic search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
 
-            val fetchedFreshContext: Boolean
-            val ctx: IterationContext
-            if (skipContextFetch && lastCtx != null) {
-                logger.debug("Reusing previous context for {} (off-page-only round)", url)
-                ctx = lastCtx
-                fetchedFreshContext = false
-            } else {
-                ctx = coroutineScope {
-                    val elementsDeferred = async { page.getInteractiveElements() }
-                    val screenshotDeferred = async { page.takeScreenshot() }
-                    val titleDeferred = async { page.getTitle() }
-                    val descDeferred = async { page.getDescription() }
-                    val scrollDeferred = async { page.getScrollPosition() }
-                    IterationContext(
-                        elements = elementsDeferred.await(),
-                        screenshot = screenshotDeferred.await(),
-                        pageTitle = titleDeferred.await(),
-                        pageDescription = descDeferred.await(),
-                        scrollPercent = scrollDeferred.await()
-                    )
-                }
-                fetchedFreshContext = true
+            val (ctx, freshContext) = fetchIterationContext(page, state)
+            state.lastCtx = ctx
+            logger.debug("Found {} interactive elements", ctx.elements.size)
+
+            if (state.previousClickScreenshot != null && state.lastActionWasClick) {
+                applyVisualDiffAfterClick(ctx.screenshot.bytes, state)
             }
-            lastCtx = ctx
-            val interactiveElements = ctx.elements
-            val rawScreenshot = ctx.screenshot
-            logger.debug("Found {} interactive elements", interactiveElements.size)
+            state.lastActionWasClick = false
 
-            if (previousClickScreenshot != null && lastActionWasClick) {
-                val changed = screenshotAnnotationService.hasVisualChange(
-                    previousClickScreenshot, rawScreenshot.bytes
-                )
-                val lastEntry = actionsPerformed.last()
-                val lastAction = lastEntry.action
-                val clickDesc = when (lastAction) {
-                    is NavigationAction.Click -> lastAction.reason.take(60)
-                        .ifEmpty { "(${lastAction.x},${lastAction.y})" }
-
-                    is NavigationAction.Type -> lastAction.reason.take(60)
-                        .ifEmpty { "(${lastAction.x},${lastAction.y})" }
-
-                    else -> ""
-                }
-                if (changed) {
-                    actionsPerformed[actionsPerformed.lastIndex] = lastEntry.copy(
-                        outcome = "VISIBLE CHANGE on the page."
-                    )
-                    failedClickDescs.remove(clickDesc)
-                } else {
-                    val failCount = failedClickDescs.merge(clickDesc, 1, Int::plus)!!
-                    actionsPerformed[actionsPerformed.lastIndex] = lastEntry.copy(
-                        outcome = if (failCount >= MAX_FAILED_CLICKS) {
-                            "Element '$clickDesc' has FAILED $failCount times — it is NOT clickable. " +
-                                    "STOP trying it. Mark unanswerable questions as resolved and " +
-                                    "use answer_found with the findings you already have."
-                        } else {
-                            "NO visible change. Try a different element or approach."
-                        }
-                    )
-                }
-                logger.debug("Visual diff after click: changed={}", changed)
-            }
-            lastActionWasClick = false
-
-            if (fetchedFreshContext) {
-                val annotated = screenshotAnnotationService.annotate(
-                    rawScreenshot.bytes,
-                    interactiveElements
-                )
-                val debugDir = java.io.File("/tmp/deepsearch-debug")
-                debugDir.mkdirs()
-                java.io.File(debugDir, "annotated-iter$iteration.jpg").writeBytes(annotated.imageBytes)
-                logger.debug("Saved debug screenshot to /tmp/deepsearch-debug/annotated-iter$iteration.jpg")
+            if (freshContext) {
+                saveDebugScreenshot(ctx.screenshot.bytes, ctx.elements, iteration)
             }
 
-            val screenshotForAgent = peekScreenshotOverride ?: IBrowserPage.Screenshot(
-                bytes = rawScreenshot.bytes,
-                mimeType = rawScreenshot.mimeType
+            val screenshotForAgent = state.peekScreenshotOverride ?: IBrowserPage.Screenshot(
+                bytes = ctx.screenshot.bytes,
+                mimeType = ctx.screenshot.mimeType
             )
-            peekScreenshotOverride = null
+            state.peekScreenshotOverride = null
 
             val input = WebpageNavigationInput(
                 screenshot = screenshotForAgent,
                 query = query,
-                previousActions = actionsPerformed.toList(),
-                questions = trackedQuestions,
-                generalFindings = generalFindings,
+                previousActions = state.actionsPerformed.toList(),
+                questions = state.trackedQuestions,
+                generalFindings = state.generalFindings,
                 pageUrl = url,
                 pageTitle = ctx.pageTitle,
                 pageDescription = ctx.pageDescription,
@@ -363,7 +264,7 @@ class AgenticWebpageSearchService(
             )
 
             val output = webpageNavigationAgent.generate(input)
-            aggregatedTokenUsage = aggregatedTokenUsage + output.tokenUsage
+            state.aggregatedTokenUsage = state.aggregatedTokenUsage + output.tokenUsage
 
             tokenUsageService.recordTokenUsage(
                 sessionId = sessionId,
@@ -374,375 +275,59 @@ class AgenticWebpageSearchService(
                 totalTokens = output.tokenUsage.totalTokens
             )
 
-            val previousAllFacts = buildSet {
-                trackedQuestions.flatMapTo(this) { it.findings }
-                addAll(generalFindings)
-            }
-            trackedQuestions = output.questionsState
-            generalFindings = output.generalFindings
-            val currentAllFacts = buildSet {
-                output.questionsState.flatMapTo(this) { it.findings }
-                addAll(output.generalFindings)
-            }
-            val newFindings = (currentAllFacts - previousAllFacts).toList()
+            val newFindings = updateFindings(output, state)
 
-            if (newFindings.isNotEmpty()) {
-                logger.info(
-                    "Agentic search new findings ({}) for {}: {}",
-                    newFindings.size, url, newFindings.joinToString("; ") { it.take(80) }
+            if (output.captureRegions.isNotEmpty()) {
+                cropCaptureRegions(
+                    ctx.screenshot.bytes,
+                    output.captureRegions,
+                    state.capturedImages,
+                    state.capturedHashes
                 )
             }
 
-            if (output.captureRegions.isNotEmpty()) {
-                cropCaptureRegions(rawScreenshot.bytes, output.captureRegions, capturedImages, capturedHashes)
-            }
-
-            val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(rawScreenshot.bytes)
+            val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(ctx.screenshot.bytes)
 
             var allActionsPipelined = output.actions.isNotEmpty()
             for ((actionIdx, action) in output.actions.withIndex()) {
-                if (actionIdx == 0) {
-                    actionsPerformed.add(
-                        ActionWithOutcome(
-                            action,
-                            observation = output.observation,
-                            findings = newFindings
-                        )
+                state.actionsPerformed.add(
+                    if (actionIdx == 0) ActionWithOutcome(
+                        action,
+                        observation = output.observation,
+                        findings = newFindings
                     )
-                } else {
-                    actionsPerformed.add(ActionWithOutcome(action, observation = output.observation))
-                }
+                    else ActionWithOutcome(action, observation = output.observation)
+                )
 
                 var continuesPipeline = false
 
                 when (action) {
-                    is NavigationAction.AnswerFound -> {
-                        val allObservations = collectAllFindings(trackedQuestions, generalFindings)
-                        logger.info(
-                            "Agentic search found answer after {} iterations ({} findings, {} captures) for {}: {}",
-                            iteration, allObservations.size, capturedImages.size, url, action.answer.take(100)
-                        )
-                        return AgenticPageSearchResult(
-                            answer = action.answer,
-                            evidence = newFindings.lastOrNull() ?: allObservations.lastOrNull(),
-                            contentDate = action.contentDate,
-                            actionsPerformed = actionsPerformed,
-                            observations = allObservations,
-                            success = true,
-                            totalTokenUsage = aggregatedTokenUsage,
-                            discoveredUrls = discoveredUrls,
-                            capturedImages = capturedImages.toList()
-                        )
-                    }
+                    is NavigationAction.AnswerFound ->
+                        return handleAnswerFound(action, state, newFindings, iteration)
 
-                    is NavigationAction.GiveUp -> {
-                        val consecutiveGiveUps = actionsPerformed.takeLastWhile {
-                            it.action is NavigationAction.GiveUp
-                        }.size
-                        val rejectionReason = evaluateGiveUpReadiness(actionsPerformed, ctx.scrollPercent)
-                        if (rejectionReason != null) {
-                            logger.info(
-                                "Rejecting premature give_up at iteration {} for {} (attempt #{}) — {}",
-                                iteration, url, consecutiveGiveUps, rejectionReason
-                            )
-                            val escalation = if (consecutiveGiveUps >= 2) {
-                                " STOP trying give_up. You have been rejected $consecutiveGiveUps times. " +
-                                        "Instead: use answer_found with whatever partial information you have gathered so far, " +
-                                        "even if incomplete. Your findings and observations contain useful data."
-                            } else ""
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "REJECTED: $rejectionReason$escalation"
-                            )
-                        } else {
-                            logger.info(
-                                "Agentic search gave up after {} iterations for {}: {}",
-                                iteration, url, action.reason
-                            )
-                            return AgenticPageSearchResult(
-                                answer = null,
-                                evidence = null,
-                                contentDate = null,
-                                actionsPerformed = actionsPerformed,
-                                observations = collectAllFindings(trackedQuestions, generalFindings),
-                                success = false,
-                                totalTokenUsage = aggregatedTokenUsage,
-                                discoveredUrls = discoveredUrls,
-                                capturedImages = capturedImages.toList()
-                            )
-                        }
-                    }
+                    is NavigationAction.GiveUp ->
+                        handleGiveUp(action, state, iteration, ctx.scrollPercent)?.let { return it }
 
-                    is NavigationAction.Click -> {
-                        val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
-                        val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
-                        val desc = action.reason.take(60).ifEmpty { "element at (${action.x},${action.y})" }
+                    is NavigationAction.Click ->
+                        continuesPipeline = handleClick(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight)
 
-                        if (desc in offPageClickedDescs) {
-                            logger.debug("Skipping re-click on known off-page element '{}'", desc)
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "Element '$desc' already navigates OFF this page. " +
-                                        "Do NOT click it again. Find the answer elsewhere on the CURRENT page, " +
-                                        "or use answer_found / give_up."
-                            )
-                            continuesPipeline = true
-                        } else {
-                            logger.debug(
-                                "Click normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
-                                action.x, action.y, viewportX, viewportY, desc, action.reason
-                            )
+                    is NavigationAction.FindOnPage ->
+                        handleFindOnPage(action, page, state)
 
-                            previousClickScreenshot = rawScreenshot.bytes
+                    is NavigationAction.ScrollToText ->
+                        handleScrollToText(action, page, state)
 
-                            try {
-                                val clickResult = page.guardedClickAtCoordinates(viewportX, viewportY)
-                                if (clickResult.navigatedAwayTo != null) {
-                                    logger.info(
-                                        "Click on '{}' intercepted navigation to {} — page unchanged",
-                                        desc, clickResult.navigatedAwayTo
-                                    )
-                                    val targetUrl = clickResult.navigatedAwayTo!!
-                                    discoveredUrls.add(targetUrl)
-                                    onLinkDiscovered?.invoke(targetUrl)
-                                    offPageClickedDescs.add(desc)
-                                    lastActionWasClick = false
-                                    actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                        outcome = buildOffPageOutcome(targetUrl)
-                                    )
-                                    continuesPipeline = true
-                                } else {
-                                    lastActionWasClick = true
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                logger.warn(
-                                    "Click failed at viewport ({},{}): {}",
-                                    viewportX, viewportY, e.message
-                                )
-                            }
-                        }
-                    }
+                    is NavigationAction.Scroll ->
+                        handleScroll(action, page, state, imgWidth, imgHeight)
 
-                    is NavigationAction.FindOnPage -> {
-                        logger.debug("FindOnPage: keywords={}", action.keywords)
-                        try {
-                            if (action.keywords.isEmpty()) {
-                                actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = "No keywords provided. Provide keywords to search for."
-                                )
-                            } else {
-                                val (counts, stemmedMatches) = coroutineScope {
-                                    val countsDeferred = async { page.countTextMatches(action.keywords) }
-                                    val stemmedDeferred = async {
-                                        try {
-                                            val pageText = page.extractTextContent()
-                                            pageTextSearchService.search(pageText, action.keywords)
-                                        } catch (e: Exception) {
-                                            logger.debug(
-                                                "Stemmed text search failed, proceeding with exact only: {}",
-                                                e.message
-                                            )
-                                            emptyMap()
-                                        }
-                                    }
-                                    Pair(countsDeferred.await(), stemmedDeferred.await())
-                                }
-                                lastFindCounts = lastFindCounts + counts
+                    is NavigationAction.ScrollAt ->
+                        handleScrollAt(action, page, state, imgWidth, imgHeight)
 
-                                val countsDesc = counts.entries.joinToString(", ") { (kw, c) ->
-                                    val hidden = c.total - c.visible
-                                    val base =
-                                        if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
-                                    val ctx = c.firstContext
-                                    if (ctx != null && c.total > 0) "$base (e.g. '$ctx')" else base
-                                }
-                                logger.info("find_on_page results for {}: {}", url, countsDesc)
+                    is NavigationAction.PeekFullPage ->
+                        handlePeekFullPage(page, state)
 
-                                val outcome = buildFindOnPageOutcome(
-                                    counts, stemmedMatches, action.keywords, countsDesc
-                                )
-
-                                val scrollTarget = pickAutoScrollTarget(counts, stemmedMatches, action.keywords)
-                                if (scrollTarget != null) {
-                                    val scrolled = page.scrollToTextContent(scrollTarget)
-                                    if (scrolled) {
-                                        logger.info("find_on_page auto-scrolled to '{}' on {}", scrollTarget, url)
-                                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                            outcome = "$outcome Auto-scrolled to \"$scrollTarget\"."
-                                        )
-                                    } else {
-                                        actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                            outcome = outcome
-                                        )
-                                    }
-                                    delay(POST_SCROLL_DELAY_MS)
-                                } else {
-                                    actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                        outcome = outcome
-                                    )
-                                }
-                            }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.warn("FindOnPage failed: {}", e.message)
-                        }
-                    }
-
-                    is NavigationAction.ScrollToText -> {
-                        logger.debug("ScrollToText: text='{}', occurrence={}", action.searchText, action.occurrence)
-                        try {
-                            if (action.searchText.isBlank()) {
-                                actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = "No searchText provided."
-                                )
-                            } else {
-                                val found = page.scrollToTextContent(action.searchText, action.occurrence)
-                                if (found) {
-                                    logger.info("scroll_to_text found '{}' on {}", action.searchText, url)
-                                    val priorMatch = lastFindCounts[action.searchText]
-                                    val totalMatches = priorMatch?.total ?: 0
-                                    val outcomeText = buildString {
-                                        append("Scrolled to \"${action.searchText}\".")
-                                        if (totalMatches > 1) {
-                                            append(" There are $totalMatches total matches on this page.")
-                                        }
-                                    }
-                                    actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                        outcome = outcomeText
-                                    )
-                                } else {
-                                    logger.debug("scroll_to_text: '{}' not found on {}", action.searchText, url)
-                                    actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                        outcome = "\"${action.searchText}\" not found on page."
-                                    )
-                                }
-                            }
-                            delay(POST_SCROLL_DELAY_MS)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.warn("ScrollToText failed: {}", e.message)
-                        }
-                    }
-
-                    is NavigationAction.Scroll -> {
-                        logger.debug("Scroll: {} {}%", action.scrollDirection, action.scrollPercent)
-                        try {
-                            val isHorizontal = action.scrollDirection == ScrollDirection.LEFT ||
-                                    action.scrollDirection == ScrollDirection.RIGHT
-                            val dimension = if (isHorizontal) imgWidth else imgHeight
-                            val scrollPx = (dimension * action.scrollPercent / 100.0).toInt()
-                            val (deltaX, deltaY) = when (action.scrollDirection) {
-                                ScrollDirection.DOWN -> 0 to scrollPx
-                                ScrollDirection.UP -> 0 to -scrollPx
-                                ScrollDirection.RIGHT -> scrollPx to 0
-                                ScrollDirection.LEFT -> -scrollPx to 0
-                            }
-                            page.scrollPage(deltaX, deltaY)
-                            val hasUsedFindOnPageBefore = actionsPerformed.any {
-                                it.action is NavigationAction.FindOnPage
-                            }
-                            val scrollOutcome = buildString {
-                                append("Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%")
-                                if (!hasUsedFindOnPageBefore) {
-                                    append(". IMPORTANT: You have not used find_on_page yet. Use find_on_page NEXT — it searches with stemming/fuzzy matching and auto-scrolls to the best match.")
-                                }
-                            }
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = scrollOutcome
-                            )
-                            delay(POST_SCROLL_DELAY_MS)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.warn("Scroll failed: {}", e.message)
-                        }
-                    }
-
-                    is NavigationAction.ScrollAt -> {
-                        logger.debug(
-                            "ScrollAt: ({},{}) {} {}%",
-                            action.x,
-                            action.y,
-                            action.scrollDirection,
-                            action.scrollPercent
-                        )
-                        try {
-                            val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
-                            val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
-                            val isHorizontal = action.scrollDirection == ScrollDirection.LEFT ||
-                                    action.scrollDirection == ScrollDirection.RIGHT
-                            val dimension = if (isHorizontal) imgWidth else imgHeight
-                            val scrollPx = (dimension * action.scrollPercent / 100.0).toInt()
-                            val (deltaX, deltaY) = when (action.scrollDirection) {
-                                ScrollDirection.DOWN -> 0 to scrollPx
-                                ScrollDirection.UP -> 0 to -scrollPx
-                                ScrollDirection.RIGHT -> scrollPx to 0
-                                ScrollDirection.LEFT -> -scrollPx to 0
-                            }
-                            page.scrollElementAtCoordinates(viewportX, viewportY, deltaX, deltaY)
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "Scrolled container at (${action.x},${action.y}) ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
-                            )
-                            delay(POST_SCROLL_DELAY_MS)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.warn("ScrollAt failed: {}", e.message)
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "scroll_at failed: ${e.message}"
-                            )
-                        }
-                    }
-
-                    is NavigationAction.PeekFullPage -> {
-                        logger.debug("Taking full-page peek screenshot for {}", url)
-                        try {
-                            val fullPageScreenshot = page.takeFullPageScreenshot()
-                            val downscaled = downscaleScreenshot(fullPageScreenshot.bytes, PEEK_MAX_HEIGHT)
-                            peekScreenshotOverride = IBrowserPage.Screenshot(
-                                bytes = downscaled,
-                                mimeType = ImageMimeType.JPEG
-                            )
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "Full page overview captured. Study this image to understand " +
-                                        "the overall page content and layout, then decide your next action."
-                            )
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.warn("Full-page screenshot failed: {}", e.message)
-                            actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                outcome = "peek_full_page failed: ${e.message}"
-                            )
-                        }
-                    }
-
-                    is NavigationAction.Type -> {
-                        val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
-                        val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
-                        val desc = action.reason.take(60).ifEmpty { "input at (${action.x},${action.y})" }
-
-                        logger.debug(
-                            "Typing '{}' at normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
-                            action.text.take(30), action.x, action.y, viewportX, viewportY, desc, action.reason
-                        )
-
-                        previousClickScreenshot = rawScreenshot.bytes
-                        lastActionWasClick = true
-
-                        try {
-                            page.clickAtCoordinates(viewportX, viewportY)
-                            delay(POST_CLICK_DELAY_MS)
-                            page.typeText(action.text)
-                            delay(POST_TYPE_DELAY_MS)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            logger.warn("Type failed at viewport ({},{}): {}", viewportX, viewportY, e.message)
-                        }
-                    }
+                    is NavigationAction.Type ->
+                        handleType(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight)
                 }
 
                 if (!continuesPipeline) {
@@ -750,50 +335,496 @@ class AgenticWebpageSearchService(
                     break
                 }
             }
-            skipContextFetch = allActionsPipelined
+            state.skipContextFetch = allActionsPipelined
         }
 
-        val allObservations = collectAllFindings(trackedQuestions, generalFindings)
-        logger.info(
-            "Agentic search exhausted {} iterations for {} without finding answer ({} observations, {} captures)",
-            MAX_ITERATIONS, url, allObservations.size, capturedImages.size
+        return buildFinalResult(state)
+    }
+
+    // --- Pre-scan ---
+
+    private suspend fun executePreScan(
+        page: IBrowserPage,
+        preScanKeywords: SearchKeywordsResult,
+        state: NavigationLoopState
+    ) {
+        state.aggregatedTokenUsage = state.aggregatedTokenUsage + preScanKeywords.tokenUsage
+        tokenUsageService.recordTokenUsage(
+            sessionId = state.sessionId,
+            agentName = "WebpageNavigationAgent.keywords",
+            modelName = preScanKeywords.tokenUsage.modelName,
+            promptTokens = preScanKeywords.tokenUsage.promptTokens,
+            outputTokens = preScanKeywords.tokenUsage.outputTokens,
+            totalTokens = preScanKeywords.tokenUsage.totalTokens
         )
 
-        if (allObservations.isNotEmpty()) {
-            val synthesized = allObservations.joinToString("; ")
-            logger.info("Synthesizing partial answer from {} observations for {}", allObservations.size, url)
-            return AgenticPageSearchResult(
-                answer = synthesized,
-                evidence = allObservations.lastOrNull(),
-                contentDate = null,
-                actionsPerformed = actionsPerformed,
-                observations = allObservations,
-                success = true,
-                totalTokenUsage = aggregatedTokenUsage,
-                discoveredUrls = discoveredUrls,
-                capturedImages = capturedImages.toList()
+        try {
+            val keywords = preScanKeywords.keywords
+            val outcome = executeFindOnPage(page, keywords, state)
+
+            state.actionsPerformed.add(
+                ActionWithOutcome(
+                    NavigationAction.FindOnPage(keywords = keywords, reason = "pre-scan"),
+                    outcome = outcome,
+                    observation = "Pre-scan keyword search before first visual analysis."
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("Pre-scan find_on_page failed: {}", e.message)
+        }
+    }
+
+    // --- Iteration helpers ---
+
+    private suspend fun fetchIterationContext(
+        page: IBrowserPage,
+        state: NavigationLoopState
+    ): Pair<IterationContext, Boolean> {
+        if (state.skipContextFetch && state.lastCtx != null) {
+            logger.debug("Reusing previous context for {} (off-page-only round)", state.url)
+            return Pair(state.lastCtx!!, false)
+        }
+
+        val ctx = coroutineScope {
+            val elementsDeferred = async { page.getInteractiveElements() }
+            val screenshotDeferred = async { page.takeScreenshot() }
+            val titleDeferred = async { page.getTitle() }
+            val descDeferred = async { page.getDescription() }
+            val scrollDeferred = async { page.getScrollPosition() }
+            IterationContext(
+                elements = elementsDeferred.await(),
+                screenshot = screenshotDeferred.await(),
+                pageTitle = titleDeferred.await(),
+                pageDescription = descDeferred.await(),
+                scrollPercent = scrollDeferred.await()
+            )
+        }
+        return Pair(ctx, true)
+    }
+
+    private fun updateFindings(
+        output: WebpageNavigationOutput,
+        state: NavigationLoopState
+    ): List<String> {
+        val previousAllFacts = buildSet {
+            state.trackedQuestions.flatMapTo(this) { it.findings }
+            addAll(state.generalFindings)
+        }
+        state.trackedQuestions = output.questionsState
+        state.generalFindings = output.generalFindings
+        val currentAllFacts = buildSet {
+            output.questionsState.flatMapTo(this) { it.findings }
+            addAll(output.generalFindings)
+        }
+        val newFindings = (currentAllFacts - previousAllFacts).toList()
+
+        if (newFindings.isNotEmpty()) {
+            logger.info(
+                "Agentic search new findings ({}) for {}: {}",
+                newFindings.size, state.url, newFindings.joinToString("; ") { it.take(80) }
             )
         }
 
+        return newFindings
+    }
+
+    private fun applyVisualDiffAfterClick(
+        currentScreenshotBytes: ByteArray,
+        state: NavigationLoopState
+    ) {
+        val previousScreenshot = state.previousClickScreenshot ?: return
+        val changed = screenshotAnnotationService.hasVisualChange(
+            previousScreenshot, currentScreenshotBytes
+        )
+        val lastEntry = state.actionsPerformed.last()
+        val clickDesc = when (val lastAction = lastEntry.action) {
+            is NavigationAction.Click -> lastAction.reason.take(60)
+                .ifEmpty { "(${lastAction.x},${lastAction.y})" }
+
+            is NavigationAction.Type -> lastAction.reason.take(60)
+                .ifEmpty { "(${lastAction.x},${lastAction.y})" }
+
+            else -> ""
+        }
+        if (changed) {
+            updateLastActionOutcome(state, "VISIBLE CHANGE on the page.")
+            state.failedClickDescs.remove(clickDesc)
+        } else {
+            val failCount = state.failedClickDescs.merge(clickDesc, 1, Int::plus)!!
+            updateLastActionOutcome(
+                state,
+                if (failCount >= MAX_FAILED_CLICKS) {
+                    "Element '$clickDesc' has FAILED $failCount times — it is NOT clickable. " +
+                            "STOP trying it. Mark unanswerable questions as resolved and " +
+                            "use answer_found with the findings you already have."
+                } else {
+                    "NO visible change. Try a different element or approach."
+                }
+            )
+        }
+        logger.debug("Visual diff after click: changed={}", changed)
+    }
+
+    private fun saveDebugScreenshot(
+        screenshotBytes: ByteArray,
+        elements: List<IBrowserPage.InteractiveElementInfo>,
+        iteration: Int
+    ) {
+        if (!logger.isDebugEnabled) return
+        try {
+            val annotated = screenshotAnnotationService.annotate(screenshotBytes, elements)
+            val debugDir = java.io.File(System.getProperty("java.io.tmpdir"), "deepsearch-debug")
+            debugDir.mkdirs()
+            java.io.File(debugDir, "annotated-iter$iteration.jpg").writeBytes(annotated.imageBytes)
+            logger.debug("Saved debug screenshot to {}/annotated-iter{}.jpg", debugDir.absolutePath, iteration)
+        } catch (e: Exception) {
+            logger.debug("Failed to save debug screenshot: {}", e.message)
+        }
+    }
+
+    // --- Action handlers ---
+
+    private fun handleAnswerFound(
+        action: NavigationAction.AnswerFound,
+        state: NavigationLoopState,
+        newFindings: List<String>,
+        iteration: Int
+    ): AgenticPageSearchResult {
+        val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings)
+        logger.info(
+            "Agentic search found answer after {} iterations ({} findings, {} captures) for {}: {}",
+            iteration, allObservations.size, state.capturedImages.size, state.url, action.answer.take(100)
+        )
+        return AgenticPageSearchResult(
+            answer = action.answer,
+            evidence = newFindings.lastOrNull() ?: allObservations.lastOrNull(),
+            contentDate = action.contentDate,
+            actionsPerformed = state.actionsPerformed,
+            observations = allObservations,
+            success = true,
+            totalTokenUsage = state.aggregatedTokenUsage,
+            discoveredUrls = state.discoveredUrls,
+            capturedImages = state.capturedImages.toList()
+        )
+    }
+
+    /**
+     * Returns an [AgenticPageSearchResult] if give-up is accepted (caller should return it),
+     * or null if the give-up was rejected and the loop should continue.
+     */
+    private fun handleGiveUp(
+        action: NavigationAction.GiveUp,
+        state: NavigationLoopState,
+        iteration: Int,
+        scrollPercent: Int
+    ): AgenticPageSearchResult? {
+        val consecutiveGiveUps = state.actionsPerformed.takeLastWhile {
+            it.action is NavigationAction.GiveUp
+        }.size
+        val rejectionReason = evaluateGiveUpReadiness(state.actionsPerformed, scrollPercent)
+
+        if (rejectionReason != null) {
+            logger.info(
+                "Rejecting premature give_up at iteration {} for {} (attempt #{}) — {}",
+                iteration, state.url, consecutiveGiveUps, rejectionReason
+            )
+            val escalation = if (consecutiveGiveUps >= 2) {
+                " STOP trying give_up. You have been rejected $consecutiveGiveUps times. " +
+                        "Instead: use answer_found with whatever partial information you have gathered so far, " +
+                        "even if incomplete. Your findings and observations contain useful data."
+            } else ""
+            updateLastActionOutcome(state, "REJECTED: $rejectionReason$escalation")
+            return null
+        }
+
+        logger.info(
+            "Agentic search gave up after {} iterations for {}: {}",
+            iteration, state.url, action.reason
+        )
         return AgenticPageSearchResult(
             answer = null,
             evidence = null,
             contentDate = null,
-            actionsPerformed = actionsPerformed,
-            observations = allObservations,
+            actionsPerformed = state.actionsPerformed,
+            observations = collectAllFindings(state.trackedQuestions, state.generalFindings),
             success = false,
-            totalTokenUsage = aggregatedTokenUsage,
-            discoveredUrls = discoveredUrls,
-            capturedImages = capturedImages.toList()
+            totalTokenUsage = state.aggregatedTokenUsage,
+            discoveredUrls = state.discoveredUrls,
+            capturedImages = state.capturedImages.toList()
         )
     }
 
-    private fun collectAllFindings(
-        questions: List<TrackedQuestion>,
-        general: List<String>
-    ): List<String> = buildList {
-        addAll(general)
-        questions.flatMapTo(this) { it.findings }
+    /**
+     * Returns true if the click was pipelined (off-page navigation), meaning
+     * the action loop should continue to the next action without breaking.
+     */
+    private suspend fun handleClick(
+        action: NavigationAction.Click,
+        page: IBrowserPage,
+        state: NavigationLoopState,
+        rawScreenshotBytes: ByteArray,
+        imgWidth: Int,
+        imgHeight: Int
+    ): Boolean {
+        val viewportX = toViewportCoord(action.x, imgWidth)
+        val viewportY = toViewportCoord(action.y, imgHeight)
+        val desc = action.reason.take(60).ifEmpty { "element at (${action.x},${action.y})" }
+
+        if (desc in state.offPageClickedDescs) {
+            logger.debug("Skipping re-click on known off-page element '{}'", desc)
+            updateLastActionOutcome(
+                state,
+                "Element '$desc' already navigates OFF this page. " +
+                        "Do NOT click it again. Find the answer elsewhere on the CURRENT page, " +
+                        "or use answer_found / give_up."
+            )
+            return true
+        }
+
+        logger.debug(
+            "Click normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
+            action.x, action.y, viewportX, viewportY, desc, action.reason
+        )
+
+        state.previousClickScreenshot = rawScreenshotBytes
+
+        try {
+            val clickResult = page.guardedClickAtCoordinates(viewportX, viewportY)
+            if (clickResult.navigatedAwayTo != null) {
+                logger.info(
+                    "Click on '{}' intercepted navigation to {} — page unchanged",
+                    desc, clickResult.navigatedAwayTo
+                )
+                val targetUrl = clickResult.navigatedAwayTo!!
+                state.discoveredUrls.add(targetUrl)
+                state.onLinkDiscovered?.invoke(targetUrl)
+                state.offPageClickedDescs.add(desc)
+                state.lastActionWasClick = false
+                updateLastActionOutcome(state, buildOffPageOutcome(targetUrl))
+                return true
+            } else {
+                state.lastActionWasClick = true
+            }
+        } catch (e: CancellationException) {
+            throw e
+        }
+
+        return false
+    }
+
+    private suspend fun handleFindOnPage(
+        action: NavigationAction.FindOnPage,
+        page: IBrowserPage,
+        state: NavigationLoopState
+    ) {
+        logger.debug("FindOnPage: keywords={}", action.keywords)
+        try {
+            if (action.keywords.isEmpty()) {
+                updateLastActionOutcome(state, "No keywords provided. Provide keywords to search for.")
+            } else {
+                val outcome = executeFindOnPage(page, action.keywords, state)
+                updateLastActionOutcome(state, outcome)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        }
+    }
+
+    private suspend fun handleScrollToText(
+        action: NavigationAction.ScrollToText,
+        page: IBrowserPage,
+        state: NavigationLoopState
+    ) {
+        logger.debug("ScrollToText: text='{}', occurrence={}", action.searchText, action.occurrence)
+        try {
+            if (action.searchText.isBlank()) {
+                updateLastActionOutcome(state, "No searchText provided.")
+            } else {
+                val found = page.scrollToTextContent(action.searchText, action.occurrence)
+                if (found) {
+                    logger.info("scroll_to_text found '{}' on {}", action.searchText, state.url)
+                    val totalMatches = state.lastFindCounts[action.searchText]?.total ?: 0
+                    val outcomeText = buildString {
+                        append("Scrolled to \"${action.searchText}\".")
+                        if (totalMatches > 1) {
+                            append(" There are $totalMatches total matches on this page.")
+                        }
+                    }
+                    updateLastActionOutcome(state, outcomeText)
+                } else {
+                    logger.debug("scroll_to_text: '{}' not found on {}", action.searchText, state.url)
+                    updateLastActionOutcome(state, "\"${action.searchText}\" not found on page.")
+                }
+            }
+            delay(POST_SCROLL_DELAY_MS)
+        } catch (e: CancellationException) {
+            throw e
+        }
+    }
+
+    private suspend fun handleScroll(
+        action: NavigationAction.Scroll,
+        page: IBrowserPage,
+        state: NavigationLoopState,
+        imgWidth: Int,
+        imgHeight: Int
+    ) {
+        logger.debug("Scroll: {} {}%", action.scrollDirection, action.scrollPercent)
+        try {
+            val (deltaX, deltaY) = computeScrollDeltas(
+                action.scrollDirection,
+                action.scrollPercent,
+                imgWidth,
+                imgHeight
+            )
+            page.scrollPage(deltaX, deltaY)
+            val hasUsedFindOnPageBefore = state.actionsPerformed.any {
+                it.action is NavigationAction.FindOnPage
+            }
+            val scrollOutcome = buildString {
+                append("Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%")
+                if (!hasUsedFindOnPageBefore) {
+                    append(". IMPORTANT: You have not used find_on_page yet. Use find_on_page NEXT — it searches with stemming/fuzzy matching and auto-scrolls to the best match.")
+                }
+            }
+            updateLastActionOutcome(state, scrollOutcome)
+            delay(POST_SCROLL_DELAY_MS)
+        } catch (e: CancellationException) {
+            throw e
+        }
+    }
+
+    private suspend fun handleScrollAt(
+        action: NavigationAction.ScrollAt,
+        page: IBrowserPage,
+        state: NavigationLoopState,
+        imgWidth: Int,
+        imgHeight: Int
+    ) {
+        logger.debug(
+            "ScrollAt: ({},{}) {} {}%",
+            action.x,
+            action.y,
+            action.scrollDirection,
+            action.scrollPercent
+        )
+        try {
+            val viewportX = toViewportCoord(action.x, imgWidth)
+            val viewportY = toViewportCoord(action.y, imgHeight)
+            val (deltaX, deltaY) = computeScrollDeltas(
+                action.scrollDirection,
+                action.scrollPercent,
+                imgWidth,
+                imgHeight
+            )
+            page.scrollElementAtCoordinates(viewportX, viewportY, deltaX, deltaY)
+            updateLastActionOutcome(
+                state,
+                "Scrolled container at (${action.x},${action.y}) ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
+            )
+            delay(POST_SCROLL_DELAY_MS)
+        } catch (e: CancellationException) {
+            throw e
+        }
+    }
+
+    private suspend fun handlePeekFullPage(
+        page: IBrowserPage,
+        state: NavigationLoopState
+    ) {
+        logger.debug("Taking full-page peek screenshot for {}", state.url)
+        try {
+            val fullPageScreenshot = page.takeFullPageScreenshot()
+            val downscaled = downscaleScreenshot(fullPageScreenshot.bytes, PEEK_MAX_HEIGHT)
+            state.peekScreenshotOverride = IBrowserPage.Screenshot(
+                bytes = downscaled,
+                mimeType = ImageMimeType.JPEG
+            )
+            updateLastActionOutcome(
+                state,
+                "Full page overview captured. Study this image to understand " +
+                        "the overall page content and layout, then decide your next action."
+            )
+        } catch (e: CancellationException) {
+            throw e
+        }
+    }
+
+    private suspend fun handleType(
+        action: NavigationAction.Type,
+        page: IBrowserPage,
+        state: NavigationLoopState,
+        rawScreenshotBytes: ByteArray,
+        imgWidth: Int,
+        imgHeight: Int
+    ) {
+        val viewportX = toViewportCoord(action.x, imgWidth)
+        val viewportY = toViewportCoord(action.y, imgHeight)
+        val desc = action.reason.take(60).ifEmpty { "input at (${action.x},${action.y})" }
+
+        logger.debug(
+            "Typing '{}' at normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
+            action.text.take(30), action.x, action.y, viewportX, viewportY, desc, action.reason
+        )
+
+        state.previousClickScreenshot = rawScreenshotBytes
+        state.lastActionWasClick = true
+
+        try {
+            page.clickAtCoordinates(viewportX, viewportY)
+            delay(POST_CLICK_DELAY_MS)
+            page.typeText(action.text)
+            delay(POST_TYPE_DELAY_MS)
+        } catch (e: CancellationException) {
+            throw e
+        }
+    }
+
+    // --- Find-on-page logic (shared by pre-scan and in-loop FindOnPage action) ---
+
+    /**
+     * Runs parallel exact + stemmed text search, builds the outcome string,
+     * and auto-scrolls to the best match if one exists. Returns the outcome text.
+     */
+    private suspend fun executeFindOnPage(
+        page: IBrowserPage,
+        keywords: List<String>,
+        state: NavigationLoopState
+    ): String {
+        val (counts, stemmedMatches) = coroutineScope {
+            val countsDeferred = async { page.countTextMatches(keywords) }
+            val stemmedDeferred = async {
+                try {
+                    val pageText = page.extractTextContent()
+                    pageTextSearchService.search(pageText, keywords)
+                } catch (e: Exception) {
+                    logger.debug("Stemmed text search failed, proceeding with exact only: {}", e.message)
+                    emptyMap()
+                }
+            }
+            Pair(countsDeferred.await(), stemmedDeferred.await())
+        }
+        state.lastFindCounts = state.lastFindCounts + counts
+
+        val countsDesc = formatCountsDescription(counts)
+        logger.info("find_on_page results for {}: {}", state.url, countsDesc)
+
+        val outcome = buildFindOnPageOutcome(counts, stemmedMatches, keywords, countsDesc)
+
+        val scrollTarget = pickAutoScrollTarget(counts, stemmedMatches, keywords)
+        if (scrollTarget != null) {
+            val scrolled = page.scrollToTextContent(scrollTarget)
+            if (scrolled) {
+                logger.info("find_on_page auto-scrolled to '{}' on {}", scrollTarget, state.url)
+                delay(POST_SCROLL_DELAY_MS)
+                return "$outcome Auto-scrolled to \"$scrollTarget\"."
+            }
+            delay(POST_SCROLL_DELAY_MS)
+        }
+
+        return outcome
     }
 
     private val currencySymbols = setOf("$", "HK$", "£", "€", "¥", "US$", "A$", "S$")
@@ -849,9 +880,57 @@ class AgenticWebpageSearchService(
         }
     }
 
+    // --- Result building ---
+
+    private fun buildFinalResult(state: NavigationLoopState): AgenticPageSearchResult {
+        val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings)
+        logger.info(
+            "Agentic search exhausted {} iterations for {} without finding answer ({} observations, {} captures)",
+            MAX_ITERATIONS, state.url, allObservations.size, state.capturedImages.size
+        )
+
+        if (allObservations.isNotEmpty()) {
+            val synthesized = allObservations.joinToString("; ")
+            logger.info("Synthesizing partial answer from {} observations for {}", allObservations.size, state.url)
+            return AgenticPageSearchResult(
+                answer = synthesized,
+                evidence = allObservations.lastOrNull(),
+                contentDate = null,
+                actionsPerformed = state.actionsPerformed,
+                observations = allObservations,
+                success = true,
+                totalTokenUsage = state.aggregatedTokenUsage,
+                discoveredUrls = state.discoveredUrls,
+                capturedImages = state.capturedImages.toList()
+            )
+        }
+
+        return AgenticPageSearchResult(
+            answer = null,
+            evidence = null,
+            contentDate = null,
+            actionsPerformed = state.actionsPerformed,
+            observations = allObservations,
+            success = false,
+            totalTokenUsage = state.aggregatedTokenUsage,
+            discoveredUrls = state.discoveredUrls,
+            capturedImages = state.capturedImages.toList()
+        )
+    }
+
+    private fun collectAllFindings(
+        questions: List<TrackedQuestion>,
+        general: List<String>
+    ): List<String> = buildList {
+        addAll(general)
+        questions.flatMapTo(this) { it.findings }
+    }
+
     private fun buildOffPageOutcome(targetUrl: String): String =
         "Navigated OFF-PAGE to $targetUrl — recorded for separate investigation. " +
                 "Look for the information elsewhere on the CURRENT page."
+
+    // --- Give-up evaluation ---
 
     /**
      * Returns null if give-up is acceptable, or a rejection reason if the agent
@@ -923,6 +1002,8 @@ class AgenticWebpageSearchService(
         return null
     }
 
+    // --- Cookie handling ---
+
     /**
      * Auto-dismiss cookie consent banners before the VLM navigation loop.
      *
@@ -948,6 +1029,8 @@ class AgenticWebpageSearchService(
 
         page.removeElementsByCssSelectors(COOKIE_OVERLAY_SELECTORS)
     }
+
+    // --- Image processing ---
 
     private fun cropCaptureRegions(
         screenshotBytes: ByteArray,
@@ -992,5 +1075,40 @@ class AgenticWebpageSearchService(
             maxHeight,
             (PEEK_JPEG_QUALITY * 100).toInt()
         )
+    }
+
+    // --- Utilities ---
+
+    private fun toViewportCoord(normalized: Int, dimension: Int): Int =
+        ((normalized / 1000.0) * dimension).toInt()
+
+    private fun computeScrollDeltas(
+        direction: ScrollDirection,
+        percent: Int,
+        imgWidth: Int,
+        imgHeight: Int
+    ): Pair<Int, Int> {
+        val isHorizontal = direction == ScrollDirection.LEFT || direction == ScrollDirection.RIGHT
+        val dimension = if (isHorizontal) imgWidth else imgHeight
+        val scrollPx = (dimension * percent / 100.0).toInt()
+        return when (direction) {
+            ScrollDirection.DOWN -> 0 to scrollPx
+            ScrollDirection.UP -> 0 to -scrollPx
+            ScrollDirection.RIGHT -> scrollPx to 0
+            ScrollDirection.LEFT -> -scrollPx to 0
+        }
+    }
+
+    private fun formatCountsDescription(counts: Map<String, IBrowserPage.TextMatchCounts>): String =
+        counts.entries.joinToString(", ") { (kw, c) ->
+            val hidden = c.total - c.visible
+            val base = if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
+            val ctx = c.firstContext
+            if (ctx != null && c.total > 0) "$base (e.g. '$ctx')" else base
+        }
+
+    private fun updateLastActionOutcome(state: NavigationLoopState, outcome: String) {
+        state.actionsPerformed[state.actionsPerformed.lastIndex] =
+            state.actionsPerformed.last().copy(outcome = outcome)
     }
 }
