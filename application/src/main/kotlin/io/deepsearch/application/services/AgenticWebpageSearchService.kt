@@ -6,6 +6,7 @@ import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.ScrollDirection
 import io.deepsearch.domain.agents.SearchKeywordsResult
+import io.deepsearch.domain.agents.TrackedQuestion
 import io.deepsearch.domain.agents.WebpageNavigationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
@@ -179,9 +180,8 @@ class AgenticWebpageSearchService(
         dismissCookieBanner(page, url)
 
         val actionsPerformed = mutableListOf<ActionWithOutcome>()
-        val observations = mutableListOf<String>()
-        var openQuestions = listOf<String>()
-        val answeredQuestions = mutableListOf<String>()
+        var trackedQuestions = listOf<TrackedQuestion>()
+        var generalFindings = listOf<String>()
         val discoveredUrls = mutableListOf<String>()
         val capturedImages = mutableListOf<CapturedImage>()
         val capturedHashes = mutableSetOf<String>()
@@ -320,7 +320,7 @@ class AgenticWebpageSearchService(
                     actionsPerformed[actionsPerformed.lastIndex] = lastEntry.copy(
                         outcome = if (failCount >= MAX_FAILED_CLICKS) {
                             "Element '$clickDesc' has FAILED $failCount times — it is NOT clickable. " +
-                                    "STOP trying it. Drop unanswerable questions from openQuestions and " +
+                                    "STOP trying it. Mark unanswerable questions as resolved and " +
                                     "use answer_found with the findings you already have."
                         } else {
                             "NO visible change. Try a different element or approach."
@@ -352,9 +352,8 @@ class AgenticWebpageSearchService(
                 screenshot = screenshotForAgent,
                 query = query,
                 previousActions = actionsPerformed.toList(),
-                answeredQuestions = answeredQuestions.toList(),
-                openQuestions = openQuestions,
-                accumulatedFindings = observations.toList(),
+                questions = trackedQuestions,
+                generalFindings = generalFindings,
                 pageUrl = url,
                 pageTitle = ctx.pageTitle,
                 pageDescription = ctx.pageDescription,
@@ -375,19 +374,23 @@ class AgenticWebpageSearchService(
                 totalTokens = output.tokenUsage.totalTokens
             )
 
-            if (output.findings.isNotEmpty()) {
-                observations.addAll(output.findings)
-                logger.info(
-                    "Agentic search findings ({}) for {}: {}",
-                    output.findings.size, url, output.findings.joinToString("; ") { it.take(80) }
-                )
+            val previousAllFacts = buildSet {
+                trackedQuestions.flatMapTo(this) { it.findings }
+                addAll(generalFindings)
             }
+            trackedQuestions = output.questionsState
+            generalFindings = output.generalFindings
+            val currentAllFacts = buildSet {
+                output.questionsState.flatMapTo(this) { it.findings }
+                addAll(output.generalFindings)
+            }
+            val newFindings = (currentAllFacts - previousAllFacts).toList()
 
-            val previousOpenQuestions = openQuestions.toSet()
-            openQuestions = output.openQuestions
-            val newlyAnswered = previousOpenQuestions - openQuestions.toSet()
-            if (newlyAnswered.isNotEmpty()) {
-                answeredQuestions.addAll(newlyAnswered)
+            if (newFindings.isNotEmpty()) {
+                logger.info(
+                    "Agentic search new findings ({}) for {}: {}",
+                    newFindings.size, url, newFindings.joinToString("; ") { it.take(80) }
+                )
             }
 
             if (output.captureRegions.isNotEmpty()) {
@@ -403,7 +406,7 @@ class AgenticWebpageSearchService(
                         ActionWithOutcome(
                             action,
                             observation = output.observation,
-                            findings = output.findings
+                            findings = newFindings
                         )
                     )
                 } else {
@@ -414,16 +417,17 @@ class AgenticWebpageSearchService(
 
                 when (action) {
                     is NavigationAction.AnswerFound -> {
+                        val allObservations = collectAllFindings(trackedQuestions, generalFindings)
                         logger.info(
                             "Agentic search found answer after {} iterations ({} findings, {} captures) for {}: {}",
-                            iteration, observations.size, capturedImages.size, url, action.answer.take(100)
+                            iteration, allObservations.size, capturedImages.size, url, action.answer.take(100)
                         )
                         return AgenticPageSearchResult(
                             answer = action.answer,
-                            evidence = output.findings.lastOrNull() ?: observations.lastOrNull(),
+                            evidence = newFindings.lastOrNull() ?: allObservations.lastOrNull(),
                             contentDate = action.contentDate,
                             actionsPerformed = actionsPerformed,
-                            observations = observations.toList(),
+                            observations = allObservations,
                             success = true,
                             totalTokenUsage = aggregatedTokenUsage,
                             discoveredUrls = discoveredUrls,
@@ -459,7 +463,7 @@ class AgenticWebpageSearchService(
                                 evidence = null,
                                 contentDate = null,
                                 actionsPerformed = actionsPerformed,
-                                observations = observations.toList(),
+                                observations = collectAllFindings(trackedQuestions, generalFindings),
                                 success = false,
                                 totalTokenUsage = aggregatedTokenUsage,
                                 discoveredUrls = discoveredUrls,
@@ -749,20 +753,21 @@ class AgenticWebpageSearchService(
             skipContextFetch = allActionsPipelined
         }
 
+        val allObservations = collectAllFindings(trackedQuestions, generalFindings)
         logger.info(
             "Agentic search exhausted {} iterations for {} without finding answer ({} observations, {} captures)",
-            MAX_ITERATIONS, url, observations.size, capturedImages.size
+            MAX_ITERATIONS, url, allObservations.size, capturedImages.size
         )
 
-        if (observations.isNotEmpty()) {
-            val synthesized = observations.joinToString("; ")
-            logger.info("Synthesizing partial answer from {} observations for {}", observations.size, url)
+        if (allObservations.isNotEmpty()) {
+            val synthesized = allObservations.joinToString("; ")
+            logger.info("Synthesizing partial answer from {} observations for {}", allObservations.size, url)
             return AgenticPageSearchResult(
                 answer = synthesized,
-                evidence = observations.lastOrNull(),
+                evidence = allObservations.lastOrNull(),
                 contentDate = null,
                 actionsPerformed = actionsPerformed,
-                observations = observations.toList(),
+                observations = allObservations,
                 success = true,
                 totalTokenUsage = aggregatedTokenUsage,
                 discoveredUrls = discoveredUrls,
@@ -775,12 +780,20 @@ class AgenticWebpageSearchService(
             evidence = null,
             contentDate = null,
             actionsPerformed = actionsPerformed,
-            observations = observations.toList(),
+            observations = allObservations,
             success = false,
             totalTokenUsage = aggregatedTokenUsage,
             discoveredUrls = discoveredUrls,
             capturedImages = capturedImages.toList()
         )
+    }
+
+    private fun collectAllFindings(
+        questions: List<TrackedQuestion>,
+        general: List<String>
+    ): List<String> = buildList {
+        addAll(general)
+        questions.flatMapTo(this) { it.findings }
     }
 
     private val currencySymbols = setOf("$", "HK$", "£", "€", "¥", "US$", "A$", "S$")

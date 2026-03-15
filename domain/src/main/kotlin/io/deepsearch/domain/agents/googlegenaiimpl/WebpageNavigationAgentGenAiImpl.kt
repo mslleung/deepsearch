@@ -13,6 +13,7 @@ import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.ScrollDirection
 import io.deepsearch.domain.agents.SearchKeywordsResult
+import io.deepsearch.domain.agents.TrackedQuestion
 import io.deepsearch.domain.agents.WebpageNavigationInput
 import io.deepsearch.domain.agents.WebpageNavigationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -119,6 +120,21 @@ class WebpageNavigationAgentGenAiImpl(
         .propertyOrdering(listOf("action", "reason", "click", "scroll", "scrollAt", "findOnPage", "scrollToText", "type"))
         .build()
 
+    private val questionStateSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .properties(
+            mapOf(
+                "question" to Schema.builder().type("STRING").description("The question text.").build(),
+                "status" to Schema.builder().type("STRING").enum_(listOf("open", "resolved"))
+                    .description("Whether this question is still open or has been resolved by findings.").build(),
+                "findings" to Schema.builder().type("ARRAY").items(Schema.builder().type("STRING").build())
+                    .description("Facts discovered that help answer this question. Empty if no findings yet.").build()
+            )
+        )
+        .required(listOf("question", "status", "findings"))
+        .propertyOrdering(listOf("question", "status", "findings"))
+        .build()
+
     private val outputSchema: Schema = Schema.builder()
         .type("OBJECT")
         .properties(
@@ -127,15 +143,15 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("STRING")
                     .description("What you see on the current screen, what happened from your last action, and your plan. This is your memory across turns.")
                     .build(),
-                "findings" to Schema.builder()
+                "questionsState" to Schema.builder()
                     .type("ARRAY")
-                    .items(Schema.builder().type("STRING").build())
-                    .description("Query-relevant facts extracted from the current viewport. Each string is one discrete fact. Empty array if nothing relevant is visible.")
+                    .items(questionStateSchema)
+                    .description("The COMPLETE updated state of ALL questions. Include every question (open and resolved) with ALL their findings. On the first turn, decompose the QUERY into sub-questions. On later turns, carry forward ALL previous questions and findings, adding new findings or marking questions resolved.")
                     .build(),
-                "openQuestions" to Schema.builder()
+                "generalFindings" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
-                    .description("Questions still needing answers. Empty when fully resolved.")
+                    .description("Facts not tied to any specific question (e.g. page context, site structure). Carry forward all previous general findings and add new ones.")
                     .build(),
                 "captureRegions" to Schema.builder()
                     .type("ARRAY")
@@ -165,15 +181,23 @@ class WebpageNavigationAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("observation", "findings", "openQuestions", "decision", "reason"))
-        .propertyOrdering(listOf("observation", "findings", "openQuestions", "captureRegions", "decision", "reason", "actions", "answer"))
+        .required(listOf("observation", "questionsState", "generalFindings", "decision", "reason"))
+        .propertyOrdering(listOf("observation", "questionsState", "generalFindings", "captureRegions", "decision", "reason", "actions", "answer"))
         .build()
 
     private val systemInstruction = """
         You are a webpage exploration agent examining a single page to answer QUERY.
 
         ## Input per turn
-        Screenshot of current viewport, ITERATION budget, FINDINGS so far, OPEN QUESTIONS, and TURNS history (observations, actions, outcomes).
+        Screenshot of current viewport, ITERATION budget, QUESTIONS (with status and findings per question), GENERAL FINDINGS, and TURNS history.
+
+        ## Questions & Findings (CRITICAL)
+        You maintain a **complete question-findings map** across turns:
+        - On turn 1: decompose the QUERY into sub-questions (status=open, no findings yet).
+        - On each turn: output the FULL updated state of ALL questions. Include every question — open AND resolved — with ALL their findings. Never omit a previously reported question or finding.
+        - When you discover a fact, add it to the relevant question's findings and mark the question "resolved" when fully answered.
+        - Facts not tied to a specific question go in generalFindings.
+        - The system replaces its state with your output each turn — if you omit a question or finding, it is lost.
 
         ## Strategy
         1. Check if the answer is visible in the current viewport.
@@ -196,7 +220,7 @@ class WebpageNavigationAgentGenAiImpl(
         - **peek_full_page**: Full-page overview. Last resort.
 
         **answer_found**: Synthesize all findings into answer. Partial answer (prefix "Based on available information:") is ALWAYS better than give_up.
-        **give_up**: LAST RESORT — only when FINDINGS is empty and ALL strategies exhausted.
+        **give_up**: LAST RESORT — only when all questions have no findings and ALL strategies exhausted.
 
         ## Rules
         - Study the screenshot fresh each turn; never carry stale data.
@@ -246,10 +270,17 @@ class WebpageNavigationAgentGenAiImpl(
     )
 
     @Serializable
+    private data class QuestionStateResponse(
+        val question: String,
+        val status: String? = null,
+        val findings: List<String>? = null
+    )
+
+    @Serializable
     private data class NavigationResponse(
         val observation: String? = null,
-        val findings: List<String>? = null,
-        val openQuestions: List<String>? = null,
+        val questionsState: List<QuestionStateResponse>? = null,
+        val generalFindings: List<String>? = null,
         val captureRegions: List<CaptureRegionResponse>? = null,
         val decision: String? = null,
         val reason: String? = null,
@@ -320,12 +351,23 @@ class WebpageNavigationAgentGenAiImpl(
             }
         }
 
+        val questionsState = (response.questionsState ?: emptyList()).map { qs ->
+            TrackedQuestion(
+                question = qs.question,
+                resolved = qs.status?.lowercase() == "resolved",
+                findings = qs.findings ?: emptyList()
+            )
+        }
+        val generalFindings = response.generalFindings ?: emptyList()
+
+        val openCount = questionsState.count { !it.resolved }
+        val resolvedCount = questionsState.count { it.resolved }
+        val totalFindings = questionsState.sumOf { it.findings.size } + generalFindings.size
         logger.debug(
-            "Navigation: decision={} actions=[{}] | findings={} | openQ={}",
+            "Navigation: decision={} actions=[{}] | questions={} (open={}, resolved={}) | findings={}",
             response.decision,
             actions.joinToString(", ") { it::class.simpleName ?: "?" },
-            response.findings?.size ?: 0,
-            response.openQuestions?.size ?: 0
+            questionsState.size, openCount, resolvedCount, totalFindings
         )
 
         val captureRegions = response.captureRegions?.map { r ->
@@ -340,9 +382,9 @@ class WebpageNavigationAgentGenAiImpl(
 
         return WebpageNavigationOutput(
             actions = actions,
-            findings = response.findings ?: emptyList(),
+            questionsState = questionsState,
+            generalFindings = generalFindings,
             observation = response.observation,
-            openQuestions = response.openQuestions ?: emptyList(),
             captureRegions = captureRegions,
             tokenUsage = tokenUsage
         )
@@ -355,23 +397,28 @@ class WebpageNavigationAgentGenAiImpl(
         appendLine()
         appendLine("QUERY: ${input.query}")
 
-        if (input.accumulatedFindings.isNotEmpty()) {
+        if (input.questions.isNotEmpty()) {
             appendLine()
-            appendLine("FINDINGS (what we know so far):")
-            input.accumulatedFindings.forEachIndexed { idx, f ->
-                appendLine("  ${idx + 1}. $f")
+            appendLine("QUESTIONS:")
+            input.questions.forEachIndexed { idx, q ->
+                val tag = if (q.resolved) "RESOLVED" else "OPEN"
+                appendLine("  [$tag] Q${idx + 1}. ${q.question}")
+                q.findings.forEach { f ->
+                    appendLine("    - $f")
+                }
+            }
+            val allResolved = input.questions.all { it.resolved }
+            if (allResolved) {
+                appendLine("  All questions resolved. You may use answer_found.")
             }
         }
 
-        if (input.openQuestions.isNotEmpty()) {
+        if (input.generalFindings.isNotEmpty()) {
             appendLine()
-            appendLine("OPEN QUESTIONS (must resolve before answer_found):")
-            input.openQuestions.forEachIndexed { idx, q ->
-                appendLine("  ${idx + 1}. $q")
+            appendLine("GENERAL FINDINGS:")
+            input.generalFindings.forEach { f ->
+                appendLine("  - $f")
             }
-        } else if (input.answeredQuestions.isNotEmpty()) {
-            appendLine()
-            appendLine("OPEN QUESTIONS: None — all questions resolved. You may use answer_found.")
         }
 
         if (input.previousActions.isNotEmpty()) {
@@ -381,7 +428,6 @@ class WebpageNavigationAgentGenAiImpl(
                 appendLine(formatTurnEntry(idx + 1, entry))
             }
         }
-
     }
 
     private fun parseAction(actionResp: ActionResponse): NavigationAction {

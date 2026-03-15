@@ -12,13 +12,18 @@ data class ActionWithOutcome(
     val findings: List<String> = emptyList()
 )
 
+data class TrackedQuestion(
+    val question: String,
+    val resolved: Boolean,
+    val findings: List<String> = emptyList()
+)
+
 data class WebpageNavigationInput(
     val screenshot: IBrowserPage.Screenshot,
     val query: String,
     val previousActions: List<ActionWithOutcome>,
-    val answeredQuestions: List<String> = emptyList(),
-    val openQuestions: List<String> = emptyList(),
-    val accumulatedFindings: List<String> = emptyList(),
+    val questions: List<TrackedQuestion> = emptyList(),
+    val generalFindings: List<String> = emptyList(),
     val pageUrl: String,
     val pageTitle: String,
     val pageDescription: String?,
@@ -102,22 +107,22 @@ data class CaptureRegion(
 )
 
 /**
- * Every VLM response includes [observation] (what the agent sees and its reasoning),
- * [findings] (query-relevant facts extracted from the current screenshot), and
- * [openQuestions] (gaps that remain), alongside the page [action].
+ * The model outputs the full question-findings map each turn via [questionsState].
+ * The service replaces its state with this output (no append/dedup needed).
  *
  * [observation] is fed back in the turn history so the agent maintains reasoning
- * continuity across turns. [findings] are accumulated and shown as knowledge state
- * for downstream consumers (answer synthesis, relevance scoring).
+ * continuity across turns. [questionsState] tracks each question (open or resolved)
+ * alongside the findings that answer it. [generalFindings] captures facts not tied
+ * to any specific question.
  *
  * [captureRegions] allows the agent to flag visual regions (charts, diagrams, tables, etc.)
  * worth capturing as images, using 0-1000 normalized bounding boxes.
  */
 data class WebpageNavigationOutput(
     val actions: List<NavigationAction>,
-    val findings: List<String>,
+    val questionsState: List<TrackedQuestion>,
+    val generalFindings: List<String>,
     val observation: String?,
-    val openQuestions: List<String>,
     val captureRegions: List<CaptureRegion>,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
