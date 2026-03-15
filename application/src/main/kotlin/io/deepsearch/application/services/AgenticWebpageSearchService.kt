@@ -2,7 +2,6 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.agents.ActionWithOutcome
 import io.deepsearch.domain.agents.CaptureRegion
-import io.deepsearch.domain.agents.ElementLabel
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.ScrollDirection
@@ -249,27 +248,6 @@ class AgenticWebpageSearchService(
             java.io.File(debugDir, "annotated-iter$iteration.jpg").writeBytes(annotated.imageBytes)
             logger.debug("Saved debug screenshot to /tmp/deepsearch-debug/annotated-iter$iteration.jpg")
 
-            val elementLabels = interactiveElements
-                .filter { el ->
-                    val elDesc = if (el.text.isNotBlank()) {
-                        "${el.tag} '${el.text.take(40)}'".trim()
-                    } else ""
-                    elDesc !in offPageClickedDescs && failedClickDescs.getOrDefault(elDesc, 0) < MAX_FAILED_CLICKS
-                }
-                .map { el ->
-                    ElementLabel(
-                        labelNumber = el.index,
-                        tag = el.tag,
-                        text = el.text.take(60),
-                        role = el.role,
-                        states = el.states
-                    )
-                }
-
-            logger.debug("Element labels: {}", elementLabels.joinToString("\n") { el ->
-                "  [${el.labelNumber}] ${el.tag} (${el.role ?: "no-role"}) ${el.states}: ${el.text}"
-            })
-
             val screenshotForAgent = peekScreenshotOverride ?: IBrowserPage.Screenshot(
                 bytes = rawScreenshot.bytes,
                 mimeType = rawScreenshot.mimeType
@@ -280,7 +258,6 @@ class AgenticWebpageSearchService(
                 screenshot = screenshotForAgent,
                 query = query,
                 previousActions = actionsPerformed.toList(),
-                elementLabels = elementLabels,
                 answeredQuestions = answeredQuestions.toList(),
                 openQuestions = openQuestions,
                 accumulatedFindings = observations.toList(),

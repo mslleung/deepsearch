@@ -168,7 +168,6 @@ class WebpageNavigationAgentGenAiImpl(
         - FINDINGS: accumulated facts discovered so far across all turns
         - OPEN QUESTIONS: what still needs to be found
         - TURNS: your previous observations, findings, decisions, and their outcomes
-        - ELEMENTS: interactive elements on the page (role, state, text)
 
         ## Instructions
 
@@ -191,7 +190,7 @@ class WebpageNavigationAgentGenAiImpl(
         ### Actions
 
         Interact:
-        - click: Click any element visible on screen by specifying (x, y) coordinates (0-1000 scale, where 0,0 is top-left). Point at the CENTER of the element you want to click. The ELEMENTS list tells you what interactive elements exist and their states.
+        - click: Click any element visible on screen by specifying (x, y) coordinates (0-1000 scale, where 0,0 is top-left). Point at the CENTER of the element you want to click.
         - type: Type into an input field. Specify the field location with (x, y) coordinates and the text to type.
 
         Explore:
@@ -206,8 +205,6 @@ class WebpageNavigationAgentGenAiImpl(
         - give_up: ABSOLUTE LAST RESORT. Before giving up, check your FINDINGS. If you have gathered ANY relevant facts, use answer_found instead. give_up should only be used when FINDINGS is completely empty and you've exhausted search strategies. You must have done ALL of: (1) find_on_page with multiple keyword variations, (2) expanded any [collapsed] elements, (3) scrolled through or used scroll_to_text.
 
         ### Rules
-        - Use the ELEMENTS list to understand what is interactive (buttons, links, accordions). Use the screenshot to identify WHERE they are visually.
-        - Elements marked [collapsed] hide content — click them to reveal what's inside.
         - Study the screenshot fresh each turn — never carry stale data forward.
         - If a previous outcome says NO visible change → try a DIFFERENT element or approach.
         - For tables/grids, match row labels to column headers carefully. If columns are cut off, use scroll_at to scroll the table container horizontally.
@@ -404,18 +401,6 @@ class WebpageNavigationAgentGenAiImpl(
             }
         }
 
-        if (input.elementLabels.isNotEmpty()) {
-            appendLine()
-            appendLine("ELEMENTS:")
-            input.elementLabels.forEach { el ->
-                val roleStr = el.role?.let { " ($it)" } ?: ""
-                val statesStr = if (el.states.isNotEmpty()) " [${el.states.joinToString(", ")}]" else ""
-                appendLine("  ${el.tag}$roleStr$statesStr: ${el.text.take(60)}")
-            }
-        } else {
-            appendLine()
-            appendLine("ELEMENTS: None visible. Use scroll, find_on_page, or give_up.")
-        }
     }
 
     private fun parseAction(decision: DecisionResponse): NavigationAction {

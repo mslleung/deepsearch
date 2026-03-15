@@ -16,7 +16,6 @@ data class WebpageNavigationInput(
     val screenshot: IBrowserPage.Screenshot,
     val query: String,
     val previousActions: List<ActionWithOutcome>,
-    val elementLabels: List<ElementLabel>,
     val answeredQuestions: List<String> = emptyList(),
     val openQuestions: List<String> = emptyList(),
     val accumulatedFindings: List<String> = emptyList(),
@@ -27,18 +26,6 @@ data class WebpageNavigationInput(
     val currentIteration: Int = 1,
     val maxIterations: Int = 12
 ) : IAgent.IAgentInput
-
-/**
- * Compact description of a labeled interactive element, sent alongside the
- * annotated screenshot so the VLM has both visual and textual reference.
- */
-data class ElementLabel(
-    val labelNumber: Int,
-    val tag: String,
-    val text: String,
-    val role: String?,
-    val states: List<String> = emptyList()
-)
 
 @Serializable
 sealed class NavigationAction {
