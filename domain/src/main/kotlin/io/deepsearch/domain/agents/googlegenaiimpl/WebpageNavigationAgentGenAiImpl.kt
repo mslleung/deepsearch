@@ -44,13 +44,13 @@ class WebpageNavigationAgentGenAiImpl(
         .required(listOf("x1", "y1", "x2", "y2", "relevance"))
         .build()
 
-    private val decisionSchema: Schema = Schema.builder()
+    private val actionSchema: Schema = Schema.builder()
         .type("OBJECT")
         .properties(
             mapOf(
                 "action" to Schema.builder()
                     .type("STRING")
-                    .enum_(listOf("click", "scroll", "scroll_at", "find_on_page", "scroll_to_text", "peek_full_page", "type", "answer_found", "give_up"))
+                    .enum_(listOf("click", "scroll_page", "scroll_element", "find_on_page", "scroll_to_text", "peek_full_page", "type_text"))
                     .build(),
                 "reason" to Schema.builder()
                     .type("STRING")
@@ -111,19 +111,11 @@ class WebpageNavigationAgentGenAiImpl(
                         "text" to Schema.builder().type("STRING").description("Text to type.").build()
                     ))
                     .required(listOf("x", "y", "text"))
-                    .build(),
-                "answerFound" to Schema.builder()
-                    .type("OBJECT")
-                    .nullable(true)
-                    .properties(mapOf(
-                        "answer" to Schema.builder().type("STRING").description("Final answer synthesizing all findings.").build()
-                    ))
-                    .required(listOf("answer"))
                     .build()
             )
         )
         .required(listOf("action", "reason"))
-        .propertyOrdering(listOf("action", "reason", "click", "scroll", "scrollAt", "findOnPage", "scrollToText", "type", "answerFound"))
+        .propertyOrdering(listOf("action", "reason", "click", "scroll", "scrollAt", "findOnPage", "scrollToText", "type"))
         .build()
 
     private val outputSchema: Schema = Schema.builder()
@@ -150,11 +142,30 @@ class WebpageNavigationAgentGenAiImpl(
                     .description("Bounding boxes of visual regions (charts, diagrams, tables) worth capturing. Use 0-1000 coordinates. Empty if nothing visual to capture.")
                     .nullable(true)
                     .build(),
-                "decision" to decisionSchema
+                "decision" to Schema.builder()
+                    .type("STRING")
+                    .enum_(listOf("explore", "answer_found", "give_up"))
+                    .description("Top-level intent: explore the page further, report the answer, or give up.")
+                    .build(),
+                "reason" to Schema.builder()
+                    .type("STRING")
+                    .description("Brief reason for the chosen decision.")
+                    .build(),
+                "actions" to Schema.builder()
+                    .type("ARRAY")
+                    .items(actionSchema)
+                    .description("Exploration actions to execute in order (decision=explore only). Eagerly include ALL actions that might yield information.")
+                    .nullable(true)
+                    .build(),
+                "answer" to Schema.builder()
+                    .type("STRING")
+                    .description("Final answer synthesizing all findings (decision=answer_found only).")
+                    .nullable(true)
+                    .build()
             )
         )
-        .required(listOf("observation", "findings", "openQuestions", "decision"))
-        .propertyOrdering(listOf("observation", "findings", "openQuestions", "captureRegions", "decision"))
+        .required(listOf("observation", "findings", "openQuestions", "decision", "reason"))
+        .propertyOrdering(listOf("observation", "findings", "openQuestions", "captureRegions", "decision", "reason", "actions", "answer"))
         .build()
 
     private val systemInstruction = """
@@ -167,7 +178,7 @@ class WebpageNavigationAgentGenAiImpl(
         - ITERATION: current turn / max turns (budget awareness)
         - FINDINGS: accumulated facts discovered so far across all turns
         - OPEN QUESTIONS: what still needs to be found
-        - TURNS: your previous observations, findings, decisions, and their outcomes
+        - TURNS: your previous observations, findings, actions, and their outcomes
 
         ## Instructions
 
@@ -177,9 +188,9 @@ class WebpageNavigationAgentGenAiImpl(
         3. If find_on_page auto-scrolled, examine the new viewport for the answer. Use scroll_to_text to jump to a DIFFERENT match or occurrence.
         4. If find_on_page shows hidden matches → expand [collapsed] elements or use scroll_to_text (which reveals hidden content).
         5. Expand [collapsed] accordions/tabs/dropdowns — the answer is often hidden behind them.
-        6. Only use scroll as a last resort when find_on_page returned no matches but the page may have visual-only content.
+        6. Only use scroll_page as a last resort when find_on_page returned no matches but the page may have visual-only content.
         7. Do NOT click off-page links as a first strategy. Explore the CURRENT page thoroughly first.
-        8. If a table or panel is cut off horizontally, use scroll_at to scroll that specific container LEFT or RIGHT.
+        8. If a table or panel is cut off horizontally, use scroll_element to scroll that specific container LEFT or RIGHT.
 
         ### Keyword tips
         Keywords must match ACTUAL TEXT on the page, not conceptual descriptions. The system handles stemming (e.g. "pricing" matches "prices").
@@ -187,27 +198,24 @@ class WebpageNavigationAgentGenAiImpl(
         - Be exhaustive: include keywords covering different aspects, synonyms, and expected text variations. The search is fast — more keywords upfront give you a richer picture of the page in fewer iterations.
         - When find_on_page already found matches in a prior turn (see TURNS), do NOT re-search the same keywords. Act on the results you already have.
 
-        ### Actions
+        ### Decision
+        - **explore**: Continue investigating the page. You MUST provide a list of exploration actions (see below). Be eager and exhaustively include ALL actions you believe could yield relevant information.
+        - **answer_found**: You have gathered enough information to answer the query. Provide the answer in the "answer" field. If running low on iterations with partial information, use answer_found with what you have — a partial answer is ALWAYS better than no answer. Prefix partial answers with "Based on available information:".
+        - **give_up**: ABSOLUTE LAST RESORT. Only when FINDINGS is completely empty and you have exhausted ALL strategies. If you have ANY findings, use answer_found instead.
 
-        Interact:
-        - click: Click any element visible on screen by specifying (x, y) coordinates (0-1000 scale, where 0,0 is top-left). Point at the CENTER of the element you want to click.
-        - type: Type into an input field. Specify the field location with (x, y) coordinates and the text to type.
-
-        Explore:
-        - find_on_page: Search page text for keywords with stemming (morphological matching). Returns match counts per keyword with context snippets. Automatically scrolls to the best visible match. Hidden matches mean content exists behind collapsed/hidden elements — expand them or use scroll_to_text.
-        - scroll_to_text: Jump directly to specific text. Use AFTER find_on_page when you want to navigate to a DIFFERENT match than the auto-scrolled one.
-        - scroll: Scroll the full page viewport (UP/DOWN/LEFT/RIGHT). Use when scroll_to_text is not applicable.
-        - scroll_at: Scroll a specific container element on the page. Point at the scrollable area using (x, y) coordinates (0-1000 scale) and specify direction (LEFT/RIGHT/UP/DOWN). Use this when a table, panel, or modal has content cut off horizontally or vertically.
-        - peek_full_page: Full-page overview screenshot. Last resort — use find_on_page first.
-
-        Conclude:
-        - answer_found: When you have gathered enough information to answer the query. If you are running low on iterations and have gathered partial information, use answer_found with what you have. A partial answer is ALWAYS better than no answer. Prefix partial answers with "Based on available information:" when incomplete.
-        - give_up: ABSOLUTE LAST RESORT. Before giving up, check your FINDINGS. If you have gathered ANY relevant facts, use answer_found instead. give_up should only be used when FINDINGS is completely empty and you've exhausted search strategies. You must have done ALL of: (1) find_on_page with multiple keyword variations, (2) expanded any [collapsed] elements, (3) scrolled through or used scroll_to_text.
+        ### Exploration actions (for decision=explore)
+        **type_text**: Type into an input field. Specify (x, y) coordinates and the text. Highest priority because it can trigger search/filter results.
+        **click**: Click an element at (x, y) coordinates (0-1000 scale, 0,0 = top-left, center of element). Include ALL clickable elements you want to investigate — buttons, tabs, accordions, links.
+        **find_on_page**: Search page text for keywords with stemming. Returns match counts with context snippets. Auto-scrolls to best match. Hidden matches = content behind collapsed elements.
+        **scroll_to_text**: Jump to specific text. Use AFTER find_on_page to navigate to a different match.
+        **scroll_page**: Scroll the full viewport (UP/DOWN/LEFT/RIGHT). Use when scroll_to_text is not applicable.
+        **scroll_element**: Scroll a specific container at (x, y) coordinates. Use for tables/panels cut off horizontally or vertically.
+        **peek_full_page**: Full-page overview screenshot. Last resort — use find_on_page first.
 
         ### Rules
         - Study the screenshot fresh each turn — never carry stale data forward.
         - If a previous outcome says NO visible change → try a DIFFERENT element or approach.
-        - For tables/grids, match row labels to column headers carefully. If columns are cut off, use scroll_at to scroll the table container horizontally.
+        - For tables/grids, match row labels to column headers carefully. If columns are cut off, use scroll_element to scroll the table container horizontally.
         - Off-page clicks are automatically blocked. The outcome will say "Navigated OFF-PAGE". Do NOT re-click such elements.
         - NEVER click the same off-page element twice. After an off-page outcome, switch to exploring the current page.
         - Prefer find_on_page over blind scrolling.
@@ -219,17 +227,21 @@ class WebpageNavigationAgentGenAiImpl(
 
         Return JSON with this structure:
         {
-          "observation": "What you see on the current screen and your reasoning about what to do next",
-          "findings": ["Fact 1 extracted from viewport", "Fact 2"],
-          "openQuestions": ["Question still needing an answer"],
-          "decision": {
-            "action": "click",
-            "reason": "Why this action",
-            "click": { "x": 500, "y": 300 }
-          }
+          "observation": "What you see and your reasoning",
+          "findings": ["Fact 1", "Fact 2"],
+          "openQuestions": ["Unanswered question"],
+          "decision": "explore",
+          "reason": "Why this decision",
+          "actions": [
+            { "action": "click", "reason": "Click Learn More for Standard plan", "click": { "x": 300, "y": 400 } },
+            { "action": "click", "reason": "Click Learn More for Comprehensive plan", "click": { "x": 700, "y": 400 } },
+            { "action": "find_on_page", "reason": "Search for pricing keywords", "findOnPage": { "keywords": ["price", "cost", "$", "HK$"] } }
+          ]
         }
 
-        Only populate the decision sub-object that matches the action. For give_up and peek_full_page, reason alone suffices (no sub-object needed).
+        For answer_found: set decision="answer_found", provide reason, and set answer to your synthesized answer.
+        For give_up: set decision="give_up" with reason. No actions needed.
+        For explore: set decision="explore" with reason and list ALL exploration actions. Only populate each action's sub-object matching its action type. For peek_full_page, reason alone suffices.
     """.trimIndent()
 
     @Serializable
@@ -260,10 +272,7 @@ class WebpageNavigationAgentGenAiImpl(
     private data class TypeParams(val x: Int? = null, val y: Int? = null, val text: String? = null)
 
     @Serializable
-    private data class AnswerFoundParams(val answer: String? = null)
-
-    @Serializable
-    private data class DecisionResponse(
+    private data class ActionResponse(
         val action: String,
         val reason: String? = null,
         val click: ClickParams? = null,
@@ -271,8 +280,7 @@ class WebpageNavigationAgentGenAiImpl(
         val scrollAt: ScrollAtParams? = null,
         val findOnPage: FindOnPageParams? = null,
         val scrollToText: ScrollToTextParams? = null,
-        val type: TypeParams? = null,
-        val answerFound: AnswerFoundParams? = null
+        val type: TypeParams? = null
     )
 
     @Serializable
@@ -281,7 +289,10 @@ class WebpageNavigationAgentGenAiImpl(
         val findings: List<String>? = null,
         val openQuestions: List<String>? = null,
         val captureRegions: List<CaptureRegionResponse>? = null,
-        val decision: DecisionResponse
+        val decision: String? = null,
+        val reason: String? = null,
+        val actions: List<ActionResponse>? = null,
+        val answer: String? = null
     )
 
     override suspend fun generate(input: WebpageNavigationInput): WebpageNavigationOutput {
@@ -329,22 +340,30 @@ class WebpageNavigationAgentGenAiImpl(
             }
         }
 
-        val decision = response.decision
-        val action = parseAction(decision)
-
-        if (action !is NavigationAction.AnswerFound && decision.answerFound?.answer != null) {
-            logger.warn(
-                "VLM speculatively filled answerFound for action={}, discarding: {}",
-                decision.action, decision.answerFound.answer.take(80)
-            )
+        val actions = when (response.decision) {
+            "answer_found" -> {
+                val answer = response.answer
+                if (answer.isNullOrBlank()) {
+                    logger.warn("VLM returned answer_found without answer text, treating as give_up")
+                    listOf(NavigationAction.GiveUp(reason = "Model claimed answer_found but provided no answer"))
+                } else {
+                    listOf(NavigationAction.AnswerFound(answer = answer))
+                }
+            }
+            "give_up" -> {
+                listOf(NavigationAction.GiveUp(reason = response.reason ?: "No reason provided"))
+            }
+            else -> {
+                (response.actions ?: emptyList()).map { parseAction(it) }
+            }
         }
 
         logger.debug(
-            "Navigation: {} | findings={} | openQ={} | reason={}",
-            action::class.simpleName,
+            "Navigation: decision={} actions=[{}] | findings={} | openQ={}",
+            response.decision,
+            actions.joinToString(", ") { it::class.simpleName ?: "?" },
             response.findings?.size ?: 0,
-            response.openQuestions?.size ?: 0,
-            decision.reason
+            response.openQuestions?.size ?: 0
         )
 
         val captureRegions = response.captureRegions?.map { r ->
@@ -358,7 +377,7 @@ class WebpageNavigationAgentGenAiImpl(
         }?.filter { it.x2 > it.x1 && it.y2 > it.y1 } ?: emptyList()
 
         return WebpageNavigationOutput(
-            action = action,
+            actions = actions,
             findings = response.findings ?: emptyList(),
             observation = response.observation,
             openQuestions = response.openQuestions ?: emptyList(),
@@ -403,11 +422,11 @@ class WebpageNavigationAgentGenAiImpl(
 
     }
 
-    private fun parseAction(decision: DecisionResponse): NavigationAction {
-        val reason = decision.reason ?: ""
-        return when (decision.action) {
+    private fun parseAction(actionResp: ActionResponse): NavigationAction {
+        val reason = actionResp.reason ?: ""
+        return when (actionResp.action) {
             "click" -> {
-                val params = decision.click
+                val params = actionResp.click
                 if (params == null) {
                     logger.warn("VLM returned click without coordinates, falling back to scroll")
                     scrollFallback()
@@ -419,18 +438,18 @@ class WebpageNavigationAgentGenAiImpl(
                     )
                 }
             }
-            "scroll" -> {
-                val params = decision.scroll
+            "scroll_page" -> {
+                val params = actionResp.scroll
                 NavigationAction.Scroll(
                     scrollDirection = parseScrollDirection(params?.direction),
                     scrollPercent = (params?.percent ?: 100).coerceIn(10, 100),
                     reason = reason
                 )
             }
-            "scroll_at" -> {
-                val params = decision.scrollAt
+            "scroll_element" -> {
+                val params = actionResp.scrollAt
                 if (params?.x == null || params.y == null || params.direction == null) {
-                    logger.warn("VLM returned scroll_at with missing params, falling back to scroll")
+                    logger.warn("VLM returned scroll_element with missing params, falling back to scroll")
                     scrollFallback()
                 } else {
                     NavigationAction.ScrollAt(
@@ -443,31 +462,22 @@ class WebpageNavigationAgentGenAiImpl(
                 }
             }
             "find_on_page" -> NavigationAction.FindOnPage(
-                keywords = decision.findOnPage?.keywords ?: emptyList(),
+                keywords = actionResp.findOnPage?.keywords ?: emptyList(),
                 reason = reason
             )
             "scroll_to_text" -> NavigationAction.ScrollToText(
-                searchText = decision.scrollToText?.text ?: "",
+                searchText = actionResp.scrollToText?.text ?: "",
                 occurrence = 1,
                 reason = reason
             )
-            "answer_found" -> {
-                val answer = decision.answerFound?.answer
-                if (answer.isNullOrBlank()) {
-                    logger.warn("VLM returned answer_found without answer text, treating as give_up")
-                    NavigationAction.GiveUp(reason = "Model claimed answer_found but provided no answer")
-                } else {
-                    NavigationAction.AnswerFound(answer = answer)
-                }
-            }
             "peek_full_page" -> NavigationAction.PeekFullPage(reason = reason)
-            "type" -> {
-                val params = decision.type
+            "type_text" -> {
+                val params = actionResp.type
                 val x = params?.x
                 val y = params?.y
                 val text = params?.text
                 if (x == null || y == null || text.isNullOrBlank()) {
-                    logger.warn("VLM returned type without coordinates or text, falling back to scroll")
+                    logger.warn("VLM returned type_text without coordinates or text, falling back to scroll")
                     scrollFallback()
                 } else {
                     NavigationAction.Type(
@@ -478,8 +488,10 @@ class WebpageNavigationAgentGenAiImpl(
                     )
                 }
             }
-            "give_up" -> NavigationAction.GiveUp(reason = reason.ifEmpty { "No reason provided" })
-            else -> NavigationAction.GiveUp(reason = "Unknown action type: ${decision.action}")
+            else -> {
+                logger.warn("Unknown exploration action type: {}", actionResp.action)
+                scrollFallback()
+            }
         }
     }
 
@@ -500,26 +512,24 @@ class WebpageNavigationAgentGenAiImpl(
         if (entry.findings.isNotEmpty()) {
             appendLine("      findings: [${entry.findings.joinToString(", ") { "\"$it\"" }}]")
         }
-        append("      decision: ${formatDecisionDesc(entry.action)}")
+        append("      action: ${formatActionDesc(entry.action)}")
         if (entry.outcome != null) {
             appendLine()
             append("      outcome: ${entry.outcome}")
         }
     }
 
-    private fun formatDecisionDesc(action: NavigationAction): String = when (action) {
+    private fun formatActionDesc(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> {
-            val target = action.elementDescription ?: "(${action.x},${action.y})"
-            "click $target"
+            "click ${action.reason.take(60).ifEmpty { "(${action.x},${action.y})" }}"
         }
-        is NavigationAction.Scroll -> "scroll ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
-        is NavigationAction.ScrollAt -> "scroll_at (${action.x},${action.y}) ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
+        is NavigationAction.Scroll -> "scroll_page ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
+        is NavigationAction.ScrollAt -> "scroll_element (${action.x},${action.y}) ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
         is NavigationAction.FindOnPage -> "find_on_page [${action.keywords.joinToString(", ") { "\"$it\"" }}]"
         is NavigationAction.ScrollToText -> "scroll_to_text \"${action.searchText}\""
         is NavigationAction.PeekFullPage -> "peek_full_page"
         is NavigationAction.Type -> {
-            val target = action.elementDescription ?: "(${action.x},${action.y})"
-            "type '${action.text.take(30)}' into $target"
+            "type_text '${action.text.take(30)}' into ${action.reason.take(60).ifEmpty { "(${action.x},${action.y})" }}"
         }
         is NavigationAction.AnswerFound -> "answer_found: ${action.answer.take(80)}"
         is NavigationAction.GiveUp -> "give_up: ${action.reason}"

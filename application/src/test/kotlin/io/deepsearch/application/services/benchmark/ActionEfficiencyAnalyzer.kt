@@ -182,7 +182,7 @@ object ActionEfficiencyAnalyzer {
             }
             .groupBy { entry ->
                 val a = entry.action as NavigationAction.Click
-                a.elementDescription ?: "(${a.x},${a.y})"
+                a.reason.take(60).ifEmpty { "(${a.x},${a.y})" }
             }
         for ((desc, entries) in failedClickGroups) {
             if (entries.size >= 2) {

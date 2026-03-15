@@ -33,8 +33,7 @@ sealed class NavigationAction {
     data class Click(
         val x: Int,
         val y: Int,
-        val reason: String,
-        val elementDescription: String? = null
+        val reason: String
     ) : NavigationAction()
 
     @Serializable
@@ -85,8 +84,7 @@ sealed class NavigationAction {
         val x: Int,
         val y: Int,
         val text: String,
-        val reason: String,
-        val elementDescription: String? = null
+        val reason: String
     ) : NavigationAction()
 }
 
@@ -116,7 +114,7 @@ data class CaptureRegion(
  * worth capturing as images, using 0-1000 normalized bounding boxes.
  */
 data class WebpageNavigationOutput(
-    val action: NavigationAction,
+    val actions: List<NavigationAction>,
     val findings: List<String>,
     val observation: String?,
     val openQuestions: List<String>,
