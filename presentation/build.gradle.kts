@@ -78,6 +78,7 @@ tasks.test {
     
     jvmArgs(
         "--enable-native-access=ALL-UNNAMED",
+        "--add-modules", "jdk.incubator.vector",
         "-Xmx4g",
         "-Dorg.bytedeco.javacpp.maxphysicalbytes=0",
         "-Dorg.bytedeco.javacpp.maxbytes=0"
@@ -127,7 +128,8 @@ jib {
         jvmFlags = listOf(
             "-XX:+UseContainerSupport",
             "-XX:MaxRAMPercentage=75.0",
-            "--enable-native-access=ALL-UNNAMED"
+            "--enable-native-access=ALL-UNNAMED",
+            "--add-modules", "jdk.incubator.vector",
         )
     }
 }

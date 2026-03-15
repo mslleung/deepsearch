@@ -75,6 +75,7 @@ tasks.test {
 
     jvmArgs(
         "--enable-native-access=ALL-UNNAMED",
+        "--add-modules", "jdk.incubator.vector",
         "-Xmx4g",
         "-Dorg.bytedeco.javacpp.maxphysicalbytes=0",
         "-Dorg.bytedeco.javacpp.maxbytes=0"
