@@ -63,13 +63,8 @@ class PageTextSearchService : IPageTextSearchService {
         val analyzer = chooseAnalyzer(pageText)
         val lines = pageText.lines()
 
-        return try {
+        return analyzer.use { analyzer ->
             buildIndexAndSearch(lines, keywords, analyzer)
-        } catch (e: Exception) {
-            logger.warn("Lucene page text search failed: {}", e.message)
-            emptyMap()
-        } finally {
-            analyzer.close()
         }
     }
 

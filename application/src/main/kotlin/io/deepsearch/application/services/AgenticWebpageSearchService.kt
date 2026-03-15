@@ -5,6 +5,7 @@ import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.ScrollDirection
+import io.deepsearch.domain.agents.SearchKeywordsResult
 import io.deepsearch.domain.agents.WebpageNavigationInput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
@@ -140,10 +141,20 @@ class AgenticWebpageSearchService(
     ): AgenticPageSearchResult {
         logger.info("Starting agentic page search (own page) for query='{}' on url={}", query, url)
 
-        return browserPool.withPage { page ->
-            page.navigate(url)
-            page.waitForLoad()
-            searchWithinPage(page, url, query, sessionId)
+        return coroutineScope {
+            val keywordsDeferred = async {
+                try {
+                    webpageNavigationAgent.generateSearchKeywords(query)
+                } catch (e: CancellationException) {
+                    throw e
+                }
+            }
+            browserPool.withPage { page ->
+                page.navigate(url)
+                page.waitForLoad()
+                val keywordsResult = keywordsDeferred.await()
+                doSearchWithinPage(page, url, query, sessionId, preScanKeywords = keywordsResult)
+            }
         }
     }
 
@@ -153,6 +164,15 @@ class AgenticWebpageSearchService(
         query: String,
         sessionId: SessionId,
         onLinkDiscovered: (suspend (String) -> Unit)?
+    ): AgenticPageSearchResult = doSearchWithinPage(page, url, query, sessionId, onLinkDiscovered)
+
+    private suspend fun doSearchWithinPage(
+        page: IBrowserPage,
+        url: String,
+        query: String,
+        sessionId: SessionId,
+        onLinkDiscovered: (suspend (String) -> Unit)? = null,
+        preScanKeywords: SearchKeywordsResult? = null
     ): AgenticPageSearchResult {
         logger.info("Starting agentic page search for query='{}' on url={}", query, url)
 
@@ -166,6 +186,64 @@ class AgenticWebpageSearchService(
         val capturedImages = mutableListOf<CapturedImage>()
         val capturedHashes = mutableSetOf<String>()
         var aggregatedTokenUsage = TokenUsageMetrics.empty("gemini-3.1-flash-lite")
+        var lastFindCounts: Map<String, IBrowserPage.TextMatchCounts> = emptyMap()
+
+        // Pre-scan: run find_on_page with LLM-generated keywords before the first VLM call
+        if (preScanKeywords != null && preScanKeywords.keywords.isNotEmpty()) {
+            aggregatedTokenUsage = aggregatedTokenUsage + preScanKeywords.tokenUsage
+            tokenUsageService.recordTokenUsage(
+                sessionId = sessionId,
+                agentName = "WebpageNavigationAgent.keywords",
+                modelName = preScanKeywords.tokenUsage.modelName,
+                promptTokens = preScanKeywords.tokenUsage.promptTokens,
+                outputTokens = preScanKeywords.tokenUsage.outputTokens,
+                totalTokens = preScanKeywords.tokenUsage.totalTokens
+            )
+
+            try {
+                val keywords = preScanKeywords.keywords
+                val (counts, stemmedMatches) = coroutineScope {
+                    val countsDeferred = async { page.countTextMatches(keywords) }
+                    val stemmedDeferred = async {
+                        val pageText = page.extractTextContent()
+                        pageTextSearchService.search(pageText, keywords)
+                    }
+                    Pair(countsDeferred.await(), stemmedDeferred.await())
+                }
+
+                val countsDesc = counts.entries.joinToString(", ") { (kw, c) ->
+                    val hidden = c.total - c.visible
+                    val base = if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
+                    val ctx = c.firstContext
+                    if (ctx != null && c.total > 0) "$base (e.g. '$ctx')" else base
+                }
+                logger.info("Pre-scan find_on_page for {}: {}", url, countsDesc)
+
+                val outcome = buildFindOnPageOutcome(counts, stemmedMatches, keywords, countsDesc)
+
+                val scrollTarget = pickAutoScrollTarget(counts, stemmedMatches, keywords)
+                val finalOutcome = if (scrollTarget != null) {
+                    val scrolled = page.scrollToTextContent(scrollTarget)
+                    if (scrolled) {
+                        logger.info("Pre-scan auto-scrolled to '{}' on {}", scrollTarget, url)
+                        "$outcome Auto-scrolled to \"$scrollTarget\"."
+                    } else outcome
+                } else outcome
+
+                actionsPerformed.add(
+                    ActionWithOutcome(
+                        NavigationAction.FindOnPage(keywords = keywords, reason = "pre-scan"),
+                        outcome = finalOutcome,
+                        observation = "Pre-scan keyword search before first visual analysis."
+                    )
+                )
+                lastFindCounts = counts
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.warn("Pre-scan find_on_page failed: {}", e.message)
+            }
+        }
 
         // Navigation Loop
         var previousClickScreenshot: ByteArray? = null
@@ -173,34 +251,46 @@ class AgenticWebpageSearchService(
         val offPageClickedDescs = mutableSetOf<String>()
         var lastActionWasClick = false
         var peekScreenshotOverride: IBrowserPage.Screenshot? = null
-        var lastFindCounts: Map<String, IBrowserPage.TextMatchCounts> = emptyMap()
+        var skipContextFetch = false
+
+        data class IterationContext(
+            val elements: List<IBrowserPage.InteractiveElementInfo>,
+            val screenshot: IBrowserPage.Screenshot,
+            val pageTitle: String,
+            val pageDescription: String?,
+            val scrollPercent: Int
+        )
+
+        var lastCtx: IterationContext? = null
 
         for (iteration in 1..MAX_ITERATIONS) {
             currentCoroutineContext().ensureActive()
             logger.debug("Agentic search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
 
-            data class IterationContext(
-                val elements: List<IBrowserPage.InteractiveElementInfo>,
-                val screenshot: IBrowserPage.Screenshot,
-                val pageTitle: String,
-                val pageDescription: String?,
-                val scrollPercent: Int
-            )
-
-            val ctx = coroutineScope {
-                val elementsDeferred = async { page.getInteractiveElements() }
-                val screenshotDeferred = async { page.takeScreenshot() }
-                val titleDeferred = async { page.getTitle() }
-                val descDeferred = async { page.getDescription() }
-                val scrollDeferred = async { page.getScrollPosition() }
-                IterationContext(
-                    elements = elementsDeferred.await(),
-                    screenshot = screenshotDeferred.await(),
-                    pageTitle = titleDeferred.await(),
-                    pageDescription = descDeferred.await(),
-                    scrollPercent = scrollDeferred.await()
-                )
+            val fetchedFreshContext: Boolean
+            val ctx: IterationContext
+            if (skipContextFetch && lastCtx != null) {
+                logger.debug("Reusing previous context for {} (off-page-only round)", url)
+                ctx = lastCtx
+                fetchedFreshContext = false
+            } else {
+                ctx = coroutineScope {
+                    val elementsDeferred = async { page.getInteractiveElements() }
+                    val screenshotDeferred = async { page.takeScreenshot() }
+                    val titleDeferred = async { page.getTitle() }
+                    val descDeferred = async { page.getDescription() }
+                    val scrollDeferred = async { page.getScrollPosition() }
+                    IterationContext(
+                        elements = elementsDeferred.await(),
+                        screenshot = screenshotDeferred.await(),
+                        pageTitle = titleDeferred.await(),
+                        pageDescription = descDeferred.await(),
+                        scrollPercent = scrollDeferred.await()
+                    )
+                }
+                fetchedFreshContext = true
             }
+            lastCtx = ctx
             val interactiveElements = ctx.elements
             val rawScreenshot = ctx.screenshot
             logger.debug("Found {} interactive elements", interactiveElements.size)
@@ -212,8 +302,12 @@ class AgenticWebpageSearchService(
                 val lastEntry = actionsPerformed.last()
                 val lastAction = lastEntry.action
                 val clickDesc = when (lastAction) {
-                    is NavigationAction.Click -> lastAction.reason.take(60).ifEmpty { "(${lastAction.x},${lastAction.y})" }
-                    is NavigationAction.Type -> lastAction.reason.take(60).ifEmpty { "(${lastAction.x},${lastAction.y})" }
+                    is NavigationAction.Click -> lastAction.reason.take(60)
+                        .ifEmpty { "(${lastAction.x},${lastAction.y})" }
+
+                    is NavigationAction.Type -> lastAction.reason.take(60)
+                        .ifEmpty { "(${lastAction.x},${lastAction.y})" }
+
                     else -> ""
                 }
                 if (changed) {
@@ -237,16 +331,16 @@ class AgenticWebpageSearchService(
             }
             lastActionWasClick = false
 
-            // Keep annotation for debug screenshots only; agent receives raw screenshot
-            val annotated = screenshotAnnotationService.annotate(
-                rawScreenshot.bytes,
-                interactiveElements
-            )
-
-            val debugDir = java.io.File("/tmp/deepsearch-debug")
-            debugDir.mkdirs()
-            java.io.File(debugDir, "annotated-iter$iteration.jpg").writeBytes(annotated.imageBytes)
-            logger.debug("Saved debug screenshot to /tmp/deepsearch-debug/annotated-iter$iteration.jpg")
+            if (fetchedFreshContext) {
+                val annotated = screenshotAnnotationService.annotate(
+                    rawScreenshot.bytes,
+                    interactiveElements
+                )
+                val debugDir = java.io.File("/tmp/deepsearch-debug")
+                debugDir.mkdirs()
+                java.io.File(debugDir, "annotated-iter$iteration.jpg").writeBytes(annotated.imageBytes)
+                logger.debug("Saved debug screenshot to /tmp/deepsearch-debug/annotated-iter$iteration.jpg")
+            }
 
             val screenshotForAgent = peekScreenshotOverride ?: IBrowserPage.Screenshot(
                 bytes = rawScreenshot.bytes,
@@ -302,9 +396,16 @@ class AgenticWebpageSearchService(
 
             val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(rawScreenshot.bytes)
 
+            var allActionsPipelined = output.actions.isNotEmpty()
             for ((actionIdx, action) in output.actions.withIndex()) {
                 if (actionIdx == 0) {
-                    actionsPerformed.add(ActionWithOutcome(action, observation = output.observation, findings = output.findings))
+                    actionsPerformed.add(
+                        ActionWithOutcome(
+                            action,
+                            observation = output.observation,
+                            findings = output.findings
+                        )
+                    )
                 } else {
                     actionsPerformed.add(ActionWithOutcome(action, observation = output.observation))
                 }
@@ -433,7 +534,10 @@ class AgenticWebpageSearchService(
                                             val pageText = page.extractTextContent()
                                             pageTextSearchService.search(pageText, action.keywords)
                                         } catch (e: Exception) {
-                                            logger.debug("Stemmed text search failed, proceeding with exact only: {}", e.message)
+                                            logger.debug(
+                                                "Stemmed text search failed, proceeding with exact only: {}",
+                                                e.message
+                                            )
                                             emptyMap()
                                         }
                                     }
@@ -443,7 +547,8 @@ class AgenticWebpageSearchService(
 
                                 val countsDesc = counts.entries.joinToString(", ") { (kw, c) ->
                                     val hidden = c.total - c.visible
-                                    val base = if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
+                                    val base =
+                                        if (hidden > 0) "$kw: ${c.visible} ($hidden hidden)" else "$kw: ${c.visible}"
                                     val ctx = c.firstContext
                                     if (ctx != null && c.total > 0) "$base (e.g. '$ctx')" else base
                                 }
@@ -552,7 +657,13 @@ class AgenticWebpageSearchService(
                     }
 
                     is NavigationAction.ScrollAt -> {
-                        logger.debug("ScrollAt: ({},{}) {} {}%", action.x, action.y, action.scrollDirection, action.scrollPercent)
+                        logger.debug(
+                            "ScrollAt: ({},{}) {} {}%",
+                            action.x,
+                            action.y,
+                            action.scrollDirection,
+                            action.scrollPercent
+                        )
                         try {
                             val viewportX = ((action.x / 1000.0) * imgWidth).toInt()
                             val viewportY = ((action.y / 1000.0) * imgHeight).toInt()
@@ -630,8 +741,12 @@ class AgenticWebpageSearchService(
                     }
                 }
 
-                if (!continuesPipeline) break
+                if (!continuesPipeline) {
+                    allActionsPipelined = false
+                    break
+                }
             }
+            skipContextFetch = allActionsPipelined
         }
 
         logger.info(

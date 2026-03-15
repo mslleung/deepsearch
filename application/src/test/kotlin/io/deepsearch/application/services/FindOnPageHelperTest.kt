@@ -1,6 +1,7 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
+import io.deepsearch.domain.agents.SearchKeywordsResult
 import io.deepsearch.domain.agents.WebpageNavigationInput
 import io.deepsearch.domain.agents.WebpageNavigationOutput
 import io.deepsearch.domain.browser.IBrowserPage
@@ -186,6 +187,8 @@ class FindOnPageHelperTest {
 
     private class StubNavigationAgent : IWebpageNavigationAgent {
         override suspend fun generate(input: WebpageNavigationInput): WebpageNavigationOutput =
+            throw UnsupportedOperationException("Stub")
+        override suspend fun generateSearchKeywords(query: String): SearchKeywordsResult =
             throw UnsupportedOperationException("Stub")
     }
 }

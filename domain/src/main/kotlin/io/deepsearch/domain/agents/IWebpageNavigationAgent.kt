@@ -122,6 +122,12 @@ data class WebpageNavigationOutput(
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
+data class SearchKeywordsResult(
+    val keywords: List<String>,
+    val tokenUsage: TokenUsageMetrics
+)
+
 interface IWebpageNavigationAgent : IAgent<WebpageNavigationInput, WebpageNavigationOutput> {
     override suspend fun generate(input: WebpageNavigationInput): WebpageNavigationOutput
+    suspend fun generateSearchKeywords(query: String): SearchKeywordsResult
 }

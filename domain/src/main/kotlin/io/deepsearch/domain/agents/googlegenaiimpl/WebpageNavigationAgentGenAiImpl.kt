@@ -12,6 +12,7 @@ import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.IWebpageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.ScrollDirection
+import io.deepsearch.domain.agents.SearchKeywordsResult
 import io.deepsearch.domain.agents.WebpageNavigationInput
 import io.deepsearch.domain.agents.WebpageNavigationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -169,79 +170,40 @@ class WebpageNavigationAgentGenAiImpl(
         .build()
 
     private val systemInstruction = """
-        You are a webpage exploration agent. You examine a single web page to find specific information requested in QUERY.
+        You are a webpage exploration agent examining a single page to answer QUERY.
 
-        ## Input
+        ## Input per turn
+        Screenshot of current viewport, ITERATION budget, FINDINGS so far, OPEN QUESTIONS, and TURNS history (observations, actions, outcomes).
 
-        You receive on each turn:
-        - A screenshot of the current viewport
-        - ITERATION: current turn / max turns (budget awareness)
-        - FINDINGS: accumulated facts discovered so far across all turns
-        - OPEN QUESTIONS: what still needs to be found
-        - TURNS: your previous observations, findings, actions, and their outcomes
+        ## Strategy
+        1. Check if the answer is visible in the current viewport.
+        2. Use find_on_page with exhaustive keywords (5-10, actual page text, not concepts; stemming handled). It auto-scrolls to the best match. Hidden matches = collapsed elements.
+        3. After find_on_page: examine viewport, use scroll_to_text for other matches, expand collapsed accordions/tabs/dropdowns.
+        4. If 0 matches: try shorter prefixes ("consult" not "consultation") or expected numeric values.
+        5. Don't re-search keywords already searched in TURNS — act on existing results.
+        6. scroll_page only when find_on_page found nothing and page may have visual-only content.
+        7. For cut-off tables/panels, use scroll_element to scroll that container.
+        8. Explore the CURRENT page before clicking off-page links.
 
-        ## Instructions
+        ## Decision & Actions
+        **explore**: Provide ALL exploration actions you think will yield information. Be eager — include every action worth trying.
+        - **type_text**: Type into input field at (x,y). Highest priority — triggers search/filter.
+        - **click**: Click element at (x,y) in 0-1000 scale. Include all clickable targets (buttons, tabs, accordions, links).
+        - **find_on_page**: Search keywords with stemming. Auto-scrolls to best match.
+        - **scroll_to_text**: Jump to specific text after find_on_page.
+        - **scroll_page**: Scroll viewport UP/DOWN/LEFT/RIGHT.
+        - **scroll_element**: Scroll container at (x,y).
+        - **peek_full_page**: Full-page overview. Last resort.
 
-        ### Strategy
-        1. Check if the answer is already visible in the current viewport.
-        2. Use find_on_page to assess whether the page contains the information. find_on_page searches with stemming and automatically scrolls to the best match.
-        3. If find_on_page auto-scrolled, examine the new viewport for the answer. Use scroll_to_text to jump to a DIFFERENT match or occurrence.
-        4. If find_on_page shows hidden matches → expand [collapsed] elements or use scroll_to_text (which reveals hidden content).
-        5. Expand [collapsed] accordions/tabs/dropdowns — the answer is often hidden behind them.
-        6. Only use scroll_page as a last resort when find_on_page returned no matches but the page may have visual-only content.
-        7. Do NOT click off-page links as a first strategy. Explore the CURRENT page thoroughly first.
-        8. If a table or panel is cut off horizontally, use scroll_element to scroll that specific container LEFT or RIGHT.
+        **answer_found**: Synthesize all findings into answer. Partial answer (prefix "Based on available information:") is ALWAYS better than give_up.
+        **give_up**: LAST RESORT — only when FINDINGS is empty and ALL strategies exhausted.
 
-        ### Keyword tips
-        Keywords must match ACTUAL TEXT on the page, not conceptual descriptions. The system handles stemming (e.g. "pricing" matches "prices").
-        - If all keywords return 0 matches: try SHORTER prefixes (e.g., "consult" instead of "consultation") or NUMERIC values you expect to find.
-        - Be exhaustive: include keywords covering different aspects, synonyms, and expected text variations. The search is fast — more keywords upfront give you a richer picture of the page in fewer iterations.
-        - When find_on_page already found matches in a prior turn (see TURNS), do NOT re-search the same keywords. Act on the results you already have.
-
-        ### Decision
-        - **explore**: Continue investigating the page. You MUST provide a list of exploration actions (see below). Be eager and exhaustively include ALL actions you believe could yield relevant information.
-        - **answer_found**: You have gathered enough information to answer the query. Provide the answer in the "answer" field. If running low on iterations with partial information, use answer_found with what you have — a partial answer is ALWAYS better than no answer. Prefix partial answers with "Based on available information:".
-        - **give_up**: ABSOLUTE LAST RESORT. Only when FINDINGS is completely empty and you have exhausted ALL strategies. If you have ANY findings, use answer_found instead.
-
-        ### Exploration actions (for decision=explore)
-        **type_text**: Type into an input field. Specify (x, y) coordinates and the text. Highest priority because it can trigger search/filter results.
-        **click**: Click an element at (x, y) coordinates (0-1000 scale, 0,0 = top-left, center of element). Include ALL clickable elements you want to investigate — buttons, tabs, accordions, links.
-        **find_on_page**: Search page text for keywords with stemming. Returns match counts with context snippets. Auto-scrolls to best match. Hidden matches = content behind collapsed elements.
-        **scroll_to_text**: Jump to specific text. Use AFTER find_on_page to navigate to a different match.
-        **scroll_page**: Scroll the full viewport (UP/DOWN/LEFT/RIGHT). Use when scroll_to_text is not applicable.
-        **scroll_element**: Scroll a specific container at (x, y) coordinates. Use for tables/panels cut off horizontally or vertically.
-        **peek_full_page**: Full-page overview screenshot. Last resort — use find_on_page first.
-
-        ### Rules
-        - Study the screenshot fresh each turn — never carry stale data forward.
-        - If a previous outcome says NO visible change → try a DIFFERENT element or approach.
-        - For tables/grids, match row labels to column headers carefully. If columns are cut off, use scroll_element to scroll the table container horizontally.
-        - Off-page clicks are automatically blocked. The outcome will say "Navigated OFF-PAGE". Do NOT re-click such elements.
-        - NEVER click the same off-page element twice. After an off-page outcome, switch to exploring the current page.
-        - Prefer find_on_page over blind scrolling.
-
-        ### Visual capture
-        If you see a relevant chart, diagram, or table image, include captureRegions with bounding box (0–1000 coordinates) and relevance description. Ignore logos, icons, and navigation images.
-
-        ## Output
-
-        Return JSON with this structure:
-        {
-          "observation": "What you see and your reasoning",
-          "findings": ["Fact 1", "Fact 2"],
-          "openQuestions": ["Unanswered question"],
-          "decision": "explore",
-          "reason": "Why this decision",
-          "actions": [
-            { "action": "click", "reason": "Click Learn More for Standard plan", "click": { "x": 300, "y": 400 } },
-            { "action": "click", "reason": "Click Learn More for Comprehensive plan", "click": { "x": 700, "y": 400 } },
-            { "action": "find_on_page", "reason": "Search for pricing keywords", "findOnPage": { "keywords": ["price", "cost", "$", "HK$"] } }
-          ]
-        }
-
-        For answer_found: set decision="answer_found", provide reason, and set answer to your synthesized answer.
-        For give_up: set decision="give_up" with reason. No actions needed.
-        For explore: set decision="explore" with reason and list ALL exploration actions. Only populate each action's sub-object matching its action type. For peek_full_page, reason alone suffices.
+        ## Rules
+        - Study the screenshot fresh each turn; never carry stale data.
+        - NO visible change after click → try a DIFFERENT element.
+        - Off-page clicks are auto-blocked ("Navigated OFF-PAGE") — never re-click them.
+        - For tables: match row labels to column headers carefully; scroll_element for cut-off columns.
+        - Relevant charts/diagrams/tables → include captureRegions (0-1000 bounding box). Ignore logos/icons.
     """.trimIndent()
 
     @Serializable
@@ -533,5 +495,59 @@ class WebpageNavigationAgentGenAiImpl(
         }
         is NavigationAction.AnswerFound -> "answer_found: ${action.answer.take(80)}"
         is NavigationAction.GiveUp -> "give_up: ${action.reason}"
+    }
+
+    // --- Keyword generation for pre-scan ---
+
+    private val keywordsOutputSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .properties(mapOf(
+            "keywords" to Schema.builder()
+                .type("ARRAY")
+                .items(Schema.builder().type("STRING").build())
+                .description("5-10 search keywords likely to appear as literal text on a webpage about this topic.")
+                .build()
+        ))
+        .required(listOf("keywords"))
+        .build()
+
+    @Serializable
+    private data class KeywordsResponse(val keywords: List<String>)
+
+    override suspend fun generateSearchKeywords(query: String): SearchKeywordsResult {
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        var tokenUsage = TokenUsageMetrics.empty(modelId)
+
+        val response = withContext(dispatcherProvider.io) {
+            retryLlmCall<KeywordsResponse>(this@WebpageNavigationAgentGenAiImpl::class.simpleName!! + ".keywords") {
+                val result = client.models.generateContent(
+                    modelId,
+                    listOf(Content.fromParts(Part.fromText(
+                        "Generate search keywords for finding information about this query on a webpage. " +
+                        "Keywords must be actual words/phrases likely to appear as text on the page, not abstract concepts. " +
+                        "Include synonyms, abbreviations, numeric values, and different phrasings.\n\nQuery: $query"
+                    ))),
+                    GenerateContentConfig.builder()
+                        .temperature(0.5F)
+                        .responseSchema(keywordsOutputSchema)
+                        .responseMimeType("application/json")
+                        .build()
+                )
+
+                result.usageMetadata().ifPresent { metadata ->
+                    tokenUsage = TokenUsageMetrics(
+                        modelName = modelId,
+                        promptTokens = metadata.promptTokenCount().orElse(0),
+                        outputTokens = metadata.candidatesTokenCount().orElse(0),
+                        totalTokens = metadata.totalTokenCount().orElse(0)
+                    )
+                }
+
+                result.text() ?: throw RuntimeException("No text response from model")
+            }
+        }
+
+        logger.debug("Generated {} pre-scan keywords for query '{}': {}", response.keywords.size, query.take(60), response.keywords)
+        return SearchKeywordsResult(keywords = response.keywords, tokenUsage = tokenUsage)
     }
 }
