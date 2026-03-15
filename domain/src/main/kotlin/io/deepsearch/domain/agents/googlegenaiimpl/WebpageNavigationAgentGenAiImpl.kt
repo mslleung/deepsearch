@@ -551,7 +551,7 @@ class WebpageNavigationAgentGenAiImpl(
             "keywords" to Schema.builder()
                 .type("ARRAY")
                 .items(Schema.builder().type("STRING").build())
-                .description("5-10 search keywords likely to appear as literal text on a webpage about this topic.")
+                .description("8-12 single-word search tokens likely to appear as literal text on the page. Each must be one word or symbol.")
                 .build()
         ))
         .required(listOf("keywords"))
@@ -569,14 +569,23 @@ class WebpageNavigationAgentGenAiImpl(
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(Part.fromText(
-                        "Generate search keywords for finding information about this query on a webpage. " +
-                        "Keywords must be actual words/phrases likely to appear as text on the page, not abstract concepts. " +
-                        "Include synonyms, abbreviations, numeric values, and different phrasings.\n\nQuery: $query"
+                        "Generate single-word search keywords for finding information about this query on a webpage.\n" +
+                        "Rules:\n" +
+                        "- Each keyword must be a SINGLE word or token (e.g. \"screening\", \"HK\$\", \"price\", \"OT&P\").\n" +
+                        "- Never combine multiple words into one keyword (BAD: \"health screening price\").\n" +
+                        "- Include: brand/company names, currency symbols (\$, HK\$, £, €), numbers, units, short abbreviations.\n" +
+                        "- Use words likely to appear as literal text on the page, not abstract descriptions.\n\n" +
+                        "Query: $query"
                     ))),
                     GenerateContentConfig.builder()
-                        .temperature(0.5F)
+                        .temperature(1.0F)
                         .responseSchema(keywordsOutputSchema)
                         .responseMimeType("application/json")
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
+                                .build()
+                        )
                         .build()
                 )
 
@@ -593,7 +602,13 @@ class WebpageNavigationAgentGenAiImpl(
             }
         }
 
-        logger.debug("Generated {} pre-scan keywords for query '{}': {}", response.keywords.size, query.take(60), response.keywords)
-        return SearchKeywordsResult(keywords = response.keywords, tokenUsage = tokenUsage)
+        val flatKeywords = response.keywords
+            .flatMap { it.split("\\s+".toRegex()) }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        logger.debug("Generated {} pre-scan keywords for query '{}': {}", flatKeywords.size, query.take(60), flatKeywords)
+        return SearchKeywordsResult(keywords = flatKeywords, tokenUsage = tokenUsage)
     }
 }
