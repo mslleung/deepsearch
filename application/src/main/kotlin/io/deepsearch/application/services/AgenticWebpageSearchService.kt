@@ -289,8 +289,7 @@ class AgenticWebpageSearchService(
                 pageDescription = ctx.pageDescription,
                 scrollPercent = ctx.scrollPercent,
                 currentIteration = iteration,
-                maxIterations = MAX_ITERATIONS,
-                searchResults = lastFindCounts
+                maxIterations = MAX_ITERATIONS
             )
 
             val output = webpageNavigationAgent.generate(input)
@@ -420,9 +419,8 @@ class AgenticWebpageSearchService(
                                 onLinkDiscovered?.invoke(targetUrl)
                                 offPageClickedDescs.add(desc)
                                 lastActionWasClick = false
-                                val usedFind = actionsPerformed.any { it.action is NavigationAction.FindOnPage }
                                 actionsPerformed[actionsPerformed.lastIndex] = actionsPerformed.last().copy(
-                                    outcome = buildOffPageOutcome(targetUrl, offPageClickedDescs.size, usedFind)
+                                    outcome = buildOffPageOutcome(targetUrl)
                                 )
                             } else {
                                 lastActionWasClick = true
@@ -741,24 +739,9 @@ class AgenticWebpageSearchService(
         }
     }
 
-    private fun buildOffPageOutcome(
-        targetUrl: String,
-        offPageCount: Int,
-        hasUsedFindOnPage: Boolean
-    ): String = buildString {
-        append("Navigated OFF-PAGE to $targetUrl — recorded for separate investigation. ")
-        if (offPageCount >= 2) {
-            append("STOP clicking links — you have tried $offPageCount off-page links already. ")
-            if (!hasUsedFindOnPage) {
-                append("You have NOT searched the current page yet. ")
-            }
-            append("Use find_on_page with relevant keywords to search the CURRENT page content.")
-        } else if (!hasUsedFindOnPage) {
-            append("Do NOT click more links. Use find_on_page first to check if the information exists on this page.")
-        } else {
-            append("Look for the information elsewhere on the CURRENT page using scroll_to_text or by expanding [collapsed] elements.")
-        }
-    }
+    private fun buildOffPageOutcome(targetUrl: String): String =
+        "Navigated OFF-PAGE to $targetUrl — recorded for separate investigation. " +
+                "Look for the information elsewhere on the CURRENT page."
 
     /**
      * Returns null if give-up is acceptable, or a rejection reason if the agent

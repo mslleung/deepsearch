@@ -169,7 +169,6 @@ class WebpageNavigationAgentGenAiImpl(
         - OPEN QUESTIONS: what still needs to be found
         - TURNS: your previous observations, findings, decisions, and their outcomes
         - ELEMENTS: interactive elements on the page (role, state, text)
-        - SEARCH RESULTS: summary of prior find_on_page outcomes (if any)
 
         ## Instructions
 
@@ -185,12 +184,9 @@ class WebpageNavigationAgentGenAiImpl(
 
         ### Keyword tips
         Keywords must match ACTUAL TEXT on the page, not conceptual descriptions. The system handles stemming (e.g. "pricing" matches "prices").
-        - For numeric data: search for the numbers themselves ("45", "60", "5,900"), not descriptions ("duration", "price").
-        - For prices: include currency symbols like "$", "HK$", "£", "€", or specific amounts.
-        - For features: search exact feature names ("Stress Test", "ECG"), not categories ("features", "tests").
         - If all keywords return 0 matches: try SHORTER prefixes (e.g., "consult" instead of "consultation") or NUMERIC values you expect to find.
-        - Always include at least one highly specific keyword AND one broader keyword.
-        - When find_on_page already found matches in a prior turn (see SEARCH RESULTS), do NOT re-search the same keywords. Act on the results you already have.
+        - Be exhaustive: include keywords covering different aspects, synonyms, and expected text variations. The search is fast — more keywords upfront give you a richer picture of the page in fewer iterations.
+        - When find_on_page already found matches in a prior turn (see TURNS), do NOT re-search the same keywords. Act on the results you already have.
 
         ### Actions
 
@@ -398,16 +394,6 @@ class WebpageNavigationAgentGenAiImpl(
         } else if (input.answeredQuestions.isNotEmpty()) {
             appendLine()
             appendLine("OPEN QUESTIONS: None — all questions resolved. You may use answer_found.")
-        }
-
-        if (input.searchResults.isNotEmpty()) {
-            appendLine()
-            appendLine("SEARCH RESULTS (from prior find_on_page — do NOT re-search these keywords):")
-            input.searchResults.forEach { (keyword, counts) ->
-                val hidden = counts.total - counts.visible
-                val hiddenStr = if (hidden > 0) ", $hidden hidden" else ""
-                appendLine("  \"$keyword\": ${counts.visible} visible$hiddenStr")
-            }
         }
 
         if (input.previousActions.isNotEmpty()) {

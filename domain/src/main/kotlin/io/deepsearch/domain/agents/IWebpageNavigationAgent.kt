@@ -25,8 +25,7 @@ data class WebpageNavigationInput(
     val pageDescription: String?,
     val scrollPercent: Int,
     val currentIteration: Int = 1,
-    val maxIterations: Int = 12,
-    val searchResults: Map<String, IBrowserPage.TextMatchCounts> = emptyMap()
+    val maxIterations: Int = 12
 ) : IAgent.IAgentInput
 
 /**
