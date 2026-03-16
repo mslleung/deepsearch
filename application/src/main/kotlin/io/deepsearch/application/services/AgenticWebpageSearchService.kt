@@ -137,6 +137,13 @@ class AgenticWebpageSearchService(
 
     // --- Inner types ---
 
+    private enum class ActionEffect {
+        PAGE_CHANGED,
+        PAGE_UNCHANGED
+    }
+
+    private data class FindOnPageResult(val outcome: String, val autoScrolled: Boolean)
+
     private data class IterationContext(
         val elements: List<IBrowserPage.InteractiveElementInfo>,
         val screenshot: IBrowserPage.Screenshot,
@@ -288,7 +295,7 @@ class AgenticWebpageSearchService(
 
             val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(ctx.screenshot.bytes)
 
-            var allActionsPipelined = output.actions.isNotEmpty()
+            var pageChangedThisIteration = false
             for ((actionIdx, action) in output.actions.withIndex()) {
                 state.actionsPerformed.add(
                     if (actionIdx == 0) ActionWithOutcome(
@@ -299,43 +306,40 @@ class AgenticWebpageSearchService(
                     else ActionWithOutcome(action, observation = output.observation)
                 )
 
-                var continuesPipeline = false
-
                 when (action) {
                     is NavigationAction.AnswerFound ->
                         return handleAnswerFound(action, state, newFindings, iteration)
 
-                    is NavigationAction.GiveUp ->
+                    is NavigationAction.GiveUp -> {
                         handleGiveUp(action, state, iteration)
+                        break
+                    }
 
-                    is NavigationAction.Click ->
-                        continuesPipeline = handleClick(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight)
-
-                    is NavigationAction.FindOnPage ->
-                        handleFindOnPage(action, page, state)
-
-                    is NavigationAction.ScrollToText ->
-                        handleScrollToText(action, page, state)
-
-                    is NavigationAction.Scroll ->
-                        handleScroll(action, page, state, imgWidth, imgHeight)
-
-                    is NavigationAction.ScrollAt ->
-                        handleScrollAt(action, page, state, imgWidth, imgHeight)
-
-                    is NavigationAction.PeekFullPage ->
-                        handlePeekFullPage(page, state)
-
-                    is NavigationAction.Type ->
-                        handleType(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight)
-                }
-
-                if (!continuesPipeline) {
-                    allActionsPipelined = false
-                    break
+                    else -> {
+                        val effect = when (action) {
+                            is NavigationAction.Click ->
+                                handleClick(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight)
+                            is NavigationAction.FindOnPage ->
+                                handleFindOnPage(action, page, state)
+                            is NavigationAction.ScrollToText ->
+                                handleScrollToText(action, page, state)
+                            is NavigationAction.Scroll ->
+                                handleScroll(action, page, state, imgWidth, imgHeight)
+                            is NavigationAction.ScrollAt ->
+                                handleScrollAt(action, page, state, imgWidth, imgHeight)
+                            is NavigationAction.PeekFullPage ->
+                                handlePeekFullPage(page, state)
+                            is NavigationAction.Type ->
+                                handleType(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight)
+                        }
+                        if (effect == ActionEffect.PAGE_CHANGED) {
+                            pageChangedThisIteration = true
+                            break
+                        }
+                    }
                 }
             }
-            state.skipContextFetch = allActionsPipelined
+            state.skipContextFetch = output.actions.isNotEmpty() && !pageChangedThisIteration
         }
 
         return buildFinalResult(state)
@@ -360,12 +364,12 @@ class AgenticWebpageSearchService(
 
         try {
             val keywords = preScanKeywords.keywords
-            val outcome = executeFindOnPage(page, keywords, state)
+            val result = executeFindOnPage(page, keywords, state)
 
             state.actionsPerformed.add(
                 ActionWithOutcome(
                     NavigationAction.FindOnPage(keywords = keywords, reason = "pre-scan"),
-                    outcome = outcome,
+                    outcome = result.outcome,
                     observation = "Pre-scan keyword search before first visual analysis."
                 )
             )
@@ -383,7 +387,7 @@ class AgenticWebpageSearchService(
         state: NavigationLoopState
     ): Pair<IterationContext, Boolean> {
         if (state.skipContextFetch && state.lastCtx != null) {
-            logger.debug("Reusing previous context for {} (off-page-only round)", state.url)
+            logger.debug("Reusing previous context for {} (no page change last round)", state.url)
             return Pair(state.lastCtx!!, false)
         }
 
@@ -536,10 +540,6 @@ class AgenticWebpageSearchService(
         )
     }
 
-    /**
-     * Returns true if the click was pipelined (off-page navigation), meaning
-     * the action loop should continue to the next action without breaking.
-     */
     private suspend fun handleClick(
         action: NavigationAction.Click,
         page: IBrowserPage,
@@ -547,7 +547,7 @@ class AgenticWebpageSearchService(
         rawScreenshotBytes: ByteArray,
         imgWidth: Int,
         imgHeight: Int
-    ): Boolean {
+    ): ActionEffect {
         val viewportX = toViewportCoord(action.x, imgWidth)
         val viewportY = toViewportCoord(action.y, imgHeight)
         val desc = action.reason.take(60).ifEmpty { "element at (${action.x},${action.y})" }
@@ -560,7 +560,7 @@ class AgenticWebpageSearchService(
                         "Do NOT click it again. Find the answer elsewhere on the CURRENT page, " +
                         "or use answer_found / give_up."
             )
-            return true
+            return ActionEffect.PAGE_UNCHANGED
         }
 
         logger.debug(
@@ -583,7 +583,7 @@ class AgenticWebpageSearchService(
                 state.offPageClickedDescs.add(desc)
                 state.lastActionWasClick = false
                 updateLastActionOutcome(state, buildOffPageOutcome(targetUrl))
-                return true
+                return ActionEffect.PAGE_UNCHANGED
             } else {
                 state.lastActionWasClick = true
             }
@@ -591,22 +591,23 @@ class AgenticWebpageSearchService(
             throw e
         }
 
-        return false
+        return ActionEffect.PAGE_CHANGED
     }
 
     private suspend fun handleFindOnPage(
         action: NavigationAction.FindOnPage,
         page: IBrowserPage,
         state: NavigationLoopState
-    ) {
+    ): ActionEffect {
         logger.debug("FindOnPage: keywords={}", action.keywords)
         try {
             if (action.keywords.isEmpty()) {
                 updateLastActionOutcome(state, "No keywords provided. Provide keywords to search for.")
-            } else {
-                val outcome = executeFindOnPage(page, action.keywords, state)
-                updateLastActionOutcome(state, outcome)
+                return ActionEffect.PAGE_UNCHANGED
             }
+            val result = executeFindOnPage(page, action.keywords, state)
+            updateLastActionOutcome(state, result.outcome)
+            return if (result.autoScrolled) ActionEffect.PAGE_CHANGED else ActionEffect.PAGE_UNCHANGED
         } catch (e: CancellationException) {
             throw e
         }
@@ -616,29 +617,31 @@ class AgenticWebpageSearchService(
         action: NavigationAction.ScrollToText,
         page: IBrowserPage,
         state: NavigationLoopState
-    ) {
+    ): ActionEffect {
         logger.debug("ScrollToText: text='{}', occurrence={}", action.searchText, action.occurrence)
         try {
             if (action.searchText.isBlank()) {
                 updateLastActionOutcome(state, "No searchText provided.")
-            } else {
-                val found = page.scrollToTextContent(action.searchText, action.occurrence)
-                if (found) {
-                    logger.info("scroll_to_text found '{}' on {}", action.searchText, state.url)
-                    val totalMatches = state.lastFindCounts[action.searchText]?.total ?: 0
-                    val outcomeText = buildString {
-                        append("Scrolled to \"${action.searchText}\".")
-                        if (totalMatches > 1) {
-                            append(" There are $totalMatches total matches on this page.")
-                        }
-                    }
-                    updateLastActionOutcome(state, outcomeText)
-                } else {
-                    logger.debug("scroll_to_text: '{}' not found on {}", action.searchText, state.url)
-                    updateLastActionOutcome(state, "\"${action.searchText}\" not found on page.")
-                }
+                return ActionEffect.PAGE_UNCHANGED
             }
-            delay(POST_SCROLL_DELAY_MS)
+            val found = page.scrollToTextContent(action.searchText, action.occurrence)
+            if (found) {
+                logger.info("scroll_to_text found '{}' on {}", action.searchText, state.url)
+                val totalMatches = state.lastFindCounts[action.searchText]?.total ?: 0
+                val outcomeText = buildString {
+                    append("Scrolled to \"${action.searchText}\".")
+                    if (totalMatches > 1) {
+                        append(" There are $totalMatches total matches on this page.")
+                    }
+                }
+                updateLastActionOutcome(state, outcomeText)
+                delay(POST_SCROLL_DELAY_MS)
+                return ActionEffect.PAGE_CHANGED
+            } else {
+                logger.debug("scroll_to_text: '{}' not found on {}", action.searchText, state.url)
+                updateLastActionOutcome(state, "\"${action.searchText}\" not found on page.")
+                return ActionEffect.PAGE_UNCHANGED
+            }
         } catch (e: CancellationException) {
             throw e
         }
@@ -650,7 +653,7 @@ class AgenticWebpageSearchService(
         state: NavigationLoopState,
         imgWidth: Int,
         imgHeight: Int
-    ) {
+    ): ActionEffect {
         logger.debug("Scroll: {} {}%", action.scrollDirection, action.scrollPercent)
         try {
             val (deltaX, deltaY) = computeScrollDeltas(
@@ -674,6 +677,7 @@ class AgenticWebpageSearchService(
         } catch (e: CancellationException) {
             throw e
         }
+        return ActionEffect.PAGE_CHANGED
     }
 
     private suspend fun handleScrollAt(
@@ -682,7 +686,7 @@ class AgenticWebpageSearchService(
         state: NavigationLoopState,
         imgWidth: Int,
         imgHeight: Int
-    ) {
+    ): ActionEffect {
         logger.debug(
             "ScrollAt: ({},{}) {} {}%",
             action.x,
@@ -708,12 +712,13 @@ class AgenticWebpageSearchService(
         } catch (e: CancellationException) {
             throw e
         }
+        return ActionEffect.PAGE_CHANGED
     }
 
     private suspend fun handlePeekFullPage(
         page: IBrowserPage,
         state: NavigationLoopState
-    ) {
+    ): ActionEffect {
         logger.debug("Taking full-page peek screenshot for {}", state.url)
         try {
             val fullPageScreenshot = page.takeFullPageScreenshot()
@@ -730,6 +735,7 @@ class AgenticWebpageSearchService(
         } catch (e: CancellationException) {
             throw e
         }
+        return ActionEffect.PAGE_CHANGED
     }
 
     private suspend fun handleType(
@@ -739,7 +745,7 @@ class AgenticWebpageSearchService(
         rawScreenshotBytes: ByteArray,
         imgWidth: Int,
         imgHeight: Int
-    ) {
+    ): ActionEffect {
         val viewportX = toViewportCoord(action.x, imgWidth)
         val viewportY = toViewportCoord(action.y, imgHeight)
         val desc = action.reason.take(60).ifEmpty { "input at (${action.x},${action.y})" }
@@ -760,19 +766,20 @@ class AgenticWebpageSearchService(
         } catch (e: CancellationException) {
             throw e
         }
+        return ActionEffect.PAGE_CHANGED
     }
 
     // --- Find-on-page logic (shared by pre-scan and in-loop FindOnPage action) ---
 
     /**
      * Runs parallel exact + stemmed text search, builds the outcome string,
-     * and auto-scrolls to the best match if one exists. Returns the outcome text.
+     * and auto-scrolls to the best match if one exists.
      */
     private suspend fun executeFindOnPage(
         page: IBrowserPage,
         keywords: List<String>,
         state: NavigationLoopState
-    ): String {
+    ): FindOnPageResult {
         val (counts, stemmedMatches) = coroutineScope {
             val countsDeferred = async { page.countTextMatches(keywords) }
             val stemmedDeferred = async {
@@ -799,12 +806,12 @@ class AgenticWebpageSearchService(
             if (scrolled) {
                 logger.info("find_on_page auto-scrolled to '{}' on {}", scrollTarget, state.url)
                 delay(POST_SCROLL_DELAY_MS)
-                return "$outcome Auto-scrolled to \"$scrollTarget\"."
+                return FindOnPageResult("$outcome Auto-scrolled to \"$scrollTarget\".", autoScrolled = true)
             }
             delay(POST_SCROLL_DELAY_MS)
         }
 
-        return outcome
+        return FindOnPageResult(outcome, autoScrolled = false)
     }
 
     private val currencySymbols = setOf("$", "HK$", "£", "€", "¥", "US$", "A$", "S$")

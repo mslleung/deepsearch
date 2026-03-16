@@ -347,7 +347,7 @@ class WebpageNavigationAgentGenAiImpl(
                 listOf(NavigationAction.GiveUp(reason = response.reason ?: "No reason provided"))
             }
             else -> {
-                (response.actions ?: emptyList()).map { parseAction(it) }
+                (response.actions ?: emptyList()).map { toNavigationAction(it) }
             }
         }
 
@@ -430,76 +430,55 @@ class WebpageNavigationAgentGenAiImpl(
         }
     }
 
-    private fun parseAction(actionResp: ActionResponse): NavigationAction {
-        val reason = actionResp.reason ?: ""
-        return when (actionResp.action) {
+    private fun toNavigationAction(resp: ActionResponse): NavigationAction {
+        val reason = resp.reason ?: ""
+        return when (resp.action) {
             "click" -> {
-                val params = actionResp.click
-                if (params == null) {
-                    logger.warn("VLM returned click without coordinates, falling back to scroll")
-                    scrollFallback()
-                } else {
-                    NavigationAction.Click(
-                        x = params.x.coerceIn(0, 1000),
-                        y = params.y.coerceIn(0, 1000),
-                        reason = reason
-                    )
-                }
+                val p = checkNotNull(resp.click) { "click action missing click params" }
+                NavigationAction.Click(
+                    x = p.x.coerceIn(0, 1000),
+                    y = p.y.coerceIn(0, 1000),
+                    reason = reason
+                )
             }
             "scroll_page" -> {
-                val params = actionResp.scroll
+                val p = resp.scroll
                 NavigationAction.Scroll(
-                    scrollDirection = parseScrollDirection(params?.direction),
-                    scrollPercent = (params?.percent ?: 100).coerceIn(10, 100),
+                    scrollDirection = parseScrollDirection(p?.direction),
+                    scrollPercent = (p?.percent ?: 100).coerceIn(10, 100),
                     reason = reason
                 )
             }
             "scroll_element" -> {
-                val params = actionResp.scrollAt
-                if (params?.x == null || params.y == null || params.direction == null) {
-                    logger.warn("VLM returned scroll_element with missing params, falling back to scroll")
-                    scrollFallback()
-                } else {
-                    NavigationAction.ScrollAt(
-                        x = params.x.coerceIn(0, 1000),
-                        y = params.y.coerceIn(0, 1000),
-                        scrollDirection = parseScrollDirection(params.direction),
-                        scrollPercent = (params.percent ?: 100).coerceIn(10, 100),
-                        reason = reason
-                    )
-                }
+                val p = checkNotNull(resp.scrollAt) { "scroll_element action missing scrollAt params" }
+                NavigationAction.ScrollAt(
+                    x = checkNotNull(p.x) { "scroll_element missing x" }.coerceIn(0, 1000),
+                    y = checkNotNull(p.y) { "scroll_element missing y" }.coerceIn(0, 1000),
+                    scrollDirection = parseScrollDirection(checkNotNull(p.direction) { "scroll_element missing direction" }),
+                    scrollPercent = (p.percent ?: 100).coerceIn(10, 100),
+                    reason = reason
+                )
             }
             "find_on_page" -> NavigationAction.FindOnPage(
-                keywords = actionResp.findOnPage?.keywords ?: emptyList(),
+                keywords = resp.findOnPage?.keywords ?: emptyList(),
                 reason = reason
             )
             "scroll_to_text" -> NavigationAction.ScrollToText(
-                searchText = actionResp.scrollToText?.text ?: "",
+                searchText = resp.scrollToText?.text ?: "",
                 occurrence = 1,
                 reason = reason
             )
             "peek_full_page" -> NavigationAction.PeekFullPage(reason = reason)
             "type_text" -> {
-                val params = actionResp.type
-                val x = params?.x
-                val y = params?.y
-                val text = params?.text
-                if (x == null || y == null || text.isNullOrBlank()) {
-                    logger.warn("VLM returned type_text without coordinates or text, falling back to scroll")
-                    scrollFallback()
-                } else {
-                    NavigationAction.Type(
-                        x = x.coerceIn(0, 1000),
-                        y = y.coerceIn(0, 1000),
-                        text = text,
-                        reason = reason
-                    )
-                }
+                val p = checkNotNull(resp.type) { "type_text action missing type params" }
+                NavigationAction.Type(
+                    x = checkNotNull(p.x) { "type_text missing x" }.coerceIn(0, 1000),
+                    y = checkNotNull(p.y) { "type_text missing y" }.coerceIn(0, 1000),
+                    text = checkNotNull(p.text) { "type_text missing text" },
+                    reason = reason
+                )
             }
-            else -> {
-                logger.warn("Unknown exploration action type: {}", actionResp.action)
-                scrollFallback()
-            }
+            else -> throw IllegalArgumentException("Unknown action type: ${resp.action}")
         }
     }
 
@@ -509,11 +488,6 @@ class WebpageNavigationAgentGenAiImpl(
         "RIGHT" -> ScrollDirection.RIGHT
         else -> ScrollDirection.DOWN
     }
-
-    private fun scrollFallback() = NavigationAction.Scroll(
-        scrollDirection = ScrollDirection.DOWN,
-        reason = "fallback"
-    )
 
     private fun formatTurnEntry(turnNumber: Int, entry: ActionWithOutcome): String = buildString {
         appendLine("  [$turnNumber] observation: ${entry.observation ?: "(none)"}")
