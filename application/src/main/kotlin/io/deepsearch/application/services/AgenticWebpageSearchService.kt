@@ -306,7 +306,7 @@ class AgenticWebpageSearchService(
                         return handleAnswerFound(action, state, newFindings, iteration)
 
                     is NavigationAction.GiveUp ->
-                        handleGiveUp(action, state, iteration, ctx.scrollPercent)?.let { return it }
+                        handleGiveUp(action, state, iteration)
 
                     is NavigationAction.Click ->
                         continuesPipeline = handleClick(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight)
@@ -517,28 +517,8 @@ class AgenticWebpageSearchService(
     private fun handleGiveUp(
         action: NavigationAction.GiveUp,
         state: NavigationLoopState,
-        iteration: Int,
-        scrollPercent: Int
-    ): AgenticPageSearchResult? {
-        val consecutiveGiveUps = state.actionsPerformed.takeLastWhile {
-            it.action is NavigationAction.GiveUp
-        }.size
-        val rejectionReason = evaluateGiveUpReadiness(state.actionsPerformed, scrollPercent)
-
-        if (rejectionReason != null) {
-            logger.info(
-                "Rejecting premature give_up at iteration {} for {} (attempt #{}) — {}",
-                iteration, state.url, consecutiveGiveUps, rejectionReason
-            )
-            val escalation = if (consecutiveGiveUps >= 2) {
-                " STOP trying give_up. You have been rejected $consecutiveGiveUps times. " +
-                        "Instead: use answer_found with whatever partial information you have gathered so far, " +
-                        "even if incomplete. Your findings and observations contain useful data."
-            } else ""
-            updateLastActionOutcome(state, "REJECTED: $rejectionReason$escalation")
-            return null
-        }
-
+        iteration: Int
+    ): AgenticPageSearchResult {
         logger.info(
             "Agentic search gave up after {} iterations for {}: {}",
             iteration, state.url, action.reason
@@ -929,78 +909,6 @@ class AgenticWebpageSearchService(
     private fun buildOffPageOutcome(targetUrl: String): String =
         "Navigated OFF-PAGE to $targetUrl — recorded for separate investigation. " +
                 "Look for the information elsewhere on the CURRENT page."
-
-    // --- Give-up evaluation ---
-
-    /**
-     * Returns null if give-up is acceptable, or a rejection reason if the agent
-     * hasn't explored the page thoroughly enough.
-     *
-     * Requirements escalate to prevent premature give-up:
-     * 1. find_on_page must have been used at least once.
-     * 2. If find_on_page found visible matches, scroll_to_text must have been used.
-     * 3. If find_on_page reported hidden matches, scroll_to_text or click must follow.
-     * 4. The page must have been navigated beyond the initial viewport
-     *    (via scroll, scroll_to_text, or reaching high scroll%).
-     */
-    private fun evaluateGiveUpReadiness(
-        actions: List<ActionWithOutcome>,
-        scrollPercent: Int
-    ): String? {
-        val usedFindOnPage = actions.any { it.action is NavigationAction.FindOnPage }
-        if (!usedFindOnPage) {
-            return "You must use find_on_page to search for relevant keywords before giving up. " +
-                    "The current viewport may not show all page content."
-        }
-
-        val findOutcomes = actions.filter { it.action is NavigationAction.FindOnPage }
-        val allZeroMatches = findOutcomes.all { entry ->
-            val outcome = entry.outcome ?: ""
-            !outcome.contains("hidden") && Regex("""\w+: (\d+)""").findAll(outcome).all { it.groupValues[1] == "0" }
-        }
-
-        if (allZeroMatches && findOutcomes.size >= 1) {
-            return null
-        }
-
-        val hasAnyVisibleMatches = findOutcomes.any { entry ->
-            val outcome = entry.outcome ?: ""
-            Regex("""\w+: (\d+)""").findAll(outcome).any { it.groupValues[1] != "0" }
-        }
-        val hasHiddenMatches = findOutcomes.any { entry ->
-            (entry.outcome ?: "").contains("hidden", ignoreCase = true)
-        }
-        val usedScrollToText = actions.any { it.action is NavigationAction.ScrollToText }
-
-        if (hasAnyVisibleMatches && !usedScrollToText) {
-            return "find_on_page found visible matches on this page but you haven't used scroll_to_text to navigate to them. " +
-                    "Use scroll_to_text with a matched keyword (e.g. a currency symbol like \"HK$\" or \"$\") to jump directly to the content."
-        }
-
-        if (hasHiddenMatches) {
-            val lastFindIndex = actions.indexOfLast { it.action is NavigationAction.FindOnPage }
-            val triedToReveal = actions.drop(lastFindIndex + 1).any {
-                it.action is NavigationAction.Click || it.action is NavigationAction.ScrollToText
-            }
-            if (!triedToReveal) {
-                return "find_on_page reported hidden matches behind collapsed elements. " +
-                        "You must use scroll_to_text to jump to hidden content, or click to expand collapsed elements, before giving up."
-            }
-        }
-
-        val hasScrolled = actions.any {
-            it.action is NavigationAction.Scroll || it.action is NavigationAction.ScrollToText || it.action is NavigationAction.ScrollAt
-        }
-        val pageFullyInViewport = scrollPercent >= 95
-
-        if (!hasScrolled && !pageFullyInViewport) {
-            return "You have not scrolled or used scroll_to_text yet. " +
-                    "The page extends beyond the current viewport (scroll position: $scrollPercent%). " +
-                    "Use scroll_to_text with relevant keywords, or scroll to explore more of the page."
-        }
-
-        return null
-    }
 
     // --- Cookie handling ---
 
