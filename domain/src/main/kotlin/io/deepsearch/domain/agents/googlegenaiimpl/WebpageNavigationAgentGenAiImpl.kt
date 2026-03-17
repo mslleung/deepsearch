@@ -198,7 +198,7 @@ class WebpageNavigationAgentGenAiImpl(
         - previous exploration iterations
         
         ## Strategy
-        1. Extract relevant findings from the current viewport screenshot.
+        1. Extract relevant findings from the current viewport screenshot. Aim to capture all relevant content with no omission, keep keywords intact. If keywords are in another language, keep them in the original language instead of transliterate.
         2. Explore the page for more information. Approach this just like a real human doing research. Look exhaustively for all relevant information on the page as efficiently as possible.
             - Control-F to jump to text
             - Scroll around the webpage
@@ -214,7 +214,7 @@ class WebpageNavigationAgentGenAiImpl(
         - **click**: Click element at (x,y) in 0-1000 scale. Include all clickable targets (buttons, tabs, accordions, links).
         - **find_on_page**: Search keywords with stemming. Auto-scrolls to best match.
         - **scroll_to_text**: Jump to specific text after find_on_page.
-        - **scroll_page**: Scroll viewport UP/DOWN/LEFT/RIGHT.
+        - **scroll_page**: Scroll viewport UP/DOWN/LEFT/RIGHT. Prefer to scroll as much as possible without breaking context so as to not waste iterations.
         - **scroll_element**: Scroll container at (x,y).
         - **peek_full_page**: Full-page overview. Last resort.
 

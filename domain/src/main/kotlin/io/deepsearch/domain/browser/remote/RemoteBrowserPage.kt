@@ -264,6 +264,17 @@ class RemoteBrowserPage(
         return IBrowserPage.Screenshot(Base64.decode(r.base64), ImageMimeType.fromValue(r.mimeType))
     }
 
+    override suspend fun getElementsAtPoints(
+        points: List<Pair<Int, Int>>
+    ): List<IBrowserPage.ElementAtPoint?> {
+        val resp = pageCmdParse<ElementsAtPointsResponse>(
+            PageCommand.GetElementsAtPoints(points.map { (x, y) -> PointCoord(x, y) })
+        )
+        return resp.elements.map { it?.let { e ->
+            IBrowserPage.ElementAtPoint(path = e.path, tag = e.tag, text = e.text)
+        }}
+    }
+
     override suspend fun clickAtCoordinates(x: Int, y: Int) {
         pageCmd(PageCommand.ClickAtCoordinates(x, y))
     }

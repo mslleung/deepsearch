@@ -174,7 +174,13 @@ sealed class PageCommand {
 
     @Serializable @SerialName("typeText")
     data class TypeText(val text: String) : PageCommand()
+
+    @Serializable @SerialName("getElementsAtPoints")
+    data class GetElementsAtPoints(val points: List<PointCoord>) : PageCommand()
 }
+
+@Serializable
+data class PointCoord(val x: Int, val y: Int)
 
 @Serializable
 data class XPathReplacement(val xpath: String, val text: String? = null)
@@ -274,6 +280,14 @@ data class TablesInterpretationDataResponse(
 
 @Serializable
 data class GuardedClickResponse(val navigatedAwayTo: String?)
+
+// ==================== Element At Point Response ====================
+
+@Serializable
+data class ElementAtPointResponse(val path: String, val tag: String, val text: String)
+
+@Serializable
+data class ElementsAtPointsResponse(val elements: List<ElementAtPointResponse?>)
 
 // ==================== Hidden Container Bounding Boxes Response ====================
 

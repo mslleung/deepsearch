@@ -89,6 +89,18 @@ interface IBrowserPage {
     suspend fun getElementHtmlByCssSelector(cssSelector: String): String
 
     /**
+     * Identify the DOM element at each viewport coordinate.
+     *
+     * Uses `document.elementFromPoint()` for each point and returns a unique
+     * DOM path (e.g. `body > div:nth-of-type(2) > a:nth-of-type(3)`) plus
+     * tag and text for debug logging.  Returns null for coordinates outside
+     * the viewport.  All points are resolved in a single browser call.
+     */
+    data class ElementAtPoint(val path: String, val tag: String, val text: String)
+
+    suspend fun getElementsAtPoints(points: List<Pair<Int, Int>>): List<ElementAtPoint?>
+
+    /**
      * Click at absolute viewport coordinates using low-level mouse events.
      * Immune to DOM changes since it doesn't rely on selectors.
      */

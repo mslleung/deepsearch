@@ -289,7 +289,23 @@ class AgenticWebpageSearchService(
 
             val (imgWidth, imgHeight) = imageProcessingService.getImageDimensions(ctx.screenshot.bytes)
 
+            val clickTargets: Map<Int, IBrowserPage.ElementAtPoint> =
+                if (hasConsecutiveClicks(output.actions)) {
+                    val clickCoords = output.actions.mapIndexedNotNull { idx, act ->
+                        if (act is NavigationAction.Click)
+                            idx to (toViewportCoord(act.x, imgWidth) to toViewportCoord(act.y, imgHeight))
+                        else null
+                    }
+                    val results = page.getElementsAtPoints(clickCoords.map { it.second })
+                    buildMap {
+                        clickCoords.zip(results).forEach { (idxCoord, el) ->
+                            if (el != null) put(idxCoord.first, el)
+                        }
+                    }
+                } else emptyMap()
+
             var pageChangedThisIteration = false
+            var alreadyContinuedClick = false
             for ((actionIdx, action) in output.actions.withIndex()) {
                 state.actionsPerformed.add(
                     if (actionIdx == 0) ActionWithOutcome(
@@ -323,6 +339,36 @@ class AgenticWebpageSearchService(
                         }
                         if (effect == ActionEffect.PAGE_CHANGED) {
                             pageChangedThisIteration = true
+
+                            if (action is NavigationAction.Click && !alreadyContinuedClick) {
+                                val nextIdx = actionIdx + 1
+                                val nextAction = output.actions.getOrNull(nextIdx)
+                                val expectedTarget = clickTargets[nextIdx]
+
+                                if (nextAction is NavigationAction.Click && expectedTarget != null) {
+                                    delay(POST_CLICK_DELAY_MS)
+                                    val nextVx = toViewportCoord(nextAction.x, imgWidth)
+                                    val nextVy = toViewportCoord(nextAction.y, imgHeight)
+                                    val fresh = page.getElementsAtPoints(listOf(nextVx to nextVy)).firstOrNull()
+
+                                    if (fresh != null && fresh.path == expectedTarget.path) {
+                                        alreadyContinuedClick = true
+                                        updateLastActionOutcome(state, "Executed; continued to next action.")
+                                        logger.debug(
+                                            "Click continuation verified: <{}> '{}' [{}] still at ({},{})",
+                                            fresh.tag, fresh.text.take(30), fresh.path, nextVx, nextVy
+                                        )
+                                        continue
+                                    } else {
+                                        logger.debug(
+                                            "Click continuation blocked at ({},{}): expected [{}], found [{}]",
+                                            nextVx, nextVy,
+                                            expectedTarget.path,
+                                            fresh?.path ?: "null"
+                                        )
+                                    }
+                                }
+                            }
                             break
                         }
                     }
@@ -988,4 +1034,9 @@ class AgenticWebpageSearchService(
         state.actionsPerformed[state.actionsPerformed.lastIndex] =
             state.actionsPerformed.last().copy(outcome = outcome)
     }
+
+    private fun hasConsecutiveClicks(actions: List<NavigationAction>): Boolean =
+        actions.zipWithNext().any { (a, b) ->
+            a is NavigationAction.Click && b is NavigationAction.Click
+        }
 }
