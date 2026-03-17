@@ -671,14 +671,8 @@ class AgenticWebpageSearchService(
                 imgHeight
             )
             page.scrollPage(deltaX, deltaY)
-            val hasUsedFindOnPageBefore = state.actionsPerformed.any {
-                it.action is NavigationAction.FindOnPage
-            }
             val scrollOutcome = buildString {
                 append("Scrolled ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%")
-                if (!hasUsedFindOnPageBefore) {
-                    append(". IMPORTANT: You have not used find_on_page yet. Use find_on_page NEXT — it searches with stemming/fuzzy matching and auto-scrolls to the best match.")
-                }
             }
             updateLastActionOutcome(state, scrollOutcome)
             delay(POST_SCROLL_DELAY_MS)
