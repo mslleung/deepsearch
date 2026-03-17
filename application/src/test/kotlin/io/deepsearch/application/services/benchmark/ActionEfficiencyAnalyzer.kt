@@ -235,16 +235,16 @@ object ActionEfficiencyAnalyzer {
             )
         }
 
-        val prematureGiveUpRejections = actions.count { entry ->
-            entry.action is NavigationAction.GiveUp &&
+        val prematureFinishRejections = actions.count { entry ->
+            entry.action is NavigationAction.ExplorationFinished &&
                     entry.outcome?.contains("REJECTED", ignoreCase = true) == true
         }
-        if (prematureGiveUpRejections > 0) {
+        if (prematureFinishRejections > 0) {
             patterns.add(
                 AntiPattern(
                     AntiPatternType.PREMATURE_GIVE_UP_REJECTED,
-                    "$prematureGiveUpRejections premature give_up attempt(s) rejected",
-                    20.0 * prematureGiveUpRejections
+                    "$prematureFinishRejections premature exploration_finished attempt(s) rejected",
+                    20.0 * prematureFinishRejections
                 )
             )
         }
@@ -314,8 +314,7 @@ object ActionEfficiencyAnalyzer {
         is NavigationAction.ScrollToText -> "scroll_to_text"
         is NavigationAction.PeekFullPage -> "peek_full_page"
         is NavigationAction.Type -> "type(${action.x},${action.y})"
-        is NavigationAction.AnswerFound -> "answer_found"
-        is NavigationAction.GiveUp -> "give_up"
+        is NavigationAction.ExplorationFinished -> "exploration_finished"
     }
 
     fun buildReport(scoreCards: List<BenchmarkScoreCard>): BenchmarkReport {

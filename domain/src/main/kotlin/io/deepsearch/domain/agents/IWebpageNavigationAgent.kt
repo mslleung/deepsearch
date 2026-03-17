@@ -62,8 +62,8 @@ sealed class NavigationAction {
     ) : NavigationAction()
 
     @Serializable
-    data class AnswerFound(
-        val answer: String,
+    data class ExplorationFinished(
+        val answer: String?,
         val contentDate: String? = null
     ) : NavigationAction()
 
@@ -75,9 +75,6 @@ sealed class NavigationAction {
         val scrollPercent: Int = 100,
         val reason: String
     ) : NavigationAction()
-
-    @Serializable
-    data class GiveUp(val reason: String) : NavigationAction()
 
     @Serializable
     data class PeekFullPage(

@@ -296,12 +296,12 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
         val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
         val peekCount = result.actionsPerformed.count { it.action is NavigationAction.PeekFullPage }
-        val gaveUp = result.actionsPerformed.any { it.action is NavigationAction.GiveUp }
-        val answeredFound = result.actionsPerformed.any { it.action is NavigationAction.AnswerFound }
+        val finished = result.actionsPerformed.lastOrNull { it.action is NavigationAction.ExplorationFinished }
+        val finishedWithAnswer = finished?.let { (it.action as NavigationAction.ExplorationFinished).answer != null } ?: false
         val exhaustedIterations = result.actionsPerformed.size >= MAX_ITERATIONS
 
         println("\n--- Behavior Summary ---")
-        println("Termination: ${if (gaveUp) "GiveUp" else if (answeredFound) "AnswerFound (HALLUCINATION!)" else "Loop exhaustion ($MAX_ITERATIONS iterations)"}")
+        println("Termination: ${if (finished != null && !finishedWithAnswer) "ExplorationFinished(null)" else if (finishedWithAnswer) "ExplorationFinished(answer) (HALLUCINATION!)" else "Loop exhaustion ($MAX_ITERATIONS iterations)"}")
         println("Total iterations: ${result.actionsPerformed.size} / $MAX_ITERATIONS")
         println("Clicks: $clickCount, Finds: $findCount, ScrollToText: $scrollToTextCount, Scrolls: $scrollCount")
         println("PeekFullPage: $peekCount")
@@ -310,8 +310,8 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         assertFalse(result.success, "Should NOT report success when the information does not exist on the page")
         assertNull(result.answer, "Should NOT hallucinate an answer — answer must be null")
         assertTrue(
-            gaveUp || exhaustedIterations,
-            "Agent should terminate via GiveUp or loop exhaustion, not AnswerFound"
+            (finished != null && !finishedWithAnswer) || exhaustedIterations,
+            "Agent should terminate via ExplorationFinished(null) or loop exhaustion, not with an answer"
         )
     }
 

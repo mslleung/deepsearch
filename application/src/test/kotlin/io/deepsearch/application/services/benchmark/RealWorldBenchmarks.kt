@@ -50,7 +50,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -71,7 +71,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -92,7 +92,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -115,7 +115,7 @@ object RealWorldBenchmarks {
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 4,
         constraints = BenchmarkConstraints(
@@ -136,7 +136,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -157,7 +157,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -180,7 +180,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -201,7 +201,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -222,7 +222,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -243,7 +243,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -264,7 +264,7 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(

@@ -161,8 +161,8 @@ class WebpageNavigationAgentGenAiImpl(
                     .build(),
                 "decision" to Schema.builder()
                     .type("STRING")
-                    .enum_(listOf("explore", "answer_found", "give_up"))
-                    .description("Top-level intent: explore the page further, report the answer, or give up.")
+                    .enum_(listOf("continue_exploring", "exploration_finished"))
+                    .description("Top-level intent: continue exploring the page, or finish exploration.")
                     .build(),
                 "reason" to Schema.builder()
                     .type("STRING")
@@ -171,12 +171,12 @@ class WebpageNavigationAgentGenAiImpl(
                 "actions" to Schema.builder()
                     .type("ARRAY")
                     .items(actionSchema)
-                    .description("Exploration actions to execute in order (decision=explore only). Eagerly include ALL actions that might yield information.")
+                    .description("Exploration actions to execute in order (decision=continue_exploring only). Eagerly include ALL actions that might yield information.")
                     .nullable(true)
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
-                    .description("Final answer synthesizing all findings (decision=answer_found only).")
+                    .description("Answer synthesized from all findings (decision=exploration_finished only). Null if no relevant findings were discovered.")
                     .nullable(true)
                     .build()
             )
@@ -209,7 +209,7 @@ class WebpageNavigationAgentGenAiImpl(
         5. Capture regions that are useful as a reference as captureRegions.
 
         ## Decision & Actions
-        **explore**: Provide ALL exploration actions you think will yield information. Be eager — include every action worth trying.
+        **continue_exploring**: Provide ALL exploration actions you think will yield information. Be eager — include every action worth trying.
         - **type_text**: Type into input field at (x,y). Highest priority — triggers search/filter.
         - **click**: Click element at (x,y) in 0-1000 scale. Include all clickable targets (buttons, tabs, accordions, links).
         - **find_on_page**: Search keywords with stemming. Auto-scrolls to best match.
@@ -218,8 +218,7 @@ class WebpageNavigationAgentGenAiImpl(
         - **scroll_element**: Scroll container at (x,y).
         - **peek_full_page**: Full-page overview. Last resort.
 
-        **answer_found**: Synthesize all findings into answer. Partial answer (prefix "Based on available information:") is ALWAYS better than give_up.
-        **give_up**: LAST RESORT — only when all questions have no findings and ALL strategies exhausted.
+        **exploration_finished**: Stop exploring and return. Provide an answer synthesized from all findings, or null if no relevant findings were discovered.
     """.trimIndent()
 
     @Serializable
@@ -326,17 +325,10 @@ class WebpageNavigationAgentGenAiImpl(
         }
 
         val actions = when (response.decision) {
-            "answer_found" -> {
-                val answer = response.answer
-                if (answer.isNullOrBlank()) {
-                    logger.warn("VLM returned answer_found without answer text, treating as give_up")
-                    listOf(NavigationAction.GiveUp(reason = "Model claimed answer_found but provided no answer"))
-                } else {
-                    listOf(NavigationAction.AnswerFound(answer = answer))
-                }
-            }
-            "give_up" -> {
-                listOf(NavigationAction.GiveUp(reason = response.reason ?: "No reason provided"))
+            "exploration_finished" -> {
+                listOf(NavigationAction.ExplorationFinished(
+                    answer = response.answer?.takeIf { it.isNotBlank() }
+                ))
             }
             else -> {
                 (response.actions ?: emptyList()).map { toNavigationAction(it) }
@@ -401,7 +393,7 @@ class WebpageNavigationAgentGenAiImpl(
             }
             val allResolved = input.questions.all { it.resolved }
             if (allResolved) {
-                appendLine("  All questions resolved. You may use answer_found.")
+                appendLine("  All questions resolved. You may use exploration_finished.")
             }
         }
 
@@ -505,8 +497,10 @@ class WebpageNavigationAgentGenAiImpl(
         is NavigationAction.Type -> {
             "type_text '${action.text.take(30)}' into ${action.reason.take(60).ifEmpty { "(${action.x},${action.y})" }}"
         }
-        is NavigationAction.AnswerFound -> "answer_found: ${action.answer.take(80)}"
-        is NavigationAction.GiveUp -> "give_up: ${action.reason}"
+        is NavigationAction.ExplorationFinished -> {
+            val summary = action.answer?.take(80) ?: "no findings"
+            "exploration_finished: $summary"
+        }
     }
 
     // --- Keyword generation for pre-scan ---

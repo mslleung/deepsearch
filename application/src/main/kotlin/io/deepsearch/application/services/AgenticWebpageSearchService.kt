@@ -307,13 +307,8 @@ class AgenticWebpageSearchService(
                 )
 
                 when (action) {
-                    is NavigationAction.AnswerFound ->
-                        return handleAnswerFound(action, state, newFindings, iteration)
-
-                    is NavigationAction.GiveUp -> {
-                        handleGiveUp(action, state, iteration)
-                        break
-                    }
+                    is NavigationAction.ExplorationFinished ->
+                        return handleExplorationFinished(action, state, newFindings, iteration)
 
                     else -> {
                         val effect = when (action) {
@@ -490,49 +485,41 @@ class AgenticWebpageSearchService(
 
     // --- Action handlers ---
 
-    private fun handleAnswerFound(
-        action: NavigationAction.AnswerFound,
+    private fun handleExplorationFinished(
+        action: NavigationAction.ExplorationFinished,
         state: NavigationLoopState,
         newFindings: List<String>,
         iteration: Int
     ): AgenticPageSearchResult {
         val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings)
+        val answer = action.answer
+        if (answer != null) {
+            logger.info(
+                "Agentic search finished with answer after {} iterations ({} findings, {} captures) for {}: {}",
+                iteration, allObservations.size, state.capturedImages.size, state.url, answer.take(100)
+            )
+            return AgenticPageSearchResult(
+                answer = answer,
+                evidence = newFindings.lastOrNull() ?: allObservations.lastOrNull(),
+                contentDate = action.contentDate,
+                actionsPerformed = state.actionsPerformed,
+                observations = allObservations,
+                success = true,
+                totalTokenUsage = state.aggregatedTokenUsage,
+                discoveredUrls = state.discoveredUrls,
+                capturedImages = state.capturedImages.toList()
+            )
+        }
         logger.info(
-            "Agentic search found answer after {} iterations ({} findings, {} captures) for {}: {}",
-            iteration, allObservations.size, state.capturedImages.size, state.url, action.answer.take(100)
-        )
-        return AgenticPageSearchResult(
-            answer = action.answer,
-            evidence = newFindings.lastOrNull() ?: allObservations.lastOrNull(),
-            contentDate = action.contentDate,
-            actionsPerformed = state.actionsPerformed,
-            observations = allObservations,
-            success = true,
-            totalTokenUsage = state.aggregatedTokenUsage,
-            discoveredUrls = state.discoveredUrls,
-            capturedImages = state.capturedImages.toList()
-        )
-    }
-
-    /**
-     * Returns an [AgenticPageSearchResult] if give-up is accepted (caller should return it),
-     * or null if the give-up was rejected and the loop should continue.
-     */
-    private fun handleGiveUp(
-        action: NavigationAction.GiveUp,
-        state: NavigationLoopState,
-        iteration: Int
-    ): AgenticPageSearchResult {
-        logger.info(
-            "Agentic search gave up after {} iterations for {}: {}",
-            iteration, state.url, action.reason
+            "Agentic search finished with no findings after {} iterations for {}",
+            iteration, state.url
         )
         return AgenticPageSearchResult(
             answer = null,
             evidence = null,
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
-            observations = collectAllFindings(state.trackedQuestions, state.generalFindings),
+            observations = allObservations,
             success = false,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,

@@ -46,7 +46,7 @@ object ControlledPageBenchmarks {
         query = "What is the company motto?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("INNOVATION-DRIVES-PROGRESS")),
         idealActionSequence = listOf(
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 1,
         constraints = BenchmarkConstraints(
@@ -68,7 +68,7 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("REFUND-GAMMA-77")),
         idealActionSequence = listOf(
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
@@ -89,7 +89,7 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("499")),
         idealActionSequence = listOf(
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
@@ -112,7 +112,7 @@ object ControlledPageBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.Click::class,
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -133,7 +133,7 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
-            NavigationAction.GiveUp::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -154,7 +154,7 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("36")),
         idealActionSequence = listOf(
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
@@ -175,7 +175,7 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("75")),
         idealActionSequence = listOf(
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
@@ -195,7 +195,7 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("WX-CANCEL-88R")),
         idealActionSequence = listOf(
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
@@ -217,7 +217,7 @@ object ControlledPageBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -236,7 +236,7 @@ object ControlledPageBenchmarks {
         query = "What is the activation code?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("ONETRUST-PASS-99")),
         idealActionSequence = listOf(
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 1,
         constraints = BenchmarkConstraints(
@@ -255,7 +255,7 @@ object ControlledPageBenchmarks {
         query = "What is the service activation key?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("COOKIEBOT-PASS-55")),
         idealActionSequence = listOf(
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 1,
         constraints = BenchmarkConstraints(
@@ -276,7 +276,7 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("CUSTOM-BANNER-77")),
         idealActionSequence = listOf(
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
@@ -297,14 +297,14 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("MAINT-PHOENIX-2024-X9")),
         idealActionSequence = listOf(
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
             maxIterations = 6,
             requiredActionTypes = setOf(
                 NavigationAction.ScrollToText::class,
-                NavigationAction.AnswerFound::class
+                NavigationAction.ExplorationFinished::class
             ),
             maxScrollCount = 2
         )
@@ -327,7 +327,7 @@ object ControlledPageBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
@@ -349,7 +349,7 @@ object ControlledPageBenchmarks {
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("2 hour")),
         idealActionSequence = listOf(
             NavigationAction.ScrollToText::class,
-            NavigationAction.AnswerFound::class
+            NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
