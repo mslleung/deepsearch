@@ -303,6 +303,9 @@ class RemoteBrowserPage(
     override suspend fun scrollToTextContent(searchText: String, occurrence: Int): Boolean =
         pageCmd(PageCommand.ScrollToTextContent(searchText, occurrence)).toBoolean()
 
+    override suspend fun scrollToTextInDirection(searchText: String, direction: String): Boolean =
+        pageCmd(PageCommand.ScrollToTextInDirection(searchText, direction)).toBoolean()
+
     override suspend fun countTextMatches(keywords: List<String>): Map<String, IBrowserPage.TextMatchCounts> {
         val json = pageCmd(PageCommand.CountTextMatches(keywords))
         return Json.decodeFromString(json)

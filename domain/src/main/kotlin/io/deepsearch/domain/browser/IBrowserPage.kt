@@ -474,6 +474,17 @@ interface IBrowserPage {
      */
     suspend fun scrollToTextContent(searchText: String, occurrence: Int = 1): Boolean
 
+    /**
+     * Search for a text fragment in a given direction (UP/DOWN) from the current viewport
+     * and scroll the containing element into view. Ignores all matches inside the current
+     * viewport and in the opposite direction.
+     *
+     * @param searchText The text fragment to search for (case-insensitive)
+     * @param direction "DOWN" to find the next match below the viewport, "UP" for above
+     * @return true if the text was found and scrolled into view; false if not found
+     */
+    suspend fun scrollToTextInDirection(searchText: String, direction: String): Boolean
+
     @Serializable
     data class TextMatchCounts(val visible: Int, val total: Int, val firstContext: String? = null)
 

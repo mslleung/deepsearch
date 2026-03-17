@@ -100,7 +100,8 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("OBJECT")
                     .nullable(true)
                     .properties(mapOf(
-                        "text" to Schema.builder().type("STRING").description("The text to scroll to on the page.").build()
+                        "text" to Schema.builder().type("STRING").description("The text to search for outside the current viewport.").build(),
+                        "direction" to Schema.builder().type("STRING").enum_(listOf("DOWN", "UP")).description("Direction to search from the current viewport. Default DOWN.").build()
                     ))
                     .required(listOf("text"))
                     .build(),
@@ -198,7 +199,10 @@ class WebpageNavigationAgentGenAiImpl(
         - previous exploration iterations
         
         ## Strategy
-        1. Extract relevant findings from the current viewport screenshot. Aim to capture all relevant content with no omission, keep keywords intact. If keywords are in another language, keep them in the original language instead of transliterate.
+        1. Extract any relevant findings from the current viewport screenshot. 
+            - Do not omit data, capture anything that may enrich or support the answer
+            - Do not invent facts, stick with exactly what is shown on the screenshot
+            - Keep keywords intact. If keywords are in another language, keep them in the original language instead of transliterate.
         2. Explore the page for more information. Approach this just like a real human doing research. Look exhaustively for all relevant information on the page as efficiently as possible.
             - Control-F to jump to text
             - Scroll around the webpage
@@ -211,10 +215,10 @@ class WebpageNavigationAgentGenAiImpl(
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information. Be eager — include every action worth trying.
         - **type_text**: Type into input field at (x,y). Highest priority — triggers search/filter.
-        - **click**: Click element at (x,y) in 0-1000 scale. Include all clickable targets (buttons, tabs, accordions, links).
-        - **find_on_page**: Search keywords with stemming. Auto-scrolls to best match.
-        - **scroll_to_text**: Jump to specific text after find_on_page.
-        - **scroll_page**: Scroll viewport UP/DOWN/LEFT/RIGHT. Always try to scroll as much as possible, without cutting text in the middle by the viewport boundaries.
+        - **click**: Click element at (x,y) in 0-1000 scale. Include all plausible targets (buttons, tabs, accordions, links etc.).
+        - **find_on_page**: Search keywords with stemming. Auto-scrolls to the first match.
+        - **scroll_to_text**: Scroll UP/DOWN to find the next occurrence of text outside the current viewport. Use after find_on_page to jump between matches. This is akin to a more efficient CONTROL-F in the webpage.
+        - **scroll_page**: Scroll viewport UP/DOWN/LEFT/RIGHT. Always try to scroll by 100% unless doing so would cut text in the middle by the viewport boundaries.
         - **scroll_element**: Scroll container at (x,y).
         - **peek_full_page**: Full-page overview. Last resort.
 
@@ -243,7 +247,7 @@ class WebpageNavigationAgentGenAiImpl(
     private data class FindOnPageParams(val keywords: List<String>? = null)
 
     @Serializable
-    private data class ScrollToTextParams(val text: String? = null)
+    private data class ScrollToTextParams(val text: String? = null, val direction: String? = null)
 
     @Serializable
     private data class TypeParams(val x: Int? = null, val y: Int? = null, val text: String? = null)
@@ -449,7 +453,7 @@ class WebpageNavigationAgentGenAiImpl(
             )
             "scroll_to_text" -> NavigationAction.ScrollToText(
                 searchText = resp.scrollToText?.text ?: "",
-                occurrence = 1,
+                direction = parseScrollDirection(resp.scrollToText?.direction),
                 reason = reason
             )
             "peek_full_page" -> NavigationAction.PeekFullPage(reason = reason)

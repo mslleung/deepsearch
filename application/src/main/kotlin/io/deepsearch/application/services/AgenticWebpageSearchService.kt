@@ -626,18 +626,19 @@ class AgenticWebpageSearchService(
         page: IBrowserPage,
         state: NavigationLoopState
     ): ActionEffect {
-        logger.debug("ScrollToText: text='{}', occurrence={}", action.searchText, action.occurrence)
+        val dirName = action.direction.name
+        logger.debug("ScrollToText: text='{}', direction={}", action.searchText, dirName)
         try {
             if (action.searchText.isBlank()) {
                 updateLastActionOutcome(state, "No searchText provided.")
                 return ActionEffect.PAGE_UNCHANGED
             }
-            val found = page.scrollToTextContent(action.searchText, action.occurrence)
+            val found = page.scrollToTextInDirection(action.searchText, dirName)
             if (found) {
-                logger.info("scroll_to_text found '{}' on {}", action.searchText, state.url)
+                logger.info("scroll_to_text found '{}' {} on {}", action.searchText, dirName, state.url)
                 val totalMatches = state.lastFindCounts[action.searchText]?.total ?: 0
                 val outcomeText = buildString {
-                    append("Scrolled to \"${action.searchText}\".")
+                    append("Scrolled ${dirName.lowercase()} to \"${action.searchText}\".")
                     if (totalMatches > 1) {
                         append(" There are $totalMatches total matches on this page.")
                     }
@@ -646,8 +647,8 @@ class AgenticWebpageSearchService(
                 delay(POST_SCROLL_DELAY_MS)
                 return ActionEffect.PAGE_CHANGED
             } else {
-                logger.debug("scroll_to_text: '{}' not found on {}", action.searchText, state.url)
-                updateLastActionOutcome(state, "\"${action.searchText}\" not found on page.")
+                logger.debug("scroll_to_text: '{}' not found {} on {}", action.searchText, dirName, state.url)
+                updateLastActionOutcome(state, "No occurrence of \"${action.searchText}\" found ${dirName.lowercase()} from current viewport.")
                 return ActionEffect.PAGE_UNCHANGED
             }
         } catch (e: CancellationException) {

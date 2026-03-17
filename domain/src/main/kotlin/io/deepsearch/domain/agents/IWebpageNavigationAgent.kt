@@ -57,7 +57,7 @@ sealed class NavigationAction {
     @Serializable
     data class ScrollToText(
         val searchText: String,
-        val occurrence: Int = 1,
+        val direction: ScrollDirection = ScrollDirection.DOWN,
         val reason: String
     ) : NavigationAction()
 
