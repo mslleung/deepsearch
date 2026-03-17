@@ -202,7 +202,8 @@ class WebpageNavigationAgentGenAiImpl(
         1. Extract any relevant findings from the current viewport screenshot. 
             - Do not omit data, capture anything that may enrich or support the answer
             - Do not invent facts, stick with exactly what is shown on the screenshot
-            - Keep keywords intact. If keywords are in another language, keep them in the original language instead of transliterate.
+            - If some nouns are in another language, keep them in the original language instead of transliterate. This means the findings can be in mixed language.
+            - Be careful with visual nuances such as tab selection, toggle states etc. Modern websites can be complicated so you need to account for the state of the current webpage, not just the information presented.
         2. Explore the page for more information. Approach this just like a real human doing research. Look exhaustively for all relevant information on the page as efficiently as possible.
             - Control-F to jump to text
             - Scroll around the webpage
