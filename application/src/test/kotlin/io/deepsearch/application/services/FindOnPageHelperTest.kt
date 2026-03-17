@@ -6,7 +6,7 @@ import io.deepsearch.domain.agents.WebpageNavigationInput
 import io.deepsearch.domain.agents.WebpageNavigationOutput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
-import io.deepsearch.domain.services.ScreenshotAnnotationService
+import io.deepsearch.domain.services.ImageProcessingService
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -24,7 +24,7 @@ class FindOnPageHelperTest {
     private val service = AgenticWebpageSearchService(
         browserPool = StubBrowserPool(),
         webpageNavigationAgent = StubNavigationAgent(),
-        screenshotAnnotationService = ScreenshotAnnotationService(),
+        imageProcessingService = ImageProcessingService(),
         tokenUsageService = TestLlmTokenUsageService(),
         pageTextSearchService = PageTextSearchService()
     )

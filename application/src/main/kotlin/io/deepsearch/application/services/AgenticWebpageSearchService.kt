@@ -14,7 +14,7 @@ import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
-import io.deepsearch.domain.services.ScreenshotAnnotationService
+import io.deepsearch.domain.services.IImageProcessingService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -63,7 +63,7 @@ interface IAgenticWebpageSearchService {
 class AgenticWebpageSearchService(
     private val browserPool: IBrowserPool,
     private val webpageNavigationAgent: IWebpageNavigationAgent,
-    private val screenshotAnnotationService: ScreenshotAnnotationService,
+    private val imageProcessingService: IImageProcessingService,
     private val tokenUsageService: ILlmTokenUsageService,
     private val pageTextSearchService: IPageTextSearchService
 ) : IAgenticWebpageSearchService {
@@ -145,7 +145,6 @@ class AgenticWebpageSearchService(
     private data class FindOnPageResult(val outcome: String, val autoScrolled: Boolean)
 
     private data class IterationContext(
-        val elements: List<IBrowserPage.InteractiveElementInfo>,
         val screenshot: IBrowserPage.Screenshot,
         val pageTitle: String,
         val pageDescription: String?,
@@ -237,18 +236,13 @@ class AgenticWebpageSearchService(
             currentCoroutineContext().ensureActive()
             logger.debug("Agentic search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
 
-            val (ctx, freshContext) = fetchIterationContext(page, state)
+            val (ctx, _) = fetchIterationContext(page, state)
             state.lastCtx = ctx
-            logger.debug("Found {} interactive elements", ctx.elements.size)
 
             if (state.previousClickScreenshot != null && state.lastActionWasClick) {
                 applyVisualDiffAfterClick(ctx.screenshot.bytes, state)
             }
             state.lastActionWasClick = false
-
-            if (freshContext) {
-                saveDebugScreenshot(ctx.screenshot.bytes, ctx.elements, iteration)
-            }
 
             val screenshotForAgent = state.peekScreenshotOverride ?: IBrowserPage.Screenshot(
                 bytes = ctx.screenshot.bytes,
@@ -293,7 +287,7 @@ class AgenticWebpageSearchService(
                 )
             }
 
-            val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(ctx.screenshot.bytes)
+            val (imgWidth, imgHeight) = imageProcessingService.getImageDimensions(ctx.screenshot.bytes)
 
             var pageChangedThisIteration = false
             for ((actionIdx, action) in output.actions.withIndex()) {
@@ -387,13 +381,11 @@ class AgenticWebpageSearchService(
         }
 
         val ctx = coroutineScope {
-            val elementsDeferred = async { page.getInteractiveElements() }
             val screenshotDeferred = async { page.takeScreenshot() }
             val titleDeferred = async { page.getTitle() }
             val descDeferred = async { page.getDescription() }
             val scrollDeferred = async { page.getScrollPosition() }
             IterationContext(
-                elements = elementsDeferred.await(),
                 screenshot = screenshotDeferred.await(),
                 pageTitle = titleDeferred.await(),
                 pageDescription = descDeferred.await(),
@@ -434,7 +426,7 @@ class AgenticWebpageSearchService(
         state: NavigationLoopState
     ) {
         val previousScreenshot = state.previousClickScreenshot ?: return
-        val changed = screenshotAnnotationService.hasVisualChange(
+        val changed = imageProcessingService.hasVisualChange(
             previousScreenshot, currentScreenshotBytes
         )
         val lastEntry = state.actionsPerformed.last()
@@ -464,23 +456,6 @@ class AgenticWebpageSearchService(
             )
         }
         logger.debug("Visual diff after click: changed={}", changed)
-    }
-
-    private fun saveDebugScreenshot(
-        screenshotBytes: ByteArray,
-        elements: List<IBrowserPage.InteractiveElementInfo>,
-        iteration: Int
-    ) {
-        if (!logger.isDebugEnabled) return
-        try {
-            val annotated = screenshotAnnotationService.annotate(screenshotBytes, elements)
-            val debugDir = java.io.File(System.getProperty("java.io.tmpdir"), "deepsearch-debug")
-            debugDir.mkdirs()
-            java.io.File(debugDir, "annotated-iter$iteration.jpg").writeBytes(annotated.imageBytes)
-            logger.debug("Saved debug screenshot to {}/annotated-iter{}.jpg", debugDir.absolutePath, iteration)
-        } catch (e: Exception) {
-            logger.debug("Failed to save debug screenshot: {}", e.message)
-        }
     }
 
     // --- Action handlers ---
@@ -940,7 +915,7 @@ class AgenticWebpageSearchService(
         capturedImages: MutableList<CapturedImage>,
         capturedHashes: MutableSet<String>
     ) {
-        val (imgWidth, imgHeight) = screenshotAnnotationService.getImageDimensions(screenshotBytes)
+        val (imgWidth, imgHeight) = imageProcessingService.getImageDimensions(screenshotBytes)
         val sha256 = MessageDigest.getInstance("SHA-256")
 
         for (region in regions) {
@@ -956,7 +931,7 @@ class AgenticWebpageSearchService(
                 continue
             }
 
-            val bytes = screenshotAnnotationService.cropToPng(screenshotBytes, x, y, w, h)
+            val bytes = imageProcessingService.cropToPng(screenshotBytes, x, y, w, h)
 
             val hash = sha256.digest(bytes)
             val hashHex = hash.joinToString("") { "%02x".format(it) }
@@ -972,7 +947,7 @@ class AgenticWebpageSearchService(
     }
 
     private fun downscaleScreenshot(imageBytes: ByteArray, maxHeight: Int): ByteArray {
-        return screenshotAnnotationService.downscaleToJpeg(
+        return imageProcessingService.downscaleToJpeg(
             imageBytes,
             maxHeight,
             (PEEK_JPEG_QUALITY * 100).toInt()

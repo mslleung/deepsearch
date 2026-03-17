@@ -166,9 +166,6 @@ sealed class PageCommand {
     @Serializable @SerialName("captureHiddenContainerBoundingBoxes")
     data object CaptureHiddenContainerBoundingBoxes : PageCommand()
 
-    @Serializable @SerialName("getInteractiveElements")
-    data object GetInteractiveElements : PageCommand()
-
     @Serializable @SerialName("clickAtCoordinates")
     data class ClickAtCoordinates(val x: Int, val y: Int) : PageCommand()
 
@@ -277,27 +274,6 @@ data class TablesInterpretationDataResponse(
 
 @Serializable
 data class GuardedClickResponse(val navigatedAwayTo: String?)
-
-// ==================== Interactive Elements Response ====================
-
-@Serializable
-data class InteractiveElementResponse(
-    val tag: String,
-    val text: String,
-    val role: String? = null,
-    val ariaLabel: String? = null,
-    val states: List<String> = emptyList(),
-    val left: Double,
-    val top: Double,
-    val right: Double,
-    val bottom: Double,
-    val index: Int
-)
-
-@Serializable
-data class InteractiveElementsResponse(
-    val elements: List<InteractiveElementResponse>
-)
 
 // ==================== Hidden Container Bounding Boxes Response ====================
 

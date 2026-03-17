@@ -39,7 +39,8 @@ import io.deepsearch.domain.services.ITextEmbeddingService
 import io.deepsearch.domain.services.JsoupDomService
 import io.deepsearch.domain.services.JwtService
 import io.deepsearch.domain.services.NormalizeUrlService
-import io.deepsearch.domain.services.ScreenshotAnnotationService
+import io.deepsearch.domain.services.IImageProcessingService
+import io.deepsearch.domain.services.ImageProcessingService
 import io.deepsearch.domain.services.SerperService
 import io.deepsearch.domain.services.GeminiBatchServiceImpl
 import io.deepsearch.domain.services.IGeminiBatchService
@@ -84,7 +85,7 @@ val domainModule = module {
     singleOf(::RecursiveTableDiscoveryService) bind IRecursiveTableDiscoveryService::class
     singleOf(::SemanticTableConverter) bind ISemanticTableConverter::class
     singleOf(::SemanticListConverter) bind ISemanticListConverter::class
-    singleOf(::ScreenshotAnnotationService)
+    singleOf(::ImageProcessingService) bind IImageProcessingService::class
 
     // Gemini Batch API service for cost-effective large-scale processing
     // Uses inline requests for batches under 20MB, 50% cost savings
