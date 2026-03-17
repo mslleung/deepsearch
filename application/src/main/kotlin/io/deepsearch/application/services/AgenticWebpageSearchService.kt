@@ -817,7 +817,6 @@ class AgenticWebpageSearchService(
         return FindOnPageResult(outcome, autoScrolled = false)
     }
 
-    private val currencySymbols = setOf("$", "HK$", "£", "€", "¥", "US$", "A$", "S$")
     private val priceKeywords = setOf("price", "cost", "pricing", "fee", "fees", "rate")
 
     /**
@@ -829,11 +828,6 @@ class AgenticWebpageSearchService(
         stemmedMatches: Map<String, List<TextMatch>>,
         keywords: List<String>
     ): String? {
-        val visibleCurrency = counts.entries
-            .filter { (kw, c) -> kw in currencySymbols && c.visible > 0 }
-            .maxByOrNull { it.value.visible }
-        if (visibleCurrency != null) return visibleCurrency.key
-
         val firstVisibleExact = keywords.firstOrNull { kw ->
             counts[kw]?.visible?.let { it > 0 } == true
         }
