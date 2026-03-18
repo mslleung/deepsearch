@@ -177,7 +177,7 @@ class WebpageNavigationAgentGenAiImpl(
                     .build(),
                 "answer" to Schema.builder()
                     .type("STRING")
-                    .description("Answer synthesized from all findings (decision=exploration_finished only). Null if no relevant findings were discovered.")
+                    .description("Answer synthesized from all findings (decision=exploration_finished only), be comprehensive and include all related/supporting content. Null if no relevant findings were discovered.")
                     .nullable(true)
                     .build()
             )
