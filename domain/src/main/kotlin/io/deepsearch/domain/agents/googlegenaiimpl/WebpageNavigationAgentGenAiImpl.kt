@@ -214,11 +214,18 @@ class WebpageNavigationAgentGenAiImpl(
         4. If a click led to a navigation to another screen, it would be recorded and processed separately, you can just continue exploring the current page.
         5. Capture regions that are useful as a reference as captureRegions.
 
+        ## Efficiency
+        - PREFER find_on_page and scroll_to_text over scroll_page. Use find_on_page to locate relevant keywords on the page, then use scroll_to_text to jump between occurrences. Only use scroll_page as a last resort when you have no target text to search for.
+        - Pack multiple relevant keywords into a SINGLE find_on_page call instead of making separate calls across iterations. Include all terms that could appear on the page: product names, prices, currencies, feature names, etc.
+        - When find_on_page reports hidden matches (text inside collapsed sections), scroll_to_text to a nearby visible anchor, then click to expand the collapsed content.
+        - Do NOT repeatedly scroll through the same page regions. Use the SCROLL position and your action history to avoid revisiting areas you have already examined.
+        - Use peek_full_page to visually see content outside the viewport if needed. Always do this before you conclude giving up on searching the current page.
+
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information. Be eager — include every action worth trying.
         - **type_text**: Type into input field at (x,y). Highest priority — triggers search/filter.
         - **click**: Click element at (x,y) in 0-1000 scale. Include all plausible targets (buttons, tabs, accordions, links etc.).
-        - **find_on_page**: Search keywords with stemming. Auto-scrolls to the first match.
+        - **find_on_page**: Search keywords (with stemming). Auto-scrolls to the first match. Always batch ALL relevant keywords in a single call. Use results to plan targeted scroll_to_text actions.
         - **scroll_to_text**: Scroll UP/DOWN to find the next occurrence of text outside the current viewport. Use after find_on_page to jump between matches. This is akin to a more efficient CONTROL-F in the webpage.
         - **scroll_page**: Scroll viewport UP/DOWN/LEFT/RIGHT. Always try to scroll by 100% unless doing so would cut text in the middle by the viewport boundaries.
         - **scroll_element**: Scroll container at (x,y).

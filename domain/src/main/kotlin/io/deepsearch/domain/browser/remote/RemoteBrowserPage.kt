@@ -3,6 +3,7 @@ package io.deepsearch.domain.browser.remote
 import io.deepsearch.domain.browser.ElementOperationException
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.PageOperationException
+import io.deepsearch.domain.browser.ScrollToTextResult
 import io.deepsearch.domain.browser.remote.dto.*
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.ext.toSafeUri
@@ -300,11 +301,11 @@ class RemoteBrowserPage(
         elementCmd(PageCommand.ScrollToElementByCssSelector(cssSelector))
     }
 
-    override suspend fun scrollToTextContent(searchText: String, occurrence: Int): Boolean =
-        pageCmd(PageCommand.ScrollToTextContent(searchText, occurrence)).toBoolean()
+    override suspend fun scrollToTextContent(searchText: String, occurrence: Int): ScrollToTextResult =
+        ScrollToTextResult.fromString(pageCmd(PageCommand.ScrollToTextContent(searchText, occurrence)))
 
-    override suspend fun scrollToTextInDirection(searchText: String, direction: String): Boolean =
-        pageCmd(PageCommand.ScrollToTextInDirection(searchText, direction)).toBoolean()
+    override suspend fun scrollToTextInDirection(searchText: String, direction: String): ScrollToTextResult =
+        ScrollToTextResult.fromString(pageCmd(PageCommand.ScrollToTextInDirection(searchText, direction)))
 
     override suspend fun countTextMatches(keywords: List<String>): Map<String, IBrowserPage.TextMatchCounts> {
         val json = pageCmd(PageCommand.CountTextMatches(keywords))

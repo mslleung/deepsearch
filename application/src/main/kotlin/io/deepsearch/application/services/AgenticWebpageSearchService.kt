@@ -11,6 +11,7 @@ import io.deepsearch.domain.agents.WebpageNavigationInput
 import io.deepsearch.domain.agents.WebpageNavigationOutput
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.browser.ScrollToTextResult
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
@@ -633,23 +634,37 @@ class AgenticWebpageSearchService(
                 updateLastActionOutcome(state, "No searchText provided.")
                 return ActionEffect.PAGE_UNCHANGED
             }
-            val found = page.scrollToTextInDirection(action.searchText, dirName)
-            if (found) {
-                logger.info("scroll_to_text found '{}' {} on {}", action.searchText, dirName, state.url)
-                val totalMatches = state.lastFindCounts[action.searchText]?.total ?: 0
-                val outcomeText = buildString {
-                    append("Scrolled ${dirName.lowercase()} to \"${action.searchText}\".")
-                    if (totalMatches > 1) {
-                        append(" There are $totalMatches total matches on this page.")
+            val result = page.scrollToTextInDirection(action.searchText, dirName)
+            val totalMatches = state.lastFindCounts[action.searchText]?.total ?: 0
+            when (result) {
+                ScrollToTextResult.SCROLLED_TO_VISIBLE -> {
+                    logger.info("scroll_to_text found '{}' {} on {}", action.searchText, dirName, state.url)
+                    val outcomeText = buildString {
+                        append("Scrolled ${dirName.lowercase()} to \"${action.searchText}\".")
+                        if (totalMatches > 1) append(" There are $totalMatches total matches on this page.")
                     }
+                    updateLastActionOutcome(state, outcomeText)
+                    delay(POST_SCROLL_DELAY_MS)
+                    return ActionEffect.PAGE_CHANGED
                 }
-                updateLastActionOutcome(state, outcomeText)
-                delay(POST_SCROLL_DELAY_MS)
-                return ActionEffect.PAGE_CHANGED
-            } else {
-                logger.debug("scroll_to_text: '{}' not found {} on {}", action.searchText, dirName, state.url)
-                updateLastActionOutcome(state, "No occurrence of \"${action.searchText}\" found ${dirName.lowercase()} from current viewport.")
-                return ActionEffect.PAGE_UNCHANGED
+                ScrollToTextResult.SCROLLED_TO_HIDDEN_ANCESTOR -> {
+                    logger.info("scroll_to_text: '{}' is hidden, scrolled to visible ancestor on {}", action.searchText, state.url)
+                    updateLastActionOutcome(state,
+                        "\"${action.searchText}\" is inside a hidden/collapsed section. Scrolled to the nearest visible container. Look for an accordion, tab, or toggle to expand and reveal the content.")
+                    delay(POST_SCROLL_DELAY_MS)
+                    return ActionEffect.PAGE_CHANGED
+                }
+                ScrollToTextResult.HIDDEN_ALREADY_NEARBY -> {
+                    logger.info("scroll_to_text: '{}' is hidden but already nearby on {}", action.searchText, state.url)
+                    updateLastActionOutcome(state,
+                        "\"${action.searchText}\" is inside a hidden/collapsed section already in view. Look for an accordion, tab, or toggle nearby to expand and reveal the content.")
+                    return ActionEffect.PAGE_UNCHANGED
+                }
+                ScrollToTextResult.NOT_FOUND -> {
+                    logger.debug("scroll_to_text: '{}' not found {} on {}", action.searchText, dirName, state.url)
+                    updateLastActionOutcome(state, "No occurrence of \"${action.searchText}\" found ${dirName.lowercase()} from current viewport.")
+                    return ActionEffect.PAGE_UNCHANGED
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -805,13 +820,32 @@ class AgenticWebpageSearchService(
 
         val scrollTarget = pickAutoScrollTarget(counts, stemmedMatches, keywords)
         if (scrollTarget != null) {
-            val scrolled = page.scrollToTextContent(scrollTarget)
-            if (scrolled) {
-                logger.info("find_on_page auto-scrolled to '{}' on {}", scrollTarget, state.url)
-                delay(POST_SCROLL_DELAY_MS)
-                return FindOnPageResult("$outcome Auto-scrolled to \"$scrollTarget\".", autoScrolled = true)
+            val scrollResult = page.scrollToTextContent(scrollTarget)
+            when (scrollResult) {
+                ScrollToTextResult.SCROLLED_TO_VISIBLE -> {
+                    logger.info("find_on_page auto-scrolled to '{}' on {}", scrollTarget, state.url)
+                    delay(POST_SCROLL_DELAY_MS)
+                    return FindOnPageResult("$outcome Auto-scrolled to \"$scrollTarget\".", autoScrolled = true)
+                }
+                ScrollToTextResult.SCROLLED_TO_HIDDEN_ANCESTOR -> {
+                    logger.info("find_on_page auto-scrolled to hidden text's ancestor for '{}' on {}", scrollTarget, state.url)
+                    delay(POST_SCROLL_DELAY_MS)
+                    return FindOnPageResult(
+                        "$outcome \"$scrollTarget\" is inside a hidden/collapsed section. Auto-scrolled to its nearest visible container. Look for an accordion, tab, or toggle to expand.",
+                        autoScrolled = true
+                    )
+                }
+                ScrollToTextResult.HIDDEN_ALREADY_NEARBY -> {
+                    logger.info("find_on_page: hidden text '{}' already nearby on {}", scrollTarget, state.url)
+                    return FindOnPageResult(
+                        "$outcome \"$scrollTarget\" is inside a hidden/collapsed section already in view. Look for an accordion, tab, or toggle nearby to expand.",
+                        autoScrolled = false
+                    )
+                }
+                ScrollToTextResult.NOT_FOUND -> {
+                    delay(POST_SCROLL_DELAY_MS)
+                }
             }
-            delay(POST_SCROLL_DELAY_MS)
         }
 
         return FindOnPageResult(outcome, autoScrolled = false)
@@ -820,8 +854,9 @@ class AgenticWebpageSearchService(
     private val priceKeywords = setOf("price", "cost", "pricing", "fee", "fees", "rate")
 
     /**
-     * Picks the best keyword to auto-scroll to after find_on_page. Returns null if no
-     * suitable scroll target exists (e.g., only hidden matches or zero matches everywhere).
+     * Picks the best keyword to auto-scroll to after find_on_page.
+     * Priority: visible match > hidden-only match (navigable via ancestor) > stemmed match.
+     * Returns null if no suitable scroll target exists.
      */
     internal fun pickAutoScrollTarget(
         counts: Map<String, IBrowserPage.TextMatchCounts>,
@@ -832,6 +867,12 @@ class AgenticWebpageSearchService(
             counts[kw]?.visible?.let { it > 0 } == true
         }
         if (firstVisibleExact != null) return firstVisibleExact
+
+        val firstHiddenOnly = keywords.firstOrNull { kw ->
+            val c = counts[kw] ?: return@firstOrNull false
+            c.visible == 0 && c.total > 0
+        }
+        if (firstHiddenOnly != null) return firstHiddenOnly
 
         val bestStemmed = stemmedMatches.values.flatten().maxByOrNull { it.score }
         return bestStemmed?.matchedText?.take(60)
@@ -845,12 +886,13 @@ class AgenticWebpageSearchService(
     ): String = buildString {
         append("Match counts — $countsDesc.")
 
-        val hiddenOnlyKeywords = counts.entries
+        val hiddenOnlyEntries = counts.entries
             .filter { (_, c) -> c.visible == 0 && c.total > 0 }
-            .map { it.key }
-        if (hiddenOnlyKeywords.isNotEmpty()) {
-            val examples = hiddenOnlyKeywords.take(3).joinToString(", ") { "\"$it\"" }
-            append(" TIP: $examples have hidden-only matches — expand [collapsed] elements or use scroll_to_text.")
+        if (hiddenOnlyEntries.isNotEmpty()) {
+            val details = hiddenOnlyEntries.take(3).joinToString(" and ") { (kw, c) ->
+                "\"$kw\" (${c.total} hidden)"
+            }
+            append(" $details are inside collapsed/hidden sections. Use scroll_to_text to navigate near them, then click to expand the containing accordion, tab, or toggle.")
         }
 
         val allZero = counts.values.all { it.total == 0 } && stemmedMatches.isEmpty()

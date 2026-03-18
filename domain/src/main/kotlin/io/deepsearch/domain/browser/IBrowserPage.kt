@@ -10,6 +10,21 @@ import java.security.MessageDigest
  * The page provides a human-oriented snapshot of what a user can see and do on the
  * current document. This snapshot is the "eye" for LLM agents to reason over.
  */
+enum class ScrollToTextResult {
+    SCROLLED_TO_VISIBLE,
+    SCROLLED_TO_HIDDEN_ANCESTOR,
+    HIDDEN_ALREADY_NEARBY,
+    NOT_FOUND;
+
+    val found get() = this != NOT_FOUND
+    val scrolled get() = this == SCROLLED_TO_VISIBLE || this == SCROLLED_TO_HIDDEN_ANCESTOR
+
+    companion object {
+        fun fromString(value: String): ScrollToTextResult =
+            entries.firstOrNull { it.name == value } ?: NOT_FOUND
+    }
+}
+
 interface IBrowserPage {
 
     /**
@@ -464,26 +479,27 @@ interface IBrowserPage {
 
     /**
      * Search for a text fragment on the page and scroll the containing element into view.
-     *
-     * Uses case-insensitive text search to find the element whose text
-     * contains [searchText], then scrolls it to the viewport center.
+     * Visible matches already in the viewport are skipped so that auto-scroll always
+     * moves to new content. If no visible match exists outside the viewport, a hidden-text
+     * fallback scrolls to the closest visible ancestor of the hidden match.
      *
      * @param searchText The text fragment to search for (case-insensitive)
-     * @param occurrence Which match to scroll to (1-based). Defaults to 1 (first match).
-     * @return true if the text was found and scrolled into view; false if not found
+     * @param occurrence Which match to start searching from (1-based). Defaults to 1.
+     * @return [ScrollToTextResult] indicating what happened
      */
-    suspend fun scrollToTextContent(searchText: String, occurrence: Int = 1): Boolean
+    suspend fun scrollToTextContent(searchText: String, occurrence: Int = 1): ScrollToTextResult
 
     /**
      * Search for a text fragment in a given direction (UP/DOWN) from the current viewport
-     * and scroll the containing element into view. Ignores all matches inside the current
-     * viewport and in the opposite direction.
+     * and scroll the containing element into view. If no visible match is found in the
+     * requested direction, falls back to hidden text and scrolls to the closest visible
+     * ancestor.
      *
      * @param searchText The text fragment to search for (case-insensitive)
      * @param direction "DOWN" to find the next match below the viewport, "UP" for above
-     * @return true if the text was found and scrolled into view; false if not found
+     * @return [ScrollToTextResult] indicating what happened
      */
-    suspend fun scrollToTextInDirection(searchText: String, direction: String): Boolean
+    suspend fun scrollToTextInDirection(searchText: String, direction: String): ScrollToTextResult
 
     @Serializable
     data class TextMatchCounts(val visible: Int, val total: Int, val firstContext: String? = null)
