@@ -62,10 +62,15 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("OBJECT")
                     .nullable(true)
                     .properties(mapOf(
-                        "x" to Schema.builder().type("INTEGER").description("X coordinate (0-1000, where 0=left edge).").build(),
-                        "y" to Schema.builder().type("INTEGER").description("Y coordinate (0-1000, where 0=top edge).").build()
+                        "box_2d" to Schema.builder().type("ARRAY")
+                            .description("Bounding box of the element to click as [ymin, xmin, ymax, xmax] scaled to [0, 1000].")
+                            .items(Schema.builder().type("INTEGER").build())
+                            .build(),
+                        "label" to Schema.builder().type("STRING")
+                            .description("Brief description of the element being clicked.")
+                            .build()
                     ))
-                    .required(listOf("x", "y"))
+                    .required(listOf("box_2d", "label"))
                     .build(),
                 "scroll" to Schema.builder()
                     .type("OBJECT")
@@ -224,7 +229,7 @@ class WebpageNavigationAgentGenAiImpl(
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information. Be eager — include every action worth trying.
         - **type_text**: Type into input field at (x,y). Highest priority — triggers search/filter.
-        - **click**: Click element at (x,y) in 0-1000 scale. Include all plausible targets (buttons, tabs, accordions, links etc.).
+        - **click**: Click element using box_2d [ymin, xmin, ymax, xmax] in 0-1000 scale. Draw a tight bounding box around the element you want to click. Include all plausible targets (buttons, tabs, accordions, links etc.).
         - **find_on_page**: Search keywords (with stemming). Auto-scrolls to the first match. Always batch ALL relevant keywords in a single call. Use results to plan targeted scroll_to_text actions.
         - **scroll_to_text**: Scroll UP/DOWN to find the next occurrence of text outside the current viewport. Use after find_on_page to jump between matches. This is akin to a more efficient CONTROL-F in the webpage.
         - **scroll_page**: Scroll viewport UP/DOWN/LEFT/RIGHT. Always try to scroll by 100% unless doing so would cut text in the middle by the viewport boundaries.
@@ -244,7 +249,7 @@ class WebpageNavigationAgentGenAiImpl(
     )
 
     @Serializable
-    private data class ClickParams(val x: Int, val y: Int)
+    private data class ClickParams(val box_2d: List<Int>, val label: String? = null)
 
     @Serializable
     private data class ScrollParams(val direction: String? = null, val percent: Int? = null)
@@ -432,9 +437,10 @@ class WebpageNavigationAgentGenAiImpl(
         return when (resp.action) {
             "click" -> {
                 val p = checkNotNull(resp.click) { "click action missing click params" }
+                require(p.box_2d.size == 4) { "click box_2d must have 4 elements: [ymin, xmin, ymax, xmax]" }
                 NavigationAction.Click(
-                    x = p.x.coerceIn(0, 1000),
-                    y = p.y.coerceIn(0, 1000),
+                    box2d = p.box_2d.map { it.coerceIn(0, 1000) },
+                    label = p.label,
                     reason = reason
                 )
             }
@@ -500,7 +506,7 @@ class WebpageNavigationAgentGenAiImpl(
 
     private fun formatActionDesc(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> {
-            "click ${action.reason.take(60).ifEmpty { "(${action.x},${action.y})" }}"
+            "click ${action.label ?: action.reason.take(60)} box_2d=${action.box2d}"
         }
         is NavigationAction.Scroll -> "scroll_page ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
         is NavigationAction.ScrollAt -> "scroll_element (${action.x},${action.y}) ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"

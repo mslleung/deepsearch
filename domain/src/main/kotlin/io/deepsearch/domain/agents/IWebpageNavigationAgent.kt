@@ -36,10 +36,13 @@ data class WebpageNavigationInput(
 sealed class NavigationAction {
     @Serializable
     data class Click(
-        val x: Int,
-        val y: Int,
+        val box2d: List<Int>,
+        val label: String? = null,
         val reason: String
-    ) : NavigationAction()
+    ) : NavigationAction() {
+        val centerX: Int get() = (box2d[1] + box2d[3]) / 2
+        val centerY: Int get() = (box2d[0] + box2d[2]) / 2
+    }
 
     @Serializable
     data class Scroll(

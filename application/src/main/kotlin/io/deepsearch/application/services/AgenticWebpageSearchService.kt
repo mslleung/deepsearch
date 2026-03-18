@@ -294,7 +294,7 @@ class AgenticWebpageSearchService(
                 if (hasConsecutiveClicks(output.actions)) {
                     val clickCoords = output.actions.mapIndexedNotNull { idx, act ->
                         if (act is NavigationAction.Click)
-                            idx to (toViewportCoord(act.x, imgWidth) to toViewportCoord(act.y, imgHeight))
+                            idx to (toViewportCoord(act.centerX, imgWidth) to toViewportCoord(act.centerY, imgHeight))
                         else null
                     }
                     val results = page.getElementsAtPoints(clickCoords.map { it.second })
@@ -348,8 +348,8 @@ class AgenticWebpageSearchService(
 
                                 if (nextAction is NavigationAction.Click && expectedTarget != null) {
                                     delay(POST_CLICK_DELAY_MS)
-                                    val nextVx = toViewportCoord(nextAction.x, imgWidth)
-                                    val nextVy = toViewportCoord(nextAction.y, imgHeight)
+                                    val nextVx = toViewportCoord(nextAction.centerX, imgWidth)
+                                    val nextVy = toViewportCoord(nextAction.centerY, imgHeight)
                                     val fresh = page.getElementsAtPoints(listOf(nextVx to nextVy)).firstOrNull()
 
                                     if (fresh != null && fresh.path == expectedTarget.path) {
@@ -478,8 +478,7 @@ class AgenticWebpageSearchService(
         )
         val lastEntry = state.actionsPerformed.last()
         val clickDesc = when (val lastAction = lastEntry.action) {
-            is NavigationAction.Click -> lastAction.reason.take(60)
-                .ifEmpty { "(${lastAction.x},${lastAction.y})" }
+            is NavigationAction.Click -> (lastAction.label ?: lastAction.reason).take(60)
 
             is NavigationAction.Type -> lastAction.reason.take(60)
                 .ifEmpty { "(${lastAction.x},${lastAction.y})" }
@@ -557,9 +556,9 @@ class AgenticWebpageSearchService(
         imgWidth: Int,
         imgHeight: Int
     ): ActionEffect {
-        val viewportX = toViewportCoord(action.x, imgWidth)
-        val viewportY = toViewportCoord(action.y, imgHeight)
-        val desc = action.reason.take(60).ifEmpty { "element at (${action.x},${action.y})" }
+        val viewportX = toViewportCoord(action.centerX, imgWidth)
+        val viewportY = toViewportCoord(action.centerY, imgHeight)
+        val desc = (action.label ?: action.reason).take(60)
 
         if (desc in state.offPageClickedDescs) {
             logger.debug("Skipping re-click on known off-page element '{}'", desc)
@@ -573,8 +572,8 @@ class AgenticWebpageSearchService(
         }
 
         logger.debug(
-            "Click normalized ({},{}) -> viewport ({},{}) - {} (reason: {})",
-            action.x, action.y, viewportX, viewportY, desc, action.reason
+            "Click box_2d={} center=({},{}) -> viewport ({},{}) - {} (reason: {})",
+            action.box2d, action.centerX, action.centerY, viewportX, viewportY, desc, action.reason
         )
 
         state.previousClickScreenshot = rawScreenshotBytes
