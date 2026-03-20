@@ -15,6 +15,8 @@ import io.deepsearch.domain.browser.ScrollToTextResult
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.services.AnnotatedElement
+import io.deepsearch.domain.services.AnnotationTarget
 import io.deepsearch.domain.services.IImageProcessingService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -147,9 +149,12 @@ class AgenticWebpageSearchService(
 
     private data class IterationContext(
         val screenshot: IBrowserPage.Screenshot,
+        val annotatedScreenshot: IBrowserPage.Screenshot?,
         val pageTitle: String,
         val pageDescription: String?,
-        val scrollPercent: Int
+        val scrollPercent: Int,
+        val labeledElements: String? = null,
+        val elementIndex: Map<Int, AnnotatedElement> = emptyMap()
     )
 
     private class NavigationLoopState(
@@ -245,10 +250,9 @@ class AgenticWebpageSearchService(
             }
             state.lastActionWasClick = false
 
-            val screenshotForAgent = state.peekScreenshotOverride ?: IBrowserPage.Screenshot(
-                bytes = ctx.screenshot.bytes,
-                mimeType = ctx.screenshot.mimeType
-            )
+            val screenshotForAgent = state.peekScreenshotOverride
+                ?: ctx.annotatedScreenshot
+                ?: IBrowserPage.Screenshot(bytes = ctx.screenshot.bytes, mimeType = ctx.screenshot.mimeType)
             state.peekScreenshotOverride = null
 
             val input = WebpageNavigationInput(
@@ -262,7 +266,8 @@ class AgenticWebpageSearchService(
                 pageDescription = ctx.pageDescription,
                 scrollPercent = ctx.scrollPercent,
                 currentIteration = iteration,
-                maxIterations = MAX_ITERATIONS
+                maxIterations = MAX_ITERATIONS,
+                labeledElements = ctx.labeledElements
             )
 
             val output = webpageNavigationAgent.generate(input)
@@ -293,9 +298,11 @@ class AgenticWebpageSearchService(
             val clickTargets: Map<Int, IBrowserPage.ElementAtPoint> =
                 if (hasConsecutiveClicks(output.actions)) {
                     val clickCoords = output.actions.mapIndexedNotNull { idx, act ->
-                        if (act is NavigationAction.Click)
-                            idx to (toViewportCoord(act.centerX, imgWidth) to toViewportCoord(act.centerY, imgHeight))
-                        else null
+                        if (act is NavigationAction.Click) {
+                            val (vx, vy) = resolveClickViewportCoords(act, ctx.elementIndex, imgWidth, imgHeight)
+                                ?: return@mapIndexedNotNull null
+                            idx to (vx to vy)
+                        } else null
                     }
                     val results = page.getElementsAtPoints(clickCoords.map { it.second })
                     buildMap {
@@ -324,7 +331,7 @@ class AgenticWebpageSearchService(
                     else -> {
                         val effect = when (action) {
                             is NavigationAction.Click ->
-                                handleClick(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight)
+                                handleClick(action, page, state, ctx.screenshot.bytes, imgWidth, imgHeight, ctx.elementIndex)
                             is NavigationAction.FindOnPage ->
                                 handleFindOnPage(action, page, state)
                             is NavigationAction.ScrollToText ->
@@ -348,8 +355,8 @@ class AgenticWebpageSearchService(
 
                                 if (nextAction is NavigationAction.Click && expectedTarget != null) {
                                     delay(POST_CLICK_DELAY_MS)
-                                    val nextVx = toViewportCoord(nextAction.centerX, imgWidth)
-                                    val nextVy = toViewportCoord(nextAction.centerY, imgHeight)
+                                    val (nextVx, nextVy) = resolveClickViewportCoords(nextAction, ctx.elementIndex, imgWidth, imgHeight)
+                                        ?: (0 to 0)
                                     val fresh = page.getElementsAtPoints(listOf(nextVx to nextVy)).firstOrNull()
 
                                     if (fresh != null && fresh.path == expectedTarget.path) {
@@ -427,19 +434,78 @@ class AgenticWebpageSearchService(
             return Pair(state.lastCtx!!, false)
         }
 
-        val ctx = coroutineScope {
+        val (rawScreenshot, title, desc, scroll, interactiveElements) = coroutineScope {
             val screenshotDeferred = async { page.takeScreenshot() }
             val titleDeferred = async { page.getTitle() }
             val descDeferred = async { page.getDescription() }
             val scrollDeferred = async { page.getScrollPosition() }
-            IterationContext(
-                screenshot = screenshotDeferred.await(),
-                pageTitle = titleDeferred.await(),
-                pageDescription = descDeferred.await(),
-                scrollPercent = scrollDeferred.await()
+            val elementsDeferred = async {
+                try { page.getInteractiveElements() }
+                catch (e: CancellationException) { throw e }
+            }
+            FetchResult(
+                screenshotDeferred.await(),
+                titleDeferred.await(),
+                descDeferred.await(),
+                scrollDeferred.await(),
+                elementsDeferred.await()
             )
         }
+
+        val (annotatedScreenshot, labeledElements, elementIndex) = annotateScreenshot(rawScreenshot, interactiveElements)
+
+        val ctx = IterationContext(
+            screenshot = rawScreenshot,
+            annotatedScreenshot = annotatedScreenshot,
+            pageTitle = title,
+            pageDescription = desc,
+            scrollPercent = scroll,
+            labeledElements = labeledElements,
+            elementIndex = elementIndex
+        )
         return Pair(ctx, true)
+    }
+
+    private data class FetchResult(
+        val screenshot: IBrowserPage.Screenshot,
+        val title: String,
+        val description: String?,
+        val scrollPercent: Int,
+        val interactiveElements: List<IBrowserPage.InteractiveElementInfo>
+    )
+
+    private fun annotateScreenshot(
+        rawScreenshot: IBrowserPage.Screenshot,
+        elements: List<IBrowserPage.InteractiveElementInfo>
+    ): Triple<IBrowserPage.Screenshot?, String?, Map<Int, AnnotatedElement>> {
+        if (elements.isEmpty()) return Triple(null, null, emptyMap())
+
+        val targets = elements.map { e ->
+            AnnotationTarget(
+                tag = e.tag, text = e.text, role = e.role, ariaLabel = e.ariaLabel,
+                left = e.boundingBox.left, top = e.boundingBox.top,
+                right = e.boundingBox.right, bottom = e.boundingBox.bottom,
+                centerX = e.centerX, centerY = e.centerY, index = e.index
+            )
+        }
+
+        val annotated = imageProcessingService.annotate(rawScreenshot.bytes, targets)
+
+        val labeledText = buildString {
+            for (e in elements) {
+                val desc = e.ariaLabel ?: e.text.take(60).ifBlank { e.tag }
+                val roleTag = e.role?.let { " [$it]" } ?: ""
+                appendLine("  [${e.index}] <${e.tag}>$roleTag $desc")
+            }
+        }
+
+        logger.debug("Annotated screenshot with {} labeled elements", elements.size)
+
+        return Triple(
+            IBrowserPage.Screenshot(bytes = annotated.imageBytes, mimeType = ImageMimeType.JPEG),
+            labeledText,
+            annotated.elementIndex
+        )
     }
 
     private fun updateFindings(
@@ -554,10 +620,9 @@ class AgenticWebpageSearchService(
         state: NavigationLoopState,
         rawScreenshotBytes: ByteArray,
         imgWidth: Int,
-        imgHeight: Int
+        imgHeight: Int,
+        elementIndex: Map<Int, AnnotatedElement> = emptyMap()
     ): ActionEffect {
-        val viewportX = toViewportCoord(action.centerX, imgWidth)
-        val viewportY = toViewportCoord(action.centerY, imgHeight)
         val desc = (action.label ?: action.reason).take(60)
 
         if (desc in state.offPageClickedDescs) {
@@ -571,10 +636,25 @@ class AgenticWebpageSearchService(
             return ActionEffect.PAGE_UNCHANGED
         }
 
-        logger.debug(
-            "Click box_2d={} center=({},{}) -> viewport ({},{}) - {} (reason: {})",
-            action.box2d, action.centerX, action.centerY, viewportX, viewportY, desc, action.reason
-        )
+        val coords = resolveClickViewportCoords(action, elementIndex, imgWidth, imgHeight)
+        if (coords == null) {
+            logger.warn("Click action has neither valid elementLabel nor box2d: {}", desc)
+            updateLastActionOutcome(state, "Could not determine click coordinates for '$desc'.")
+            return ActionEffect.PAGE_UNCHANGED
+        }
+        val (viewportX, viewportY) = coords
+
+        if (action.elementLabel != null) {
+            logger.debug(
+                "Click element#{} '{}' -> viewport ({},{}) (reason: {})",
+                action.elementLabel, desc, viewportX, viewportY, action.reason
+            )
+        } else {
+            logger.debug(
+                "Click box_2d={} center=({},{}) -> viewport ({},{}) - {} (reason: {})",
+                action.box2d, action.centerX, action.centerY, viewportX, viewportY, desc, action.reason
+            )
+        }
 
         state.previousClickScreenshot = rawScreenshotBytes
 
@@ -1031,6 +1111,23 @@ class AgenticWebpageSearchService(
     }
 
     // --- Utilities ---
+
+    private fun resolveClickViewportCoords(
+        action: NavigationAction.Click,
+        elementIndex: Map<Int, AnnotatedElement>,
+        imgWidth: Int,
+        imgHeight: Int
+    ): Pair<Int, Int>? {
+        val label = action.elementLabel
+        if (label != null) {
+            val element = elementIndex[label]
+            if (element != null) return element.centerX to element.centerY
+            logger.warn("element_label={} not found in index (size={}), falling back to box_2d", label, elementIndex.size)
+        }
+        val cx = action.centerX ?: return null
+        val cy = action.centerY ?: return null
+        return toViewportCoord(cx, imgWidth) to toViewportCoord(cy, imgHeight)
+    }
 
     private fun toViewportCoord(normalized: Int, dimension: Int): Int =
         ((normalized / 1000.0) * dimension).toInt()

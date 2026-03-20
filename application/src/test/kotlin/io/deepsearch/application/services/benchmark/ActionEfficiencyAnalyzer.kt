@@ -307,7 +307,7 @@ object ActionEfficiencyAnalyzer {
     }
 
     private fun actionTypeName(action: NavigationAction): String = when (action) {
-        is NavigationAction.Click -> "click(${action.centerX},${action.centerY})_${action.label ?: ""}"
+        is NavigationAction.Click -> "click(${action.elementLabel ?: "${action.centerX},${action.centerY}"})_${action.label ?: ""}"
         is NavigationAction.Scroll -> "scroll_${action.scrollDirection.name.lowercase()}"
         is NavigationAction.ScrollAt -> "scroll_at(${action.x},${action.y})_${action.scrollDirection.name.lowercase()}"
         is NavigationAction.FindOnPage -> "find_on_page"

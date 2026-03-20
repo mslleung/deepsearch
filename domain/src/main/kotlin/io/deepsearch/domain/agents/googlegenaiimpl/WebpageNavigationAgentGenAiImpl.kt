@@ -62,15 +62,20 @@ class WebpageNavigationAgentGenAiImpl(
                     .type("OBJECT")
                     .nullable(true)
                     .properties(mapOf(
+                        "element_label" to Schema.builder().type("INTEGER")
+                            .description("Number shown on the annotated screenshot for the element to click. Preferred over box_2d.")
+                            .nullable(true)
+                            .build(),
                         "box_2d" to Schema.builder().type("ARRAY")
-                            .description("Bounding box of the element to click as [ymin, xmin, ymax, xmax] scaled to [0, 1000].")
+                            .description("Fallback: bounding box [ymin, xmin, ymax, xmax] in 0-1000 scale. Only use when no element_label matches the target.")
                             .items(Schema.builder().type("INTEGER").build())
+                            .nullable(true)
                             .build(),
                         "label" to Schema.builder().type("STRING")
                             .description("Brief description of the element being clicked.")
                             .build()
                     ))
-                    .required(listOf("box_2d", "label"))
+                    .required(listOf("label"))
                     .build(),
                 "scroll" to Schema.builder()
                     .type("OBJECT")
@@ -229,7 +234,7 @@ class WebpageNavigationAgentGenAiImpl(
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information. Be eager — include every action worth trying.
         - **type_text**: Type into input field at (x,y). Highest priority — triggers search/filter.
-        - **click**: Click element using box_2d [ymin, xmin, ymax, xmax] in 0-1000 scale. Draw a tight bounding box around the element you want to click. Include all plausible targets (buttons, tabs, accordions, links etc.).
+        - **click**: Click an interactive element. Elements are numbered on the screenshot — use element_label to click by number (preferred). If the target isn't labeled, fall back to box_2d [ymin, xmin, ymax, xmax] in 0-1000 scale. Include all plausible targets (buttons, tabs, accordions, links etc.).
         - **find_on_page**: Search keywords (with stemming). Auto-scrolls to the first match. Always batch ALL relevant keywords in a single call. Use results to plan targeted scroll_to_text actions.
         - **scroll_to_text**: Scroll UP/DOWN to find the next occurrence of text outside the current viewport. Use after find_on_page to jump between matches. This is akin to a more efficient CONTROL-F in the webpage.
         - **scroll_page**: Scroll viewport UP/DOWN/LEFT/RIGHT. Always try to scroll by 100% unless doing so would cut text in the middle by the viewport boundaries.
@@ -249,7 +254,7 @@ class WebpageNavigationAgentGenAiImpl(
     )
 
     @Serializable
-    private data class ClickParams(val box_2d: List<Int>, val label: String? = null)
+    private data class ClickParams(val element_label: Int? = null, val box_2d: List<Int>? = null, val label: String? = null)
 
     @Serializable
     private data class ScrollParams(val direction: String? = null, val percent: Int? = null)
@@ -423,6 +428,12 @@ class WebpageNavigationAgentGenAiImpl(
             }
         }
 
+        if (input.labeledElements != null) {
+            appendLine()
+            appendLine("LABELED ELEMENTS (numbered on the screenshot — use element_label to click):")
+            appendLine(input.labeledElements)
+        }
+
         if (input.previousActions.isNotEmpty()) {
             appendLine()
             appendLine("TURNS:")
@@ -437,9 +448,12 @@ class WebpageNavigationAgentGenAiImpl(
         return when (resp.action) {
             "click" -> {
                 val p = checkNotNull(resp.click) { "click action missing click params" }
-                require(p.box_2d.size == 4) { "click box_2d must have 4 elements: [ymin, xmin, ymax, xmax]" }
+                val box2d = p.box_2d?.map { it.coerceIn(0, 1000) }
+                if (box2d != null) require(box2d.size == 4) { "click box_2d must have 4 elements: [ymin, xmin, ymax, xmax]" }
+                require(p.element_label != null || box2d != null) { "click must have element_label or box_2d" }
                 NavigationAction.Click(
-                    box2d = p.box_2d.map { it.coerceIn(0, 1000) },
+                    elementLabel = p.element_label,
+                    box2d = box2d,
                     label = p.label,
                     reason = reason
                 )
@@ -506,7 +520,8 @@ class WebpageNavigationAgentGenAiImpl(
 
     private fun formatActionDesc(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> {
-            "click ${action.label ?: action.reason.take(60)} box_2d=${action.box2d}"
+            val target = if (action.elementLabel != null) "element#${action.elementLabel}" else "box_2d=${action.box2d}"
+            "click ${action.label ?: action.reason.take(60)} $target"
         }
         is NavigationAction.Scroll -> "scroll_page ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"
         is NavigationAction.ScrollAt -> "scroll_element (${action.x},${action.y}) ${action.scrollDirection.name.lowercase()} ${action.scrollPercent}%"

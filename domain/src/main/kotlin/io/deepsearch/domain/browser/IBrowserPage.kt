@@ -104,6 +104,28 @@ interface IBrowserPage {
     suspend fun getElementHtmlByCssSelector(cssSelector: String): String
 
     /**
+     * Visible interactive element on the page with its bounding box.
+     * Re-evaluated each call to handle dynamic DOM changes.
+     */
+    data class InteractiveElementInfo(
+        val tag: String,
+        val text: String,
+        val role: String?,
+        val ariaLabel: String?,
+        val boundingBox: BoundingBox,
+        val index: Int
+    ) {
+        val centerX: Int get() = ((boundingBox.left + boundingBox.right) / 2).toInt()
+        val centerY: Int get() = ((boundingBox.top + boundingBox.bottom) / 2).toInt()
+    }
+
+    /**
+     * Enumerate all visible interactive elements in the viewport with their bounding boxes.
+     * Uses hybrid detection: native elements, ARIA roles, cursor:pointer, onclick, tabindex.
+     */
+    suspend fun getInteractiveElements(): List<InteractiveElementInfo>
+
+    /**
      * Identify the DOM element at each viewport coordinate.
      *
      * Uses `document.elementFromPoint()` for each point and returns a unique

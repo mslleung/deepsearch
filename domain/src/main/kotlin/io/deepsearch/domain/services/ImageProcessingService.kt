@@ -11,19 +11,79 @@ import org.bytedeco.opencv.global.opencv_imgcodecs.IMREAD_GRAYSCALE
 import org.bytedeco.opencv.global.opencv_imgcodecs.IMWRITE_JPEG_QUALITY
 import org.bytedeco.opencv.global.opencv_imgcodecs.imdecode
 import org.bytedeco.opencv.global.opencv_imgcodecs.imencode
+import org.bytedeco.opencv.global.opencv_imgproc.FILLED
+import org.bytedeco.opencv.global.opencv_imgproc.FONT_HERSHEY_DUPLEX
+import org.bytedeco.opencv.global.opencv_imgproc.LINE_8
+import org.bytedeco.opencv.global.opencv_imgproc.LINE_AA
 import org.bytedeco.opencv.global.opencv_imgproc.THRESH_BINARY
+import org.bytedeco.opencv.global.opencv_imgproc.getTextSize
+import org.bytedeco.opencv.global.opencv_imgproc.putText
+import org.bytedeco.opencv.global.opencv_imgproc.rectangle
 import org.bytedeco.opencv.global.opencv_imgproc.resize
 import org.bytedeco.opencv.global.opencv_imgproc.threshold
 import org.bytedeco.opencv.opencv_core.Mat
+import org.bytedeco.opencv.opencv_core.Point
 import org.bytedeco.opencv.opencv_core.Rect
+import org.bytedeco.opencv.opencv_core.Scalar
 import org.bytedeco.opencv.opencv_core.Size
 import org.slf4j.LoggerFactory
+
+data class AnnotatedScreenshot(
+    val imageBytes: ByteArray,
+    val mimeType: String,
+    val elementIndex: Map<Int, AnnotatedElement>
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as AnnotatedScreenshot
+        if (!imageBytes.contentEquals(other.imageBytes)) return false
+        if (mimeType != other.mimeType) return false
+        if (elementIndex != other.elementIndex) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = imageBytes.contentHashCode()
+        result = 31 * result + mimeType.hashCode()
+        result = 31 * result + elementIndex.hashCode()
+        return result
+    }
+}
+
+data class AnnotatedElement(
+    val tag: String,
+    val text: String,
+    val role: String?,
+    val ariaLabel: String?,
+    val centerX: Int,
+    val centerY: Int,
+    val index: Int
+)
+
+data class AnnotationTarget(
+    val tag: String,
+    val text: String,
+    val role: String?,
+    val ariaLabel: String?,
+    val left: Double,
+    val top: Double,
+    val right: Double,
+    val bottom: Double,
+    val centerX: Int,
+    val centerY: Int,
+    val index: Int
+)
 
 interface IImageProcessingService {
     fun getImageDimensions(imageBytes: ByteArray): Pair<Int, Int>
     fun downscaleToJpeg(imageBytes: ByteArray, maxHeight: Int, jpegQuality: Int): ByteArray
     fun cropToPng(imageBytes: ByteArray, x: Int, y: Int, width: Int, height: Int): ByteArray
     fun hasVisualChange(previous: ByteArray, current: ByteArray): Boolean
+    fun annotate(
+        screenshotBytes: ByteArray,
+        elements: List<AnnotationTarget>
+    ): AnnotatedScreenshot
 }
 
 /**
@@ -39,6 +99,26 @@ class ImageProcessingService : IImageProcessingService {
         }
 
         private const val PIXEL_DIFF_THRESHOLD = 30.0
+
+        private const val ANNOTATION_JPEG_QUALITY = 90
+        private const val FONT_FACE = FONT_HERSHEY_DUPLEX
+        private const val FONT_SCALE = 0.45
+        private const val FONT_THICKNESS = 1
+        private const val LABEL_PAD_X = 4
+        private const val LABEL_PAD_Y = 4
+        private const val BOX_OUTER_THICKNESS = 3
+        private const val BOX_INNER_THICKNESS = 2
+
+        private val SHADOW = Scalar(0.0, 0.0, 0.0, 0.0)
+        private val BLACK = Scalar(0.0, 0.0, 0.0, 0.0)
+        private val WHITE = Scalar(255.0, 255.0, 255.0, 0.0)
+
+        private val PALETTE_BGR = arrayOf(
+            Scalar(255.0, 230.0, 0.0, 0.0),   // cyan
+            Scalar(147.0, 20.0, 255.0, 0.0),   // magenta
+            Scalar(50.0, 255.0, 50.0, 0.0),    // green
+        )
+        private val PALETTE_TEXT = arrayOf(BLACK, WHITE, BLACK)
     }
 
     override fun getImageDimensions(imageBytes: ByteArray): Pair<Int, Int> {
@@ -106,6 +186,83 @@ class ImageProcessingService : IImageProcessingService {
         prevMat.close(); curMat.close(); diff.close()
 
         return changedPixels > 0
+    }
+
+    override fun annotate(
+        screenshotBytes: ByteArray,
+        elements: List<AnnotationTarget>
+    ): AnnotatedScreenshot {
+        val image = decodeMat(screenshotBytes, IMREAD_COLOR)
+        val imgW = image.cols()
+        val imgH = image.rows()
+
+        val elementIndex = mutableMapOf<Int, AnnotatedElement>()
+        val p1 = Point()
+        val p2 = Point()
+        val textOrigin = Point()
+        val baselinePtr = IntPointer(1L).put(0)
+
+        for (element in elements) {
+            val labelNumber = element.index
+            elementIndex[labelNumber] = AnnotatedElement(
+                tag = element.tag,
+                text = element.text,
+                role = element.role,
+                ariaLabel = element.ariaLabel,
+                centerX = element.centerX,
+                centerY = element.centerY,
+                index = element.index
+            )
+
+            val boxX = element.left.toInt().coerceIn(0, imgW - 1)
+            val boxY = element.top.toInt().coerceIn(0, imgH - 1)
+            val boxR = element.right.toInt().coerceIn((boxX + 4).coerceAtMost(imgW), imgW)
+            val boxB = element.bottom.toInt().coerceIn((boxY + 4).coerceAtMost(imgH), imgH)
+
+            val paletteIdx = labelNumber % PALETTE_BGR.size
+            val accentColor = PALETTE_BGR[paletteIdx]
+
+            p1.x(boxX).y(boxY)
+            p2.x(boxR).y(boxB)
+            rectangle(image, p1, p2, SHADOW, BOX_OUTER_THICKNESS, LINE_8, 0)
+            rectangle(image, p1, p2, accentColor, BOX_INNER_THICKNESS, LINE_8, 0)
+
+            val labelText = labelNumber.toString()
+            baselinePtr.put(0L, 0)
+            val textSize = getTextSize(labelText, FONT_FACE, FONT_SCALE, FONT_THICKNESS, baselinePtr)
+            val textW = textSize.width()
+            val textH = textSize.height()
+
+            val badgeW = textW + LABEL_PAD_X * 2
+            val badgeH = textH + LABEL_PAD_Y * 2
+            val badgeX = boxX.coerceIn(0, (imgW - badgeW).coerceAtLeast(0))
+            val badgeY = (boxY - badgeH - 1).coerceIn(0, (imgH - badgeH).coerceAtLeast(0))
+
+            p1.x(badgeX - 1).y(badgeY - 1)
+            p2.x(badgeX + badgeW + 1).y(badgeY + badgeH + 1)
+            rectangle(image, p1, p2, SHADOW, FILLED, LINE_8, 0)
+
+            p1.x(badgeX).y(badgeY)
+            p2.x(badgeX + badgeW).y(badgeY + badgeH)
+            rectangle(image, p1, p2, accentColor, FILLED, LINE_8, 0)
+
+            textOrigin.x(badgeX + LABEL_PAD_X).y(badgeY + LABEL_PAD_Y + textH)
+            putText(image, labelText, textOrigin, FONT_FACE, FONT_SCALE, PALETTE_TEXT[paletteIdx], FONT_THICKNESS, LINE_AA, false)
+        }
+
+        p1.close()
+        p2.close()
+        textOrigin.close()
+        baselinePtr.close()
+
+        val outputBytes = encodeJpeg(image, ANNOTATION_JPEG_QUALITY)
+        image.close()
+
+        return AnnotatedScreenshot(
+            imageBytes = outputBytes,
+            mimeType = "image/jpeg",
+            elementIndex = elementIndex
+        )
     }
 
     private fun decodeMat(bytes: ByteArray, flags: Int): Mat {

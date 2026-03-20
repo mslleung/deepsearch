@@ -180,6 +180,9 @@ sealed class PageCommand {
 
     @Serializable @SerialName("getElementsAtPoints")
     data class GetElementsAtPoints(val points: List<PointCoord>) : PageCommand()
+
+    @Serializable @SerialName("getInteractiveElements")
+    data object GetInteractiveElements : PageCommand()
 }
 
 @Serializable
@@ -291,6 +294,22 @@ data class ElementAtPointResponse(val path: String, val tag: String, val text: S
 
 @Serializable
 data class ElementsAtPointsResponse(val elements: List<ElementAtPointResponse?>)
+
+@Serializable
+data class InteractiveElementDto(
+    val tag: String,
+    val text: String,
+    val role: String? = null,
+    val ariaLabel: String? = null,
+    val left: Double,
+    val top: Double,
+    val right: Double,
+    val bottom: Double,
+    val index: Int
+)
+
+@Serializable
+data class InteractiveElementsResponse(val elements: List<InteractiveElementDto>)
 
 // ==================== Hidden Container Bounding Boxes Response ====================
 

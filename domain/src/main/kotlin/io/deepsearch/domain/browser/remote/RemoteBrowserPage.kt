@@ -276,6 +276,20 @@ class RemoteBrowserPage(
         }}
     }
 
+    override suspend fun getInteractiveElements(): List<IBrowserPage.InteractiveElementInfo> {
+        val r = pageCmdParse<InteractiveElementsResponse>(PageCommand.GetInteractiveElements)
+        return r.elements.map { e ->
+            IBrowserPage.InteractiveElementInfo(
+                tag = e.tag,
+                text = e.text,
+                role = e.role,
+                ariaLabel = e.ariaLabel,
+                boundingBox = IBrowserPage.BoundingBox(e.left, e.top, e.right, e.bottom),
+                index = e.index
+            )
+        }
+    }
+
     override suspend fun clickAtCoordinates(x: Int, y: Int) {
         pageCmd(PageCommand.ClickAtCoordinates(x, y))
     }

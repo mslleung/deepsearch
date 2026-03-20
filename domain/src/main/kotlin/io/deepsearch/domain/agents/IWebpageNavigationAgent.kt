@@ -29,19 +29,21 @@ data class WebpageNavigationInput(
     val pageDescription: String?,
     val scrollPercent: Int,
     val currentIteration: Int = 1,
-    val maxIterations: Int = 12
+    val maxIterations: Int = 12,
+    val labeledElements: String? = null
 ) : IAgent.IAgentInput
 
 @Serializable
 sealed class NavigationAction {
     @Serializable
     data class Click(
-        val box2d: List<Int>,
+        val elementLabel: Int? = null,
+        val box2d: List<Int>? = null,
         val label: String? = null,
         val reason: String
     ) : NavigationAction() {
-        val centerX: Int get() = (box2d[1] + box2d[3]) / 2
-        val centerY: Int get() = (box2d[0] + box2d[2]) / 2
+        val centerX: Int? get() = box2d?.let { (it[1] + it[3]) / 2 }
+        val centerY: Int? get() = box2d?.let { (it[0] + it[2]) / 2 }
     }
 
     @Serializable
