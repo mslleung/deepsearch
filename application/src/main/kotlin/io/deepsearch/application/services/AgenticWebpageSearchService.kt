@@ -333,7 +333,7 @@ class AgenticWebpageSearchService(
                 maxIterations = MAX_ITERATIONS,
                 pageState = state.pageState,
                 isOverlayMode = isOverlayMode,
-                labeledElements = labeledElements,
+                labeledElements = null,
                 scrollStateHint = scrollStateHint,
                 extractedRegionContent = state.extractedRegionContent.toList()
             )

@@ -140,16 +140,6 @@ class FullPageNavigationAgentGenAiImpl(
                     .type("STRING")
                     .description("Describe the page layout, visible sections, and any changes from the last action.")
                     .build(),
-                "visibleContent" to Schema.builder()
-                    .type("STRING")
-                    .description(
-                        "Structured extraction of ALL visible text content in the current viewport, " +
-                        "formatted as markdown. " +
-                        "Use markdown tables for any tabular data (preserve rows, columns, and headers). " +
-                        "Use headings, lists, and emphasis to reflect the page structure. " +
-                        "Preserve the original text exactly — do NOT paraphrase or summarize."
-                    )
-                    .build(),
                 "questionsState" to Schema.builder()
                     .type("ARRAY")
                     .items(questionStateSchema)
@@ -188,8 +178,8 @@ class FullPageNavigationAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("pageState", "observation", "visibleContent", "questionsState", "generalFindings", "decision", "reason"))
-        .propertyOrdering(listOf("pageState", "observation", "visibleContent", "questionsState", "generalFindings", "captureRegions", "decision", "reason", "actions", "answer"))
+        .required(listOf("pageState", "observation", "questionsState", "generalFindings", "decision", "reason"))
+        .propertyOrdering(listOf("pageState", "observation", "questionsState", "generalFindings", "captureRegions", "decision", "reason", "actions", "answer"))
         .build()
 
     private val fullPageSystemInstruction = """
@@ -203,19 +193,16 @@ class FullPageNavigationAgentGenAiImpl(
         Complete this stage based ONLY on what you SEE in the screenshot — before considering the query.
         - pageState: Report ALL dynamic UI states (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements.
         - observation: Describe the page layout and any changes from the last action.
-        - visibleContent: TRANSCRIBE all visible text from the screenshot as markdown — use tables for tabular data, headings for sections, lists for bullet points. You MUST copy text character-for-character as it appears in the image. NEVER paraphrase, summarize, or approximate — transcribe the exact words and numbers. Include EVERY item in bullet/numbered lists individually — do not collapse items like "various tests" or "laboratory tests".
-        - If text is in another language, keep it in the original language.
-        - Pay special attention to PRICES and NUMBERS — read each digit carefully from the screenshot. "$6,900" and "$6,500" are different values; copy the exact number shown.
-        - Note: visibleContent is your visual reading. The system also extracts text programmatically from your captureRegions — that programmatic extraction is more accurate for exact values like prices and numbers.
+        - captureRegions: For any area containing data relevant to the query (prices, numbers, text, tables), provide bounding boxes. The system will programmatically extract text from these regions and feed it back as PROGRAMMATIC EXTRACTION on the next turn. You MUST provide capture regions for all areas with factual data needed to answer the query.
         CRITICAL: Do NOT let the query influence your visual analysis. If the query mentions "X", do not assume X is visible — look at the screenshot and report what is ACTUALLY there.
 
         ## STAGE 2 — QUERY PLANNING
         Now read the query and use your Stage 1 analysis to decide what to do.
         1. Trust your Stage 1 analysis. If you reported "Active tab: Y" in pageState, that IS the active tab — even if you expected a different tab based on the query or your previous click. If the state doesn't match what you expected, your last click likely targeted the wrong element — try a different one.
-        2. Extract any relevant findings from visibleContent. Do not omit data. Do not invent or modify facts.
+        2. Extract any relevant findings from your observation and PROGRAMMATIC EXTRACTION data. Do not omit data. Do not invent or modify facts.
         3. Explore the page by issuing actions: click, type_text.
         4. If a click led to navigation, it would be recorded separately, just continue exploring.
-        5. Before calling exploration_finished: VERIFY that every data point in your answer appears verbatim in your visibleContent extractions across turns. If any data point is NOT in your extractions, continue exploring to find it — do NOT guess or fabricate.
+        5. Before calling exploration_finished: VERIFY that every data point in your answer appears in PROGRAMMATIC EXTRACTION data across turns. If any data point is NOT in your extractions, continue exploring to find it — do NOT guess or fabricate.
         6. If you see tabs, accordions, or toggles that MAY contain relevant content, you MUST click each one to reveal its content before finishing. Do NOT report content as "not listed" or "not available" if you haven't clicked the tab/toggle to check.
         7. When the query asks for a LIST of items (e.g. 'all prices', 'all packages'), you MUST systematically click through ALL relevant tabs/accordions/toggles to gather every item before calling exploration_finished.
 
@@ -225,7 +212,7 @@ class FullPageNavigationAgentGenAiImpl(
         - **click**: Click an interactive element by element_label (preferred) or box_2d [ymin, xmin, ymax, xmax] 0-1000 scale as fallback. Every click MUST include element_label or box_2d coordinates.
 
         **exploration_finished**: Stop exploring. You MUST provide a comprehensive answer in the "answer" field, synthesized from ALL findings.
-        - Your answer MUST contain ONLY data from PROGRAMMATIC EXTRACTION (preferred) or your visibleContent extractions. When programmatic extractions are available, prefer those values over your visual reading. NEVER fabricate, estimate, or infer values you have not seen.
+        - Your answer MUST be grounded in PROGRAMMATIC EXTRACTION data. NEVER fabricate, estimate, or infer values you have not seen in the extractions.
         - If you haven't found sufficient data, continue exploring rather than guessing.
         - Never leave answer empty when you have findings.
     """.trimIndent()
@@ -242,18 +229,16 @@ class FullPageNavigationAgentGenAiImpl(
         Complete this stage based ONLY on what you SEE in the screenshot — before considering the query.
         - pageState: Report ALL dynamic UI states (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements.
         - observation: Describe the overlay content and any changes from the last action. Note if content appears cut off (indicating more content available via scrolling).
-        - visibleContent: Extract ALL visible text as markdown — use tables for tabular data, headings for sections, lists for bullet points. Preserve original text exactly.
-        - If text is in another language, keep it in the original language.
-        - Note: visibleContent is your visual reading. The system also extracts text programmatically from your captureRegions — that programmatic extraction is more accurate for exact values like prices and numbers.
+        - captureRegions: For any area containing data relevant to the query (prices, numbers, text, tables), provide bounding boxes. The system will programmatically extract text from these regions and feed it back as PROGRAMMATIC EXTRACTION on the next turn. You MUST provide capture regions for all areas with factual data needed to answer the query.
         CRITICAL: Do NOT let the query influence your visual analysis. If the query mentions "X", do not assume X is visible — look at the screenshot and report what is ACTUALLY there.
 
         ## STAGE 2 — QUERY PLANNING
         Now read the query and use your Stage 1 analysis to decide what to do.
         1. Trust your Stage 1 analysis. If you reported "Active tab: Y" in pageState, that IS the active tab — even if you expected a different tab based on the query or your previous click. If the state doesn't match what you expected, your last click likely targeted the wrong element — try a different one.
-        2. Extract any relevant findings from visibleContent. Do not omit data. Do not invent or modify facts.
+        2. Extract any relevant findings from your observation and PROGRAMMATIC EXTRACTION data. Do not omit data. Do not invent or modify facts.
         3. Explore the page by issuing actions: click, type_text, scroll_element.
         4. If a click led to navigation, it would be recorded separately, just continue exploring.
-        5. Before calling exploration_finished: VERIFY that every data point in your answer appears verbatim in your visibleContent extractions across turns. If any data point is NOT in your extractions, continue exploring to find it — do NOT guess or fabricate.
+        5. Before calling exploration_finished: VERIFY that every data point in your answer appears in PROGRAMMATIC EXTRACTION data across turns. If any data point is NOT in your extractions, continue exploring to find it — do NOT guess or fabricate.
         6. If the overlay does NOT contain the information you need, dismiss it by clicking the close button (X) or clicking the dimmed area outside, then continue exploring the main page.
         7. Do NOT call exploration_finished while inside an overlay unless all required data has been found.
 
@@ -264,7 +249,7 @@ class FullPageNavigationAgentGenAiImpl(
         - **scroll_element**: Scroll within an overlay or container. Provide x,y coordinates of the scrollable area and the direction (DOWN, UP, LEFT, RIGHT).
 
         **exploration_finished**: Stop exploring. You MUST provide a comprehensive answer in the "answer" field, synthesized from ALL findings.
-        - Your answer MUST contain ONLY data from PROGRAMMATIC EXTRACTION (preferred) or your visibleContent extractions. When programmatic extractions are available, prefer those values over your visual reading. NEVER fabricate, estimate, or infer values you have not seen.
+        - Your answer MUST be grounded in PROGRAMMATIC EXTRACTION data. NEVER fabricate, estimate, or infer values you have not seen in the extractions.
         - If you haven't found sufficient data, continue exploring rather than guessing.
         - Never leave answer empty when you have findings.
     """.trimIndent()
@@ -307,7 +292,6 @@ class FullPageNavigationAgentGenAiImpl(
     private data class NavigationResponse(
         val pageState: List<String>? = null,
         val observation: String? = null,
-        val visibleContent: String? = null,
         val questionsState: List<QuestionStateResponse>? = null,
         val generalFindings: List<String>? = null,
         val captureRegions: List<CaptureRegionResponse>? = null,
@@ -437,12 +421,6 @@ class FullPageNavigationAgentGenAiImpl(
             }
         }
 
-        if (input.labeledElements != null) {
-            appendLine()
-            appendLine("LABELED ELEMENTS (numbered — use element_label to click):")
-            appendLine(input.labeledElements)
-        }
-
         appendLine()
         appendLine("--- QUERY & CONTEXT ---")
 
@@ -476,7 +454,7 @@ class FullPageNavigationAgentGenAiImpl(
 
         if (input.extractedRegionContent.isNotEmpty()) {
             appendLine()
-            appendLine("PROGRAMMATIC EXTRACTION (authoritative — extracted from DOM, use over visibleContent for data accuracy):")
+            appendLine("PROGRAMMATIC EXTRACTION (authoritative — extracted from DOM):")
             input.extractedRegionContent.forEach { ec ->
                 appendLine("  [${ec.description}]${if (ec.isTable) " (table)" else ""}:")
                 appendLine("    ${ec.text}")
