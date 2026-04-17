@@ -30,7 +30,8 @@ data class WebpageNavigationInput(
     val scrollPercent: Int,
     val currentIteration: Int = 1,
     val maxIterations: Int = 12,
-    val labeledElements: String? = null
+    val labeledElements: String? = null,
+    val pageState: List<String> = emptyList()
 ) : IAgent.IAgentInput
 
 @Serializable
@@ -124,6 +125,7 @@ data class WebpageNavigationOutput(
     val actions: List<NavigationAction>,
     val questionsState: List<TrackedQuestion>,
     val generalFindings: List<String>,
+    val pageState: List<String>,
     val observation: String?,
     val captureRegions: List<CaptureRegion>,
     val tokenUsage: TokenUsageMetrics

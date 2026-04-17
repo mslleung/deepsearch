@@ -120,10 +120,14 @@ interface IBrowserPage {
     }
 
     /**
-     * Enumerate all visible interactive elements in the viewport with their bounding boxes.
-     * Uses hybrid detection: native elements, ARIA roles, cursor:pointer, onclick, tabindex.
+     * Enumerate visible interactive elements using hybrid detection: native elements, ARIA roles,
+     * cursor:pointer, onclick, tabindex.
+     *
+     * @param fullPage When true, returns ALL interactive elements on the page with page-absolute
+     *   coordinates (call after scrolling to top). When false (default), returns only viewport-visible
+     *   elements with viewport-relative coordinates and occlusion filtering.
      */
-    suspend fun getInteractiveElements(): List<InteractiveElementInfo>
+    suspend fun getInteractiveElements(fullPage: Boolean = false): List<InteractiveElementInfo>
 
     /**
      * Identify the DOM element at each viewport coordinate.
@@ -706,6 +710,103 @@ interface IBrowserPage {
      * @return HiddenContainerBoundingBoxes containing bounding box data for each hidden container
      */
     suspend fun captureHiddenContainerBoundingBoxes(): HiddenContainerBoundingBoxes
+
+    /**
+     * Detect whether a scrollable fixed-position overlay is present on the page.
+     *
+     * Checks for visible `position: fixed` elements (or descendants of one)
+     * where `scrollHeight > clientHeight`, indicating content clipped by internal scroll.
+     * This is a factual DOM measurement, not a heuristic.
+     *
+     * @return true if a scrollable fixed overlay is detected
+     */
+    suspend fun hasScrollableFixedOverlay(): Boolean
+
+    /**
+     * Detect whether a modal or overlay is present using high-confidence signals:
+     * open `<dialog>`, ARIA modals (`role="dialog"` / `aria-modal="true"`), or body scroll lock.
+     */
+    suspend fun hasModalOverlay(): Boolean
+
+    /**
+     * Return a stable signature for each visible `position: fixed` element.
+     * Used for before/after diffing to detect newly appearing fixed overlays
+     * that would corrupt full-page screenshots.
+     */
+    suspend fun getFixedElementSignatures(): List<String>
+
+    data class ScrollableContainerInfo(
+        val description: String,
+        val hasMoreAbove: Boolean = false,
+        val hasMoreBelow: Boolean = false,
+        val hasMoreLeft: Boolean = false,
+        val hasMoreRight: Boolean = false,
+        val verticalScrollPercent: Int = 0,
+        val horizontalScrollPercent: Int = 0
+    )
+
+    /**
+     * Find all significant scrollable containers on the page, detect vertical
+     * and horizontal scroll state, and inject visual "scroll for more" indicators
+     * at edges where content is hidden.
+     */
+    suspend fun annotateScrollableContainers(): List<ScrollableContainerInfo>
+
+    // ==================== DOM Snapshot ====================
+
+    data class DomBoundingBox(
+        val x: Double,
+        val y: Double,
+        val width: Double,
+        val height: Double
+    )
+
+    data class DomElementInfo(
+        val stableId: String,
+        val tag: String,
+        val id: String,
+        val boundingBox: DomBoundingBox,
+        val childCount: Int
+    )
+
+    data class DomSnapshot(
+        val elements: List<DomElementInfo>,
+        val viewportWidth: Int,
+        val viewportHeight: Int,
+        val bodyOverflow: String
+    )
+
+    /**
+     * Capture a lightweight DOM snapshot of body's visible direct children.
+     * Each element is identified by a stable DOM-path-based ID and includes
+     * bounding box and child count for structural diffing.
+     */
+    suspend fun captureDomSnapshot(): DomSnapshot
+
+    // ==================== Region-Based Content Extraction ====================
+
+    data class RegionContent(
+        val text: String,
+        val html: String,
+        val tag: String,
+        val isTable: Boolean
+    )
+
+    /**
+     * Extract the content of the DOM element that best covers a viewport region.
+     *
+     * Starts from `document.elementFromPoint` at the region center and walks up
+     * the DOM tree until it finds an ancestor whose bounding box covers at least
+     * ~70% of the target region. Returns the element's text, outerHTML, tag name,
+     * and whether it (or an ancestor within the walk) is a table-like element
+     * (`<table>`, CSS grid/flex with tabular structure).
+     *
+     * @param x1 left edge of the region in viewport pixels
+     * @param y1 top edge of the region in viewport pixels
+     * @param x2 right edge of the region in viewport pixels
+     * @param y2 bottom edge of the region in viewport pixels
+     */
+    suspend fun extractContentInRegion(x1: Int, y1: Int, x2: Int, y2: Int): RegionContent
 
     /**
      * Close this page and release associated resources.

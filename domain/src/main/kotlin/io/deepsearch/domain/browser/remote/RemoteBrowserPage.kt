@@ -276,8 +276,8 @@ class RemoteBrowserPage(
         }}
     }
 
-    override suspend fun getInteractiveElements(): List<IBrowserPage.InteractiveElementInfo> {
-        val r = pageCmdParse<InteractiveElementsResponse>(PageCommand.GetInteractiveElements)
+    override suspend fun getInteractiveElements(fullPage: Boolean): List<IBrowserPage.InteractiveElementInfo> {
+        val r = pageCmdParse<InteractiveElementsResponse>(PageCommand.GetInteractiveElements(fullPage))
         return r.elements.map { e ->
             IBrowserPage.InteractiveElementInfo(
                 tag = e.tag,
@@ -477,6 +477,63 @@ class RemoteBrowserPage(
                 it.text
             )
         }))
+    }
+
+    override suspend fun hasScrollableFixedOverlay(): Boolean =
+        pageCmd(PageCommand.HasScrollableFixedOverlay).toBoolean()
+
+    override suspend fun hasModalOverlay(): Boolean =
+        pageCmd(PageCommand.HasModalOverlay).toBoolean()
+
+    override suspend fun getFixedElementSignatures(): List<String> =
+        pageCmdParse<List<String>>(PageCommand.GetFixedElementSignatures)
+
+    override suspend fun annotateScrollableContainers(): List<IBrowserPage.ScrollableContainerInfo> {
+        val list = pageCmdParse<List<ScrollableContainerInfoResponse>>(PageCommand.AnnotateScrollableContainers)
+        return list.map { r ->
+            IBrowserPage.ScrollableContainerInfo(
+                description = r.description,
+                hasMoreAbove = r.hasMoreAbove,
+                hasMoreBelow = r.hasMoreBelow,
+                hasMoreLeft = r.hasMoreLeft,
+                hasMoreRight = r.hasMoreRight,
+                verticalScrollPercent = r.verticalScrollPercent,
+                horizontalScrollPercent = r.horizontalScrollPercent
+            )
+        }
+    }
+
+    override suspend fun captureDomSnapshot(): IBrowserPage.DomSnapshot {
+        val r = pageCmdParse<DomSnapshotResponse>(PageCommand.CaptureDomSnapshot)
+        return IBrowserPage.DomSnapshot(
+            elements = r.elements.map { el ->
+                IBrowserPage.DomElementInfo(
+                    stableId = el.stableId,
+                    tag = el.tag,
+                    id = el.id,
+                    boundingBox = IBrowserPage.DomBoundingBox(
+                        x = el.boundingBox.x,
+                        y = el.boundingBox.y,
+                        width = el.boundingBox.width,
+                        height = el.boundingBox.height
+                    ),
+                    childCount = el.childCount
+                )
+            },
+            viewportWidth = r.viewportWidth,
+            viewportHeight = r.viewportHeight,
+            bodyOverflow = r.bodyOverflow
+        )
+    }
+
+    override suspend fun extractContentInRegion(x1: Int, y1: Int, x2: Int, y2: Int): IBrowserPage.RegionContent {
+        val r = pageCmdParse<RegionContentResponse>(PageCommand.ExtractContentInRegion(x1, y1, x2, y2))
+        return IBrowserPage.RegionContent(
+            text = r.text,
+            html = r.html,
+            tag = r.tag,
+            isTable = r.isTable
+        )
     }
 
     override suspend fun close() {

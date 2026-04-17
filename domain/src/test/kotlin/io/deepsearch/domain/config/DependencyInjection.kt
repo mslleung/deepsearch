@@ -47,6 +47,8 @@ import io.deepsearch.domain.services.ITableGridDetectorService
 import io.deepsearch.domain.services.IRecursiveTableDiscoveryService
 import io.deepsearch.domain.services.ISemanticListConverter
 import io.deepsearch.domain.services.ISemanticTableConverter
+import io.deepsearch.domain.services.DomDiffService
+import io.deepsearch.domain.services.IDomDiffService
 import io.deepsearch.domain.services.IImageProcessingService
 import io.deepsearch.domain.services.ImageProcessingService
 import io.deepsearch.domain.services.SemanticListConverter
@@ -126,6 +128,7 @@ private val domainCommonTestModule = module {
     singleOf(::SemanticTableClassificationAgentGenAiImpl) bind ISemanticTableClassificationAgent::class
     singleOf(::LinearizedContentConversionAgentGenAiImpl) bind ILinearizedContentConversionAgent::class
     singleOf(::WebpageNavigationAgentGenAiImpl) bind IWebpageNavigationAgent::class
+    singleOf(::FullPageNavigationAgentGenAiImpl) bind IFullPageNavigationAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class
@@ -158,6 +161,7 @@ private val domainCommonTestModule = module {
     singleOf(::SemanticTableConverter) bind ISemanticTableConverter::class
     singleOf(::SemanticListConverter) bind ISemanticListConverter::class
     singleOf(::ImageProcessingService) bind IImageProcessingService::class
+    singleOf(::DomDiffService) bind IDomDiffService::class
     singleOf(::ProxyAwareHttpClientFactory) bind IProxyAwareHttpClientFactory::class
     singleOf(::ProxyTestService) bind IProxyTestService::class
     singleOf(::FreeProxySyncService)

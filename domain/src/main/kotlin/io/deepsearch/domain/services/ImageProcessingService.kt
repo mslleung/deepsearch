@@ -100,7 +100,7 @@ class ImageProcessingService : IImageProcessingService {
 
         private const val PIXEL_DIFF_THRESHOLD = 30.0
 
-        private const val ANNOTATION_JPEG_QUALITY = 90
+        private const val ANNOTATION_JPEG_QUALITY = 100
         private const val FONT_FACE = FONT_HERSHEY_DUPLEX
         private const val FONT_SCALE = 0.45
         private const val FONT_THICKNESS = 1

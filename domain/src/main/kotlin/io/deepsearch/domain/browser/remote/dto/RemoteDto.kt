@@ -75,6 +75,24 @@ sealed class PageCommand {
 
     @Serializable @SerialName("scrollElementAtCoordinates")
     data class ScrollElementAtCoordinates(val x: Int, val y: Int, val deltaX: Int, val deltaY: Int) : PageCommand()
+
+    @Serializable @SerialName("hasScrollableFixedOverlay")
+    data object HasScrollableFixedOverlay : PageCommand()
+
+    @Serializable @SerialName("hasModalOverlay")
+    data object HasModalOverlay : PageCommand()
+
+    @Serializable @SerialName("getFixedElementSignatures")
+    data object GetFixedElementSignatures : PageCommand()
+
+    @Serializable @SerialName("annotateScrollableContainers")
+    data object AnnotateScrollableContainers : PageCommand()
+
+    @Serializable @SerialName("captureDomSnapshot")
+    data object CaptureDomSnapshot : PageCommand()
+
+    @Serializable @SerialName("extractContentInRegion")
+    data class ExtractContentInRegion(val x1: Int, val y1: Int, val x2: Int, val y2: Int) : PageCommand()
     
     @Serializable @SerialName("removeElement")
     data class RemoveElement(val xpath: String) : PageCommand()
@@ -182,7 +200,7 @@ sealed class PageCommand {
     data class GetElementsAtPoints(val points: List<PointCoord>) : PageCommand()
 
     @Serializable @SerialName("getInteractiveElements")
-    data object GetInteractiveElements : PageCommand()
+    data class GetInteractiveElements(val fullPage: Boolean = false) : PageCommand()
 }
 
 @Serializable
@@ -202,6 +220,50 @@ data class AttributeInjection(
 )
 
 // ==================== Response Data Types ====================
+
+@Serializable
+data class ScrollableContainerInfoResponse(
+    val description: String = "",
+    val hasMoreAbove: Boolean = false,
+    val hasMoreBelow: Boolean = false,
+    val hasMoreLeft: Boolean = false,
+    val hasMoreRight: Boolean = false,
+    val verticalScrollPercent: Int = 0,
+    val horizontalScrollPercent: Int = 0
+)
+
+@Serializable
+data class DomElementInfoResponse(
+    val stableId: String,
+    val tag: String,
+    val id: String,
+    val boundingBox: DomBoundingBoxResponse,
+    val childCount: Int
+)
+
+@Serializable
+data class DomBoundingBoxResponse(
+    val x: Double,
+    val y: Double,
+    val width: Double,
+    val height: Double
+)
+
+@Serializable
+data class DomSnapshotResponse(
+    val elements: List<DomElementInfoResponse>,
+    val viewportWidth: Int,
+    val viewportHeight: Int,
+    val bodyOverflow: String
+)
+
+@Serializable
+data class RegionContentResponse(
+    val text: String,
+    val html: String,
+    val tag: String,
+    val isTable: Boolean
+)
 
 @Serializable
 data class ScreenshotResponse(val base64: String, val mimeType: String)
