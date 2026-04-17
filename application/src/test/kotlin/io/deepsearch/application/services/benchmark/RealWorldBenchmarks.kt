@@ -31,7 +31,17 @@ object RealWorldBenchmarks {
         otpUltraPrice(),
         otpStressTest(),
         otpCardiovascularPrice(),
-        otpWellWomanGoldPrice()
+        otpWellWomanGoldPrice(),
+        otpHepCAccordion(),
+        otpHomocysteineAccordion(),
+        otpFaqHealthCheckDefinition(),
+        otpFitAtFiftyPrice(),
+        otpCancerRiskPrice(),
+        otpCardiovascularStressTest(),
+        otpFaqFirstVisitDuration(),
+        otpFaqFemaleDoctors(),
+        otpCentralClinicAddress(),
+        otpAboutFounded()
     )
 
     // ==================== SleekFlow Pricing ====================
@@ -261,6 +271,256 @@ object RealWorldBenchmarks {
         pageSource = PageSource.Url("https://www.otandp.com/body-check/specialised-health-checks"),
         query = "What is the price of the OT&P Well Woman Gold package?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("9,900")),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 3,
+        constraints = BenchmarkConstraints(
+            maxIterations = 9
+        )
+    )
+
+    // ---- /body-check/ accordion content (hidden until expanded) ----
+
+    /**
+     * Hep C Ab is buried inside the "Blood Tests and Investigations" accordion,
+     * under the "Infection Profile" sub-section. Only the Ultra column has a check.
+     * Ideal: scroll_to_text("Blood Tests") -> click accordion -> scroll_to_text("Hep C") -> answer.
+     */
+    private fun otpHepCAccordion() = BenchmarkCase(
+        id = "otp-hep-c-accordion",
+        description = "OT&P Hep C Ab inclusion (deep accordion table)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/"),
+        query = "Which OT&P body check packages include Hepatitis C Antibody (Hep C Ab) testing?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(listOf("ultra"), caseSensitive = false),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.Click::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 4,
+        constraints = BenchmarkConstraints(
+            maxIterations = 12
+        )
+    )
+
+    /**
+     * Homocysteine is under the "Cardiovascular" sub-section inside the
+     * "Blood Tests and Investigations" accordion. Only Ultra and Ultra Follow Up
+     * have it. Must expand the accordion to see the nested comparison rows.
+     * Ideal: scroll_to_text("Blood Tests") -> click accordion -> scroll_to_text("Homocysteine") -> answer.
+     */
+    private fun otpHomocysteineAccordion() = BenchmarkCase(
+        id = "otp-homocysteine-accordion",
+        description = "OT&P Homocysteine inclusion (accordion cardiovascular sub-section)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/"),
+        query = "Which OT&P body check packages include Homocysteine testing?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(listOf("ultra"), caseSensitive = false),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.Click::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 4,
+        constraints = BenchmarkConstraints(
+            maxIterations = 12
+        )
+    )
+
+    /**
+     * The FAQ section at the bottom of /body-check/ uses accordions that must
+     * be clicked to reveal answers. The first FAQ "What is a health check?"
+     * contains a definition mentioning "comprehensive evaluation".
+     * Ideal: scroll_to_text("FAQ") -> click accordion heading -> read answer -> answer.
+     */
+    private fun otpFaqHealthCheckDefinition() = BenchmarkCase(
+        id = "otp-faq-health-check-definition",
+        description = "OT&P body-check FAQ: what is a health check (accordion)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/"),
+        query = "According to OT&P's body check page FAQ, what is a health check?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(
+            listOf("comprehensive evaluation"), caseSensitive = false
+        ),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.Click::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 4,
+        constraints = BenchmarkConstraints(
+            maxIterations = 12
+        )
+    )
+
+    // ---- /body-check/specialised-health-checks tabbed content ----
+
+    /**
+     * Fit at Fifty price ($7,900) is only visible after clicking the "Fit at Fifty"
+     * tab in the package tab strip. The default active tab is Cardiovascular.
+     * Ideal: scroll_to_text("Fit at Fifty") -> click tab -> read price -> answer.
+     */
+    private fun otpFitAtFiftyPrice() = BenchmarkCase(
+        id = "otp-fit-at-fifty-price",
+        description = "OT&P Fit at Fifty price (hidden tab)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/specialised-health-checks"),
+        query = "What is the price of the OT&P Fit at Fifty package?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(listOf("7,900")),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.Click::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 4,
+        constraints = BenchmarkConstraints(
+            maxIterations = 11
+        )
+    )
+
+    /**
+     * Cancer Risk Package price ($6,900) is behind the "Cancer Risk" tab,
+     * which is not the default selection.
+     * Ideal: scroll_to_text("Cancer Risk") -> click tab -> read price -> answer.
+     */
+    private fun otpCancerRiskPrice() = BenchmarkCase(
+        id = "otp-cancer-risk-price",
+        description = "OT&P Cancer Risk Package price (hidden tab)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/specialised-health-checks"),
+        query = "What is the price of the OT&P Cancer Risk Package?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(listOf("6,900")),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.Click::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 4,
+        constraints = BenchmarkConstraints(
+            maxIterations = 11
+        )
+    )
+
+    /**
+     * The Cardiovascular Risk tab lists included tests. "Stress Test (Treadmill)"
+     * is among them. This may already be the default active tab, but the agent
+     * still needs to scroll to the tab content area and read the included items.
+     * Ideal: scroll_to_text("Cardiovascular") -> click tab (if needed) -> read list -> answer.
+     */
+    private fun otpCardiovascularStressTest() = BenchmarkCase(
+        id = "otp-cardiovascular-stress-test",
+        description = "OT&P Cardiovascular Risk Package includes Stress Test (tab content)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/specialised-health-checks"),
+        query = "Does the OT&P Cardiovascular Risk Package include a Stress Test?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(
+            listOf("stress test", "treadmill"), caseSensitive = false
+        ),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.Click::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 4,
+        constraints = BenchmarkConstraints(
+            maxIterations = 11
+        )
+    )
+
+    // ---- /faq/ accordion content ----
+
+    /**
+     * The FAQ page uses accordions for each question. The "Consultations" section
+     * states that a first-time GP visit is at least 30 minutes.
+     * Ideal: scroll_to_text("first") -> click accordion -> read -> answer.
+     */
+    private fun otpFaqFirstVisitDuration() = BenchmarkCase(
+        id = "otp-faq-first-visit-duration",
+        description = "OT&P FAQ: first-time GP consultation length (accordion)",
+        pageSource = PageSource.Url("https://www.otandp.com/faq/"),
+        query = "According to OT&P's FAQ, how long is a first-time GP consultation?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(listOf("30"), caseSensitive = false),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.Click::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 4,
+        constraints = BenchmarkConstraints(
+            maxIterations = 11
+        )
+    )
+
+    /**
+     * The FAQ "Practitioners" section has an accordion about female doctors.
+     * The answer lists Central, Repulse Bay, and Clearwater Bay clinics.
+     * Ideal: scroll_to_text("female") -> click accordion -> read -> answer.
+     */
+    private fun otpFaqFemaleDoctors() = BenchmarkCase(
+        id = "otp-faq-female-doctors",
+        description = "OT&P FAQ: clinics with female doctors for Well Woman (accordion)",
+        pageSource = PageSource.Url("https://www.otandp.com/faq/"),
+        query = "At which OT&P clinics can you see a female doctor for a Well Woman check?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(
+            listOf("central", "repulse bay", "clearwater bay"), caseSensitive = false
+        ),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.Click::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 4,
+        constraints = BenchmarkConstraints(
+            maxIterations = 11
+        )
+    )
+
+    // ---- /contact and /about ----
+
+    /**
+     * The /contact page has a multi-pane SPA with a clinic list on the left
+     * and a detail pane in the centre. The Central GP clinic address includes
+     * "Century Square" and "D'Aguilar Street".
+     * Ideal: find_on_page("Central General Practice") -> scroll_to_text -> read pane -> answer.
+     */
+    private fun otpCentralClinicAddress() = BenchmarkCase(
+        id = "otp-central-clinic-address",
+        description = "OT&P Central GP clinic address (multi-pane contact page)",
+        pageSource = PageSource.Url("https://www.otandp.com/contact"),
+        query = "What is the address of the OT&P Central General Practice Clinic?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(
+            listOf("D'Aguilar", "Century Square"), caseSensitive = false
+        ),
+        idealActionSequence = listOf(
+            NavigationAction.FindOnPage::class,
+            NavigationAction.ScrollToText::class,
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 3,
+        constraints = BenchmarkConstraints(
+            maxIterations = 10
+        )
+    )
+
+    /**
+     * The /about page (static text) states OT&P was founded in 1994 by
+     * Dr Tim Trodd and Dr David Owens.
+     * Ideal: scroll slightly or read directly -> answer.
+     */
+    private fun otpAboutFounded() = BenchmarkCase(
+        id = "otp-about-founded",
+        description = "OT&P founding year and founders (static about page)",
+        pageSource = PageSource.Url("https://www.otandp.com/about"),
+        query = "When was OT&P founded and who were the founders?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(
+            listOf("1994", "Trodd", "Owens"), caseSensitive = false
+        ),
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,

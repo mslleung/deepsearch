@@ -26,6 +26,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.TimeSource
 
 data class CapturedImage(
     val bytes: ByteArray,
@@ -165,6 +166,8 @@ class AgenticWebpageSearchService(
         var aggregatedTokenUsage: TokenUsageMetrics = TokenUsageMetrics.empty("gemini-3.1-flash-lite"),
         var previousClickScreenshot: ByteArray? = null,
         var previousDomSnapshot: IBrowserPage.DomSnapshot? = null,
+        var lastClickImageCoords: Pair<Int, Int>? = null,
+        var lastClickVisualChanged: Boolean = false,
         val failedClickDescs: MutableMap<String, Int> = mutableMapOf(),
         val offPageClickedDescs: MutableSet<String> = mutableSetOf(),
         var pageState: List<String> = emptyList(),
@@ -218,7 +221,9 @@ class AgenticWebpageSearchService(
             sessionId = sessionId,
             onLinkDiscovered = onLinkDiscovered
         )
+        val clock = TimeSource.Monotonic
         for (iteration in 1..MAX_ITERATIONS) {
+            val iterStart = clock.markNow()
             currentCoroutineContext().ensureActive()
             logger.debug("Full-page search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
 
@@ -231,6 +236,7 @@ class AgenticWebpageSearchService(
                 page.scrollToPercentage(0)
             }
 
+            val fetchStart = clock.markNow()
             val fetchResult = coroutineScope {
                 val containersDeferred = async {
                     try { page.annotateScrollableContainers() } catch (_: Exception) { emptyList() }
@@ -253,6 +259,7 @@ class AgenticWebpageSearchService(
                     elementsDeferred.await()
                 )
             }
+            val fetchMs = (clock.markNow() - fetchStart).inWholeMilliseconds
             val scrollableContainers = fetchResult.scrollableContainers
             val screenshot = fetchResult.screenshot
             val title = fetchResult.title
@@ -263,6 +270,7 @@ class AgenticWebpageSearchService(
                 logger.debug("Found {} scrollable containers: {}", scrollableContainers.size, scrollableContainers)
             }
 
+            val annotateStart = clock.markNow()
             val jpegBytes =
                 imageProcessingService.downscaleToJpeg(screenshot.bytes, Int.MAX_VALUE, (JPEG_QUALITY * 100).toInt())
             val (imgWidth, imgHeight) = imageProcessingService.getImageDimensions(jpegBytes)
@@ -279,6 +287,17 @@ class AgenticWebpageSearchService(
                 applyVisualDiffAfterClick(jpegBytes, state, currentDomSnapshot)
             }
             state.previousDomSnapshot = currentDomSnapshot
+
+            val finalScreenshot = if (state.lastClickVisualChanged && state.lastClickImageCoords != null) {
+                val (cx, cy) = state.lastClickImageCoords!!
+                val highlighted = imageProcessingService.highlightRegion(screenshotForAgent.bytes, cx, cy)
+                state.lastClickVisualChanged = false
+                logger.debug("Applied visual highlight around click ({},{}) on screenshot", cx, cy)
+                IBrowserPage.Screenshot(bytes = highlighted, mimeType = ImageMimeType.JPEG)
+            } else {
+                screenshotForAgent
+            }
+            val annotateMs = (clock.markNow() - annotateStart).inWholeMilliseconds
 
             val scrollStateHint = if (scrollableContainers.isNotEmpty()) {
                 buildString {
@@ -302,7 +321,7 @@ class AgenticWebpageSearchService(
             } else null
 
             val input = FullPageNavigationInput(
-                fullPageScreenshot = screenshotForAgent,
+                fullPageScreenshot = finalScreenshot,
                 query = query,
                 previousActions = state.actionsPerformed.toList(),
                 questions = state.trackedQuestions,
@@ -319,7 +338,9 @@ class AgenticWebpageSearchService(
                 extractedRegionContent = state.extractedRegionContent.toList()
             )
 
+            val llmStart = clock.markNow()
             val output = fullPageNavigationAgent.generate(input)
+            val llmMs = (clock.markNow() - llmStart).inWholeMilliseconds
             state.aggregatedTokenUsage = state.aggregatedTokenUsage + output.tokenUsage
 
             tokenUsageService.recordTokenUsage(
@@ -331,6 +352,7 @@ class AgenticWebpageSearchService(
                 totalTokens = output.tokenUsage.totalTokens
             )
 
+            val postLlmStart = clock.markNow()
             val newFindings = updateFindings(output.questionsState, output.generalFindings, state)
             state.pageState = output.pageState
 
@@ -360,8 +382,15 @@ class AgenticWebpageSearchService(
                 )
 
                 when (action) {
-                    is NavigationAction.ExplorationFinished ->
+                    is NavigationAction.ExplorationFinished -> {
+                        val postLlmMs = (clock.markNow() - postLlmStart).inWholeMilliseconds
+                        val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
+                        logger.info(
+                            "TIMING iter={} total={}ms | fetch={}ms annotate={}ms llm={}ms post={}ms",
+                            iteration, iterMs, fetchMs, annotateMs, llmMs, postLlmMs
+                        )
                         return handleExplorationFinished(action, state, newFindings, iteration)
+                    }
 
                     else -> {
                         val effect = when (action) {
@@ -427,6 +456,12 @@ class AgenticWebpageSearchService(
                     }
                 }
             }
+            val postLlmMs = (clock.markNow() - postLlmStart).inWholeMilliseconds
+            val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
+            logger.info(
+                "TIMING iter={} total={}ms | fetch={}ms annotate={}ms llm={}ms post={}ms",
+                iteration, iterMs, fetchMs, annotateMs, llmMs, postLlmMs
+            )
         }
 
         return buildFinalResult(state)
@@ -478,6 +513,14 @@ class AgenticWebpageSearchService(
         }
 
         state.previousClickScreenshot = rawScreenshotBytes
+        val element = action.elementLabel?.let { elementIndex[it] }
+        state.lastClickImageCoords = if (element != null) {
+            element.centerX to element.centerY
+        } else if (action.centerX != null && action.centerY != null) {
+            val px = ((action.centerX!! / 1000.0) * imgWidth).toInt()
+            val py = ((action.centerY!! / 1000.0) * imgHeight).toInt()
+            px to py
+        } else null
 
         val clickResult = page.guardedClickAtCoordinates(viewportX, viewportY)
         if (clickResult.navigatedAwayTo != null) {
@@ -490,6 +533,7 @@ class AgenticWebpageSearchService(
             state.onLinkDiscovered?.invoke(targetUrl)
             state.offPageClickedDescs.add(desc)
             state.previousClickScreenshot = null
+            state.lastClickImageCoords = null
             updateLastActionOutcome(state, buildOffPageOutcome(targetUrl))
             return ActionEffect.PAGE_UNCHANGED
         }
@@ -529,6 +573,7 @@ class AgenticWebpageSearchService(
         )
 
         state.previousClickScreenshot = rawScreenshotBytes
+        state.lastClickImageCoords = pageX to pageY
 
         try {
             page.clickAtCoordinates(viewportX, viewportY)
@@ -595,6 +640,7 @@ class AgenticWebpageSearchService(
         )
 
         state.previousClickScreenshot = rawScreenshotBytes
+        state.lastClickImageCoords = viewportX to viewportY
 
         val clickResult = page.guardedClickAtCoordinates(viewportX, viewportY)
         if (clickResult.navigatedAwayTo != null) {
@@ -607,6 +653,7 @@ class AgenticWebpageSearchService(
             state.onLinkDiscovered?.invoke(targetUrl)
             state.offPageClickedDescs.add(desc)
             state.previousClickScreenshot = null
+            state.lastClickImageCoords = null
             updateLastActionOutcome(state, buildOffPageOutcome(targetUrl))
             return ActionEffect.PAGE_UNCHANGED
         }
@@ -772,6 +819,7 @@ class AgenticWebpageSearchService(
 
             else -> ""
         }
+        state.lastClickVisualChanged = changed
         if (changed) {
             val domBefore = state.previousDomSnapshot
             val outcome = if (domBefore != null && currentDomSnapshot != null) {

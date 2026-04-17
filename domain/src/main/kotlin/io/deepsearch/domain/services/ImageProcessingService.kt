@@ -5,6 +5,7 @@ import org.bytedeco.javacpp.IntPointer
 import org.bytedeco.javacpp.Loader
 import org.bytedeco.opencv.global.opencv_core.CV_8UC1
 import org.bytedeco.opencv.global.opencv_core.absdiff
+import org.bytedeco.opencv.global.opencv_core.addWeighted
 import org.bytedeco.opencv.global.opencv_core.countNonZero
 import org.bytedeco.opencv.global.opencv_imgcodecs.IMREAD_COLOR
 import org.bytedeco.opencv.global.opencv_imgcodecs.IMREAD_GRAYSCALE
@@ -84,6 +85,7 @@ interface IImageProcessingService {
         screenshotBytes: ByteArray,
         elements: List<AnnotationTarget>
     ): AnnotatedScreenshot
+    fun highlightRegion(imageBytes: ByteArray, centerX: Int, centerY: Int, margin: Int = 400): ByteArray
 }
 
 /**
@@ -119,6 +121,10 @@ class ImageProcessingService : IImageProcessingService {
             Scalar(50.0, 255.0, 50.0, 0.0),    // green
         )
         private val PALETTE_TEXT = arrayOf(BLACK, WHITE, BLACK)
+
+        private val HIGHLIGHT_COLOR = Scalar(0.0, 165.0, 255.0, 0.0) // orange BGR
+        private const val HIGHLIGHT_ALPHA = 0.20
+        private const val HIGHLIGHT_BORDER_THICKNESS = 4
     }
 
     override fun getImageDimensions(imageBytes: ByteArray): Pair<Int, Int> {
@@ -263,6 +269,32 @@ class ImageProcessingService : IImageProcessingService {
             mimeType = "image/jpeg",
             elementIndex = elementIndex
         )
+    }
+
+    override fun highlightRegion(imageBytes: ByteArray, centerX: Int, centerY: Int, margin: Int): ByteArray {
+        val image = decodeMat(imageBytes, IMREAD_COLOR)
+        val imgW = image.cols()
+        val imgH = image.rows()
+
+        val x1 = (centerX - margin).coerceIn(0, imgW - 1)
+        val y1 = (centerY - margin).coerceIn(0, imgH - 1)
+        val x2 = (centerX + margin).coerceIn(x1 + 1, imgW)
+        val y2 = (centerY + margin).coerceIn(y1 + 1, imgH)
+
+        val roi = Mat(image, Rect(x1, y1, x2 - x1, y2 - y1))
+        val overlay = roi.clone()
+        rectangle(overlay, Point(0, 0), Point(overlay.cols(), overlay.rows()),
+            HIGHLIGHT_COLOR, FILLED, LINE_8, 0)
+        addWeighted(overlay, HIGHLIGHT_ALPHA, roi, 1.0 - HIGHLIGHT_ALPHA, 0.0, roi)
+        overlay.close()
+
+        rectangle(image, Point(x1, y1), Point(x2, y2),
+            HIGHLIGHT_COLOR, HIGHLIGHT_BORDER_THICKNESS, LINE_8, 0)
+
+        val result = encodeJpeg(image, ANNOTATION_JPEG_QUALITY)
+        roi.close()
+        image.close()
+        return result
     }
 
     private fun decodeMat(bytes: ByteArray, flags: Int): Mat {
