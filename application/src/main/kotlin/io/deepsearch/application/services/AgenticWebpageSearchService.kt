@@ -17,6 +17,8 @@ import io.deepsearch.domain.services.AnnotatedElement
 import io.deepsearch.domain.services.AnnotationTarget
 import io.deepsearch.domain.services.IDomDiffService
 import io.deepsearch.domain.services.IImageProcessingService
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -136,6 +138,14 @@ class AgenticWebpageSearchService(
 
     // --- Inner types ---
 
+    private data class IterationFetchResult(
+        val scrollableContainers: List<IBrowserPage.ScrollableContainerInfo>,
+        val screenshot: IBrowserPage.Screenshot,
+        val title: String,
+        val description: String?,
+        val interactiveElements: List<IBrowserPage.InteractiveElementInfo>
+    )
+
     private enum class ActionEffect {
         PAGE_CHANGED,
         PAGE_UNCHANGED
@@ -200,9 +210,7 @@ class AgenticWebpageSearchService(
 
         dismissCookieBanner(page, url)
 
-        val vpScreenshot = page.takeScreenshot()
-        val vpDims = imageProcessingService.getImageDimensions(vpScreenshot.bytes)
-        val actualViewportHeight = vpDims.second
+        val actualViewportHeight = page.captureDomSnapshot().viewportHeight
 
         val state = NavigationLoopState(
             url = url,
@@ -223,22 +231,41 @@ class AgenticWebpageSearchService(
                 page.scrollToPercentage(0)
             }
 
-            val scrollableContainers = try {
-                page.annotateScrollableContainers()
-            } catch (_: Exception) {
-                emptyList()
+            val fetchResult = coroutineScope {
+                val containersDeferred = async {
+                    try { page.annotateScrollableContainers() } catch (_: Exception) { emptyList() }
+                }
+                val screenshotDeferred = async {
+                    if (isOverlayMode) page.takeScreenshot() else page.takeFullPageScreenshot()
+                }
+                val titleDeferred = async { page.getTitle() }
+                val descDeferred = async { page.getDescription() }
+                val elementsDeferred = async {
+                    try { page.getInteractiveElements(fullPage = !isOverlayMode) }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { emptyList() }
+                }
+                IterationFetchResult(
+                    containersDeferred.await(),
+                    screenshotDeferred.await(),
+                    titleDeferred.await(),
+                    descDeferred.await(),
+                    elementsDeferred.await()
+                )
             }
+            val scrollableContainers = fetchResult.scrollableContainers
+            val screenshot = fetchResult.screenshot
+            val title = fetchResult.title
+            val desc = fetchResult.description
+            val interactiveElements = fetchResult.interactiveElements
+
             if (scrollableContainers.isNotEmpty()) {
                 logger.debug("Found {} scrollable containers: {}", scrollableContainers.size, scrollableContainers)
             }
 
-            val screenshot = if (isOverlayMode) page.takeScreenshot() else page.takeFullPageScreenshot()
-            val title = page.getTitle()
-            val desc = page.getDescription()
-            val interactiveElements = page.getInteractiveElements(fullPage = !isOverlayMode)
-
             val jpegBytes =
                 imageProcessingService.downscaleToJpeg(screenshot.bytes, Int.MAX_VALUE, (JPEG_QUALITY * 100).toInt())
+            val (imgWidth, imgHeight) = imageProcessingService.getImageDimensions(jpegBytes)
 
             val (annotatedScreenshot, labeledElements, elementIndex) = annotateScreenshot(
                 IBrowserPage.Screenshot(bytes = jpegBytes, mimeType = ImageMimeType.JPEG),
@@ -247,20 +274,11 @@ class AgenticWebpageSearchService(
             val screenshotForAgent = annotatedScreenshot
                 ?: IBrowserPage.Screenshot(bytes = jpegBytes, mimeType = ImageMimeType.JPEG)
 
+            val currentDomSnapshot = try { page.captureDomSnapshot() } catch (_: Exception) { null }
             if (state.previousClickScreenshot != null) {
-                val currentDomSnapshot = try {
-                    page.captureDomSnapshot()
-                } catch (_: Exception) {
-                    null
-                }
                 applyVisualDiffAfterClick(jpegBytes, state, currentDomSnapshot)
             }
-
-            state.previousDomSnapshot = try {
-                page.captureDomSnapshot()
-            } catch (_: Exception) {
-                null
-            }
+            state.previousDomSnapshot = currentDomSnapshot
 
             val scrollStateHint = if (scrollableContainers.isNotEmpty()) {
                 buildString {
@@ -316,14 +334,14 @@ class AgenticWebpageSearchService(
             val newFindings = updateFindings(output.questionsState, output.generalFindings, state)
             state.pageState = output.pageState
 
-            val (imgWidth, imgHeight) = imageProcessingService.getImageDimensions(jpegBytes)
-
             if (output.captureRegions.isNotEmpty()) {
                 cropCaptureRegions(
                     jpegBytes,
                     output.captureRegions,
                     state.capturedImages,
-                    state.capturedHashes
+                    state.capturedHashes,
+                    imgWidth,
+                    imgHeight
                 )
                 extractRegionContent(
                     page, output.captureRegions, imgWidth, imgHeight,
@@ -943,9 +961,10 @@ class AgenticWebpageSearchService(
         screenshotBytes: ByteArray,
         regions: List<CaptureRegion>,
         capturedImages: MutableList<CapturedImage>,
-        capturedHashes: MutableSet<String>
+        capturedHashes: MutableSet<String>,
+        imgWidth: Int,
+        imgHeight: Int
     ) {
-        val (imgWidth, imgHeight) = imageProcessingService.getImageDimensions(screenshotBytes)
         val sha256 = MessageDigest.getInstance("SHA-256")
 
         for (region in regions) {
