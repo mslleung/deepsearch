@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Browser pool using REST API to communicate with deepsearch-browser service.
  *
  * - Acquires sessions via POST /sessions
- * - Sends commands via POST /sessions/{id}/command
+ * - Sends commands via POST /sessions/{id}/command (or batch via POST /sessions/{id}/commands/batch)
  * - Releases sessions via DELETE /sessions/{id}
  */
 class RemoteBrowserPool(
@@ -118,7 +118,8 @@ class RemoteBrowserPool(
                     logger.debug("Released session via close(): {}", sessionId)
                 }
             },
-            execute = { command -> sendCommand(sessionId, command) }
+            execute = { command -> sendCommand(sessionId, command) },
+            executeBatch = { commands -> sendCommandsBatch(sessionId, commands) }
         )
 
         return try {
@@ -194,6 +195,34 @@ class RemoteBrowserPool(
         return result.data ?: ""
     }
 
+    private suspend fun sendCommandsBatch(sessionId: String, commands: List<PageCommand>): List<String> {
+        val response =
+            httpClient.post("$baseUrl/sessions/$sessionId/commands/batch") {
+                contentType(ContentType.Application.Json)
+                setBody(BatchCommandsRequest(commands = commands))
+            }
+
+        if (!response.status.isSuccess()) {
+            if (response.status == HttpStatusCode.NotFound) {
+                throw RemoteBrowserException("SESSION_NOT_FOUND", "Session expired or not found")
+            }
+            val errorBody = response.bodyAsText()
+            throw RemoteBrowserException("COMMAND_FAILED", "Batch command failed: $errorBody")
+        }
+
+        val bodyText = response.bodyAsText()
+        val batch = json.decodeFromString<BatchCommandsResponse>(bodyText)
+        return batch.results.map { result ->
+            if (!result.success) {
+                throw RemoteBrowserException(
+                    result.error?.code ?: "COMMAND_FAILED",
+                    result.error?.message ?: "Batch command item failed"
+                )
+            }
+            result.data ?: ""
+        }
+    }
+
     private suspend fun releaseSession(sessionId: String) {
         withContext(NonCancellable) {
             try {
@@ -228,6 +257,16 @@ private data class CommandResponse(
     val success: Boolean,
     val data: String? = null,
     val error: ErrorInfo? = null
+)
+
+@Serializable
+private data class BatchCommandsRequest(
+    val commands: List<PageCommand>
+)
+
+@Serializable
+private data class BatchCommandsResponse(
+    val results: List<CommandResponse>
 )
 
 @Serializable

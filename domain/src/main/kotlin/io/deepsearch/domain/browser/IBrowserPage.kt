@@ -1,6 +1,9 @@
 package io.deepsearch.domain.browser
 
 import io.deepsearch.domain.constants.ImageMimeType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import java.security.MessageDigest
 
@@ -807,6 +810,68 @@ interface IBrowserPage {
      * @param y2 bottom edge of the region in viewport pixels
      */
     suspend fun extractContentInRegion(x1: Int, y1: Int, x2: Int, y2: Int): RegionContent
+
+    // ==================== Agentic Iteration Fetch ====================
+
+    /**
+     * All data needed for one iteration of the agentic navigation loop,
+     * fetched in parallel to minimize wall-clock time.
+     */
+    data class AgenticIterationFetchData(
+        val scrollableContainers: List<ScrollableContainerInfo>,
+        val screenshot: Screenshot,
+        val title: String,
+        val description: String?,
+        val interactiveElements: List<InteractiveElementInfo>,
+        val domSnapshot: DomSnapshot?
+    )
+
+    /**
+     * Fetch all data needed for a single agentic navigation iteration.
+     *
+     * The default implementation fans out 6 parallel coroutines. Subclasses
+     * (e.g. [remote.RemoteBrowserPage]) may override to use a batch HTTP
+     * endpoint for lower overhead.
+     *
+     * @param isOverlayMode true when a fixed overlay is detected (viewport screenshot + viewport elements)
+     * @param cachedScreenshot reuse a screenshot from a previous iteration whose page state is unchanged
+     */
+    suspend fun fetchAgenticIterationData(
+        isOverlayMode: Boolean,
+        cachedScreenshot: Screenshot? = null
+    ): AgenticIterationFetchData {
+        return coroutineScope {
+            val containersDeferred = async {
+                try { annotateScrollableContainers() } catch (_: Exception) { emptyList() }
+            }
+            val screenshotDeferred = async {
+                cachedScreenshot
+                    ?: if (isOverlayMode) takeScreenshot() else takeFullPageScreenshot()
+            }
+            val titleDeferred = async { getTitle() }
+            val descDeferred = async { getDescription() }
+            val elementsDeferred = async {
+                try {
+                    getInteractiveElements(fullPage = !isOverlayMode)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
+            val domSnapshotDeferred = async {
+                try { captureDomSnapshot() } catch (_: Exception) { null }
+            }
+            AgenticIterationFetchData(
+                scrollableContainers = containersDeferred.await(),
+                screenshot = screenshotDeferred.await(),
+                title = titleDeferred.await(),
+                description = descDeferred.await(),
+                interactiveElements = elementsDeferred.await(),
+                domSnapshot = domSnapshotDeferred.await()
+            )
+        }
+    }
 
     /**
      * Close this page and release associated resources.

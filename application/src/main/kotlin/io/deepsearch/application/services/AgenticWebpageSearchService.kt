@@ -1,15 +1,9 @@
 package io.deepsearch.application.services
 
-import io.deepsearch.domain.agents.ActionWithOutcome
-import io.deepsearch.domain.agents.CaptureRegion
-import io.deepsearch.domain.agents.ExtractedContent
-import io.deepsearch.domain.agents.IFullPageNavigationAgent
-import io.deepsearch.domain.agents.FullPageNavigationInput
-import io.deepsearch.domain.agents.NavigationAction
-import io.deepsearch.domain.agents.ScrollDirection
-import io.deepsearch.domain.agents.TrackedQuestion
+import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.IBrowserPool
+import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
@@ -17,15 +11,11 @@ import io.deepsearch.domain.services.AnnotatedElement
 import io.deepsearch.domain.services.AnnotationTarget
 import io.deepsearch.domain.services.IDomDiffService
 import io.deepsearch.domain.services.IImageProcessingService
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.*
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
-import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.TimeSource
 
 data class CapturedImage(
@@ -68,7 +58,8 @@ class AgenticWebpageSearchService(
     private val fullPageNavigationAgent: IFullPageNavigationAgent,
     private val imageProcessingService: IImageProcessingService,
     private val domDiffService: IDomDiffService,
-    private val tokenUsageService: ILlmTokenUsageService
+    private val tokenUsageService: ILlmTokenUsageService,
+    private val dispatcherProvider: IDispatcherProvider
 ) : IAgenticWebpageSearchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -76,12 +67,12 @@ class AgenticWebpageSearchService(
     companion object {
         private const val MAX_ITERATIONS = 12
         private const val MAX_FAILED_CLICKS = 2
-        private const val POST_CLICK_DELAY_MS = 350L
-        private const val POST_SCROLL_DELAY_MS = 150L
+        private const val POST_CLICK_DELAY_MS = 150L
+        private const val POST_SCROLL_DELAY_MS = 50L
         private const val POST_TYPE_DELAY_MS = 500L
         private const val JPEG_QUALITY = 1.0f
         private const val MIN_CAPTURE_SIZE_PX = 40
-        private const val COOKIE_DISMISS_DELAY_MS = 300L
+        private const val COOKIE_DISMISS_DELAY_MS = 150L
 
         /**
          * CSS selectors for common Consent Management Platform "Accept All" buttons.
@@ -138,14 +129,6 @@ class AgenticWebpageSearchService(
     }
 
     // --- Inner types ---
-
-    private data class IterationFetchResult(
-        val scrollableContainers: List<IBrowserPage.ScrollableContainerInfo>,
-        val screenshot: IBrowserPage.Screenshot,
-        val title: String,
-        val description: String?,
-        val interactiveElements: List<IBrowserPage.InteractiveElementInfo>
-    )
 
     private enum class ActionEffect {
         PAGE_CHANGED,
@@ -222,6 +205,7 @@ class AgenticWebpageSearchService(
             onLinkDiscovered = onLinkDiscovered
         )
         val clock = TimeSource.Monotonic
+        var cachedScreenshot: IBrowserPage.Screenshot? = null
         for (iteration in 1..MAX_ITERATIONS) {
             val iterStart = clock.markNow()
             currentCoroutineContext().ensureActive()
@@ -237,28 +221,8 @@ class AgenticWebpageSearchService(
             }
 
             val fetchStart = clock.markNow()
-            val fetchResult = coroutineScope {
-                val containersDeferred = async {
-                    try { page.annotateScrollableContainers() } catch (_: Exception) { emptyList() }
-                }
-                val screenshotDeferred = async {
-                    if (isOverlayMode) page.takeScreenshot() else page.takeFullPageScreenshot()
-                }
-                val titleDeferred = async { page.getTitle() }
-                val descDeferred = async { page.getDescription() }
-                val elementsDeferred = async {
-                    try { page.getInteractiveElements(fullPage = !isOverlayMode) }
-                    catch (e: CancellationException) { throw e }
-                    catch (_: Exception) { emptyList() }
-                }
-                IterationFetchResult(
-                    containersDeferred.await(),
-                    screenshotDeferred.await(),
-                    titleDeferred.await(),
-                    descDeferred.await(),
-                    elementsDeferred.await()
-                )
-            }
+            val fetchResult = page.fetchAgenticIterationData(isOverlayMode, cachedScreenshot)
+            cachedScreenshot = null
             val fetchMs = (clock.markNow() - fetchStart).inWholeMilliseconds
             val scrollableContainers = fetchResult.scrollableContainers
             val screenshot = fetchResult.screenshot
@@ -271,18 +235,21 @@ class AgenticWebpageSearchService(
             }
 
             val annotateStart = clock.markNow()
-            val jpegBytes =
-                imageProcessingService.downscaleToJpeg(screenshot.bytes, Int.MAX_VALUE, (JPEG_QUALITY * 100).toInt())
-            val (imgWidth, imgHeight) = imageProcessingService.getImageDimensions(jpegBytes)
-
-            val (annotatedScreenshot, labeledElements, elementIndex) = annotateScreenshot(
+            val (jpegBytes, imgWidth, imgHeight) = withContext(dispatcherProvider.default) {
+                val jpeg = imageProcessingService.downscaleToJpeg(
+                    screenshot.bytes, Int.MAX_VALUE, (JPEG_QUALITY * 100).toInt()
+                )
+                val (w, h) = imageProcessingService.getImageDimensions(jpeg)
+                Triple(jpeg, w, h)
+            }
+            val (annotatedScreenshot, _, elementIndex) = annotateScreenshot(
                 IBrowserPage.Screenshot(bytes = jpegBytes, mimeType = ImageMimeType.JPEG),
                 interactiveElements
             )
             val screenshotForAgent = annotatedScreenshot
                 ?: IBrowserPage.Screenshot(bytes = jpegBytes, mimeType = ImageMimeType.JPEG)
 
-            val currentDomSnapshot = try { page.captureDomSnapshot() } catch (_: Exception) { null }
+            val currentDomSnapshot = fetchResult.domSnapshot
             if (state.previousClickScreenshot != null) {
                 applyVisualDiffAfterClick(jpegBytes, state, currentDomSnapshot)
             }
@@ -356,19 +323,28 @@ class AgenticWebpageSearchService(
             val newFindings = updateFindings(output.questionsState, output.generalFindings, state)
             state.pageState = output.pageState
 
+            var pageChanged = false
+
             if (output.captureRegions.isNotEmpty()) {
-                cropCaptureRegions(
-                    jpegBytes,
-                    output.captureRegions,
-                    state.capturedImages,
-                    state.capturedHashes,
-                    imgWidth,
-                    imgHeight
-                )
-                extractRegionContent(
-                    page, output.captureRegions, imgWidth, imgHeight,
-                    isOverlayMode, actualViewportHeight, state.extractedRegionContent
-                )
+                pageChanged = true
+                val (cropResult, newContent) = coroutineScope {
+                    val cropDeferred = async(dispatcherProvider.default) {
+                        cropCaptureRegions(
+                            jpegBytes, output.captureRegions, state.capturedHashes,
+                            imgWidth, imgHeight
+                        )
+                    }
+                    val extractDeferred = async {
+                        extractRegionContent(
+                            page, output.captureRegions, imgWidth, imgHeight,
+                            isOverlayMode, actualViewportHeight
+                        )
+                    }
+                    cropDeferred.await() to extractDeferred.await()
+                }
+                state.capturedImages.addAll(cropResult.images)
+                state.capturedHashes.addAll(cropResult.newHashes)
+                state.extractedRegionContent.addAll(newContent)
             }
 
             for ((actionIdx, action) in output.actions.withIndex()) {
@@ -440,6 +416,7 @@ class AgenticWebpageSearchService(
                             }
                         }
                         if (effect == ActionEffect.PAGE_CHANGED) {
+                            pageChanged = true
                             val wasOverlay = state.isOverlayMode
                             state.isOverlayMode = try {
                                 page.hasModalOverlay()
@@ -462,6 +439,11 @@ class AgenticWebpageSearchService(
                 "TIMING iter={} total={}ms | fetch={}ms annotate={}ms llm={}ms post={}ms",
                 iteration, iterMs, fetchMs, annotateMs, llmMs, postLlmMs
             )
+            // If no action changed the page, the current iteration's screenshot
+            // is still valid — carry it forward to skip the screenshot fetch next time.
+            if (!pageChanged) {
+                cachedScreenshot = screenshot
+            }
         }
 
         return buildFinalResult(state)
@@ -1005,15 +987,21 @@ class AgenticWebpageSearchService(
 
     // --- Image processing ---
 
+    private data class CropResult(
+        val images: List<CapturedImage>,
+        val newHashes: Set<String>
+    )
+
     private fun cropCaptureRegions(
         screenshotBytes: ByteArray,
         regions: List<CaptureRegion>,
-        capturedImages: MutableList<CapturedImage>,
-        capturedHashes: MutableSet<String>,
+        existingHashes: Set<String>,
         imgWidth: Int,
         imgHeight: Int
-    ) {
+    ): CropResult {
         val sha256 = MessageDigest.getInstance("SHA-256")
+        val images = mutableListOf<CapturedImage>()
+        val newHashes = mutableSetOf<String>()
 
         for (region in regions) {
             val x = ((region.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
@@ -1032,15 +1020,16 @@ class AgenticWebpageSearchService(
 
             val hash = sha256.digest(bytes)
             val hashHex = hash.joinToString("") { "%02x".format(it) }
-            if (hashHex in capturedHashes) {
+            if (hashHex in existingHashes || hashHex in newHashes) {
                 logger.debug("Skipping duplicate capture for: {}", region.relevance)
                 continue
             }
-            capturedHashes.add(hashHex)
+            newHashes.add(hashHex)
 
-            capturedImages.add(CapturedImage(bytes, "image/png", region.relevance, hash))
+            images.add(CapturedImage(bytes, "image/png", region.relevance, hash))
             logger.info("Captured visual region ({}x{}): {}", w, h, region.relevance.take(80))
         }
+        return CropResult(images, newHashes)
     }
 
     private suspend fun extractRegionContent(
@@ -1049,10 +1038,10 @@ class AgenticWebpageSearchService(
         imgWidth: Int,
         imgHeight: Int,
         isOverlayMode: Boolean,
-        viewportHeight: Int,
-        extractedContent: MutableList<ExtractedContent>
-    ) {
+        viewportHeight: Int
+    ): List<ExtractedContent> {
         val scrollableRange = (imgHeight - viewportHeight).coerceAtLeast(1)
+        val results = mutableListOf<ExtractedContent>()
         for (region in regions) {
             val pageX1 = ((region.x1 / 1000.0) * imgWidth).toInt()
             val pageY1 = ((region.y1 / 1000.0) * imgHeight).toInt()
@@ -1084,7 +1073,7 @@ class AgenticWebpageSearchService(
                 vpX2.coerceAtLeast(vpX1 + 1), vpY2.coerceAtLeast(vpY1 + 1)
             )
             if (content.text.isNotBlank()) {
-                extractedContent.add(
+                results.add(
                     ExtractedContent(
                         description = region.relevance,
                         text = content.text,
@@ -1097,6 +1086,7 @@ class AgenticWebpageSearchService(
                 )
             }
         }
+        return results
     }
 
     // --- Utilities ---

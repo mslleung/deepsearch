@@ -119,4 +119,44 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
 
         println(report.toMarkdown())
     }
+
+    @Test
+    fun `stripe pricing benchmark`() = runBlocking {
+        val cases = RealWorldBenchmarks.stripe()
+        val report = runner.runAll(cases)
+
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `notion pricing benchmark`() = runBlocking {
+        val cases = RealWorldBenchmarks.notion()
+        val report = runner.runAll(cases)
+
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `cloudflare plans benchmark`() = runBlocking {
+        val cases = RealWorldBenchmarks.cloudflare()
+        val report = runner.runAll(cases)
+
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `hubspot pricing benchmark`() = runBlocking {
+        val cases = RealWorldBenchmarks.hubspot()
+        val report = runner.runAll(cases)
+
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `github pricing benchmark`() = runBlocking {
+        val cases = RealWorldBenchmarks.github()
+        val report = runner.runAll(cases)
+
+        println(report.toMarkdown())
+    }
 }

@@ -7,6 +7,7 @@ import io.deepsearch.domain.browser.ScrollToTextResult
 import io.deepsearch.domain.browser.remote.dto.*
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.ext.toSafeUri
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 import kotlin.io.encoding.Base64
@@ -25,10 +26,14 @@ class RemoteBrowserPage(
     private val sessionId: String,
     private val json: Json,
     private val onClose: suspend () -> Unit,
-    private val execute: suspend (PageCommand) -> String?
+    private val execute: suspend (PageCommand) -> String?,
+    private val executeBatch: (suspend (List<PageCommand>) -> List<String>)? = null
 ) : IBrowserPage {
 
     private val logger = LoggerFactory.getLogger(this::class.java)
+
+    private suspend fun runCommandsOrBatch(commands: List<PageCommand>): List<String> =
+        executeBatch?.invoke(commands) ?: commands.map { execute(it) ?: "" }
     
     /** Tracks the current URL for exception reporting. Updated after successful navigation. */
     private var currentUrl: String = ""
@@ -540,6 +545,91 @@ class RemoteBrowserPage(
         onClose()
     }
 
+    /**
+     * Single HTTP batch (when supported) or sequential commands for one agentic iteration fetch:
+     * scrollable containers, screenshot, title, description, interactive elements, DOM snapshot.
+     */
+    override suspend fun fetchAgenticIterationData(
+        isOverlayMode: Boolean,
+        cachedScreenshot: IBrowserPage.Screenshot?
+    ): IBrowserPage.AgenticIterationFetchData {
+        val commands = buildList {
+            add(PageCommand.AnnotateScrollableContainers)
+            if (cachedScreenshot == null) {
+                add(if (isOverlayMode) PageCommand.TakeScreenshot else PageCommand.TakeFullPageScreenshot)
+            }
+            add(PageCommand.GetTitle)
+            add(PageCommand.GetDescription)
+            add(PageCommand.GetInteractiveElements(fullPage = !isOverlayMode))
+            add(PageCommand.CaptureDomSnapshot)
+        }
+        val raws = runCommandsOrBatch(commands)
+        var i = 0
+        val scrollableContainers =
+            json.decodeFromString<List<ScrollableContainerInfoResponse>>(raws[i++]).map { r ->
+                IBrowserPage.ScrollableContainerInfo(
+                    description = r.description,
+                    hasMoreAbove = r.hasMoreAbove,
+                    hasMoreBelow = r.hasMoreBelow,
+                    hasMoreLeft = r.hasMoreLeft,
+                    hasMoreRight = r.hasMoreRight,
+                    verticalScrollPercent = r.verticalScrollPercent,
+                    horizontalScrollPercent = r.horizontalScrollPercent
+                )
+            }
+        val screenshot = cachedScreenshot ?: decodeScreenshotResponse(raws[i++])
+        val title = raws[i++]
+        val description = raws[i++].takeIf { it.isNotEmpty() }
+        val interactiveElements =
+            json.decodeFromString<InteractiveElementsResponse>(raws[i++]).elements.map { e ->
+                IBrowserPage.InteractiveElementInfo(
+                    tag = e.tag,
+                    text = e.text,
+                    role = e.role,
+                    ariaLabel = e.ariaLabel,
+                    boundingBox = IBrowserPage.BoundingBox(e.left, e.top, e.right, e.bottom),
+                    index = e.index
+                )
+            }
+        val domSnapshot = decodeDomSnapshot(raws[i++])
+        return IBrowserPage.AgenticIterationFetchData(
+            scrollableContainers = scrollableContainers,
+            screenshot = screenshot,
+            title = title,
+            description = description,
+            interactiveElements = interactiveElements,
+            domSnapshot = domSnapshot
+        )
+    }
+
+    private fun decodeScreenshotResponse(raw: String): IBrowserPage.Screenshot {
+        val r = json.decodeFromString<ScreenshotResponse>(raw)
+        return IBrowserPage.Screenshot(Base64.decode(r.base64), ImageMimeType.fromValue(r.mimeType))
+    }
+
+    private fun decodeDomSnapshot(raw: String): IBrowserPage.DomSnapshot {
+        val r = json.decodeFromString<DomSnapshotResponse>(raw)
+        return IBrowserPage.DomSnapshot(
+            elements = r.elements.map { el ->
+                IBrowserPage.DomElementInfo(
+                    stableId = el.stableId,
+                    tag = el.tag,
+                    id = el.id,
+                    boundingBox = IBrowserPage.DomBoundingBox(
+                        x = el.boundingBox.x,
+                        y = el.boundingBox.y,
+                        width = el.boundingBox.width,
+                        height = el.boundingBox.height
+                    ),
+                    childCount = el.childCount
+                )
+            },
+            viewportWidth = r.viewportWidth,
+            viewportHeight = r.viewportHeight,
+            bodyOverflow = r.bodyOverflow
+        )
+    }
+
     private fun toMediaResult(r: MediaResponse) = IBrowserPage.MediaExtractionResult(
         icons = r.icons.map {
             IBrowserPage.Icon(
@@ -558,3 +648,4 @@ class RemoteBrowserPage(
         failedImages = r.failedImages.map { IBrowserPage.FailedImageInfo(it.cssSelector, it.reason) }
     )
 }
+
