@@ -289,8 +289,6 @@ class AgenticWebpageSearchService(
                 }.trimEnd()
             } else null
 
-            val extractionContentBeforeThisIteration = state.extractedRegionContent.toList()
-
             val input = FullPageNavigationInput(
                 fullPageScreenshot = finalScreenshot,
                 query = query,
@@ -306,7 +304,7 @@ class AgenticWebpageSearchService(
                 isOverlayMode = isOverlayMode,
                 labeledElements = null,
                 scrollStateHint = scrollStateHint,
-                extractedRegionContent = extractionContentBeforeThisIteration
+                extractedRegionContent = state.extractedRegionContent.toList()
             )
 
             val llmStart = clock.markNow()
@@ -363,27 +361,6 @@ class AgenticWebpageSearchService(
 
                 when (action) {
                     is NavigationAction.ExplorationFinished -> {
-                        val newTableExtractions = output.captureRegions.isNotEmpty()
-                                && state.extractedRegionContent.any { it.isTable }
-                                && extractionContentBeforeThisIteration.none { it.isTable }
-                        val withinBudget = iteration < MAX_ITERATIONS
-
-                        if (newTableExtractions && withinBudget) {
-                            logger.info(
-                                "Rejecting exploration_finished at iter={}: table extraction pending verification",
-                                iteration
-                            )
-                            state.actionsPerformed.add(
-                                ActionWithOutcome(
-                                    action,
-                                    outcome = "REJECTED: Table data was extracted from your captureRegions. " +
-                                            "Review the PROGRAMMATIC EXTRACTION (table) on the next turn " +
-                                            "and base your answer on that structured data, not visual interpretation."
-                                )
-                            )
-                            break
-                        }
-
                         val postLlmMs = (clock.markNow() - postLlmStart).inWholeMilliseconds
                         val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
                         logger.info(
