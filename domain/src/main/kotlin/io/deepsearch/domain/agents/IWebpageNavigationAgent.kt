@@ -106,7 +106,8 @@ data class CaptureRegion(
     val y1: Int,
     val x2: Int,
     val y2: Int,
-    val relevance: String
+    val relevance: String,
+    val containsTable: Boolean = false
 )
 
 /**

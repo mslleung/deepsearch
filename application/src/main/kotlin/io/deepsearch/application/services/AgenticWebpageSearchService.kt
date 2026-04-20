@@ -59,7 +59,9 @@ class AgenticWebpageSearchService(
     private val imageProcessingService: IImageProcessingService,
     private val domDiffService: IDomDiffService,
     private val tokenUsageService: ILlmTokenUsageService,
-    private val dispatcherProvider: IDispatcherProvider
+    private val dispatcherProvider: IDispatcherProvider,
+    private val tableInterpretationService: ITableInterpretationService,
+    private val tableExtractionAgent: ITableExtractionAgent
 ) : IAgenticWebpageSearchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -287,6 +289,8 @@ class AgenticWebpageSearchService(
                 }.trimEnd()
             } else null
 
+            val extractionContentBeforeThisIteration = state.extractedRegionContent.toList()
+
             val input = FullPageNavigationInput(
                 fullPageScreenshot = finalScreenshot,
                 query = query,
@@ -302,7 +306,7 @@ class AgenticWebpageSearchService(
                 isOverlayMode = isOverlayMode,
                 labeledElements = null,
                 scrollStateHint = scrollStateHint,
-                extractedRegionContent = state.extractedRegionContent.toList()
+                extractedRegionContent = extractionContentBeforeThisIteration
             )
 
             val llmStart = clock.markNow()
@@ -337,7 +341,7 @@ class AgenticWebpageSearchService(
                     val extractDeferred = async {
                         extractRegionContent(
                             page, output.captureRegions, imgWidth, imgHeight,
-                            isOverlayMode, actualViewportHeight
+                            isOverlayMode, actualViewportHeight, sessionId, jpegBytes
                         )
                     }
                     cropDeferred.await() to extractDeferred.await()
@@ -359,6 +363,27 @@ class AgenticWebpageSearchService(
 
                 when (action) {
                     is NavigationAction.ExplorationFinished -> {
+                        val newTableExtractions = output.captureRegions.isNotEmpty()
+                                && state.extractedRegionContent.any { it.isTable }
+                                && extractionContentBeforeThisIteration.none { it.isTable }
+                        val withinBudget = iteration < MAX_ITERATIONS
+
+                        if (newTableExtractions && withinBudget) {
+                            logger.info(
+                                "Rejecting exploration_finished at iter={}: table extraction pending verification",
+                                iteration
+                            )
+                            state.actionsPerformed.add(
+                                ActionWithOutcome(
+                                    action,
+                                    outcome = "REJECTED: Table data was extracted from your captureRegions. " +
+                                            "Review the PROGRAMMATIC EXTRACTION (table) on the next turn " +
+                                            "and base your answer on that structured data, not visual interpretation."
+                                )
+                            )
+                            break
+                        }
+
                         val postLlmMs = (clock.markNow() - postLlmStart).inWholeMilliseconds
                         val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
                         logger.info(
@@ -1038,7 +1063,9 @@ class AgenticWebpageSearchService(
         imgWidth: Int,
         imgHeight: Int,
         isOverlayMode: Boolean,
-        viewportHeight: Int
+        viewportHeight: Int,
+        sessionId: SessionId,
+        jpegBytes: ByteArray
     ): List<ExtractedContent> {
         val scrollableRange = (imgHeight - viewportHeight).coerceAtLeast(1)
         val results = mutableListOf<ExtractedContent>()
@@ -1072,21 +1099,85 @@ class AgenticWebpageSearchService(
                 vpX1.coerceAtLeast(0), vpY1.coerceAtLeast(0),
                 vpX2.coerceAtLeast(vpX1 + 1), vpY2.coerceAtLeast(vpY1 + 1)
             )
-            if (content.text.isNotBlank()) {
-                results.add(
-                    ExtractedContent(
-                        description = region.relevance,
-                        text = content.text,
-                        isTable = content.isTable
+            val isTable = region.containsTable || content.isTable
+
+            if (isTable) {
+                val markdown = try {
+                    extractTableContent(content, region, sessionId, jpegBytes, imgWidth, imgHeight, pageX1, pageY1, pageX2, pageY2)
+                } catch (e: Exception) {
+                    logger.warn("Table extraction failed for region '{}', falling back to text", region.relevance.take(80), e)
+                    null
+                }
+
+                if (!markdown.isNullOrBlank()) {
+                    results.add(ExtractedContent(description = region.relevance, text = markdown, isTable = true))
+                    logger.info(
+                        "Extracted table ({} chars, path={}): {}",
+                        markdown.length,
+                        if (content.isTable && content.html.isNotBlank()) "html-interpretation" else "image-extraction",
+                        region.relevance.take(80)
                     )
-                )
+                } else if (content.text.isNotBlank()) {
+                    results.add(ExtractedContent(description = region.relevance, text = content.text, isTable = true))
+                    logger.info("Table extraction returned blank, using raw text ({} chars): {}", content.text.length, region.relevance.take(80))
+                }
+            } else if (content.text.isNotBlank()) {
+                results.add(ExtractedContent(description = region.relevance, text = content.text, isTable = false))
                 logger.info(
-                    "Extracted region text ({} chars, table={}): {}",
-                    content.text.length, content.isTable, region.relevance.take(80)
+                    "Extracted region text ({} chars): {}",
+                    content.text.length, region.relevance.take(80)
                 )
             }
         }
         return results
+    }
+
+    /**
+     * Extracts structured markdown from a table region using the appropriate path:
+     * - Path A (HTML): DOM has tabular structure → TableInterpretationService converts HTML to markdown
+     * - Path B (Image): DOM lacks structure (e.g. <img>) → TableExtractionAgent uses vision on cropped image
+     */
+    private suspend fun extractTableContent(
+        content: IBrowserPage.RegionContent,
+        region: CaptureRegion,
+        sessionId: SessionId,
+        jpegBytes: ByteArray,
+        imgWidth: Int,
+        imgHeight: Int,
+        pageX1: Int,
+        pageY1: Int,
+        pageX2: Int,
+        pageY2: Int
+    ): String? {
+        if (content.isTable && content.html.isNotBlank()) {
+            val input = TableInterpretationInput(
+                tableIdentification = TableIdentification(
+                    cssSelector = "",
+                    dataId = "",
+                    auxiliaryInfo = region.relevance
+                ),
+                tableHtml = content.html,
+                boundingBoxes = emptyMap()
+            )
+            return tableInterpretationService.interpretTable(input, sessionId).markdown
+        }
+
+        val x = pageX1.coerceIn(0, imgWidth - 1)
+        val y = pageY1.coerceIn(0, imgHeight - 1)
+        val x2 = pageX2.coerceIn(x + 1, imgWidth)
+        val y2 = pageY2.coerceIn(y + 1, imgHeight)
+        val w = x2 - x
+        val h = y2 - y
+        if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) return null
+
+        val croppedBytes = imageProcessingService.cropToPng(jpegBytes, x, y, w, h)
+        val extractionInput = TableExtractionInput(
+            images = listOf(
+                TableExtractionInput.ImageItem(bytes = croppedBytes, mimeType = ImageMimeType.PNG)
+            )
+        )
+        val output = tableExtractionAgent.generate(extractionInput)
+        return output.extractions.firstOrNull()?.extractedText
     }
 
     // --- Utilities ---

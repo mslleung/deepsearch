@@ -39,10 +39,13 @@ class FullPageNavigationAgentGenAiImpl(
                 "y1" to Schema.builder().type("INTEGER").description("Top edge (0-1000).").build(),
                 "x2" to Schema.builder().type("INTEGER").description("Right edge (0-1000).").build(),
                 "y2" to Schema.builder().type("INTEGER").description("Bottom edge (0-1000).").build(),
-                "relevance" to Schema.builder().type("STRING").description("Why this visual region is relevant to the query.").build()
+                "relevance" to Schema.builder().type("STRING").description("Why this visual region is relevant to the query.").build(),
+                "containsTable" to Schema.builder().type("BOOLEAN")
+                    .description("True if this region contains tabular data (comparison grid, pricing table, feature matrix, data table, or an image of a table). False for plain text, paragraphs, or single values.")
+                    .build()
             )
         )
-        .required(listOf("x1", "y1", "x2", "y2", "relevance"))
+        .required(listOf("x1", "y1", "x2", "y2", "relevance", "containsTable"))
         .build()
 
     private val actionSchema: Schema = Schema.builder()
@@ -260,7 +263,8 @@ class FullPageNavigationAgentGenAiImpl(
         val y1: Int,
         val x2: Int,
         val y2: Int,
-        val relevance: String
+        val relevance: String,
+        val containsTable: Boolean = false
     )
 
     @Serializable
@@ -384,7 +388,8 @@ class FullPageNavigationAgentGenAiImpl(
                 y1 = r.y1.coerceIn(0, 1000),
                 x2 = r.x2.coerceIn(0, 1000),
                 y2 = r.y2.coerceIn(0, 1000),
-                relevance = r.relevance
+                relevance = r.relevance,
+                containsTable = r.containsTable
             )
         }?.filter { it.x2 > it.x1 && it.y2 > it.y1 } ?: emptyList()
 
