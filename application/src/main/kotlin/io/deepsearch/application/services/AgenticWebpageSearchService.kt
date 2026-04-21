@@ -1079,12 +1079,7 @@ class AgenticWebpageSearchService(
             val isTable = region.containsTable || content.isTable
 
             if (isTable) {
-                val markdown = try {
-                    extractTableContent(content, region, sessionId, jpegBytes, imgWidth, imgHeight, pageX1, pageY1, pageX2, pageY2)
-                } catch (e: Exception) {
-                    logger.warn("Table extraction failed for region '{}', falling back to text", region.relevance.take(80), e)
-                    null
-                }
+                val markdown = extractTableContent(content, region, sessionId, jpegBytes, imgWidth, imgHeight, pageX1, pageY1, pageX2, pageY2)
 
                 if (!markdown.isNullOrBlank()) {
                     results.add(ExtractedContent(description = region.relevance, text = markdown, isTable = true))
