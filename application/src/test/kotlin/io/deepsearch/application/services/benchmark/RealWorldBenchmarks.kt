@@ -121,7 +121,7 @@ object RealWorldBenchmarks {
         description = "SleekFlow FAQ: what counts as active contact (accordion)",
         pageSource = PageSource.Url("https://sleekflow.io/pricing"),
         query = "According to SleekFlow's FAQ, what counts as a monthly active contact?",
-        expectedOutcome = ExpectedOutcome.AnswerContains(listOf("message"), caseSensitive = false),
+        expectedOutcome = ExpectedOutcome.AnswerContains(listOf("chat"), caseSensitive = false),
         idealActionSequence = listOf(
             NavigationAction.FindOnPage::class,
             NavigationAction.ScrollToText::class,

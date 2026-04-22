@@ -7,6 +7,7 @@ import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.agents.infra.TableMarkdownUtils
 import io.deepsearch.domain.services.AnnotatedElement
 import io.deepsearch.domain.services.AnnotationTarget
 import io.deepsearch.domain.services.IDomDiffService
@@ -60,8 +61,7 @@ class AgenticWebpageSearchService(
     private val domDiffService: IDomDiffService,
     private val tokenUsageService: ILlmTokenUsageService,
     private val dispatcherProvider: IDispatcherProvider,
-    private val tableInterpretationService: ITableInterpretationService,
-    private val tableExtractionAgent: ITableExtractionAgent
+    private val agenticTableConversionAgent: IAgenticTableConversionAgent
 ) : IAgenticWebpageSearchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -339,7 +339,7 @@ class AgenticWebpageSearchService(
                     val extractDeferred = async {
                         extractRegionContent(
                             page, output.captureRegions, imgWidth, imgHeight,
-                            isOverlayMode, actualViewportHeight, sessionId, jpegBytes
+                            isOverlayMode, actualViewportHeight, jpegBytes
                         )
                     }
                     cropDeferred.await() to extractDeferred.await()
@@ -1041,7 +1041,6 @@ class AgenticWebpageSearchService(
         imgHeight: Int,
         isOverlayMode: Boolean,
         viewportHeight: Int,
-        sessionId: SessionId,
         jpegBytes: ByteArray
     ): List<ExtractedContent> {
         val scrollableRange = (imgHeight - viewportHeight).coerceAtLeast(1)
@@ -1079,14 +1078,14 @@ class AgenticWebpageSearchService(
             val isTable = region.containsTable || content.isTable
 
             if (isTable) {
-                val markdown = extractTableContent(content, region, sessionId, jpegBytes, imgWidth, imgHeight, pageX1, pageY1, pageX2, pageY2)
+                val markdown = extractTableContent(content, region, jpegBytes, imgWidth, imgHeight, pageX1, pageY1, pageX2, pageY2)
 
                 if (!markdown.isNullOrBlank()) {
                     results.add(ExtractedContent(description = region.relevance, text = markdown, isTable = true))
                     logger.info(
-                        "Extracted table ({} chars, path={}): {}",
+                        "Extracted table ({} chars, hasHtml={}): {}",
                         markdown.length,
-                        if (content.isTable && content.html.isNotBlank()) "html-interpretation" else "image-extraction",
+                        content.html.isNotBlank(),
                         region.relevance.take(80)
                     )
                 } else if (content.text.isNotBlank()) {
@@ -1105,14 +1104,19 @@ class AgenticWebpageSearchService(
     }
 
     /**
-     * Extracts structured markdown from a table region using the appropriate path:
-     * - Path A (HTML): DOM has tabular structure → TableInterpretationService converts HTML to markdown
-     * - Path B (Image): DOM lacks structure (e.g. <img>) → TableExtractionAgent uses vision on cropped image
+     * Extracts structured markdown from a table region using a unified multimodal approach.
+     *
+     * Always crops the region screenshot and passes it together with the DOM-extracted HTML
+     * to [IAgenticTableConversionAgent]. The agent uses the image as visual ground truth
+     * for structure and the HTML as the text source. For purely graphical tables (no useful
+     * HTML), the agent falls back to OCR from the image.
+     *
+     * The agent returns a clean HTML `<table>`, which is then programmatically converted
+     * to markdown via [TableMarkdownUtils].
      */
     private suspend fun extractTableContent(
         content: IBrowserPage.RegionContent,
         region: CaptureRegion,
-        sessionId: SessionId,
         jpegBytes: ByteArray,
         imgWidth: Int,
         imgHeight: Int,
@@ -1121,19 +1125,6 @@ class AgenticWebpageSearchService(
         pageX2: Int,
         pageY2: Int
     ): String? {
-        if (content.isTable && content.html.isNotBlank()) {
-            val input = TableInterpretationInput(
-                tableIdentification = TableIdentification(
-                    cssSelector = "",
-                    dataId = "",
-                    auxiliaryInfo = region.relevance
-                ),
-                tableHtml = content.html,
-                boundingBoxes = emptyMap()
-            )
-            return tableInterpretationService.interpretTable(input, sessionId).markdown
-        }
-
         val x = pageX1.coerceIn(0, imgWidth - 1)
         val y = pageY1.coerceIn(0, imgHeight - 1)
         val x2 = pageX2.coerceIn(x + 1, imgWidth)
@@ -1143,13 +1134,18 @@ class AgenticWebpageSearchService(
         if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) return null
 
         val croppedBytes = imageProcessingService.cropToPng(jpegBytes, x, y, w, h)
-        val extractionInput = TableExtractionInput(
-            images = listOf(
-                TableExtractionInput.ImageItem(bytes = croppedBytes, mimeType = ImageMimeType.PNG)
-            )
+
+        val input = AgenticTableConversionInput(
+            regionImage = croppedBytes,
+            imageMimeType = ImageMimeType.PNG,
+            cleanedHtml = content.html.ifBlank { null },
+            auxiliaryInfo = region.relevance
         )
-        val output = tableExtractionAgent.generate(extractionInput)
-        return output.extractions.firstOrNull()?.extractedText
+        val output = agenticTableConversionAgent.generate(input)
+
+        if (output.htmlTable.isBlank()) return null
+
+        return TableMarkdownUtils.transformHTMLTablesToMarkdown(output.htmlTable).ifBlank { null }
     }
 
     // --- Utilities ---

@@ -116,6 +116,7 @@ val domainModule = module {
     singleOf(::ImageClassificationAgentGenAiImpl) bind IImageClassificationAgent::class
     singleOf(::ImageDescriptionAgentGenAiImpl) bind IImageDescriptionAgent::class
     singleOf(::TableExtractionAgentGenAiImpl) bind ITableExtractionAgent::class
+    singleOf(::AgenticTableConversionAgentGenAiImpl) bind IAgenticTableConversionAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::PopupContainerIdentificationAgentGenAiImpl) bind IPopupContainerIdentificationAgent::class
     singleOf(::SemanticIdentificationAgentGenAiImpl) bind ISemanticIdentificationAgent::class
