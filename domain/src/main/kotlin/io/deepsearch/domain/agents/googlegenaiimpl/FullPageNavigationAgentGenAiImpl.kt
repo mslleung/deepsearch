@@ -31,6 +31,8 @@ class FullPageNavigationAgentGenAiImpl(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
+    // ── Shared sub-schemas ──────────────────────────────────────────────
+
     private val captureRegionSchema: Schema = Schema.builder()
         .type("OBJECT")
         .properties(
@@ -112,16 +114,18 @@ class FullPageNavigationAgentGenAiImpl(
             mapOf(
                 "question" to Schema.builder().type("STRING").description("The question text.").build(),
                 "status" to Schema.builder().type("STRING").enum_(listOf("open", "resolved"))
-                    .description("Whether this question is still open or has been resolved by findings.").build(),
+                    .description("Whether this question is still open or has been resolved. Only mark resolved when the relevant data appears in EXTRACTED KNOWLEDGE.").build(),
                 "findings" to Schema.builder().type("ARRAY").items(Schema.builder().type("STRING").build())
-                    .description("Facts discovered that help answer this question. Empty if no findings yet.").build()
+                    .description("Facts from EXTRACTED KNOWLEDGE that help answer this question. Only include data that appears in EXTRACTED KNOWLEDGE. Empty if no relevant extracted data yet.").build()
             )
         )
         .required(listOf("question", "status", "findings"))
         .propertyOrdering(listOf("question", "status", "findings"))
         .build()
 
-    private val outputSchema: Schema = Schema.builder()
+    // ── Agent 1: Navigate + Decide ──────────────────────────────────────
+
+    private val navigateSchema: Schema = Schema.builder()
         .type("OBJECT")
         .properties(
             mapOf(
@@ -146,23 +150,23 @@ class FullPageNavigationAgentGenAiImpl(
                 "questionsState" to Schema.builder()
                     .type("ARRAY")
                     .items(questionStateSchema)
-                    .description("The COMPLETE updated state of ALL questions. Include every question (open and resolved) with ALL their findings. On the first turn, decompose the QUERY into sub-questions. On later turns, carry forward ALL previous questions and findings, adding new findings or marking questions resolved.")
+                    .description("The COMPLETE updated state of ALL questions. On the first turn, decompose the QUERY into sub-questions. On later turns, carry forward ALL previous questions. Mark questions resolved and add findings ONLY when relevant data appears in EXTRACTED KNOWLEDGE.")
                     .build(),
                 "generalFindings" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
-                    .description("Facts not tied to any specific question (e.g. page context, site structure). Carry forward all previous general findings and add new ones.")
+                    .description("Navigational observations about page layout and structure (e.g. 'FAQ section at bottom', 'pricing table has 4 columns'). Carry forward previous entries and add new ones.")
                     .build(),
                 "captureRegions" to Schema.builder()
                     .type("ARRAY")
                     .items(captureRegionSchema)
-                    .description("Bounding boxes of regions containing data relevant to the query (prices, numbers, text content, tables, charts). The system will programmatically extract text from these regions. You MUST provide capture regions for any area with factual data needed to answer the query. Use 0-1000 coordinates.")
+                    .description("Bounding boxes of regions containing data relevant to the query. Provide one region per distinct content block (a price, a heading, a paragraph, a table). Multiple regions are expected when more than one area is relevant. Size each region to cover ONE complete content block (a full paragraph, a full heading, a full table). For a multi-line paragraph, the region must span from the first line to the last line — not just one line. Use 0-1000 coordinates.")
                     .nullable(true)
                     .build(),
                 "decision" to Schema.builder()
                     .type("STRING")
                     .enum_(listOf("continue_exploring", "exploration_finished"))
-                    .description("Top-level intent: continue exploring the page, or finish exploration.")
+                    .description("Top-level intent: continue exploring the page, or finish exploration. Only finish when you have explored all relevant sections and the EXTRACTED KNOWLEDGE contains the data needed to answer the query.")
                     .build(),
                 "reason" to Schema.builder()
                     .type("STRING")
@@ -173,39 +177,36 @@ class FullPageNavigationAgentGenAiImpl(
                     .items(actionSchema)
                     .description("Exploration actions to execute in order (decision=continue_exploring only). Eagerly include ALL actions that might yield information.")
                     .nullable(true)
-                    .build(),
-                "answer" to Schema.builder()
-                    .type("STRING")
-                    .description("REQUIRED when decision=exploration_finished. Comprehensive answer synthesized from ALL findings. Include every relevant detail. Only null when decision is continue_exploring.")
-                    .nullable(true)
                     .build()
             )
         )
         .required(listOf("pageState", "observation", "questionsState", "generalFindings", "decision", "reason"))
-        .propertyOrdering(listOf("pageState", "observation", "questionsState", "generalFindings", "captureRegions", "decision", "reason", "actions", "answer"))
+        .propertyOrdering(listOf("pageState", "observation", "questionsState", "generalFindings", "captureRegions", "decision", "reason", "actions"))
         .build()
 
-    private val fullPageSystemInstruction = """
-        You are a webpage exploration agent. You work in two stages within each response.
+    private val fullPageNavigateInstruction = """
+        You are a webpage exploration agent. You should imitate a human navigating a webpage looking for information.
 
         You see a screenshot of the **entire page** from top to bottom. Interactive elements are marked with **numbered labels** overlaid on the screenshot.
-        You can click on any labeled element by providing its `element_label` number. The system will handle scrolling automatically.
+        You can click on any labeled element by providing its `element_label` number.
         If content is hidden (behind accordions, tabs, etc.), click the header/toggle to reveal it. You will see the updated full page on the next turn.
 
         ## STAGE 1 — VISUAL ANALYSIS
         Complete this stage based ONLY on what you SEE in the screenshot — before considering the query.
         - pageState: Report ALL dynamic UI states (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements.
         - observation: Describe the page layout and any changes from the last action.
-        - captureRegions: For any area containing data relevant to the query (prices, numbers, text, tables), provide bounding boxes. The system will programmatically extract text from these regions and feed it back as PROGRAMMATIC EXTRACTION on the next turn. You MUST provide capture regions for all areas with factual data needed to answer the query.
+        - captureRegions: For any area containing data relevant to the query (prices, numbers, text, tables), provide bounding boxes. The system extracts text from these regions and feeds it back as EXTRACTED KNOWLEDGE on the next turn.
+          - Use MULTIPLE capture regions — one per distinct content block (e.g. a price label, a package name, a description paragraph, a table). Prefer more regions over fewer.
+          - Size each region to cover ONE complete content block (a full paragraph, a full heading, a full table). For a multi-line paragraph, the region must span from the first line to the last line — not just one line.
         CRITICAL: Do NOT let the query influence your visual analysis. If the query mentions "X", do not assume X is visible — look at the screenshot and report what is ACTUALLY there.
 
         ## STAGE 2 — QUERY PLANNING
         Now read the query and use your Stage 1 analysis to decide what to do.
         1. Trust your Stage 1 analysis. If you reported "Active tab: Y" in pageState, that IS the active tab — even if you expected a different tab based on the query or your previous click. If the state doesn't match what you expected, your last click likely targeted the wrong element — try a different one.
-        2. Extract any relevant findings from your observation and PROGRAMMATIC EXTRACTION data. Do not omit data. Do not invent or modify facts.
+        2. EXTRACTED KNOWLEDGE (shown in the prompt) is the accumulated factual knowledge from previous capture regions. Use it to track progress and resolve questions.
         3. Explore the page by issuing actions: click, type_text.
         4. If a click led to navigation, it would be recorded separately, just continue exploring.
-        5. Before calling exploration_finished: VERIFY that every data point in your answer appears in PROGRAMMATIC EXTRACTION data across turns. If any data point is NOT in your extractions, continue exploring to find it — do NOT guess or fabricate.
+        5. Mark a question as resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE. If you have not yet seen the data in EXTRACTED KNOWLEDGE, continue exploring.
         6. If you see tabs, accordions, or toggles that MAY contain relevant content, you MUST click each one to reveal its content before finishing. Do NOT report content as "not listed" or "not available" if you haven't clicked the tab/toggle to check.
         7. When the query asks for a LIST of items (e.g. 'all prices', 'all packages'), you MUST systematically click through ALL relevant tabs/accordions/toggles to gather every item before calling exploration_finished.
 
@@ -214,14 +215,13 @@ class FullPageNavigationAgentGenAiImpl(
         - **type_text**: Type into input field at (x,y). Highest priority.
         - **click**: Click an interactive element by element_label (preferred) or box_2d [ymin, xmin, ymax, xmax] 0-1000 scale as fallback. Every click MUST include element_label or box_2d coordinates.
 
-        **exploration_finished**: Stop exploring. You MUST provide a comprehensive answer in the "answer" field, synthesized from ALL findings.
-        - Your answer MUST be grounded in PROGRAMMATIC EXTRACTION data. NEVER fabricate, estimate, or infer values you have not seen in the extractions.
-        - If you haven't found sufficient data, continue exploring rather than guessing.
-        - Never leave answer empty when you have findings.
+        **exploration_finished**: Stop exploring. The accumulated EXTRACTED KNOWLEDGE will be returned to the caller.
+        - If you haven't found sufficient data in EXTRACTED KNOWLEDGE, continue exploring rather than guessing.
+        - Only finish when you have explored all relevant sections of the page, and conclude that either the information is found or that the information does not exist on the page.
     """.trimIndent()
 
-    private val overlaySystemInstruction = """
-        You are a webpage exploration agent. You work in two stages within each response.
+    private val overlayNavigateInstruction = """
+        You are a webpage exploration agent. You should imitate a human navigating a webpage looking for information.
 
         You see a **viewport screenshot**. A dialog/overlay is open on the page, and the screenshot shows what is currently visible in the browser viewport. Interactive elements are marked with **numbered labels**.
         You can interact with labeled elements by providing their `element_label` number. Use `box_2d` as a fallback only when no label matches.
@@ -232,16 +232,18 @@ class FullPageNavigationAgentGenAiImpl(
         Complete this stage based ONLY on what you SEE in the screenshot — before considering the query.
         - pageState: Report ALL dynamic UI states (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements.
         - observation: Describe the overlay content and any changes from the last action. Note if content appears cut off (indicating more content available via scrolling).
-        - captureRegions: For any area containing data relevant to the query (prices, numbers, text, tables), provide bounding boxes. The system will programmatically extract text from these regions and feed it back as PROGRAMMATIC EXTRACTION on the next turn. You MUST provide capture regions for all areas with factual data needed to answer the query.
+        - captureRegions: For any area containing data relevant to the query (prices, numbers, text, tables), provide bounding boxes. The system extracts text from these regions and feeds it back as EXTRACTED KNOWLEDGE on the next turn.
+          - Use MULTIPLE capture regions — one per distinct content block (e.g. a price label, a package name, a description paragraph, a table). Prefer more regions over fewer.
+          - Size each region to cover ONE complete content block (a full paragraph, a full heading, a full table). For a multi-line paragraph, the region must span from the first line to the last line — not just one line.
         CRITICAL: Do NOT let the query influence your visual analysis. If the query mentions "X", do not assume X is visible — look at the screenshot and report what is ACTUALLY there.
 
         ## STAGE 2 — QUERY PLANNING
         Now read the query and use your Stage 1 analysis to decide what to do.
         1. Trust your Stage 1 analysis. If you reported "Active tab: Y" in pageState, that IS the active tab — even if you expected a different tab based on the query or your previous click. If the state doesn't match what you expected, your last click likely targeted the wrong element — try a different one.
-        2. Extract any relevant findings from your observation and PROGRAMMATIC EXTRACTION data. Do not omit data. Do not invent or modify facts.
+        2. EXTRACTED KNOWLEDGE (shown in the prompt) is the accumulated factual knowledge from previous capture regions. Use it to track progress and resolve questions.
         3. Explore the page by issuing actions: click, type_text, scroll_element.
         4. If a click led to navigation, it would be recorded separately, just continue exploring.
-        5. Before calling exploration_finished: VERIFY that every data point in your answer appears in PROGRAMMATIC EXTRACTION data across turns. If any data point is NOT in your extractions, continue exploring to find it — do NOT guess or fabricate.
+        5. Mark a question as resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE. If you have not yet seen the data in EXTRACTED KNOWLEDGE, continue exploring.
         6. If the overlay does NOT contain the information you need, dismiss it by clicking the close button (X) or clicking the dimmed area outside, then continue exploring the main page.
         7. Do NOT call exploration_finished while inside an overlay unless all required data has been found.
 
@@ -251,11 +253,12 @@ class FullPageNavigationAgentGenAiImpl(
         - **click**: Click an interactive element by element_label (preferred) or box_2d [ymin, xmin, ymax, xmax] 0-1000 scale as fallback. Every click MUST include element_label or box_2d coordinates.
         - **scroll_element**: Scroll within an overlay or container. Provide x,y coordinates of the scrollable area and the direction (DOWN, UP, LEFT, RIGHT).
 
-        **exploration_finished**: Stop exploring. You MUST provide a comprehensive answer in the "answer" field, synthesized from ALL findings.
-        - Your answer MUST be grounded in PROGRAMMATIC EXTRACTION data. NEVER fabricate, estimate, or infer values you have not seen in the extractions.
-        - If you haven't found sufficient data, continue exploring rather than guessing.
-        - Never leave answer empty when you have findings.
+        **exploration_finished**: Stop exploring. The accumulated EXTRACTED KNOWLEDGE will be returned to the caller.
+        - If you haven't found sufficient data in EXTRACTED KNOWLEDGE, continue exploring rather than guessing.
+        - Only finish when you have explored all relevant sections.
     """.trimIndent()
+
+    // ── Serializable response types ─────────────────────────────────────
 
     @Serializable
     private data class CaptureRegionResponse(
@@ -293,7 +296,7 @@ class FullPageNavigationAgentGenAiImpl(
     )
 
     @Serializable
-    private data class NavigationResponse(
+    private data class NavigateResponse(
         val pageState: List<String>? = null,
         val observation: String? = null,
         val questionsState: List<QuestionStateResponse>? = null,
@@ -301,18 +304,19 @@ class FullPageNavigationAgentGenAiImpl(
         val captureRegions: List<CaptureRegionResponse>? = null,
         val decision: String? = null,
         val reason: String? = null,
-        val actions: List<ActionResponse>? = null,
-        val answer: String? = null
+        val actions: List<ActionResponse>? = null
     )
+
+    // ── generate() — navigate + decide ────────────────────────────────
 
     override suspend fun generate(input: FullPageNavigationInput): FullPageNavigationOutput {
         val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val prompt = buildPrompt(input)
+        val prompt = buildNavigatePrompt(input)
 
         val response = withContext(dispatcherProvider.io) {
-            retryLlmCall<NavigationResponse>(this@FullPageNavigationAgentGenAiImpl::class.simpleName!! + ".navigate") {
+            retryLlmCall<NavigateResponse>(this@FullPageNavigationAgentGenAiImpl::class.simpleName!! + ".navigate") {
                 val screenshotLabel = if (input.isOverlayMode) "VIEWPORT SCREENSHOT (overlay detected):" else "FULL PAGE SCREENSHOT:"
                 val contentParts = listOf(
                     Part.fromText(screenshotLabel),
@@ -325,7 +329,7 @@ class FullPageNavigationAgentGenAiImpl(
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
                         .temperature(1.0F)
-                        .responseSchema(outputSchema)
+                        .responseSchema(navigateSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
                             ThinkingConfig.builder()
@@ -333,7 +337,7 @@ class FullPageNavigationAgentGenAiImpl(
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(
-                            if (input.isOverlayMode) overlaySystemInstruction else fullPageSystemInstruction
+                            if (input.isOverlayMode) overlayNavigateInstruction else fullPageNavigateInstruction
                         )))
                         .build()
                 )
@@ -354,23 +358,14 @@ class FullPageNavigationAgentGenAiImpl(
         }
 
         val pageState = response.pageState ?: emptyList()
-        logger.debug("Navigation: pageState={}", pageState)
+        logger.debug("Navigate: pageState={}", pageState)
 
-        val actions = when (response.decision) {
-            "exploration_finished" -> {
-                listOf(NavigationAction.ExplorationFinished(
-                    answer = response.answer?.takeIf { it.isNotBlank() }
-                ))
-            }
-            else -> {
-                (response.actions ?: emptyList()).mapNotNull { action ->
-                    try {
-                        toNavigationAction(action)
-                    } catch (e: IllegalArgumentException) {
-                        logger.warn("Skipping malformed action '{}': {}", action.action, e.message)
-                        null
-                    }
-                }
+        val actions = (response.actions ?: emptyList()).mapNotNull { action ->
+            try {
+                toNavigationAction(action)
+            } catch (e: IllegalArgumentException) {
+                logger.warn("Skipping malformed action '{}': {}", action.action, e.message)
+                null
             }
         }
 
@@ -393,14 +388,17 @@ class FullPageNavigationAgentGenAiImpl(
             )
         }?.filter { it.x2 > it.x1 && it.y2 > it.y1 } ?: emptyList()
 
+        val decision = response.decision ?: "continue_exploring"
         val openCount = questionsState.count { !it.resolved }
         val resolvedCount = questionsState.count { it.resolved }
         val totalFindings = questionsState.sumOf { it.findings.size } + (response.generalFindings?.size ?: 0)
+
         logger.debug(
-            "Navigation: decision={} actions=[{}] | questions={} (open={}, resolved={}) | findings={} | pageState={}",
-            response.decision,
+            "Navigate: decision={} actions=[{}] | questions={} (open={}, resolved={}) | findings={} | captures={} | pageState={}",
+            decision,
             actions.joinToString(", ") { it::class.simpleName ?: "?" },
             questionsState.size, openCount, resolvedCount, totalFindings,
+            captureRegions.size,
             pageState
         )
 
@@ -411,11 +409,14 @@ class FullPageNavigationAgentGenAiImpl(
             pageState = pageState,
             observation = response.observation,
             captureRegions = captureRegions,
+            decision = decision,
             tokenUsage = tokenUsage
         )
     }
 
-    private fun buildPrompt(input: FullPageNavigationInput): String = buildString {
+    // ── Prompt builders ─────────────────────────────────────────────────
+
+    private fun buildNavigatePrompt(input: FullPageNavigationInput): String = buildString {
         appendLine("PAGE: ${input.pageTitle} — ${input.pageUrl}")
 
         if (input.pageState.isNotEmpty()) {
@@ -443,10 +444,6 @@ class FullPageNavigationAgentGenAiImpl(
                     appendLine("    - $f")
                 }
             }
-            val allResolved = input.questions.all { it.resolved }
-            if (allResolved) {
-                appendLine("  All questions resolved. You may use exploration_finished.")
-            }
         }
 
         if (input.generalFindings.isNotEmpty()) {
@@ -459,7 +456,7 @@ class FullPageNavigationAgentGenAiImpl(
 
         if (input.extractedRegionContent.isNotEmpty()) {
             appendLine()
-            appendLine("PROGRAMMATIC EXTRACTION (authoritative — extracted from DOM):")
+            appendLine("EXTRACTED KNOWLEDGE:")
             input.extractedRegionContent.forEach { ec ->
                 appendLine("  [${ec.description}]${if (ec.isTable) " (table)" else ""}:")
                 appendLine("    ${ec.text}")
@@ -480,6 +477,8 @@ class FullPageNavigationAgentGenAiImpl(
             }
         }
     }
+
+    // ── Shared helpers ──────────────────────────────────────────────────
 
     private fun toNavigationAction(resp: ActionResponse): NavigationAction {
         val reason = resp.reason ?: ""

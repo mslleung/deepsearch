@@ -16,8 +16,15 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import com.ibm.icu.text.Transliterator
 import java.security.MessageDigest
 import kotlin.time.TimeSource
+
+private val LATIN_ASCII_TRANSLITERATOR: Transliterator =
+    Transliterator.getInstance("Latin-ASCII")
+
+private fun normalizeText(text: String): String =
+    LATIN_ASCII_TRANSLITERATOR.transliterate(text)
 
 data class CapturedImage(
     val bytes: ByteArray,
@@ -157,7 +164,8 @@ class AgenticWebpageSearchService(
         val offPageClickedDescs: MutableSet<String> = mutableSetOf(),
         var pageState: List<String> = emptyList(),
         var isOverlayMode: Boolean = false,
-        val extractedRegionContent: MutableList<ExtractedContent> = mutableListOf()
+        val extractedRegionContent: MutableList<ExtractedContent> = mutableListOf(),
+        val extractedTextHashes: MutableSet<String> = mutableSetOf()
     )
 
     // --- Public API ---
@@ -289,7 +297,8 @@ class AgenticWebpageSearchService(
                 }.trimEnd()
             } else null
 
-            val input = FullPageNavigationInput(
+            // ── Phase 1: Visual Navigation (multimodal LLM) ──────────────
+            val navInput = FullPageNavigationInput(
                 fullPageScreenshot = finalScreenshot,
                 query = query,
                 previousActions = state.actionsPerformed.toList(),
@@ -307,39 +316,42 @@ class AgenticWebpageSearchService(
                 extractedRegionContent = state.extractedRegionContent.toList()
             )
 
-            val llmStart = clock.markNow()
-            val output = fullPageNavigationAgent.generate(input)
-            val llmMs = (clock.markNow() - llmStart).inWholeMilliseconds
-            state.aggregatedTokenUsage = state.aggregatedTokenUsage + output.tokenUsage
+            val navLlmStart = clock.markNow()
+            val navOutput = fullPageNavigationAgent.generate(navInput)
+            val navLlmMs = (clock.markNow() - navLlmStart).inWholeMilliseconds
+            state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage
 
             tokenUsageService.recordTokenUsage(
                 sessionId = sessionId,
                 agentName = "FullPageNavigationAgent",
-                modelName = output.tokenUsage.modelName,
-                promptTokens = output.tokenUsage.promptTokens,
-                outputTokens = output.tokenUsage.outputTokens,
-                totalTokens = output.tokenUsage.totalTokens
+                modelName = navOutput.tokenUsage.modelName,
+                promptTokens = navOutput.tokenUsage.promptTokens,
+                outputTokens = navOutput.tokenUsage.outputTokens,
+                totalTokens = navOutput.tokenUsage.totalTokens
             )
 
-            val postLlmStart = clock.markNow()
-            val newFindings = updateFindings(output.questionsState, output.generalFindings, state)
-            state.pageState = output.pageState
+            val postNavStart = clock.markNow()
+            state.pageState = navOutput.pageState
+
+            val newFindings = updateFindings(navOutput.questionsState, navOutput.generalFindings, state)
 
             var pageChanged = false
 
-            if (output.captureRegions.isNotEmpty()) {
+            // Extract content from capture regions (always, before checking decision)
+            if (navOutput.captureRegions.isNotEmpty()) {
                 pageChanged = true
                 val (cropResult, newContent) = coroutineScope {
                     val cropDeferred = async(dispatcherProvider.default) {
                         cropCaptureRegions(
-                            jpegBytes, output.captureRegions, state.capturedHashes,
+                            jpegBytes, navOutput.captureRegions, state.capturedHashes,
                             imgWidth, imgHeight
                         )
                     }
                     val extractDeferred = async {
                         extractRegionContent(
-                            page, output.captureRegions, imgWidth, imgHeight,
-                            isOverlayMode, actualViewportHeight, jpegBytes
+                            page, navOutput.captureRegions, imgWidth, imgHeight,
+                            isOverlayMode, actualViewportHeight, jpegBytes,
+                            state.extractedTextHashes
                         )
                     }
                     cropDeferred.await() to extractDeferred.await()
@@ -349,100 +361,95 @@ class AgenticWebpageSearchService(
                 state.extractedRegionContent.addAll(newContent)
             }
 
-            for ((actionIdx, action) in output.actions.withIndex()) {
+            if (navOutput.decision == "exploration_finished") {
+                val postNavMs = (clock.markNow() - postNavStart).inWholeMilliseconds
+                val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
+                logger.info(
+                    "TIMING iter={} total={}ms | fetch={}ms annotate={}ms navLlm={}ms post={}ms",
+                    iteration, iterMs, fetchMs, annotateMs, navLlmMs, postNavMs
+                )
+                return handleExplorationFinished(state, newFindings, iteration)
+            }
+
+            // ── Execute proposed actions from Phase 1 ────────────────────────
+            for ((actionIdx, action) in navOutput.actions.withIndex()) {
                 state.actionsPerformed.add(
                     if (actionIdx == 0) ActionWithOutcome(
                         action,
-                        observation = output.observation,
+                        observation = navOutput.observation,
                         findings = newFindings
                     )
-                    else ActionWithOutcome(action, observation = output.observation)
+                    else ActionWithOutcome(action, observation = navOutput.observation)
                 )
 
-                when (action) {
-                    is NavigationAction.ExplorationFinished -> {
-                        val postLlmMs = (clock.markNow() - postLlmStart).inWholeMilliseconds
-                        val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
-                        logger.info(
-                            "TIMING iter={} total={}ms | fetch={}ms annotate={}ms llm={}ms post={}ms",
-                            iteration, iterMs, fetchMs, annotateMs, llmMs, postLlmMs
-                        )
-                        return handleExplorationFinished(action, state, newFindings, iteration)
-                    }
+                val effect = when (action) {
+                    is NavigationAction.Click ->
+                        if (isOverlayMode)
+                            handleViewportClick(
+                                action,
+                                page,
+                                state,
+                                jpegBytes,
+                                imgWidth,
+                                imgHeight,
+                                elementIndex
+                            )
+                        else
+                            handleFullPageClick(
+                                action,
+                                page,
+                                state,
+                                jpegBytes,
+                                imgWidth,
+                                imgHeight,
+                                elementIndex,
+                                actualViewportHeight
+                            )
+
+                    is NavigationAction.Type ->
+                        if (isOverlayMode)
+                            handleViewportType(action, page, state, imgWidth, imgHeight)
+                        else
+                            handleFullPageType(
+                                action,
+                                page,
+                                state,
+                                jpegBytes,
+                                imgWidth,
+                                imgHeight,
+                                actualViewportHeight
+                            )
+
+                    is NavigationAction.ScrollAt ->
+                        handleScrollAt(action, page, state, imgWidth, imgHeight)
 
                     else -> {
-                        val effect = when (action) {
-                            is NavigationAction.Click ->
-                                if (isOverlayMode)
-                                    handleViewportClick(
-                                        action,
-                                        page,
-                                        state,
-                                        jpegBytes,
-                                        imgWidth,
-                                        imgHeight,
-                                        elementIndex
-                                    )
-                                else
-                                    handleFullPageClick(
-                                        action,
-                                        page,
-                                        state,
-                                        jpegBytes,
-                                        imgWidth,
-                                        imgHeight,
-                                        elementIndex,
-                                        actualViewportHeight
-                                    )
-
-                            is NavigationAction.Type ->
-                                if (isOverlayMode)
-                                    handleViewportType(action, page, state, imgWidth, imgHeight)
-                                else
-                                    handleFullPageType(
-                                        action,
-                                        page,
-                                        state,
-                                        jpegBytes,
-                                        imgWidth,
-                                        imgHeight,
-                                        actualViewportHeight
-                                    )
-
-                            is NavigationAction.ScrollAt ->
-                                handleScrollAt(action, page, state, imgWidth, imgHeight)
-
-                            else -> {
-                                logger.warn("Unsupported action in full-page mode: {}", action)
-                                ActionEffect.PAGE_UNCHANGED
-                            }
-                        }
-                        if (effect == ActionEffect.PAGE_CHANGED) {
-                            pageChanged = true
-                            val wasOverlay = state.isOverlayMode
-                            state.isOverlayMode = try {
-                                page.hasModalOverlay()
-                            } catch (_: Exception) {
-                                false
-                            }
-                            if (state.isOverlayMode && !wasOverlay) {
-                                logger.info("Modal overlay detected after action — switching to viewport mode")
-                            } else if (!state.isOverlayMode && wasOverlay) {
-                                logger.info("Overlay dismissed after action — returning to full-page mode")
-                            }
-                            break
-                        }
+                        logger.warn("Unsupported action in full-page mode: {}", action)
+                        ActionEffect.PAGE_UNCHANGED
                     }
                 }
+                if (effect == ActionEffect.PAGE_CHANGED) {
+                    pageChanged = true
+                    val wasOverlay = state.isOverlayMode
+                    state.isOverlayMode = try {
+                        page.hasModalOverlay()
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (state.isOverlayMode && !wasOverlay) {
+                        logger.info("Modal overlay detected after action — switching to viewport mode")
+                    } else if (!state.isOverlayMode && wasOverlay) {
+                        logger.info("Overlay dismissed after action — returning to full-page mode")
+                    }
+                    break
+                }
             }
-            val postLlmMs = (clock.markNow() - postLlmStart).inWholeMilliseconds
+            val postNavMs = (clock.markNow() - postNavStart).inWholeMilliseconds
             val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
             logger.info(
-                "TIMING iter={} total={}ms | fetch={}ms annotate={}ms llm={}ms post={}ms",
-                iteration, iterMs, fetchMs, annotateMs, llmMs, postLlmMs
+                "TIMING iter={} total={}ms | fetch={}ms annotate={}ms navLlm={}ms post={}ms",
+                iteration, iterMs, fetchMs, annotateMs, navLlmMs, postNavMs
             )
-            // If no action changed the page, the current iteration's screenshot
-            // is still valid — carry it forward to skip the screenshot fetch next time.
             if (!pageChanged) {
                 cachedScreenshot = screenshot
             }
@@ -833,41 +840,34 @@ class AgenticWebpageSearchService(
     // --- Action handlers ---
 
     private fun handleExplorationFinished(
-        action: NavigationAction.ExplorationFinished,
         state: NavigationLoopState,
         newFindings: List<String>,
         iteration: Int
     ): AgenticPageSearchResult {
-        val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings)
-        val answer = action.answer
+        val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings, state.extractedRegionContent)
+        val answer = state.extractedRegionContent
+            .joinToString("\n\n") { "[${it.description}]${if (it.isTable) " (table)" else ""}:\n${it.text}" }
+            .ifBlank { null }
+
         if (answer != null) {
             logger.info(
-                "Agentic search finished with answer after {} iterations ({} findings, {} captures) for {}: {}",
-                iteration, allObservations.size, state.capturedImages.size, state.url, answer.take(100)
+                "Agentic search finished after {} iterations ({} findings, {} extracted, {} captures) for {}: {}",
+                iteration, allObservations.size, state.extractedRegionContent.size, state.capturedImages.size, state.url, answer.take(100)
             )
-            return AgenticPageSearchResult(
-                answer = answer,
-                evidence = newFindings.lastOrNull() ?: allObservations.lastOrNull(),
-                contentDate = action.contentDate,
-                actionsPerformed = state.actionsPerformed,
-                observations = allObservations,
-                success = true,
-                totalTokenUsage = state.aggregatedTokenUsage,
-                discoveredUrls = state.discoveredUrls,
-                capturedImages = state.capturedImages.toList()
+        } else {
+            logger.info(
+                "Agentic search finished with no extracted knowledge after {} iterations for {}",
+                iteration, state.url
             )
         }
-        logger.info(
-            "Agentic search finished with no findings after {} iterations for {}",
-            iteration, state.url
-        )
+
         return AgenticPageSearchResult(
-            answer = null,
-            evidence = null,
+            answer = answer,
+            evidence = newFindings.lastOrNull() ?: allObservations.lastOrNull(),
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
             observations = allObservations,
-            success = false,
+            success = answer != null,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
             capturedImages = state.capturedImages.toList()
@@ -912,10 +912,10 @@ class AgenticWebpageSearchService(
     // --- Result building ---
 
     private fun buildFinalResult(state: NavigationLoopState): AgenticPageSearchResult {
-        val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings)
+        val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings, state.extractedRegionContent)
         logger.info(
-            "Agentic search exhausted {} iterations for {} without finding answer ({} observations, {} captures)",
-            MAX_ITERATIONS, state.url, allObservations.size, state.capturedImages.size
+            "Agentic search exhausted {} iterations for {} without finding answer ({} observations, {} extracted, {} captures)",
+            MAX_ITERATIONS, state.url, allObservations.size, state.extractedRegionContent.size, state.capturedImages.size
         )
 
         if (allObservations.isNotEmpty()) {
@@ -949,10 +949,12 @@ class AgenticWebpageSearchService(
 
     private fun collectAllFindings(
         questions: List<TrackedQuestion>,
-        general: List<String>
+        general: List<String>,
+        extractedContent: List<ExtractedContent> = emptyList()
     ): List<String> = buildList {
         addAll(general)
         questions.flatMapTo(this) { it.findings }
+        extractedContent.mapTo(this) { "[${it.description}] ${it.text}" }
     }
 
     private fun buildOffPageOutcome(targetUrl: String): String =
@@ -1041,8 +1043,10 @@ class AgenticWebpageSearchService(
         imgHeight: Int,
         isOverlayMode: Boolean,
         viewportHeight: Int,
-        jpegBytes: ByteArray
+        jpegBytes: ByteArray,
+        extractedTextHashes: MutableSet<String>
     ): List<ExtractedContent> {
+        val sha256 = MessageDigest.getInstance("SHA-256")
         val scrollableRange = (imgHeight - viewportHeight).coerceAtLeast(1)
         val results = mutableListOf<ExtractedContent>()
         for (region in regions) {
@@ -1081,7 +1085,14 @@ class AgenticWebpageSearchService(
                 val markdown = extractTableContent(content, region, jpegBytes, imgWidth, imgHeight, pageX1, pageY1, pageX2, pageY2)
 
                 if (!markdown.isNullOrBlank()) {
-                    results.add(ExtractedContent(description = region.relevance, text = markdown, isTable = true))
+                    val normalizedMarkdown = normalizeText(markdown)
+                    val textHash = sha256.digest(normalizedMarkdown.trim().replace("\\s+".toRegex(), " ").toByteArray()).joinToString("") { "%02x".format(it) }
+                    if (textHash in extractedTextHashes) {
+                        logger.debug("Skipping duplicate extracted text for: {}", region.relevance.take(80))
+                        continue
+                    }
+                    extractedTextHashes.add(textHash)
+                    results.add(ExtractedContent(description = region.relevance, text = normalizedMarkdown, isTable = true))
                     logger.info(
                         "Extracted table ({} chars, hasHtml={}): {}",
                         markdown.length,
@@ -1089,11 +1100,25 @@ class AgenticWebpageSearchService(
                         region.relevance.take(80)
                     )
                 } else if (content.text.isNotBlank()) {
-                    results.add(ExtractedContent(description = region.relevance, text = content.text, isTable = true))
-                    logger.info("Table extraction returned blank, using raw text ({} chars): {}", content.text.length, region.relevance.take(80))
+                    val normalizedText = normalizeText(content.text)
+                    val textHash = sha256.digest(normalizedText.trim().replace("\\s+".toRegex(), " ").toByteArray()).joinToString("") { "%02x".format(it) }
+                    if (textHash in extractedTextHashes) {
+                        logger.debug("Skipping duplicate extracted text for: {}", region.relevance.take(80))
+                        continue
+                    }
+                    extractedTextHashes.add(textHash)
+                    results.add(ExtractedContent(description = region.relevance, text = normalizedText, isTable = true))
+                    logger.info("Table extraction returned blank, using raw text ({} chars): {}", normalizedText.length, region.relevance.take(80))
                 }
             } else if (content.text.isNotBlank()) {
-                results.add(ExtractedContent(description = region.relevance, text = content.text, isTable = false))
+                val normalizedText = normalizeText(content.text)
+                val textHash = sha256.digest(normalizedText.trim().replace("\\s+".toRegex(), " ").toByteArray()).joinToString("") { "%02x".format(it) }
+                if (textHash in extractedTextHashes) {
+                    logger.debug("Skipping duplicate extracted text for: {}", region.relevance.take(80))
+                    continue
+                }
+                extractedTextHashes.add(textHash)
+                results.add(ExtractedContent(description = region.relevance, text = normalizedText, isTable = false))
                 logger.info(
                     "Extracted region text ({} chars): {}",
                     content.text.length, region.relevance.take(80)

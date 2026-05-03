@@ -35,6 +35,7 @@ data class FullPageNavigationOutput(
     val pageState: List<String>,
     val observation: String?,
     val captureRegions: List<CaptureRegion>,
+    val decision: String,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
