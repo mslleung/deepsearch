@@ -291,11 +291,8 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         println("=== NON-EXISTENT INFORMATION TEST ===")
         printResult(result)
 
-        val findCount = result.actionsPerformed.count { it.action is NavigationAction.FindOnPage }
-        val scrollToTextCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollToText }
-        val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
         val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
-        val peekCount = result.actionsPerformed.count { it.action is NavigationAction.PeekFullPage }
+        val scrollAtCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollAt }
         val finished = result.actionsPerformed.lastOrNull { it.action is NavigationAction.ExplorationFinished }
         val finishedWithAnswer = finished?.let { (it.action as NavigationAction.ExplorationFinished).answer != null } ?: false
         val exhaustedIterations = result.actionsPerformed.size >= MAX_ITERATIONS
@@ -303,8 +300,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
         println("\n--- Behavior Summary ---")
         println("Termination: ${if (finished != null && !finishedWithAnswer) "ExplorationFinished(null)" else if (finishedWithAnswer) "ExplorationFinished(answer) (HALLUCINATION!)" else "Loop exhaustion ($MAX_ITERATIONS iterations)"}")
         println("Total iterations: ${result.actionsPerformed.size} / $MAX_ITERATIONS")
-        println("Clicks: $clickCount, Finds: $findCount, ScrollToText: $scrollToTextCount, Scrolls: $scrollCount")
-        println("PeekFullPage: $peekCount")
+        println("Clicks: $clickCount, ScrollAt: $scrollAtCount")
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, output=${result.totalTokenUsage.outputTokens}, total=${result.totalTokenUsage.totalTokens}")
 
         assertFalse(result.success, "Should NOT report success when the information does not exist on the page")
@@ -329,7 +325,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
         val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations ?: result.actionsPerformed.size)
         println("\n--- Efficiency Summary ---")
-        println("find_on_page: ${report.findOnPageCount} | scroll_to_text: ${report.scrollToTextCount} | scroll: ${report.scrollCount}")
+        println("click: ${report.clickCount} | scroll_at: ${report.scrollAtCount} | type: ${report.typeCount}")
     }
 
     // ==================== Test: Page dense with numbers (hallucination-prone) ====================

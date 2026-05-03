@@ -124,7 +124,6 @@ val domainModule = module {
     singleOf(::VisualIdentificationAgentGenAiImpl) bind IVisualIdentificationAgent::class
     singleOf(::SemanticTableClassificationAgentGenAiImpl) bind ISemanticTableClassificationAgent::class
     singleOf(::LinearizedContentConversionAgentGenAiImpl) bind ILinearizedContentConversionAgent::class
-    singleOf(::WebpageNavigationAgentGenAiImpl) bind IWebpageNavigationAgent::class
     singleOf(::FullPageNavigationAgentGenAiImpl) bind IFullPageNavigationAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
 

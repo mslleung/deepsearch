@@ -18,9 +18,7 @@ data class BenchmarkConstraints(
     val maxIterations: Int = 12,
     val requiredActionTypes: Set<KClass<out NavigationAction>> = emptySet(),
     val forbiddenActionTypes: Set<KClass<out NavigationAction>> = emptySet(),
-    val maxClickCount: Int? = null,
-    val maxScrollCount: Int? = null,
-    val maxFindOnPageCount: Int? = null
+    val maxClickCount: Int? = null
 )
 
 sealed class ExpectedOutcome {
@@ -79,10 +77,8 @@ data class AntiPattern(
 enum class AntiPatternType {
     REPEATED_FAILED_CLICK,
     LABEL_HALLUCINATION,
-    EXCESSIVE_SCROLLING,
     OFF_PAGE_RE_CLICK,
     PREMATURE_GIVE_UP_REJECTED,
-    WASTED_FIND_ON_PAGE,
     REDUNDANT_ACTION
 }
 

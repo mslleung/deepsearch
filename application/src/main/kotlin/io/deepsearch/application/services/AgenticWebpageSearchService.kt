@@ -151,7 +151,6 @@ class AgenticWebpageSearchService(
         val onLinkDiscovered: (suspend (String) -> Unit)?,
         val actionsPerformed: MutableList<ActionWithOutcome> = mutableListOf(),
         var trackedQuestions: List<TrackedQuestion> = emptyList(),
-        var generalFindings: List<String> = emptyList(),
         val discoveredUrls: MutableList<String> = mutableListOf(),
         val capturedImages: MutableList<CapturedImage> = mutableListOf(),
         val capturedHashes: MutableSet<String> = mutableSetOf(),
@@ -237,7 +236,6 @@ class AgenticWebpageSearchService(
             val scrollableContainers = fetchResult.scrollableContainers
             val screenshot = fetchResult.screenshot
             val title = fetchResult.title
-            val desc = fetchResult.description
             val interactiveElements = fetchResult.interactiveElements
 
             if (scrollableContainers.isNotEmpty()) {
@@ -303,15 +301,12 @@ class AgenticWebpageSearchService(
                 query = query,
                 previousActions = state.actionsPerformed.toList(),
                 questions = state.trackedQuestions,
-                generalFindings = state.generalFindings,
                 pageUrl = url,
                 pageTitle = title,
-                pageDescription = desc,
                 currentIteration = iteration,
                 maxIterations = MAX_ITERATIONS,
                 pageState = state.pageState,
                 isOverlayMode = isOverlayMode,
-                labeledElements = null,
                 scrollStateHint = scrollStateHint,
                 extractedRegionContent = state.extractedRegionContent.toList()
             )
@@ -332,8 +327,7 @@ class AgenticWebpageSearchService(
 
             val postNavStart = clock.markNow()
             state.pageState = navOutput.pageState
-
-            val newFindings = updateFindings(navOutput.questionsState, navOutput.generalFindings, state)
+            state.trackedQuestions = navOutput.questions
 
             var pageChanged = false
 
@@ -368,7 +362,7 @@ class AgenticWebpageSearchService(
                     "TIMING iter={} total={}ms | fetch={}ms annotate={}ms navLlm={}ms post={}ms",
                     iteration, iterMs, fetchMs, annotateMs, navLlmMs, postNavMs
                 )
-                return handleExplorationFinished(state, newFindings, iteration)
+                return handleExplorationFinished(state, iteration)
             }
 
             // ── Execute proposed actions from Phase 1 ────────────────────────
@@ -376,10 +370,9 @@ class AgenticWebpageSearchService(
                 state.actionsPerformed.add(
                     if (actionIdx == 0) ActionWithOutcome(
                         action,
-                        observation = navOutput.observation,
-                        findings = newFindings
+                        observation = navOutput.observation
                     )
-                    else ActionWithOutcome(action, observation = navOutput.observation)
+                    else ActionWithOutcome(action)
                 )
 
                 val effect = when (action) {
@@ -765,32 +758,6 @@ class AgenticWebpageSearchService(
         )
     }
 
-    private fun updateFindings(
-        questionsState: List<TrackedQuestion>,
-        generalFindings: List<String>,
-        state: NavigationLoopState
-    ): List<String> {
-        val previousAllFacts = buildSet {
-            state.trackedQuestions.flatMapTo(this) { it.findings }
-            addAll(state.generalFindings)
-        }
-        state.trackedQuestions = questionsState
-        state.generalFindings = generalFindings
-        val currentAllFacts = buildSet {
-            questionsState.flatMapTo(this) { it.findings }
-            addAll(generalFindings)
-        }
-        val newFindings = (currentAllFacts - previousAllFacts).toList()
-
-        if (newFindings.isNotEmpty()) {
-            logger.info(
-                "Agentic search new findings ({}) for {}: {}",
-                newFindings.size, state.url, newFindings.joinToString("; ") { it.take(80) }
-            )
-        }
-
-        return newFindings
-    }
 
     private fun applyVisualDiffAfterClick(
         currentScreenshotBytes: ByteArray,
@@ -828,7 +795,7 @@ class AgenticWebpageSearchService(
                 if (failCount >= MAX_FAILED_CLICKS) {
                     "Element '$clickDesc' has FAILED $failCount times — it is NOT clickable. " +
                             "STOP trying it. Mark unanswerable questions as resolved and " +
-                            "use answer_found with the findings you already have."
+                            "finish exploration with the EXTRACTED KNOWLEDGE you already have."
                 } else {
                     "NO visible change. Try a different element or approach."
                 }
@@ -841,18 +808,17 @@ class AgenticWebpageSearchService(
 
     private fun handleExplorationFinished(
         state: NavigationLoopState,
-        newFindings: List<String>,
         iteration: Int
     ): AgenticPageSearchResult {
-        val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings, state.extractedRegionContent)
         val answer = state.extractedRegionContent
             .joinToString("\n\n") { "[${it.description}]${if (it.isTable) " (table)" else ""}:\n${it.text}" }
             .ifBlank { null }
+        val observations = state.extractedRegionContent.map { "[${it.description}] ${it.text}" }
 
         if (answer != null) {
             logger.info(
-                "Agentic search finished after {} iterations ({} findings, {} extracted, {} captures) for {}: {}",
-                iteration, allObservations.size, state.extractedRegionContent.size, state.capturedImages.size, state.url, answer.take(100)
+                "Agentic search finished after {} iterations ({} extracted, {} captures) for {}: {}",
+                iteration, state.extractedRegionContent.size, state.capturedImages.size, state.url, answer.take(100)
             )
         } else {
             logger.info(
@@ -863,10 +829,10 @@ class AgenticWebpageSearchService(
 
         return AgenticPageSearchResult(
             answer = answer,
-            evidence = newFindings.lastOrNull() ?: allObservations.lastOrNull(),
+            evidence = observations.lastOrNull(),
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
-            observations = allObservations,
+            observations = observations,
             success = answer != null,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
@@ -912,21 +878,21 @@ class AgenticWebpageSearchService(
     // --- Result building ---
 
     private fun buildFinalResult(state: NavigationLoopState): AgenticPageSearchResult {
-        val allObservations = collectAllFindings(state.trackedQuestions, state.generalFindings, state.extractedRegionContent)
+        val observations = state.extractedRegionContent.map { "[${it.description}] ${it.text}" }
         logger.info(
-            "Agentic search exhausted {} iterations for {} without finding answer ({} observations, {} extracted, {} captures)",
-            MAX_ITERATIONS, state.url, allObservations.size, state.extractedRegionContent.size, state.capturedImages.size
+            "Agentic search exhausted {} iterations for {} without finding answer ({} extracted, {} captures)",
+            MAX_ITERATIONS, state.url, state.extractedRegionContent.size, state.capturedImages.size
         )
 
-        if (allObservations.isNotEmpty()) {
-            val synthesized = allObservations.joinToString("; ")
-            logger.info("Synthesizing partial answer from {} observations for {}", allObservations.size, state.url)
+        if (state.extractedRegionContent.isNotEmpty()) {
+            val synthesized = observations.joinToString("; ")
+            logger.info("Synthesizing partial answer from {} extracted regions for {}", observations.size, state.url)
             return AgenticPageSearchResult(
                 answer = synthesized,
-                evidence = allObservations.lastOrNull(),
+                evidence = observations.lastOrNull(),
                 contentDate = null,
                 actionsPerformed = state.actionsPerformed,
-                observations = allObservations,
+                observations = observations,
                 success = true,
                 totalTokenUsage = state.aggregatedTokenUsage,
                 discoveredUrls = state.discoveredUrls,
@@ -939,22 +905,12 @@ class AgenticWebpageSearchService(
             evidence = null,
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
-            observations = allObservations,
+            observations = emptyList(),
             success = false,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
             capturedImages = state.capturedImages.toList()
         )
-    }
-
-    private fun collectAllFindings(
-        questions: List<TrackedQuestion>,
-        general: List<String>,
-        extractedContent: List<ExtractedContent> = emptyList()
-    ): List<String> = buildList {
-        addAll(general)
-        questions.flatMapTo(this) { it.findings }
-        extractedContent.mapTo(this) { "[${it.description}] ${it.text}" }
     }
 
     private fun buildOffPageOutcome(targetUrl: String): String =

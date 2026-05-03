@@ -8,13 +8,9 @@ import kotlin.reflect.KClass
 object ActionEfficiencyAnalyzer {
 
     data class EfficiencyReport(
-        val findOnPageCount: Int,
-        val scrollToTextCount: Int,
-        val scrollCount: Int,
         val clickCount: Int,
         val scrollAtCount: Int,
         val typeCount: Int,
-        val peekFullPageCount: Int,
         val totalIterations: Int,
         val optimalIterations: Int,
         val efficiencyRatio: Double,
@@ -25,13 +21,9 @@ object ActionEfficiencyAnalyzer {
 
     fun analyze(result: AgenticPageSearchResult, optimalIterations: Int): EfficiencyReport {
         val actions = result.actionsPerformed
-        val findOnPageCount = actions.count { it.action is NavigationAction.FindOnPage }
-        val scrollToTextCount = actions.count { it.action is NavigationAction.ScrollToText }
-        val scrollCount = actions.count { it.action is NavigationAction.Scroll }
         val clickCount = actions.count { it.action is NavigationAction.Click }
         val scrollAtCount = actions.count { it.action is NavigationAction.ScrollAt }
         val typeCount = actions.count { it.action is NavigationAction.Type }
-        val peekFullPageCount = actions.count { it.action is NavigationAction.PeekFullPage }
         val totalIterations = actions.size
 
         val failedClickCount = actions.count { entry ->
@@ -50,13 +42,9 @@ object ActionEfficiencyAnalyzer {
         val wastedIterations = (totalIterations - capped).coerceAtLeast(0)
 
         return EfficiencyReport(
-            findOnPageCount = findOnPageCount,
-            scrollToTextCount = scrollToTextCount,
-            scrollCount = scrollCount,
             clickCount = clickCount,
             scrollAtCount = scrollAtCount,
             typeCount = typeCount,
-            peekFullPageCount = peekFullPageCount,
             totalIterations = totalIterations,
             optimalIterations = capped,
             efficiencyRatio = efficiencyRatio,
@@ -71,9 +59,7 @@ object ActionEfficiencyAnalyzer {
         println("Iterations: ${report.totalIterations} (optimal: ${report.optimalIterations})")
         println("Efficiency ratio: ${"%.0f".format(report.efficiencyRatio * 100)}%")
         println("Wasted iterations: ${report.wastedIterations}")
-        println("Actions: find_on_page=${report.findOnPageCount}, scroll_to_text=${report.scrollToTextCount}, " +
-                "scroll=${report.scrollCount}, click=${report.clickCount}, scroll_at=${report.scrollAtCount}, " +
-                "type=${report.typeCount}, peek=${report.peekFullPageCount}")
+        println("Actions: click=${report.clickCount}, scroll_at=${report.scrollAtCount}, type=${report.typeCount}")
         println("Failed clicks: ${report.failedClickCount}, Off-page clicks: ${report.offPageClickCount}")
     }
 
@@ -209,18 +195,6 @@ object ActionEfficiencyAnalyzer {
             )
         }
 
-        val scrollCount = actions.count { it.action is NavigationAction.Scroll }
-        val hasScrollToText = actions.any { it.action is NavigationAction.ScrollToText }
-        if (scrollCount >= 4 && !hasScrollToText) {
-            patterns.add(
-                AntiPattern(
-                    AntiPatternType.EXCESSIVE_SCROLLING,
-                    "$scrollCount scroll actions without using scroll_to_text",
-                    10.0 * (scrollCount - 3)
-                )
-            )
-        }
-
         val offPageReClicks = actions
             .filter { entry ->
                 entry.outcome?.contains("already navigates OFF this page", ignoreCase = true) == true
@@ -289,30 +263,12 @@ object ActionEfficiencyAnalyzer {
             }
         }
 
-        constraints.maxScrollCount?.let { max ->
-            val scrolls = actions.count { it.action is NavigationAction.Scroll }
-            if (scrolls > max) {
-                violations.add("Exceeded max scroll count: $scrolls > $max")
-            }
-        }
-
-        constraints.maxFindOnPageCount?.let { max ->
-            val finds = actions.count { it.action is NavigationAction.FindOnPage }
-            if (finds > max) {
-                violations.add("Exceeded max find_on_page count: $finds > $max")
-            }
-        }
-
         return violations
     }
 
     private fun actionTypeName(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> "click(${action.elementLabel ?: "${action.centerX},${action.centerY}"})_${action.label ?: ""}"
-        is NavigationAction.Scroll -> "scroll_${action.scrollDirection.name.lowercase()}"
         is NavigationAction.ScrollAt -> "scroll_at(${action.x},${action.y})_${action.scrollDirection.name.lowercase()}"
-        is NavigationAction.FindOnPage -> "find_on_page"
-        is NavigationAction.ScrollToText -> "scroll_to_text"
-        is NavigationAction.PeekFullPage -> "peek_full_page"
         is NavigationAction.Type -> "type(${action.x},${action.y})"
         is NavigationAction.ExplorationFinished -> "exploration_finished"
     }

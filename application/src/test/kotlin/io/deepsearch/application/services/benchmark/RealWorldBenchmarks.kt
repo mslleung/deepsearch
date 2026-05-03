@@ -42,7 +42,10 @@ object RealWorldBenchmarks {
         otpFaqFirstVisitDuration(),
         otpFaqFemaleDoctors(),
         otpCentralClinicAddress(),
-        otpAboutFounded()
+        otpAboutFounded(),
+        otpNonexistentPediatric(),
+        otpFaqInsurance(),
+        otpAboutIpo()
     )
 
     // ==================== SleekFlow Pricing ====================
@@ -59,8 +62,6 @@ object RealWorldBenchmarks {
         query = "What is the price of the SleekFlow Pro AI plan?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("99")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -80,8 +81,6 @@ object RealWorldBenchmarks {
         query = "What is the price of the SleekFlow Premium AI plan?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("299")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -101,8 +100,6 @@ object RealWorldBenchmarks {
         query = "Which SleekFlow plans include role-based access control?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("premium", "enterprise"), caseSensitive = false),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -123,8 +120,6 @@ object RealWorldBenchmarks {
         query = "According to SleekFlow's FAQ, what counts as a monthly active contact?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("chat"), caseSensitive = false),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -145,8 +140,6 @@ object RealWorldBenchmarks {
         query = "How many monthly active contacts are included in each SleekFlow plan?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("50", "500"), caseSensitive = false),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -166,8 +159,6 @@ object RealWorldBenchmarks {
         query = "Which SleekFlow plans include Salesforce integration?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("enterprise"), caseSensitive = false),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -189,8 +180,6 @@ object RealWorldBenchmarks {
         query = "What is the price of the OT&P Standard body check package?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("5,900")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -210,8 +199,6 @@ object RealWorldBenchmarks {
         query = "What is the price of the OT&P Ultra body check package?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("15,900")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -231,8 +218,6 @@ object RealWorldBenchmarks {
         query = "Which OT&P body check package includes a Stress Test (treadmill test)?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("ultra"), caseSensitive = false),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -252,8 +237,6 @@ object RealWorldBenchmarks {
         query = "What is the price of the OT&P Cardiovascular Risk Package?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("4,900")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -273,8 +256,6 @@ object RealWorldBenchmarks {
         query = "What is the price of the OT&P Well Woman Gold package?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("9,900")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -297,8 +278,6 @@ object RealWorldBenchmarks {
         query = "Which OT&P body check packages include Hepatitis C Antibody (Hep C Ab) testing?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("ultra"), caseSensitive = false),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -321,8 +300,6 @@ object RealWorldBenchmarks {
         query = "Which OT&P body check packages include Homocysteine testing?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("ultra"), caseSensitive = false),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -347,8 +324,6 @@ object RealWorldBenchmarks {
             listOf("comprehensive evaluation"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -372,8 +347,6 @@ object RealWorldBenchmarks {
         query = "What is the price of the OT&P Fit at Fifty package?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("7,900")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -395,8 +368,6 @@ object RealWorldBenchmarks {
         query = "What is the price of the OT&P Cancer Risk Package?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("6,900")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -421,8 +392,6 @@ object RealWorldBenchmarks {
             listOf("stress test", "treadmill"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -446,8 +415,6 @@ object RealWorldBenchmarks {
         query = "According to OT&P's FAQ, how long is a first-time GP consultation?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("30"), caseSensitive = false),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -471,8 +438,6 @@ object RealWorldBenchmarks {
             listOf("central", "repulse bay", "clearwater bay"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -499,8 +464,6 @@ object RealWorldBenchmarks {
             listOf("D'Aguilar", "Century Square"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -523,13 +486,72 @@ object RealWorldBenchmarks {
             listOf("1994", "Trodd", "Owens"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
             maxIterations = 9
+        )
+    )
+
+    // ---- Negative cases: information NOT on the page ----
+
+    /**
+     * The /body-check/ page lists Standard, Comprehensive, Ultra, and specialised
+     * packages — but no "Pediatric Health Check". The agent should explore the
+     * comparison table, find no match, and give up.
+     */
+    private fun otpNonexistentPediatric() = BenchmarkCase(
+        id = "otp-nonexistent-pediatric",
+        description = "OT&P Pediatric Health Check (does not exist)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/"),
+        query = "What is the price of the OT&P Pediatric Health Check package?",
+        expectedOutcome = ExpectedOutcome.ShouldGiveUp,
+        idealActionSequence = listOf(
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 1,
+        constraints = BenchmarkConstraints(
+            maxIterations = 8
+        )
+    )
+
+    /**
+     * The /faq/ page covers Location & Booking, Consultations & Prescriptions,
+     * and Practitioners — but has no question about insurance coverage or
+     * accepted insurance plans.
+     */
+    private fun otpFaqInsurance() = BenchmarkCase(
+        id = "otp-faq-insurance",
+        description = "OT&P FAQ: insurance acceptance (not on page)",
+        pageSource = PageSource.Url("https://www.otandp.com/faq/"),
+        query = "Does OT&P accept health insurance, and which insurance providers are covered?",
+        expectedOutcome = ExpectedOutcome.ShouldGiveUp,
+        idealActionSequence = listOf(
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 1,
+        constraints = BenchmarkConstraints(
+            maxIterations = 8
+        )
+    )
+
+    /**
+     * The /about page describes OT&P's history, founders, and mission — but
+     * OT&P is a private clinic group and has no IPO information.
+     */
+    private fun otpAboutIpo() = BenchmarkCase(
+        id = "otp-about-ipo",
+        description = "OT&P IPO date (does not exist — private company)",
+        pageSource = PageSource.Url("https://www.otandp.com/about"),
+        query = "When did OT&P Healthcare go public and what was the IPO price?",
+        expectedOutcome = ExpectedOutcome.ShouldGiveUp,
+        idealActionSequence = listOf(
+            NavigationAction.ExplorationFinished::class
+        ),
+        optimalIterations = 1,
+        constraints = BenchmarkConstraints(
+            maxIterations = 6
         )
     )
 
@@ -558,8 +580,6 @@ object RealWorldBenchmarks {
             listOf("does not charge setup fees", "monthly fees"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -584,8 +604,6 @@ object RealWorldBenchmarks {
             listOf("refund"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -610,8 +628,6 @@ object RealWorldBenchmarks {
             listOf("3D Secure"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -635,8 +651,6 @@ object RealWorldBenchmarks {
             listOf("custom pricing", "large"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -659,8 +673,6 @@ object RealWorldBenchmarks {
         query = "What ROI percentage does Stripe cite from Forrester on the custom pricing section?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("326")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -693,8 +705,6 @@ object RealWorldBenchmarks {
             listOf("business", "enterprise"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -716,8 +726,6 @@ object RealWorldBenchmarks {
         query = "How many days of page history does the Notion Plus plan include?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("30")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -738,8 +746,6 @@ object RealWorldBenchmarks {
         query = "According to Notion's FAQ, how many times may a failed payment be retried?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("8")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -761,8 +767,6 @@ object RealWorldBenchmarks {
         query = "What is the price for Notion Custom Agents after the free trial?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("10", "1,000 credits")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -786,8 +790,6 @@ object RealWorldBenchmarks {
             listOf("zero data retention", "30 day"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -820,13 +822,10 @@ object RealWorldBenchmarks {
         query = "In Cloudflare's full feature comparison, what is the Client Max Upload Size (MB) for the Business plan?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("200")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 5,
+        optimalIterations = 2,
         constraints = BenchmarkConstraints(
             maxIterations = 14
         )
@@ -836,7 +835,7 @@ object RealWorldBenchmarks {
      * Clicking "Developer Platform" tab changes the URL to /plans/developer-platform/.
      * Then "Workers KV" sub-tab must be selected to see KV limits. Free tier
      * includes 100K key-value reads per day.
-     * Ideal: click "Developer Platform" -> click "Workers KV" -> scroll_to_text -> answer.
+     * Ideal: click "Developer Platform" -> click "Workers KV" -> answer.
      */
     private fun cfDevPlatformKvReads() = BenchmarkCase(
         id = "cf-dev-platform-kv-reads",
@@ -847,10 +846,9 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.Click::class,
             NavigationAction.Click::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 4,
+        optimalIterations = 3,
         constraints = BenchmarkConstraints(
             maxIterations = 12
         )
@@ -859,7 +857,7 @@ object RealWorldBenchmarks {
     /**
      * On Developer Platform -> Cloudflare Workers sub-tab, the paid tier shows
      * "10 million requests/month included + $0.30 per additional million".
-     * Ideal: click "Developer Platform" -> click "Workers" -> scroll_to_text -> answer.
+     * Ideal: click "Developer Platform" -> click "Workers" -> answer.
      */
     private fun cfWorkersOverage() = BenchmarkCase(
         id = "cf-workers-overage",
@@ -870,10 +868,9 @@ object RealWorldBenchmarks {
         idealActionSequence = listOf(
             NavigationAction.Click::class,
             NavigationAction.Click::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 4,
+        optimalIterations = 3,
         constraints = BenchmarkConstraints(
             maxIterations = 12
         )
@@ -892,8 +889,6 @@ object RealWorldBenchmarks {
         query = "According to Cloudflare's FAQ, if you first sign up on January 10, on which day of the month are future charges billed?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("10th")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -916,8 +911,6 @@ object RealWorldBenchmarks {
         query = "What is the Cloudflare Pro plan price per month if billed monthly (not the annual rate)?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("25")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -951,8 +944,6 @@ object RealWorldBenchmarks {
             listOf("10 times"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -974,8 +965,6 @@ object RealWorldBenchmarks {
         query = "How many marketing contacts are included with HubSpot Marketing Hub Enterprise?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("10,000")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -998,8 +987,6 @@ object RealWorldBenchmarks {
         query = "During the HubSpot AEO trial, how many prompts are tracked in ChatGPT?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("10")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -1022,8 +1009,6 @@ object RealWorldBenchmarks {
             listOf("professional", "enterprise"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -1047,8 +1032,6 @@ object RealWorldBenchmarks {
             listOf("onboarding"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -1080,13 +1063,10 @@ object RealWorldBenchmarks {
         query = "How many GitHub Actions minutes per month does the GitHub Team plan include?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("3,000")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 5,
+        optimalIterations = 2,
         constraints = BenchmarkConstraints(
             maxIterations = 13
         )
@@ -1107,8 +1087,6 @@ object RealWorldBenchmarks {
             listOf("Microsoft Azure"), caseSensitive = false
         ),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -1131,8 +1109,6 @@ object RealWorldBenchmarks {
         query = "How many free hours does GitHub Codespaces give on a 2-core machine?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("60")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
@@ -1154,8 +1130,6 @@ object RealWorldBenchmarks {
         query = "How many free completions and chat requests per month does GitHub Copilot offer?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("2,000", "50")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,
@@ -1176,8 +1150,6 @@ object RealWorldBenchmarks {
         query = "How much does Git Large File Storage cost per month on GitHub?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("5", "50 GB")),
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
         optimalIterations = 3,

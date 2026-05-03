@@ -114,13 +114,11 @@ class FullPageNavigationAgentGenAiImpl(
             mapOf(
                 "question" to Schema.builder().type("STRING").description("The question text.").build(),
                 "status" to Schema.builder().type("STRING").enum_(listOf("open", "resolved"))
-                    .description("Whether this question is still open or has been resolved. Only mark resolved when the relevant data appears in EXTRACTED KNOWLEDGE.").build(),
-                "findings" to Schema.builder().type("ARRAY").items(Schema.builder().type("STRING").build())
-                    .description("Facts from EXTRACTED KNOWLEDGE that help answer this question. Only include data that appears in EXTRACTED KNOWLEDGE. Empty if no relevant extracted data yet.").build()
+                    .description("Whether this question is still open or has been resolved. Only mark resolved when the relevant data appears in EXTRACTED KNOWLEDGE.").build()
             )
         )
-        .required(listOf("question", "status", "findings"))
-        .propertyOrdering(listOf("question", "status", "findings"))
+        .required(listOf("question", "status"))
+        .propertyOrdering(listOf("question", "status"))
         .build()
 
     // ── Agent 1: Navigate + Decide ──────────────────────────────────────
@@ -150,12 +148,7 @@ class FullPageNavigationAgentGenAiImpl(
                 "questionsState" to Schema.builder()
                     .type("ARRAY")
                     .items(questionStateSchema)
-                    .description("The COMPLETE updated state of ALL questions. On the first turn, decompose the QUERY into sub-questions. On later turns, carry forward ALL previous questions. Mark questions resolved and add findings ONLY when relevant data appears in EXTRACTED KNOWLEDGE.")
-                    .build(),
-                "generalFindings" to Schema.builder()
-                    .type("ARRAY")
-                    .items(Schema.builder().type("STRING").build())
-                    .description("Navigational observations about page layout and structure (e.g. 'FAQ section at bottom', 'pricing table has 4 columns'). Carry forward previous entries and add new ones.")
+                    .description("The COMPLETE updated state of ALL questions. On the first turn, decompose the QUERY into sub-questions. On later turns, carry forward ALL previous questions. Mark questions resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE.")
                     .build(),
                 "captureRegions" to Schema.builder()
                     .type("ARRAY")
@@ -168,10 +161,6 @@ class FullPageNavigationAgentGenAiImpl(
                     .enum_(listOf("continue_exploring", "exploration_finished"))
                     .description("Top-level intent: continue exploring the page, or finish exploration. Only finish when you have explored all relevant sections and the EXTRACTED KNOWLEDGE contains the data needed to answer the query.")
                     .build(),
-                "reason" to Schema.builder()
-                    .type("STRING")
-                    .description("Brief reason for the chosen decision.")
-                    .build(),
                 "actions" to Schema.builder()
                     .type("ARRAY")
                     .items(actionSchema)
@@ -180,8 +169,8 @@ class FullPageNavigationAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("pageState", "observation", "questionsState", "generalFindings", "decision", "reason"))
-        .propertyOrdering(listOf("pageState", "observation", "questionsState", "generalFindings", "captureRegions", "decision", "reason", "actions"))
+        .required(listOf("pageState", "observation", "questionsState", "decision"))
+        .propertyOrdering(listOf("pageState", "observation", "questionsState", "captureRegions", "decision", "actions"))
         .build()
 
     private val fullPageNavigateInstruction = """
@@ -209,6 +198,7 @@ class FullPageNavigationAgentGenAiImpl(
         5. Mark a question as resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE. If you have not yet seen the data in EXTRACTED KNOWLEDGE, continue exploring.
         6. If you see tabs, accordions, or toggles that MAY contain relevant content, you MUST click each one to reveal its content before finishing. Do NOT report content as "not listed" or "not available" if you haven't clicked the tab/toggle to check.
         7. When the query asks for a LIST of items (e.g. 'all prices', 'all packages'), you MUST systematically click through ALL relevant tabs/accordions/toggles to gather every item before calling exploration_finished.
+        8. Capture regions are your ONLY way to record information. Place them carefully — they must cover the actual answer content, not just headers or labels.
 
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information.
@@ -246,6 +236,7 @@ class FullPageNavigationAgentGenAiImpl(
         5. Mark a question as resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE. If you have not yet seen the data in EXTRACTED KNOWLEDGE, continue exploring.
         6. If the overlay does NOT contain the information you need, dismiss it by clicking the close button (X) or clicking the dimmed area outside, then continue exploring the main page.
         7. Do NOT call exploration_finished while inside an overlay unless all required data has been found.
+        8. Capture regions are your ONLY way to record information. Place them carefully — they must cover the actual answer content, not just headers or labels.
 
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information.
@@ -291,8 +282,7 @@ class FullPageNavigationAgentGenAiImpl(
     @Serializable
     private data class QuestionStateResponse(
         val question: String,
-        val status: String? = null,
-        val findings: List<String>? = null
+        val status: String? = null
     )
 
     @Serializable
@@ -300,10 +290,8 @@ class FullPageNavigationAgentGenAiImpl(
         val pageState: List<String>? = null,
         val observation: String? = null,
         val questionsState: List<QuestionStateResponse>? = null,
-        val generalFindings: List<String>? = null,
         val captureRegions: List<CaptureRegionResponse>? = null,
         val decision: String? = null,
-        val reason: String? = null,
         val actions: List<ActionResponse>? = null
     )
 
@@ -372,8 +360,7 @@ class FullPageNavigationAgentGenAiImpl(
         val questionsState = (response.questionsState ?: emptyList()).map { qs ->
             TrackedQuestion(
                 question = qs.question,
-                resolved = qs.status?.lowercase() == "resolved",
-                findings = qs.findings ?: emptyList()
+                resolved = qs.status?.lowercase() == "resolved"
             )
         }
 
@@ -391,21 +378,19 @@ class FullPageNavigationAgentGenAiImpl(
         val decision = response.decision ?: "continue_exploring"
         val openCount = questionsState.count { !it.resolved }
         val resolvedCount = questionsState.count { it.resolved }
-        val totalFindings = questionsState.sumOf { it.findings.size } + (response.generalFindings?.size ?: 0)
 
         logger.debug(
-            "Navigate: decision={} actions=[{}] | questions={} (open={}, resolved={}) | findings={} | captures={} | pageState={}",
+            "Navigate: decision={} actions=[{}] | questions={} (open={}, resolved={}) | captures={} | pageState={}",
             decision,
             actions.joinToString(", ") { it::class.simpleName ?: "?" },
-            questionsState.size, openCount, resolvedCount, totalFindings,
+            questionsState.size, openCount, resolvedCount,
             captureRegions.size,
             pageState
         )
 
         return FullPageNavigationOutput(
             actions = actions,
-            questionsState = questionsState,
-            generalFindings = response.generalFindings ?: emptyList(),
+            questions = questionsState,
             pageState = pageState,
             observation = response.observation,
             captureRegions = captureRegions,
@@ -440,17 +425,6 @@ class FullPageNavigationAgentGenAiImpl(
             input.questions.forEachIndexed { idx, q ->
                 val tag = if (q.resolved) "RESOLVED" else "OPEN"
                 appendLine("  [$tag] Q${idx + 1}. ${q.question}")
-                q.findings.forEach { f ->
-                    appendLine("    - $f")
-                }
-            }
-        }
-
-        if (input.generalFindings.isNotEmpty()) {
-            appendLine()
-            appendLine("GENERAL FINDINGS:")
-            input.generalFindings.forEach { f ->
-                appendLine("  - $f")
             }
         }
 
@@ -472,8 +446,9 @@ class FullPageNavigationAgentGenAiImpl(
         if (input.previousActions.isNotEmpty()) {
             appendLine()
             appendLine("TURNS:")
-            input.previousActions.forEachIndexed { idx, entry ->
-                appendLine(formatTurnEntry(idx + 1, entry))
+            val turns = groupIntoTurns(input.previousActions)
+            turns.forEachIndexed { idx, turn ->
+                appendLine(formatTurn(idx + 1, turn))
             }
         }
     }
@@ -518,15 +493,25 @@ class FullPageNavigationAgentGenAiImpl(
         }
     }
 
-    private fun formatTurnEntry(turnNumber: Int, entry: ActionWithOutcome): String = buildString {
-        appendLine("  [$turnNumber] observation: ${entry.observation ?: "(none)"}")
-        if (entry.findings.isNotEmpty()) {
-            appendLine("      findings: [${entry.findings.joinToString(", ") { "\"$it\"" }}]")
+    private fun groupIntoTurns(actions: List<ActionWithOutcome>): List<List<ActionWithOutcome>> {
+        val turns = mutableListOf<MutableList<ActionWithOutcome>>()
+        for (entry in actions) {
+            if (entry.observation != null || turns.isEmpty()) {
+                turns.add(mutableListOf(entry))
+            } else {
+                turns.last().add(entry)
+            }
         }
-        append("      action: ${formatActionDesc(entry.action)}")
-        if (entry.outcome != null) {
-            appendLine()
-            append("      outcome: ${entry.outcome}")
+        return turns
+    }
+
+    private fun formatTurn(turnNumber: Int, entries: List<ActionWithOutcome>): String = buildString {
+        val first = entries.first()
+        appendLine("  [Turn $turnNumber] observation: ${first.observation ?: "(none)"}")
+        for ((i, entry) in entries.withIndex()) {
+            append("      ${i + 1}. ${formatActionDesc(entry.action)}")
+            if (entry.outcome != null) append(" -> ${entry.outcome}")
+            if (i < entries.lastIndex) appendLine()
         }
     }
 

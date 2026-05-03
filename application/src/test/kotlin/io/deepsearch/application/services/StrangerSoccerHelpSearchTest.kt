@@ -321,10 +321,8 @@ class StrangerSoccerHelpSearchTest : IsolatedKoinTest() {
             println("  ${idx + 1}. $action")
         }
         val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
-        val findCount = result.actionsPerformed.count { it.action is NavigationAction.FindOnPage }
-        val scrollToTextCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollToText }
-        val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
-        println("Clicks: $clickCount, Finds: $findCount, ScrollToText: $scrollToTextCount, Scrolls: $scrollCount")
+        val scrollAtCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollAt }
+        println("Clicks: $clickCount, ScrollAt: $scrollAtCount")
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, " +
                 "output=${result.totalTokenUsage.outputTokens}, " +
                 "total=${result.totalTokenUsage.totalTokens}")

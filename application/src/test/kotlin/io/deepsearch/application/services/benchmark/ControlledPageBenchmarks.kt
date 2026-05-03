@@ -51,14 +51,13 @@ object ControlledPageBenchmarks {
         optimalIterations = 1,
         constraints = BenchmarkConstraints(
             maxIterations = 3,
-            maxClickCount = 0,
-            maxScrollCount = 0
+            maxClickCount = 0
         )
     )
 
     /**
      * Answer hidden behind a single FAQ accordion click.
-     * Optimal: use find_on_page to locate "refund", click the accordion, read answer.
+     * Optimal: click the accordion, read answer.
      */
     fun accordion() = BenchmarkCase(
         id = "accordion",
@@ -72,8 +71,7 @@ object ControlledPageBenchmarks {
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
-            maxIterations = 5,
-            maxScrollCount = 1
+            maxIterations = 5
         )
     )
 
@@ -93,8 +91,7 @@ object ControlledPageBenchmarks {
         ),
         optimalIterations = 2,
         constraints = BenchmarkConstraints(
-            maxIterations = 5,
-            maxScrollCount = 1
+            maxIterations = 5
         )
     )
 
@@ -116,14 +113,13 @@ object ControlledPageBenchmarks {
         ),
         optimalIterations = 3,
         constraints = BenchmarkConstraints(
-            maxIterations = 7,
-            maxScrollCount = 2
+            maxIterations = 7
         )
     )
 
     /**
      * Information does not exist on the page. Agent must explore and give up gracefully.
-     * Optimal: use find_on_page to confirm absence, then give_up.
+     * Optimal: confirm absence, then give_up.
      */
     fun nonExistentInfo() = BenchmarkCase(
         id = "no-match",
@@ -132,10 +128,9 @@ object ControlledPageBenchmarks {
         query = "What is the CEO's birthday?",
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
-            NavigationAction.FindOnPage::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 3,
+        optimalIterations = 1,
         constraints = BenchmarkConstraints(
             maxIterations = 12
         )
@@ -206,7 +201,7 @@ object ControlledPageBenchmarks {
     /**
      * Prominent CTA links navigate off-page. Answer is in a small FAQ below.
      * Agent must avoid getting stuck re-clicking the CTA.
-     * Optimal: scroll/find FAQ, click it, answer.
+     * Optimal: find FAQ, click it, answer.
      */
     fun offPageLoop() = BenchmarkCase(
         id = "offpage-loop",
@@ -215,11 +210,10 @@ object ControlledPageBenchmarks {
         query = "What is the maximum file size for sync?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("50")),
         idealActionSequence = listOf(
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 3,
+        optimalIterations = 2,
         constraints = BenchmarkConstraints(
             maxIterations = 8
         )
@@ -287,33 +281,27 @@ object ControlledPageBenchmarks {
     /**
      * Long page (~3500px) with answer buried at the bottom. The agent should use
      * scroll_to_text to jump directly rather than scrolling 5+ times.
-     * Optimal: scroll_to_text("maintenance code") -> answer_found.
+     * Optimal: full-page screenshot captures everything, answer directly.
      */
     fun longPageBottom() = BenchmarkCase(
         id = "long-page-bottom",
-        description = "Long page; answer at bottom via scroll_to_text",
+        description = "Long page; answer at bottom visible in full-page screenshot",
         pageSource = PageSource.InlineHtml(ControlledPageHtml.LONG_PAGE_BOTTOM_HTML, "/long-page-bottom"),
         query = "What is the system maintenance code?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("MAINT-PHOENIX-2024-X9")),
         idealActionSequence = listOf(
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 2,
+        optimalIterations = 1,
         constraints = BenchmarkConstraints(
-            maxIterations = 6,
-            requiredActionTypes = setOf(
-                NavigationAction.ScrollToText::class,
-                NavigationAction.ExplorationFinished::class
-            ),
-            maxScrollCount = 2
+            maxIterations = 6
         )
     )
 
     /**
      * Long page with FAQ accordion at the bottom. Must navigate to the FAQ area
      * and then click to expand the answer.
-     * Optimal: scroll_to_text("emergency shutdown") -> click accordion -> answer_found.
+     * Optimal: click accordion -> answer_found.
      */
     fun longPageAccordionBottom() = BenchmarkCase(
         id = "long-page-accordion-bottom",
@@ -325,36 +313,32 @@ object ControlledPageBenchmarks {
         query = "What is the emergency shutdown procedure?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("ESHUT-DELTA-7X")),
         idealActionSequence = listOf(
-            NavigationAction.ScrollToText::class,
             NavigationAction.Click::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 3,
+        optimalIterations = 2,
         constraints = BenchmarkConstraints(
-            maxIterations = 8,
-            maxScrollCount = 3
+            maxIterations = 8
         )
     )
 
     /**
      * Large table with 25 rows. The agent should use scroll_to_text to jump
      * to "platinum" rather than scrolling through the whole table.
-     * Optimal: scroll_to_text("platinum") -> answer_found.
+     * Optimal: full-page screenshot captures everything, answer directly.
      */
     fun searchableTable() = BenchmarkCase(
         id = "searchable-table",
-        description = "Large table; find specific row via scroll_to_text",
+        description = "Large table; find specific row in full-page view",
         pageSource = PageSource.InlineHtml(ControlledPageHtml.SEARCHABLE_TABLE_HTML, "/searchable-table"),
         query = "What is the processing time for platinum-tier orders?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("2 hour")),
         idealActionSequence = listOf(
-            NavigationAction.ScrollToText::class,
             NavigationAction.ExplorationFinished::class
         ),
-        optimalIterations = 2,
+        optimalIterations = 1,
         constraints = BenchmarkConstraints(
-            maxIterations = 5,
-            maxScrollCount = 2
+            maxIterations = 5
         )
     )
 }

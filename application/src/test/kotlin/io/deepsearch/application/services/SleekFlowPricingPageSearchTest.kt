@@ -589,16 +589,14 @@ class SleekFlowPricingPageSearchTest : IsolatedKoinTest() {
             println("  ${idx + 1}. $action")
         }
         val clickCount = result.actionsPerformed.count { it.action is NavigationAction.Click }
-        val findCount = result.actionsPerformed.count { it.action is NavigationAction.FindOnPage }
-        val scrollToTextCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollToText }
-        val scrollCount = result.actionsPerformed.count { it.action is NavigationAction.Scroll }
-        println("Clicks: $clickCount, Finds: $findCount, ScrollToText: $scrollToTextCount, Scrolls: $scrollCount")
+        val scrollAtCount = result.actionsPerformed.count { it.action is NavigationAction.ScrollAt }
+        println("Clicks: $clickCount, ScrollAt: $scrollAtCount")
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, " +
                 "output=${result.totalTokenUsage.outputTokens}, " +
                 "total=${result.totalTokenUsage.totalTokens}")
 
         val report = ActionEfficiencyAnalyzer.analyze(result, result.actionsPerformed.size)
         println("\n--- Efficiency Summary ---")
-        println("find_on_page: ${report.findOnPageCount} | scroll_to_text: ${report.scrollToTextCount} | scroll: ${report.scrollCount}")
+        println("click: ${report.clickCount} | scroll_at: ${report.scrollAtCount} | type: ${report.typeCount}")
     }
 }
