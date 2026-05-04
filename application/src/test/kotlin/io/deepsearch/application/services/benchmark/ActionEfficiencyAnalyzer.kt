@@ -271,6 +271,7 @@ object ActionEfficiencyAnalyzer {
         is NavigationAction.ScrollAt -> "scroll_at(${action.x},${action.y})_${action.scrollDirection.name.lowercase()}"
         is NavigationAction.Type -> "type(${action.x},${action.y})"
         is NavigationAction.ExplorationFinished -> "exploration_finished"
+        is NavigationAction.GiveUp -> "give_up"
     }
 
     fun buildReport(scoreCards: List<BenchmarkScoreCard>): BenchmarkReport {

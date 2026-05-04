@@ -44,8 +44,10 @@ object RealWorldBenchmarks {
         otpCentralClinicAddress(),
         otpAboutFounded(),
         otpNonexistentPediatric(),
-        otpFaqInsurance(),
-        otpAboutIpo()
+        otpFaqTelemedicine(),
+        otpAboutIpo(),
+        otpSpecialisedDermatology(),
+        otpBodycheckMri()
     )
 
     // ==================== SleekFlow Pricing ====================
@@ -508,7 +510,7 @@ object RealWorldBenchmarks {
         query = "What is the price of the OT&P Pediatric Health Check package?",
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
-            NavigationAction.ExplorationFinished::class
+            NavigationAction.GiveUp::class
         ),
         optimalIterations = 1,
         constraints = BenchmarkConstraints(
@@ -518,17 +520,17 @@ object RealWorldBenchmarks {
 
     /**
      * The /faq/ page covers Location & Booking, Consultations & Prescriptions,
-     * and Practitioners — but has no question about insurance coverage or
-     * accepted insurance plans.
+     * and Practitioners — but has no question about telemedicine or virtual
+     * consultation services.
      */
-    private fun otpFaqInsurance() = BenchmarkCase(
-        id = "otp-faq-insurance",
-        description = "OT&P FAQ: insurance acceptance (not on page)",
+    private fun otpFaqTelemedicine() = BenchmarkCase(
+        id = "otp-faq-telemedicine",
+        description = "OT&P FAQ: telemedicine/virtual consultations (not on page)",
         pageSource = PageSource.Url("https://www.otandp.com/faq/"),
-        query = "Does OT&P accept health insurance, and which insurance providers are covered?",
+        query = "Does OT&P offer telemedicine or virtual consultation services?",
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
-            NavigationAction.ExplorationFinished::class
+            NavigationAction.GiveUp::class
         ),
         optimalIterations = 1,
         constraints = BenchmarkConstraints(
@@ -547,11 +549,50 @@ object RealWorldBenchmarks {
         query = "When did OT&P Healthcare go public and what was the IPO price?",
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
-            NavigationAction.ExplorationFinished::class
+            NavigationAction.GiveUp::class
         ),
         optimalIterations = 1,
         constraints = BenchmarkConstraints(
             maxIterations = 6
+        )
+    )
+
+    /**
+     * The /body-check/specialised-health-checks page has Cardiovascular Risk,
+     * Well Woman, Fit at Fifty, and Cancer Risk packages — but no
+     * "Dermatology Screening Package".
+     */
+    private fun otpSpecialisedDermatology() = BenchmarkCase(
+        id = "otp-specialised-dermatology",
+        description = "OT&P Dermatology Screening (does not exist)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/specialised-health-checks"),
+        query = "What is the price of the OT&P Dermatology Screening Package?",
+        expectedOutcome = ExpectedOutcome.ShouldGiveUp,
+        idealActionSequence = listOf(
+            NavigationAction.GiveUp::class
+        ),
+        optimalIterations = 1,
+        constraints = BenchmarkConstraints(
+            maxIterations = 8
+        )
+    )
+
+    /**
+     * The /body-check/ comparison table covers blood tests, ECG, ultrasound,
+     * spirometry, etc. — but no MRI scan in any package.
+     */
+    private fun otpBodycheckMri() = BenchmarkCase(
+        id = "otp-bodycheck-mri",
+        description = "OT&P MRI scan inclusion (does not exist)",
+        pageSource = PageSource.Url("https://www.otandp.com/body-check/"),
+        query = "Which OT&P body check packages include an MRI scan?",
+        expectedOutcome = ExpectedOutcome.ShouldGiveUp,
+        idealActionSequence = listOf(
+            NavigationAction.GiveUp::class
+        ),
+        optimalIterations = 1,
+        constraints = BenchmarkConstraints(
+            maxIterations = 8
         )
     )
 

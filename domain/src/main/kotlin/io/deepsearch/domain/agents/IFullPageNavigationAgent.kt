@@ -51,6 +51,9 @@ sealed class NavigationAction {
         val text: String,
         val reason: String
     ) : NavigationAction()
+
+    @Serializable
+    data object GiveUp : NavigationAction()
 }
 
 @Serializable
@@ -95,6 +98,7 @@ data class FullPageNavigationOutput(
     val observation: String?,
     val captureRegions: List<CaptureRegion>,
     val decision: String,
+    val relevantInfoFound: Boolean? = null,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

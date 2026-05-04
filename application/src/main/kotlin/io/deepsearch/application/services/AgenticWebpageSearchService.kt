@@ -362,6 +362,28 @@ class AgenticWebpageSearchService(
                     "TIMING iter={} total={}ms | fetch={}ms annotate={}ms navLlm={}ms post={}ms",
                     iteration, iterMs, fetchMs, annotateMs, navLlmMs, postNavMs
                 )
+
+                if (navOutput.relevantInfoFound == false) {
+                    state.actionsPerformed.add(
+                        ActionWithOutcome(NavigationAction.GiveUp, observation = navOutput.observation)
+                    )
+                    logger.info(
+                        "Agent finished with relevantInfoFound=false after {} iterations for {}: no relevant information found",
+                        iteration, state.url
+                    )
+                    return AgenticPageSearchResult(
+                        answer = null,
+                        evidence = null,
+                        contentDate = null,
+                        actionsPerformed = state.actionsPerformed,
+                        observations = emptyList(),
+                        success = false,
+                        totalTokenUsage = state.aggregatedTokenUsage,
+                        discoveredUrls = state.discoveredUrls,
+                        capturedImages = state.capturedImages.toList()
+                    )
+                }
+
                 return handleExplorationFinished(state, iteration)
             }
 

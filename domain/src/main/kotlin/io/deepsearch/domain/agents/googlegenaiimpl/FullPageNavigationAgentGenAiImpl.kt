@@ -159,7 +159,11 @@ class FullPageNavigationAgentGenAiImpl(
                 "decision" to Schema.builder()
                     .type("STRING")
                     .enum_(listOf("continue_exploring", "exploration_finished"))
-                    .description("Top-level intent: continue exploring the page, or finish exploration. Only finish when you have explored all relevant sections and the EXTRACTED KNOWLEDGE contains the data needed to answer the query.")
+                    .description("Top-level intent: continue exploring the page, or finish exploration.")
+                    .build(),
+                "relevantInfoFound" to Schema.builder()
+                    .type("BOOLEAN")
+                    .description("When decision is exploration_finished: true if the page contains information relevant to the query (even partial), false if no relevant information was found after exploring all relevant sections.")
                     .build(),
                 "actions" to Schema.builder()
                     .type("ARRAY")
@@ -169,8 +173,8 @@ class FullPageNavigationAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("pageState", "observation", "questionsState", "decision"))
-        .propertyOrdering(listOf("pageState", "observation", "questionsState", "captureRegions", "decision", "actions"))
+        .required(listOf("pageState", "observation", "questionsState", "decision", "relevantInfoFound"))
+        .propertyOrdering(listOf("pageState", "observation", "questionsState", "captureRegions", "decision", "relevantInfoFound", "actions"))
         .build()
 
     private val fullPageNavigateInstruction = """
@@ -205,9 +209,9 @@ class FullPageNavigationAgentGenAiImpl(
         - **type_text**: Type into input field at (x,y). Highest priority.
         - **click**: Click an interactive element by element_label (preferred) or box_2d [ymin, xmin, ymax, xmax] 0-1000 scale as fallback. Every click MUST include element_label or box_2d coordinates.
 
-        **exploration_finished**: Stop exploring. The accumulated EXTRACTED KNOWLEDGE will be returned to the caller.
-        - If you haven't found sufficient data in EXTRACTED KNOWLEDGE, continue exploring rather than guessing.
-        - Only finish when you have explored all relevant sections of the page, and conclude that either the information is found or that the information does not exist on the page.
+        **exploration_finished**: Stop exploring.
+        - Set `relevantInfoFound: true` if the EXTRACTED KNOWLEDGE contains data relevant to the query (even partial information is valuable).
+        - Set `relevantInfoFound: false` if after exploring all relevant sections, you concluded that the page does NOT contain information relevant to the query. Do NOT place capture regions when relevantInfoFound is false.
     """.trimIndent()
 
     private val overlayNavigateInstruction = """
@@ -244,9 +248,9 @@ class FullPageNavigationAgentGenAiImpl(
         - **click**: Click an interactive element by element_label (preferred) or box_2d [ymin, xmin, ymax, xmax] 0-1000 scale as fallback. Every click MUST include element_label or box_2d coordinates.
         - **scroll_element**: Scroll within an overlay or container. Provide x,y coordinates of the scrollable area and the direction (DOWN, UP, LEFT, RIGHT).
 
-        **exploration_finished**: Stop exploring. The accumulated EXTRACTED KNOWLEDGE will be returned to the caller.
-        - If you haven't found sufficient data in EXTRACTED KNOWLEDGE, continue exploring rather than guessing.
-        - Only finish when you have explored all relevant sections.
+        **exploration_finished**: Stop exploring.
+        - Set `relevantInfoFound: true` if the EXTRACTED KNOWLEDGE contains data relevant to the query (even partial information is valuable).
+        - Set `relevantInfoFound: false` if after exploring all relevant sections, you concluded that the page does NOT contain information relevant to the query. Do NOT place capture regions when relevantInfoFound is false.
     """.trimIndent()
 
     // ── Serializable response types ─────────────────────────────────────
@@ -292,6 +296,7 @@ class FullPageNavigationAgentGenAiImpl(
         val questionsState: List<QuestionStateResponse>? = null,
         val captureRegions: List<CaptureRegionResponse>? = null,
         val decision: String? = null,
+        val relevantInfoFound: Boolean? = null,
         val actions: List<ActionResponse>? = null
     )
 
@@ -395,6 +400,7 @@ class FullPageNavigationAgentGenAiImpl(
             observation = response.observation,
             captureRegions = captureRegions,
             decision = decision,
+            relevantInfoFound = response.relevantInfoFound,
             tokenUsage = tokenUsage
         )
     }
