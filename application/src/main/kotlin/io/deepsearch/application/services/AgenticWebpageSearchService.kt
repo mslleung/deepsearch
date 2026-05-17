@@ -64,6 +64,7 @@ interface IAgenticWebpageSearchService {
 class AgenticWebpageSearchService(
     private val browserPool: IBrowserPool,
     private val fullPageNavigationAgent: IFullPageNavigationAgent,
+    private val contentExtractionAgent: IContentExtractionAgent,
     private val imageProcessingService: IImageProcessingService,
     private val domDiffService: IDomDiffService,
     private val tokenUsageService: ILlmTokenUsageService,
@@ -295,7 +296,7 @@ class AgenticWebpageSearchService(
                 }.trimEnd()
             } else null
 
-            // ── Phase 1: Visual Navigation (multimodal LLM) ──────────────
+            // ── Phase 1: Navigation + Content Extraction (parallel) ─────
             val navInput = FullPageNavigationInput(
                 fullPageScreenshot = finalScreenshot,
                 query = query,
@@ -311,10 +312,22 @@ class AgenticWebpageSearchService(
                 extractedRegionContent = state.extractedRegionContent.toList()
             )
 
+            val extractionInput = ContentExtractionInput(
+                cleanScreenshot = IBrowserPage.Screenshot(bytes = jpegBytes, mimeType = ImageMimeType.JPEG),
+                query = query,
+                extractedRegionContent = state.extractedRegionContent.toList(),
+                currentIteration = iteration
+            )
+
             val navLlmStart = clock.markNow()
-            val navOutput = fullPageNavigationAgent.generate(navInput)
+            val (navOutput, extractionOutput) = coroutineScope {
+                val navDeferred = async { fullPageNavigationAgent.generate(navInput) }
+                val extDeferred = async { contentExtractionAgent.generate(extractionInput) }
+                navDeferred.await() to extDeferred.await()
+            }
             val navLlmMs = (clock.markNow() - navLlmStart).inWholeMilliseconds
-            state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage
+
+            state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage + extractionOutput.tokenUsage
 
             tokenUsageService.recordTokenUsage(
                 sessionId = sessionId,
@@ -324,6 +337,14 @@ class AgenticWebpageSearchService(
                 outputTokens = navOutput.tokenUsage.outputTokens,
                 totalTokens = navOutput.tokenUsage.totalTokens
             )
+            tokenUsageService.recordTokenUsage(
+                sessionId = sessionId,
+                agentName = "ContentExtractionAgent",
+                modelName = extractionOutput.tokenUsage.modelName,
+                promptTokens = extractionOutput.tokenUsage.promptTokens,
+                outputTokens = extractionOutput.tokenUsage.outputTokens,
+                totalTokens = extractionOutput.tokenUsage.totalTokens
+            )
 
             val postNavStart = clock.markNow()
             state.pageState = navOutput.pageState
@@ -331,19 +352,19 @@ class AgenticWebpageSearchService(
 
             var pageChanged = false
 
-            // Extract content from capture regions (always, before checking decision)
-            if (navOutput.captureRegions.isNotEmpty()) {
+            val captureRegions = extractionOutput.captureRegions
+            if (captureRegions.isNotEmpty()) {
                 pageChanged = true
                 val (cropResult, newContent) = coroutineScope {
                     val cropDeferred = async(dispatcherProvider.default) {
                         cropCaptureRegions(
-                            jpegBytes, navOutput.captureRegions, state.capturedHashes,
+                            jpegBytes, captureRegions, state.capturedHashes,
                             imgWidth, imgHeight
                         )
                     }
                     val extractDeferred = async {
                         extractRegionContent(
-                            page, navOutput.captureRegions, imgWidth, imgHeight,
+                            page, captureRegions, imgWidth, imgHeight,
                             isOverlayMode, actualViewportHeight, jpegBytes,
                             state.extractedTextHashes
                         )
@@ -986,10 +1007,16 @@ class AgenticWebpageSearchService(
         val newHashes = mutableSetOf<String>()
 
         for (region in regions) {
-            val x = ((region.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
-            val y = ((region.y1 / 1000.0) * imgHeight).toInt().coerceIn(0, imgHeight - 1)
-            val x2 = ((region.x2 / 1000.0) * imgWidth).toInt().coerceIn((x + 1).coerceAtMost(imgWidth), imgWidth)
-            val y2 = ((region.y2 / 1000.0) * imgHeight).toInt().coerceIn((y + 1).coerceAtMost(imgHeight), imgHeight)
+            val boxes = when (region) {
+                is CaptureRegion.Element -> listOf(region.boundingBox)
+                is CaptureRegion.Table -> region.regions.map { it.boundingBox }
+            }
+            val unionBox = computeUnionBox(boxes)
+
+            val x = ((unionBox.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
+            val y = ((unionBox.y1 / 1000.0) * imgHeight).toInt().coerceIn(0, imgHeight - 1)
+            val x2 = ((unionBox.x2 / 1000.0) * imgWidth).toInt().coerceIn((x + 1).coerceAtMost(imgWidth), imgWidth)
+            val y2 = ((unionBox.y2 / 1000.0) * imgHeight).toInt().coerceIn((y + 1).coerceAtMost(imgHeight), imgHeight)
             val w = x2 - x
             val h = y2 - y
 
@@ -1014,6 +1041,15 @@ class AgenticWebpageSearchService(
         return CropResult(images, newHashes)
     }
 
+    private fun computeUnionBox(boxes: List<BoundingBox>): BoundingBox {
+        return BoundingBox(
+            x1 = boxes.minOf { it.x1 },
+            y1 = boxes.minOf { it.y1 },
+            x2 = boxes.maxOf { it.x2 },
+            y2 = boxes.maxOf { it.y2 }
+        )
+    }
+
     private suspend fun extractRegionContent(
         page: IBrowserPage,
         regions: List<CaptureRegion>,
@@ -1028,127 +1064,142 @@ class AgenticWebpageSearchService(
         val scrollableRange = (imgHeight - viewportHeight).coerceAtLeast(1)
         val results = mutableListOf<ExtractedContent>()
         for (region in regions) {
-            val pageX1 = ((region.x1 / 1000.0) * imgWidth).toInt()
-            val pageY1 = ((region.y1 / 1000.0) * imgHeight).toInt()
-            val pageX2 = ((region.x2 / 1000.0) * imgWidth).toInt()
-            val pageY2 = ((region.y2 / 1000.0) * imgHeight).toInt()
+            when (region) {
+                is CaptureRegion.Element -> {
+                    val box = region.boundingBox
+                    val pageX1 = ((box.x1 / 1000.0) * imgWidth).toInt()
+                    val pageY1 = ((box.y1 / 1000.0) * imgHeight).toInt()
+                    val pageX2 = ((box.x2 / 1000.0) * imgWidth).toInt()
+                    val pageY2 = ((box.y2 / 1000.0) * imgHeight).toInt()
 
-            val (vpX1, vpY1, vpX2, vpY2) = if (isOverlayMode) {
-                listOf(pageX1, pageY1, pageX2, pageY2)
-            } else {
-                val regionCenterY = (pageY1 + pageY2) / 2
-                val targetScrollY = (regionCenterY - viewportHeight / 2).coerceAtLeast(0)
-                val percent = (targetScrollY * 100 / scrollableRange).coerceIn(0, 100)
-                try {
-                    page.scrollToPercentage(percent)
-                    delay(POST_SCROLL_DELAY_MS)
-                } catch (_: Exception) { /* best effort */
-                }
-                val actualScrollPercent = try {
-                    page.getScrollPosition()
-                } catch (_: Exception) {
-                    percent
-                }
-                val actualScrollY = (actualScrollPercent / 100.0 * scrollableRange).toInt()
-                listOf(pageX1, pageY1 - actualScrollY, pageX2, pageY2 - actualScrollY)
-            }
-
-            val content = page.extractContentInRegion(
-                vpX1.coerceAtLeast(0), vpY1.coerceAtLeast(0),
-                vpX2.coerceAtLeast(vpX1 + 1), vpY2.coerceAtLeast(vpY1 + 1)
-            )
-            val isTable = region.containsTable || content.isTable
-
-            if (isTable) {
-                val markdown = extractTableContent(content, region, jpegBytes, imgWidth, imgHeight, pageX1, pageY1, pageX2, pageY2)
-
-                if (!markdown.isNullOrBlank()) {
-                    val normalizedMarkdown = normalizeText(markdown)
-                    val textHash = sha256.digest(normalizedMarkdown.trim().replace("\\s+".toRegex(), " ").toByteArray()).joinToString("") { "%02x".format(it) }
-                    if (textHash in extractedTextHashes) {
-                        logger.debug("Skipping duplicate extracted text for: {}", region.relevance.take(80))
-                        continue
-                    }
-                    extractedTextHashes.add(textHash)
-                    results.add(ExtractedContent(description = region.relevance, text = normalizedMarkdown, isTable = true))
-                    logger.info(
-                        "Extracted table ({} chars, hasHtml={}): {}",
-                        markdown.length,
-                        content.html.isNotBlank(),
-                        region.relevance.take(80)
+                    val (vpX1, vpY1, vpX2, vpY2) = toViewportRegion(
+                        pageX1, pageY1, pageX2, pageY2,
+                        isOverlayMode, viewportHeight, scrollableRange, page
                     )
-                } else if (content.text.isNotBlank()) {
-                    val normalizedText = normalizeText(content.text)
-                    val textHash = sha256.digest(normalizedText.trim().replace("\\s+".toRegex(), " ").toByteArray()).joinToString("") { "%02x".format(it) }
-                    if (textHash in extractedTextHashes) {
-                        logger.debug("Skipping duplicate extracted text for: {}", region.relevance.take(80))
-                        continue
+
+                    val content = page.extractContentInRegion(
+                        vpX1.coerceAtLeast(0), vpY1.coerceAtLeast(0),
+                        vpX2.coerceAtLeast(vpX1 + 1), vpY2.coerceAtLeast(vpY1 + 1)
+                    )
+
+                    if (content.text.isNotBlank()) {
+                        val normalizedText = normalizeText(content.text)
+                        val textHash = sha256.digest(normalizedText.trim().replace("\\s+".toRegex(), " ").toByteArray())
+                            .joinToString("") { "%02x".format(it) }
+                        if (textHash in extractedTextHashes) {
+                            logger.debug("Skipping duplicate extracted text for: {}", region.relevance.take(80))
+                            continue
+                        }
+                        extractedTextHashes.add(textHash)
+                        results.add(ExtractedContent(description = region.relevance, text = normalizedText, isTable = false))
+                        logger.info("Extracted element text ({} chars): {}", content.text.length, region.relevance.take(80))
                     }
-                    extractedTextHashes.add(textHash)
-                    results.add(ExtractedContent(description = region.relevance, text = normalizedText, isTable = true))
-                    logger.info("Table extraction returned blank, using raw text ({} chars): {}", normalizedText.length, region.relevance.take(80))
                 }
-            } else if (content.text.isNotBlank()) {
-                val normalizedText = normalizeText(content.text)
-                val textHash = sha256.digest(normalizedText.trim().replace("\\s+".toRegex(), " ").toByteArray()).joinToString("") { "%02x".format(it) }
-                if (textHash in extractedTextHashes) {
-                    logger.debug("Skipping duplicate extracted text for: {}", region.relevance.take(80))
-                    continue
+
+                is CaptureRegion.Table -> {
+                    val subContents = region.regions.map { sub ->
+                        val box = sub.boundingBox
+                        val pageX1 = ((box.x1 / 1000.0) * imgWidth).toInt()
+                        val pageY1 = ((box.y1 / 1000.0) * imgHeight).toInt()
+                        val pageX2 = ((box.x2 / 1000.0) * imgWidth).toInt()
+                        val pageY2 = ((box.y2 / 1000.0) * imgHeight).toInt()
+
+                        val (vpX1, vpY1, vpX2, vpY2) = toViewportRegion(
+                            pageX1, pageY1, pageX2, pageY2,
+                            isOverlayMode, viewportHeight, scrollableRange, page
+                        )
+
+                        val content = page.extractContentInRegion(
+                            vpX1.coerceAtLeast(0), vpY1.coerceAtLeast(0),
+                            vpX2.coerceAtLeast(vpX1 + 1), vpY2.coerceAtLeast(vpY1 + 1)
+                        )
+                        Triple(sub, content, content.html)
+                    }
+
+                    val unionBox = computeUnionBox(region.regions.map { it.boundingBox })
+                    val uPageX1 = ((unionBox.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
+                    val uPageY1 = ((unionBox.y1 / 1000.0) * imgHeight).toInt().coerceIn(0, imgHeight - 1)
+                    val uPageX2 = ((unionBox.x2 / 1000.0) * imgWidth).toInt().coerceIn(uPageX1 + 1, imgWidth)
+                    val uPageY2 = ((unionBox.y2 / 1000.0) * imgHeight).toInt().coerceIn(uPageY1 + 1, imgHeight)
+                    val w = uPageX2 - uPageX1
+                    val h = uPageY2 - uPageY1
+                    if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) continue
+
+                    val croppedBytes = imageProcessingService.cropToPng(jpegBytes, uPageX1, uPageY1, w, h)
+
+                    val combinedHtml = subContents
+                        .filter { (_, _, html) -> html.isNotBlank() }
+                        .joinToString("\n") { (sub, _, html) ->
+                            "<!-- ${sub.role.name}: ${sub.description} -->\n$html"
+                        }
+
+                    val input = AgenticTableConversionInput(
+                        regionImage = croppedBytes,
+                        imageMimeType = ImageMimeType.PNG,
+                        cleanedHtml = combinedHtml.ifBlank { null },
+                        auxiliaryInfo = region.relevance
+                    )
+                    val output = agenticTableConversionAgent.generate(input)
+
+                    if (output.htmlTable.isNotBlank()) {
+                        val markdown = TableMarkdownUtils.transformHTMLTablesToMarkdown(output.htmlTable).ifBlank { null }
+                        if (markdown != null) {
+                            val normalizedMarkdown = normalizeText(markdown)
+                            val textHash = sha256.digest(normalizedMarkdown.trim().replace("\\s+".toRegex(), " ").toByteArray())
+                                .joinToString("") { "%02x".format(it) }
+                            if (textHash in extractedTextHashes) {
+                                logger.debug("Skipping duplicate extracted table for: {}", region.relevance.take(80))
+                                continue
+                            }
+                            extractedTextHashes.add(textHash)
+                            results.add(ExtractedContent(description = region.relevance, text = normalizedMarkdown, isTable = true))
+                            logger.info("Extracted table ({} chars, {} sub-regions): {}", markdown.length, region.regions.size, region.relevance.take(80))
+                            continue
+                        }
+                    }
+
+                    val fallbackText = subContents
+                        .filter { (_, content, _) -> content.text.isNotBlank() }
+                        .joinToString("\n") { (sub, content, _) ->
+                            "[${sub.role.name}: ${sub.description}]\n${content.text}"
+                        }
+                    if (fallbackText.isNotBlank()) {
+                        val normalizedText = normalizeText(fallbackText)
+                        val textHash = sha256.digest(normalizedText.trim().replace("\\s+".toRegex(), " ").toByteArray())
+                            .joinToString("") { "%02x".format(it) }
+                        if (textHash in extractedTextHashes) {
+                            logger.debug("Skipping duplicate extracted text for: {}", region.relevance.take(80))
+                            continue
+                        }
+                        extractedTextHashes.add(textHash)
+                        results.add(ExtractedContent(description = region.relevance, text = normalizedText, isTable = true))
+                        logger.info("Table conversion returned blank, using raw sub-region text ({} chars): {}", normalizedText.length, region.relevance.take(80))
+                    }
                 }
-                extractedTextHashes.add(textHash)
-                results.add(ExtractedContent(description = region.relevance, text = normalizedText, isTable = false))
-                logger.info(
-                    "Extracted region text ({} chars): {}",
-                    content.text.length, region.relevance.take(80)
-                )
             }
         }
         return results
     }
 
-    /**
-     * Extracts structured markdown from a table region using a unified multimodal approach.
-     *
-     * Always crops the region screenshot and passes it together with the DOM-extracted HTML
-     * to [IAgenticTableConversionAgent]. The agent uses the image as visual ground truth
-     * for structure and the HTML as the text source. For purely graphical tables (no useful
-     * HTML), the agent falls back to OCR from the image.
-     *
-     * The agent returns a clean HTML `<table>`, which is then programmatically converted
-     * to markdown via [TableMarkdownUtils].
-     */
-    private suspend fun extractTableContent(
-        content: IBrowserPage.RegionContent,
-        region: CaptureRegion,
-        jpegBytes: ByteArray,
-        imgWidth: Int,
-        imgHeight: Int,
-        pageX1: Int,
-        pageY1: Int,
-        pageX2: Int,
-        pageY2: Int
-    ): String? {
-        val x = pageX1.coerceIn(0, imgWidth - 1)
-        val y = pageY1.coerceIn(0, imgHeight - 1)
-        val x2 = pageX2.coerceIn(x + 1, imgWidth)
-        val y2 = pageY2.coerceIn(y + 1, imgHeight)
-        val w = x2 - x
-        val h = y2 - y
-        if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) return null
-
-        val croppedBytes = imageProcessingService.cropToPng(jpegBytes, x, y, w, h)
-
-        val input = AgenticTableConversionInput(
-            regionImage = croppedBytes,
-            imageMimeType = ImageMimeType.PNG,
-            cleanedHtml = content.html.ifBlank { null },
-            auxiliaryInfo = region.relevance
-        )
-        val output = agenticTableConversionAgent.generate(input)
-
-        if (output.htmlTable.isBlank()) return null
-
-        return TableMarkdownUtils.transformHTMLTablesToMarkdown(output.htmlTable).ifBlank { null }
+    private suspend fun toViewportRegion(
+        pageX1: Int, pageY1: Int, pageX2: Int, pageY2: Int,
+        isOverlayMode: Boolean, viewportHeight: Int, scrollableRange: Int,
+        page: IBrowserPage
+    ): List<Int> {
+        return if (isOverlayMode) {
+            listOf(pageX1, pageY1, pageX2, pageY2)
+        } else {
+            val regionCenterY = (pageY1 + pageY2) / 2
+            val targetScrollY = (regionCenterY - viewportHeight / 2).coerceAtLeast(0)
+            val percent = (targetScrollY * 100 / scrollableRange).coerceIn(0, 100)
+            try {
+                page.scrollToPercentage(percent)
+                delay(POST_SCROLL_DELAY_MS)
+            } catch (_: Exception) { /* best effort */ }
+            val actualScrollPercent = try { page.getScrollPosition() } catch (_: Exception) { percent }
+            val actualScrollY = (actualScrollPercent / 100.0 * scrollableRange).toInt()
+            listOf(pageX1, pageY1 - actualScrollY, pageX2, pageY2 - actualScrollY)
+        }
     }
 
     // --- Utilities ---

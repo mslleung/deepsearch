@@ -61,14 +61,34 @@ enum class ScrollDirection {
     DOWN, UP, LEFT, RIGHT
 }
 
-data class CaptureRegion(
+data class BoundingBox(
     val x1: Int,
     val y1: Int,
     val x2: Int,
-    val y2: Int,
-    val relevance: String,
-    val containsTable: Boolean = false
+    val y2: Int
 )
+
+enum class TableRegionRole { HEADER, DATA, CONTEXT }
+
+data class TableSubRegion(
+    val boundingBox: BoundingBox,
+    val role: TableRegionRole,
+    val description: String
+)
+
+sealed class CaptureRegion {
+    abstract val relevance: String
+
+    data class Element(
+        override val relevance: String,
+        val boundingBox: BoundingBox
+    ) : CaptureRegion()
+
+    data class Table(
+        override val relevance: String,
+        val regions: List<TableSubRegion>
+    ) : CaptureRegion()
+}
 
 data class ExtractedContent(
     val description: String,
