@@ -8,10 +8,13 @@ import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
 
 import io.deepsearch.domain.agents.ActionWithOutcome
+import io.deepsearch.domain.agents.BoundingBox
 import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.IFullPageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.ScrollDirection
+import io.deepsearch.domain.agents.TableRegionRole
+import io.deepsearch.domain.agents.TableSubRegion
 import io.deepsearch.domain.agents.TrackedQuestion
 import io.deepsearch.domain.agents.FullPageNavigationInput
 import io.deepsearch.domain.agents.FullPageNavigationOutput
@@ -369,16 +372,23 @@ class FullPageNavigationAgentGenAiImpl(
             )
         }
 
-        val captureRegions = response.captureRegions?.map { r ->
-            CaptureRegion(
+        val captureRegions = response.captureRegions?.mapNotNull { r ->
+            val bb = BoundingBox(
                 x1 = r.x1.coerceIn(0, 1000),
                 y1 = r.y1.coerceIn(0, 1000),
                 x2 = r.x2.coerceIn(0, 1000),
-                y2 = r.y2.coerceIn(0, 1000),
-                relevance = r.relevance,
-                containsTable = r.containsTable
+                y2 = r.y2.coerceIn(0, 1000)
             )
-        }?.filter { it.x2 > it.x1 && it.y2 > it.y1 } ?: emptyList()
+            if (bb.x2 <= bb.x1 || bb.y2 <= bb.y1) return@mapNotNull null
+            if (r.containsTable) {
+                CaptureRegion.Table(
+                    relevance = r.relevance,
+                    regions = listOf(TableSubRegion(boundingBox = bb, role = TableRegionRole.DATA, description = r.relevance))
+                )
+            } else {
+                CaptureRegion.Element(relevance = r.relevance, boundingBox = bb)
+            }
+        } ?: emptyList()
 
         val decision = response.decision ?: "continue_exploring"
         val openCount = questionsState.count { !it.resolved }
