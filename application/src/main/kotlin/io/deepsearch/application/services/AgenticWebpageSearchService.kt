@@ -1011,43 +1011,35 @@ class AgenticWebpageSearchService(
                 is CaptureRegion.Element -> listOf(region.boundingBox)
                 is CaptureRegion.Table -> region.regions.map { it.boundingBox }
             }
-            val unionBox = computeUnionBox(boxes)
 
-            val x = ((unionBox.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
-            val y = ((unionBox.y1 / 1000.0) * imgHeight).toInt().coerceIn(0, imgHeight - 1)
-            val x2 = ((unionBox.x2 / 1000.0) * imgWidth).toInt().coerceIn((x + 1).coerceAtMost(imgWidth), imgWidth)
-            val y2 = ((unionBox.y2 / 1000.0) * imgHeight).toInt().coerceIn((y + 1).coerceAtMost(imgHeight), imgHeight)
-            val w = x2 - x
-            val h = y2 - y
+            for (box in boxes) {
+                val x = ((box.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
+                val y = ((box.y1 / 1000.0) * imgHeight).toInt().coerceIn(0, imgHeight - 1)
+                val x2 = ((box.x2 / 1000.0) * imgWidth).toInt().coerceIn((x + 1).coerceAtMost(imgWidth), imgWidth)
+                val y2 = ((box.y2 / 1000.0) * imgHeight).toInt().coerceIn((y + 1).coerceAtMost(imgHeight), imgHeight)
+                val w = x2 - x
+                val h = y2 - y
 
-            if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) {
-                logger.debug("Skipping tiny capture region {}x{} for: {}", w, h, region.relevance)
-                continue
+                if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) {
+                    logger.debug("Skipping tiny capture region {}x{} for: {}", w, h, region.relevance)
+                    continue
+                }
+
+                val bytes = imageProcessingService.cropToPng(screenshotBytes, x, y, w, h)
+
+                val hash = sha256.digest(bytes)
+                val hashHex = hash.joinToString("") { "%02x".format(it) }
+                if (hashHex in existingHashes || hashHex in newHashes) {
+                    logger.debug("Skipping duplicate capture for: {}", region.relevance)
+                    continue
+                }
+                newHashes.add(hashHex)
+
+                images.add(CapturedImage(bytes, "image/png", region.relevance, hash))
+                logger.info("Captured visual region ({}x{}): {}", w, h, region.relevance.take(80))
             }
-
-            val bytes = imageProcessingService.cropToPng(screenshotBytes, x, y, w, h)
-
-            val hash = sha256.digest(bytes)
-            val hashHex = hash.joinToString("") { "%02x".format(it) }
-            if (hashHex in existingHashes || hashHex in newHashes) {
-                logger.debug("Skipping duplicate capture for: {}", region.relevance)
-                continue
-            }
-            newHashes.add(hashHex)
-
-            images.add(CapturedImage(bytes, "image/png", region.relevance, hash))
-            logger.info("Captured visual region ({}x{}): {}", w, h, region.relevance.take(80))
         }
         return CropResult(images, newHashes)
-    }
-
-    private fun computeUnionBox(boxes: List<BoundingBox>): BoundingBox {
-        return BoundingBox(
-            x1 = boxes.minOf { it.x1 },
-            y1 = boxes.minOf { it.y1 },
-            x2 = boxes.maxOf { it.x2 },
-            y2 = boxes.maxOf { it.y2 }
-        )
     }
 
     private suspend fun extractRegionContent(
@@ -1116,16 +1108,24 @@ class AgenticWebpageSearchService(
                         Triple(sub, content, content.html)
                     }
 
-                    val unionBox = computeUnionBox(region.regions.map { it.boundingBox })
-                    val uPageX1 = ((unionBox.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
-                    val uPageY1 = ((unionBox.y1 / 1000.0) * imgHeight).toInt().coerceIn(0, imgHeight - 1)
-                    val uPageX2 = ((unionBox.x2 / 1000.0) * imgWidth).toInt().coerceIn(uPageX1 + 1, imgWidth)
-                    val uPageY2 = ((unionBox.y2 / 1000.0) * imgHeight).toInt().coerceIn(uPageY1 + 1, imgHeight)
-                    val w = uPageX2 - uPageX1
-                    val h = uPageY2 - uPageY1
-                    if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) continue
-
-                    val croppedBytes = imageProcessingService.cropToPng(jpegBytes, uPageX1, uPageY1, w, h)
+                    val subRegionImages = region.regions.mapNotNull { sub ->
+                        val box = sub.boundingBox
+                        val x = ((box.x1 / 1000.0) * imgWidth).toInt().coerceIn(0, imgWidth - 1)
+                        val y = ((box.y1 / 1000.0) * imgHeight).toInt().coerceIn(0, imgHeight - 1)
+                        val x2 = ((box.x2 / 1000.0) * imgWidth).toInt().coerceIn((x + 1).coerceAtMost(imgWidth), imgWidth)
+                        val y2 = ((box.y2 / 1000.0) * imgHeight).toInt().coerceIn((y + 1).coerceAtMost(imgHeight), imgHeight)
+                        val w = x2 - x
+                        val h = y2 - y
+                        if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) return@mapNotNull null
+                        val cropped = imageProcessingService.cropToPng(jpegBytes, x, y, w, h)
+                        TableSubRegionImage(
+                            bytes = cropped,
+                            mimeType = ImageMimeType.PNG,
+                            role = sub.role,
+                            description = sub.description
+                        )
+                    }
+                    if (subRegionImages.isEmpty()) continue
 
                     val combinedHtml = subContents
                         .filter { (_, _, html) -> html.isNotBlank() }
@@ -1134,8 +1134,7 @@ class AgenticWebpageSearchService(
                         }
 
                     val input = AgenticTableConversionInput(
-                        regionImage = croppedBytes,
-                        imageMimeType = ImageMimeType.PNG,
+                        subRegionImages = subRegionImages,
                         cleanedHtml = combinedHtml.ifBlank { null },
                         auxiliaryInfo = region.relevance
                     )

@@ -21,13 +21,12 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * Multimodal table conversion agent that uses both a cropped screenshot and the
- * DOM-extracted HTML snippet to produce a clean HTML table.
+ * Multimodal table conversion agent that receives individually cropped sub-region
+ * images (header, data, context) and synthesizes them into a clean HTML table.
  *
- * The image serves as visual ground truth for table structure, dimensions, and merged cells.
- * The HTML provides accurate cell text content, avoiding OCR errors.
- * When the HTML is empty or unhelpful (e.g. graphical/image-based tables), the agent
- * falls back to OCR from the screenshot.
+ * Each sub-region image is labeled with its role so the agent can correlate headers
+ * with data rows. The DOM-extracted HTML snippet is provided as a supplementary
+ * text source. When no useful HTML is available, the agent falls back to OCR.
  */
 class AgenticTableConversionAgentGenAiImpl(
     private val client: com.google.genai.Client,
@@ -52,32 +51,36 @@ class AgenticTableConversionAgentGenAiImpl(
 
     private val systemInstruction = """
         You are a table extraction specialist. You are given:
-        1. A screenshot/image of a table region from a webpage
-        2. Optionally, the HTML snippet extracted from the DOM for that same region
+        1. Multiple cropped images of a table, each labeled with a ROLE:
+           - HEADER: column/row header images showing column names, tier names, category labels
+           - DATA: images of data rows/cells that contain the actual values
+           - CONTEXT: surrounding text needed to interpret the table (section titles, legends, footnotes)
+        2. Optionally, an HTML snippet extracted from the DOM for the same table region
 
-        Your task is to produce a clean HTML <table> that accurately represents the table.
+        Your task is to synthesize these sub-region images into a single coherent HTML <table>.
 
-        HOW TO USE THE TWO INPUTS:
-        - The IMAGE is the visual ground truth. Use it to determine:
+        HOW TO USE THE INPUTS:
+        - The IMAGES are the visual ground truth. Use them to determine:
           - The exact number of rows and columns
           - Which cells are merged (colspan/rowspan)
           - The overall table layout and structure
+          - Correlate HEADER images with DATA images to understand which columns/rows the data belongs to
         - The HTML SNIPPET (when provided) contains the text content extracted from the DOM.
           Use it as the primary source for cell text, because it is more accurate than OCR.
           However, the HTML structure itself may be unreliable (CSS grid/flex layouts, nested divs, etc.).
         - If no HTML snippet is provided, or if it is clearly unhelpful (e.g., just an image tag
-          or empty), extract all text from the image via OCR.
+          or empty), extract all text from the images via OCR.
 
         HTML TABLE OUTPUT RULES:
         - Use <table>, <thead>, <tbody>, <tr>, <th>, <td> tags
         - Use <thead> for the header row(s) and <tbody> for data rows
         - For merged cells, use colspan and rowspan attributes (e.g., <td colspan="2">, <td rowspan="3">)
-        - Make sure the table dimensions exactly match what is visible in the image
-        - Do NOT invent data — only use text that appears in the HTML snippet or is visible in the image
+        - Make sure the table dimensions match what is visible across the images
+        - Do NOT invent data — only use text that appears in the HTML snippet or is visible in the images
         - Capture ALL text with no information loss
         - Use emojis (✅ ❌) for checkmarks/crosses instead of HTML entities
         - Output clean HTML without styling attributes (no class, style, etc.)
-        - If the image does not contain a table, return an empty string
+        - If the images do not contain a table, return an empty string
 
         Example output:
         <table>
@@ -115,30 +118,33 @@ class AgenticTableConversionAgentGenAiImpl(
             if (html.isNotBlank()) cleanHtml(html) else null
         }
 
+        val totalImageBytes = input.subRegionImages.sumOf { it.bytes.size }
         logger.debug(
-            "Converting table region to HTML table (image {} bytes, html {} chars, cleaned {} chars)",
-            input.regionImage.size,
+            "Converting table with {} sub-region images ({} bytes total, html {} chars, cleaned {} chars)",
+            input.subRegionImages.size,
+            totalImageBytes,
             input.cleanedHtml?.length ?: 0,
             cleanedHtml?.length ?: 0
         )
 
-        val userPromptText = buildString {
-            appendLine("Context: ${input.auxiliaryInfo}")
-            appendLine()
-            if (!cleanedHtml.isNullOrBlank()) {
-                appendLine("HTML snippet extracted from the DOM for this table region:")
-                appendLine(cleanedHtml)
-                appendLine()
-                appendLine("Use the image as visual ground truth for structure and the HTML text for accurate cell content.")
-            } else {
-                appendLine("No HTML snippet is available for this table. Extract all content from the image using OCR.")
+        val contentParts = buildList {
+            for (subRegion in input.subRegionImages) {
+                add(Part.fromText("[${subRegion.role.name}: ${subRegion.description}]"))
+                add(Part.fromBytes(subRegion.bytes, subRegion.mimeType.value))
             }
+            add(Part.fromText(buildString {
+                appendLine("Context: ${input.auxiliaryInfo}")
+                appendLine()
+                if (!cleanedHtml.isNullOrBlank()) {
+                    appendLine("HTML snippet extracted from the DOM for this table region:")
+                    appendLine(cleanedHtml)
+                    appendLine()
+                    appendLine("Use the images as visual ground truth for structure and the HTML text for accurate cell content.")
+                } else {
+                    appendLine("No HTML snippet is available for this table. Extract all content from the images using OCR.")
+                }
+            }))
         }
-
-        val contentParts = listOf(
-            Part.fromBytes(input.regionImage, input.imageMimeType.value),
-            Part.fromText(userPromptText)
-        )
 
         val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)

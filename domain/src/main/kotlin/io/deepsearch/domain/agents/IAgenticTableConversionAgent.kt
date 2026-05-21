@@ -4,21 +4,26 @@ import io.deepsearch.domain.agents.infra.IAgent
 import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 
+data class TableSubRegionImage(
+    val bytes: ByteArray,
+    val mimeType: ImageMimeType,
+    val role: TableRegionRole,
+    val description: String
+)
+
 /**
  * Input for the unified multimodal table conversion agent.
  *
- * Combines both a cropped screenshot of the table region and the cleaned HTML snippet
- * from the DOM. The agent uses the image as visual ground truth for structure and the
- * HTML as the primary text source to avoid OCR errors.
+ * Each table sub-region (header, data, context) is cropped individually and passed
+ * with its role label. The agent synthesizes them into a single coherent HTML table.
+ * The cleaned HTML snippet from DOM extraction is provided as a supplementary text source.
  *
- * @param regionImage Cropped PNG screenshot of the table region
- * @param imageMimeType MIME type of the region image (typically PNG)
+ * @param subRegionImages Individually cropped images for each table sub-region, labeled with role
  * @param cleanedHtml Cleaned HTML snippet from DOM extraction; null or blank for purely graphical tables
  * @param auxiliaryInfo Context about the table (e.g., relevance description from the navigation agent)
  */
 data class AgenticTableConversionInput(
-    val regionImage: ByteArray,
-    val imageMimeType: ImageMimeType,
+    val subRegionImages: List<TableSubRegionImage>,
     val cleanedHtml: String?,
     val auxiliaryInfo: String
 ) : IAgent.IAgentInput
