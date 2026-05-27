@@ -124,7 +124,7 @@ class SemanticTableClassificationAgentGenAiImpl(
         if (inputs.isEmpty()) {
             return SemanticTableClassificationBatchResult(
                 classifications = emptyList(),
-                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)
             )
         }
 
@@ -145,7 +145,7 @@ class SemanticTableClassificationAgentGenAiImpl(
 
         logger.debug("Classifying {} semantic tables", inputs.size)
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {

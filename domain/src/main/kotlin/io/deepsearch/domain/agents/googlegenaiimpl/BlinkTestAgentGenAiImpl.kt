@@ -72,7 +72,7 @@ class BlinkTestAgentGenAiImpl(
             appendLine(input.searchQuery.query)
         }
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
         val response = withContext(dispatcherProvider.io) {

@@ -45,7 +45,7 @@ class FileSearchQueryAgentGenAiImpl(
         val (storeName, query, maxAgeMs) = input
         logger.debug("File search query on store '{}': '{}' (maxAgeMs: {})", storeName, query, maxAgeMs)
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Build FileSearch with optional metadata filter for age

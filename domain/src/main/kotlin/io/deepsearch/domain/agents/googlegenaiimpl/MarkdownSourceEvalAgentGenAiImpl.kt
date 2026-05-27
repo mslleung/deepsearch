@@ -158,7 +158,7 @@ class MarkdownSourceEvalAgentGenAiImpl(
             markdownSource.url
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Markdown already has numbered IDs in format ![desc](#img-N)

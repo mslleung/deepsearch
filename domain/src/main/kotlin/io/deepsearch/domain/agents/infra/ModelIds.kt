@@ -19,7 +19,7 @@ enum class ModelIds(
     val outputPricePerMillion: Double
 ) {
     // Gemini 3.1 models (latest generation)
-    GEMINI_3_1_FLASH_LITE_PREVIEW("gemini-3.1-flash-lite-preview", 0.25, 1.50),
+    GEMINI_3_1_FLASH_LITE("gemini-3.1-flash-lite", 0.25, 1.50),
 
     // Gemini 3 models
     GEMINI_3_PRO_PREVIEW("gemini-3-pro-preview", 2.00, 12.00),

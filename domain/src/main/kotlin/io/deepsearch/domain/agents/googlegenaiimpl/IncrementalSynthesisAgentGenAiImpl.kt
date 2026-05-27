@@ -253,7 +253,7 @@ class IncrementalSynthesisAgentGenAiImpl(
             input.currentCitedSourceUrls.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.newSources.isEmpty() || input.newSources.all { it.relevantFacts.isEmpty() }) {
@@ -343,7 +343,7 @@ class IncrementalSynthesisAgentGenAiImpl(
             input.currentAnswer.length
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
 
         if (input.newSources.isEmpty() || input.newSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No new facts provided, emitting current answer unchanged")

@@ -132,7 +132,7 @@ class ImageClassificationAgentGenAiImpl(
             input.images.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.images.isEmpty()) {
@@ -173,7 +173,7 @@ class ImageClassificationAgentGenAiImpl(
             // Combine results in order
             val allClassifications = results.map { it.first }
             val aggregatedTokenUsage =
-                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)) { acc, (_, tokenUsage) ->
+                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)) { acc, (_, tokenUsage) ->
                     TokenUsageMetrics(
                         modelName = acc.modelName,
                         promptTokens = acc.promptTokens + tokenUsage.promptTokens,
@@ -196,7 +196,7 @@ class ImageClassificationAgentGenAiImpl(
         image: ImageClassificationInput.ImageItem,
         imageIndex: Int
     ): Pair<ImageClassificationOutput.ImageClassification, TokenUsageMetrics> {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Check if image is too large
@@ -302,7 +302,7 @@ class ImageClassificationAgentGenAiImpl(
     ): BatchContentRequest {
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+            modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
             systemInstruction = systemInstruction,
             userPrompt = "Classify this image and provide a comprehensive description",
             imageData = Base64.encode(image.bytes),

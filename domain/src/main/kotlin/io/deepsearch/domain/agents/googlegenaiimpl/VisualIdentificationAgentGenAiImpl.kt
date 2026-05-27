@@ -267,11 +267,11 @@ class VisualIdentificationAgentGenAiImpl(
 
         // ========== Vision Detection ==========
         // Single LLM call for visible semantic elements and tables
-        var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)
+        var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)
         val visionResponse = withContext(dispatcherProvider.io) {
             retryLlmCall<CombinedVisionResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_vision") {
                 val result = client.models.generateContent(
-                    ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+                    ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
                     listOf(
                         Content.fromParts(
                             Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
@@ -295,7 +295,7 @@ class VisualIdentificationAgentGenAiImpl(
 
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
-                        modelName = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+                        modelName = ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
                         promptTokens = metadata.promptTokenCount().orElse(0),
                         outputTokens = metadata.candidatesTokenCount().orElse(0),
                         totalTokens = metadata.totalTokenCount().orElse(0)
@@ -368,11 +368,11 @@ class VisualIdentificationAgentGenAiImpl(
             imageDimensionService.getImageDimensions(screenshot.bytes)
         }
 
-        var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)
+        var tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)
         val visionResponse = withContext(dispatcherProvider.io) {
             retryLlmCall<LayoutVisionResponse>(this@VisualIdentificationAgentGenAiImpl::class.simpleName!! + "_layout") {
                 val result = client.models.generateContent(
-                    ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+                    ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
                     listOf(
                         Content.fromParts(
                             Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
@@ -396,7 +396,7 @@ class VisualIdentificationAgentGenAiImpl(
 
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
-                        modelName = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+                        modelName = ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
                         promptTokens = metadata.promptTokenCount().orElse(0),
                         outputTokens = metadata.candidatesTokenCount().orElse(0),
                         totalTokens = metadata.totalTokenCount().orElse(0)
@@ -957,7 +957,7 @@ class VisualIdentificationAgentGenAiImpl(
 
         val request = BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+            modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
             systemInstruction = combinedSystemInstruction,
             userPrompt = "Analyze this webpage screenshot for semantic elements and tables.",
             imageData = screenshotBase64,
@@ -1006,7 +1006,7 @@ class VisualIdentificationAgentGenAiImpl(
         return VisualIdentificationOutput(
             semanticElements = semanticElements,
             tables = tableIdentifications,
-            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId)
+            tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)
         )
     }
 }

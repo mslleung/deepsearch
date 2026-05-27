@@ -119,7 +119,7 @@ class TextLinkDiscoveryAgentGenAiImpl(
         }
 
         val userPrompt = buildPrompt(input.query, textWithOnlySameDomainUrls)
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val links = try {

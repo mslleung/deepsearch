@@ -158,7 +158,7 @@ class TableInterpretationAgentGenAiImpl(
             appendLine("Please generate the response in JSON structured output")
         }
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -516,7 +516,7 @@ class TableInterpretationAgentGenAiImpl(
 
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId,
+            modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
             systemInstruction = systemInstruction,
             userPrompt = userPrompt,
             temperature = 1.0f

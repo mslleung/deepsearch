@@ -143,7 +143,7 @@ class FileSearchGroundingMetadataTest : IsolatedKoinTest() {
             )
             .build()
 
-        val modelId = "gemini-3.1-flash-lite-preview"
+        val modelId = "gemini-3.1-flash-lite"
         println("Using model: $modelId")
 
         val response = client.models.generateContent(

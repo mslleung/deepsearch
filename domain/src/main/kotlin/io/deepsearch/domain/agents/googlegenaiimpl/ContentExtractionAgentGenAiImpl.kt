@@ -157,6 +157,8 @@ class ContentExtractionAgentGenAiImpl(
           that someone seeing ONLY these regions could fully understand the table data without
           needing to see the rest of the page.
 
+        Do NOT classify tab navigation or tabbed interfaces as "table" — tabs switch between views and are not tabular data.
+
         Guidelines:
         - Point at the area containing the actual answer data — not just nearby headings or section titles alone.
         - Include both the label AND its associated value in the same region when they are visually close.
@@ -168,7 +170,7 @@ class ContentExtractionAgentGenAiImpl(
     """.trimIndent()
 
     override suspend fun generate(input: ContentExtractionInput): ContentExtractionOutput {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val prompt = buildPrompt(input)

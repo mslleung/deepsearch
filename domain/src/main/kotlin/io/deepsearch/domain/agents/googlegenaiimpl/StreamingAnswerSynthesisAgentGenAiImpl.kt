@@ -256,7 +256,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             input.previouslySearchedQueries.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
@@ -369,7 +369,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             input.previouslySearchedQueries.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
 
         if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No facts provided, emitting default message")

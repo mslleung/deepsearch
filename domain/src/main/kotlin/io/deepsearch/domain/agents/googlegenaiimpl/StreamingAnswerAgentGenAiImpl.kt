@@ -81,7 +81,7 @@ class StreamingAnswerAgentGenAiImpl(
             input.currentAnswer != null
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.markdownBatch.isEmpty()) {
@@ -118,7 +118,7 @@ class StreamingAnswerAgentGenAiImpl(
             appendLine(markdownContent)
         }
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE_PREVIEW.modelId
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
