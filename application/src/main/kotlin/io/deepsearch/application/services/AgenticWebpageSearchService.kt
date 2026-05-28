@@ -81,7 +81,6 @@ class AgenticWebpageSearchService(
         private const val POST_SCROLL_DELAY_MS = 50L
         private const val POST_TYPE_DELAY_MS = 500L
         private const val JPEG_QUALITY = 1.0f
-        private const val MIN_CAPTURE_SIZE_PX = 40
         private const val COOKIE_DISMISS_DELAY_MS = 150L
 
         /**
@@ -165,7 +164,8 @@ class AgenticWebpageSearchService(
         var pageState: List<String> = emptyList(),
         var isOverlayMode: Boolean = false,
         val extractedRegionContent: MutableList<ExtractedContent> = mutableListOf(),
-        val extractedTextHashes: MutableSet<String> = mutableSetOf()
+        val extractedTextHashes: MutableSet<String> = mutableSetOf(),
+        var contentObservation: String? = null
     )
 
     // --- Public API ---
@@ -309,7 +309,8 @@ class AgenticWebpageSearchService(
                 pageState = state.pageState,
                 isOverlayMode = isOverlayMode,
                 scrollStateHint = scrollStateHint,
-                extractedRegionContent = state.extractedRegionContent.toList()
+                extractedRegionContent = state.extractedRegionContent.toList(),
+                contentObservation = state.contentObservation
             )
 
             val extractionInput = ContentExtractionInput(
@@ -349,6 +350,7 @@ class AgenticWebpageSearchService(
             val postNavStart = clock.markNow()
             state.pageState = navOutput.pageState
             state.trackedQuestions = navOutput.questions
+            state.contentObservation = extractionOutput.observation
 
             var pageChanged = false
 
@@ -1020,11 +1022,6 @@ class AgenticWebpageSearchService(
                 val w = x2 - x
                 val h = y2 - y
 
-                if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) {
-                    logger.debug("Skipping tiny capture region {}x{} for: {}", w, h, region.relevance)
-                    continue
-                }
-
                 val bytes = imageProcessingService.cropToPng(screenshotBytes, x, y, w, h)
 
                 val hash = sha256.digest(bytes)
@@ -1116,7 +1113,6 @@ class AgenticWebpageSearchService(
                         val y2 = ((box.y2 / 1000.0) * imgHeight).toInt().coerceIn((y + 1).coerceAtMost(imgHeight), imgHeight)
                         val w = x2 - x
                         val h = y2 - y
-                        if (w < MIN_CAPTURE_SIZE_PX || h < MIN_CAPTURE_SIZE_PX) return@mapNotNull null
                         val cropped = imageProcessingService.cropToPng(jpegBytes, x, y, w, h)
                         TableSubRegionImage(
                             bytes = cropped,

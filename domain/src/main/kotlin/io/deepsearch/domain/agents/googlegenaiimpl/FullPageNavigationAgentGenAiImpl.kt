@@ -428,6 +428,12 @@ class FullPageNavigationAgentGenAiImpl(
             }
         }
 
+        if (!input.contentObservation.isNullOrBlank()) {
+            appendLine()
+            appendLine("CONTENT OBSERVATION (from clean screenshot analysis):")
+            appendLine("  ${input.contentObservation}")
+        }
+
         appendLine()
         appendLine("--- QUERY & CONTEXT ---")
 

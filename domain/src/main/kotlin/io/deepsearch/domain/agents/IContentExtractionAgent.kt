@@ -13,6 +13,7 @@ data class ContentExtractionInput(
 
 data class ContentExtractionOutput(
     val captureRegions: List<CaptureRegion>,
+    val observation: String?,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

@@ -55,7 +55,8 @@ class ContentExtractionAgentGenAiImpl(
 
     @Serializable
     private data class ExtractionResponse(
-        val captureRegions: List<CaptureRegionResponse>? = null
+        val captureRegions: List<CaptureRegionResponse>? = null,
+        val observation: String? = null
     )
 
     private val boundingBoxSchema: Schema = Schema.builder()
@@ -131,6 +132,11 @@ class ContentExtractionAgentGenAiImpl(
                     .type("ARRAY")
                     .items(captureRegionSchema)
                     .description("Bounding boxes around page regions containing data relevant to the query. Provide one region per distinct content block. Use 0-1000 coordinates. Return an empty array if nothing relevant is visible.")
+                    .build(),
+                "observation" to Schema.builder()
+                    .type("STRING")
+                    .nullable(true)
+                    .description("Describe any UI patterns that hide content: tabbed interfaces (which tab is active, what other tabs exist), collapsed accordions, carousels, or paginated views. Null if all relevant content is directly visible without interaction.")
                     .build()
             )
         )
@@ -167,6 +173,13 @@ class ContentExtractionAgentGenAiImpl(
         - Use MULTIPLE capture regions when relevant content appears in different areas of the page.
         - If content has already been extracted (shown in EXTRACTED KNOWLEDGE), do NOT re-capture it.
         - Return an empty array if no relevant content is visible on the page.
+
+        Observation:
+        If you notice UI patterns where content is hidden behind interactions (tabbed interfaces,
+        collapsed accordions, carousels, paginated views), describe them in the observation field.
+        Specifically note: which tabs/sections exist, which one is currently active/visible,
+        and what content might be revealed by clicking the others. This helps a navigation agent
+        know what to explore next.
     """.trimIndent()
 
     override suspend fun generate(input: ContentExtractionInput): ContentExtractionOutput {
@@ -254,10 +267,11 @@ class ContentExtractionAgentGenAiImpl(
             }
         } ?: emptyList()
 
-        logger.debug("Content extraction: {} capture regions", captureRegions.size)
+        logger.debug("Content extraction: {} capture regions, observation={}", captureRegions.size, response.observation?.take(80))
 
         return ContentExtractionOutput(
             captureRegions = captureRegions,
+            observation = response.observation,
             tokenUsage = tokenUsage
         )
     }

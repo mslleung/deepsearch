@@ -108,7 +108,8 @@ data class FullPageNavigationInput(
     val pageState: List<String> = emptyList(),
     val isOverlayMode: Boolean = false,
     val scrollStateHint: String? = null,
-    val extractedRegionContent: List<ExtractedContent> = emptyList()
+    val extractedRegionContent: List<ExtractedContent> = emptyList(),
+    val contentObservation: String? = null
 ) : IAgent.IAgentInput
 
 data class FullPageNavigationOutput(
