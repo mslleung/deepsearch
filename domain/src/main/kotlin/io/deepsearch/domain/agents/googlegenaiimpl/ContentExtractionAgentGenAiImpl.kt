@@ -79,7 +79,7 @@ class ContentExtractionAgentGenAiImpl(
                 "boundingBox" to boundingBoxSchema,
                 "role" to Schema.builder().type("STRING")
                     .enum_(listOf("header", "data", "context"))
-                    .description("Role: 'header' for column/row headers, 'data' for relevant data rows, 'context' for labels/legends/footnotes needed to understand the data.")
+                    .description("Role: 'header' for the full header row or column spanning all names, 'data' for full data rows or columns containing the answer, 'context' for labels/legends/footnotes needed to understand the data.")
                     .build(),
                 "description" to Schema.builder().type("STRING")
                     .description("What this sub-region contains (e.g. 'Package name columns: Standard, Comprehensive, Ultra').")
@@ -117,7 +117,7 @@ class ContentExtractionAgentGenAiImpl(
                 "regions" to Schema.builder().type("ARRAY")
                     .items(tableSubRegionSchema)
                     .nullable(true)
-                    .description("Sub-regions for type=table. Required when type is 'table'. Must include at least one 'data' region. Include 'header' for column/row names and 'context' for surrounding labels needed to interpret the data.")
+                    .description("Sub-regions for type=table. Required when type is 'table'. Must include at least one 'data' region. 'header' and 'data' regions must span the full row (or full column for column-oriented tables), not individual cells. Include 'context' for surrounding labels needed to interpret the data.")
                     .build()
             )
         )
@@ -154,9 +154,10 @@ class ContentExtractionAgentGenAiImpl(
           Provide a single boundingBox that tightly covers the content.
 
         TYPE "table" — for tabular, grid-like, or comparison data (including div-based layouts, CSS grids, pricing matrices, feature comparison charts).
+          Tables can be row-oriented (headers across the top) or column-oriented (headers down the left side).
           Provide MULTIPLE sub-regions so the table can be understood as a standalone:
-          - "header" regions: column headers, row headers, package/plan/tier names, category labels
-          - "data" regions: the specific rows/cells that answer the query
+          - "header" regions: the FULL header row (or full header column for column-oriented tables) — must span ALL column/row names, not just one cell
+          - "data" regions: the FULL data row (or full data column) containing the answer — must span the same width/height as the header so columns/rows can be aligned
           - "context" regions: section titles, legends, footnotes, price labels — anything needed to interpret the data
 
           Each sub-region has its own bounding box. Together they must capture enough information
@@ -169,7 +170,7 @@ class ContentExtractionAgentGenAiImpl(
         - Point at the area containing the actual answer data — not just nearby headings or section titles alone.
         - Include both the label AND its associated value in the same region when they are visually close.
         - For "element" type, size the box to tightly cover one complete content block.
-        - For "table" type, always include a "header" sub-region with column/row names so the data can be interpreted. Include "data" sub-regions for the rows that answer the query. Add "context" sub-regions for any surrounding text needed to understand the data.
+        - For "table" type, always include a "header" sub-region spanning the FULL header row (or column). Include "data" sub-regions spanning the FULL data row (or column) that answers the query. Both must span the same width/height so columns/rows align. Add "context" sub-regions for any surrounding text needed to understand the data.
         - Use MULTIPLE capture regions when relevant content appears in different areas of the page.
         - If content has already been extracted (shown in EXTRACTED KNOWLEDGE), do NOT re-capture it.
         - Return an empty array if no relevant content is visible on the page.
