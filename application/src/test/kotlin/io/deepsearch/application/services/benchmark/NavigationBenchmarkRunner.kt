@@ -115,7 +115,7 @@ class NavigationBenchmarkRunner(
     }
 
     private fun printConsoleReport(results: List<CaseResult>, report: BenchmarkReport) {
-        val separator = "=".repeat(100)
+        val separator = "=".repeat(120)
 
         println()
         println(separator)
@@ -123,16 +123,17 @@ class NavigationBenchmarkRunner(
         println(separator)
         println()
 
-        println("%-35s  %5s  %5s  %5s  %5s  %5s  %5s  %6s".format(
-            "Case", "Corr", "Effc", "Tool", "Anti", "COMP", "Iters", "Time"
+        println("%-35s  %5s  %5s  %5s  %5s  %5s  %5s  %6s  %7s  %7s  %7s".format(
+            "Case", "Corr", "Effc", "Tool", "Anti", "COMP", "Iters", "Time", "Prompt", "Output", "Total"
         ))
-        println("-".repeat(100))
+        println("-".repeat(120))
 
         for (cr in results) {
             val sc = cr.scoreCard
+            val tokens = cr.searchResult.totalTokenUsage
             val status = if (sc.success) " " else "X"
             println(
-                "%s %-33s  %5.1f  %5.1f  %5.1f  %5.1f  %5.1f  %2d/%-2d  %5.1fs".format(
+                "%s %-33s  %5.1f  %5.1f  %5.1f  %5.1f  %5.1f  %2d/%-2d  %5.1fs  %7d  %7d  %7d".format(
                     status,
                     sc.caseId.take(33),
                     sc.correctnessScore,
@@ -142,7 +143,10 @@ class NavigationBenchmarkRunner(
                     sc.compositeScore,
                     sc.actualIterations,
                     sc.optimalIterations,
-                    cr.durationMs / 1000.0
+                    cr.durationMs / 1000.0,
+                    tokens.promptTokens,
+                    tokens.outputTokens,
+                    tokens.totalTokens
                 )
             )
 
@@ -158,7 +162,7 @@ class NavigationBenchmarkRunner(
             }
         }
 
-        println("-".repeat(100))
+        println("-".repeat(120))
         println(
             "  %-33s  %5.1f  %5.1f  %5.1f  %5.1f  %5.1f".format(
                 "AVERAGE",
@@ -171,6 +175,47 @@ class NavigationBenchmarkRunner(
         )
         println()
         println("Success rate: ${"%.0f".format(report.successRate * 100)}% (${report.scoreCards.count { it.success }}/${report.scoreCards.size})")
+
+        val totalDurationSec = results.sumOf { it.durationMs } / 1000.0
+        val avgDurationSec = totalDurationSec / results.size
+        val totalPromptTokens = results.sumOf { it.searchResult.totalTokenUsage.promptTokens }
+        val totalOutputTokens = results.sumOf { it.searchResult.totalTokenUsage.outputTokens }
+        val totalTokens = results.sumOf { it.searchResult.totalTokenUsage.totalTokens }
+        val avgTokensPerCase = totalTokens / results.size
+        val modelName = results.firstOrNull()?.searchResult?.totalTokenUsage?.modelName ?: "unknown"
+
+        println()
+        println(separator)
+        println("  PERFORMANCE & TOKEN USAGE SUMMARY")
+        println(separator)
+        println()
+        println("  Model: $modelName")
+        println("  Cases run: ${results.size}")
+        println()
+        println("  Latency:")
+        println("    Total wall time:     %8.1fs".format(totalDurationSec))
+        println("    Avg per case:        %8.1fs".format(avgDurationSec))
+        println("    Min:                 %8.1fs".format(results.minOf { it.durationMs } / 1000.0))
+        println("    Max:                 %8.1fs".format(results.maxOf { it.durationMs } / 1000.0))
+        println("    Median:              %8.1fs".format(
+            results.map { it.durationMs }.sorted().let { it[it.size / 2] } / 1000.0
+        ))
+        println()
+        println("  Token Usage:")
+        println("    Total prompt tokens: %8d".format(totalPromptTokens))
+        println("    Total output tokens: %8d".format(totalOutputTokens))
+        println("    Total tokens:        %8d".format(totalTokens))
+        println("    Avg tokens/case:     %8d".format(avgTokensPerCase))
+        println("    Avg prompt/case:     %8d".format(totalPromptTokens / results.size))
+        println("    Avg output/case:     %8d".format(totalOutputTokens / results.size))
+        println()
+        println("  Iterations:")
+        println("    Avg iterations:      %8.1f".format(results.map { it.scoreCard.actualIterations }.average()))
+        println("    Avg optimal:         %8.1f".format(results.map { it.scoreCard.optimalIterations }.average()))
+        println("    Tokens/iteration:    %8d".format(
+            totalTokens / results.sumOf { it.scoreCard.actualIterations }.coerceAtLeast(1)
+        ))
+        println()
         println(separator)
         println()
     }

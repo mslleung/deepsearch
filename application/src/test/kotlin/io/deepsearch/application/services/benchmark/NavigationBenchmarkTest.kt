@@ -159,4 +159,12 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
 
         println(report.toMarkdown())
     }
+
+    @Test
+    fun `intercom pricing benchmark`() = runBlocking {
+        val cases = RealWorldBenchmarks.intercom()
+        val report = runner.runAll(cases)
+
+        println(report.toMarkdown())
+    }
 }
