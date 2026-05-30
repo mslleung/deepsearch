@@ -35,7 +35,14 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Secrets / Environment ###
 .env
+.env.*
+!.env.example
+
+### IntelliJ Run Configurations ###
+.run/
 
 ### H2 Database ###
 *.h2.db
