@@ -39,18 +39,6 @@ interface IQueryUrlProcessingService {
         sharedEvaluatedUrls: MutableSet<String>? = null
     ): Flow<UrlProcessingEvent>
 
-    /**
-     * Re-run on-page link relevance analysis for a different query using cached HTML.
-     * No browser page is opened -- this uses previously persisted cleanedLinkRelevanceHtml.
-     * Used by the outer loop when a follow-up query needs to re-evaluate links on already-visited pages.
-     */
-    suspend fun reDiscoverLinksForQuery(
-        query: String,
-        cleanedHtml: String,
-        url: String,
-        sessionId: QuerySessionId,
-        sharedEvaluatedUrls: MutableSet<String>?
-    ): OnPageLinkDiscoveryResult
 }
 
 class QueryUrlProcessingService(
@@ -128,17 +116,6 @@ class QueryUrlProcessingService(
         }
     }
 
-    override suspend fun reDiscoverLinksForQuery(
-        query: String,
-        cleanedHtml: String,
-        url: String,
-        sessionId: QuerySessionId,
-        sharedEvaluatedUrls: MutableSet<String>?
-    ): OnPageLinkDiscoveryResult {
-        return webpageLinkDiscoveryService.discoverRelevantLinksByAgent(
-            query, cleanedHtml, url, sessionId, sharedEvaluatedUrls
-        )
-    }
 
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     private suspend fun storeCapturedImages(
