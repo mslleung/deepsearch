@@ -155,41 +155,69 @@ private fun encodeFragment(fragment: String): String {
 }
 
 /**
- * Encodes a URL component while preserving already-encoded sequences.
- * This is a simple implementation that handles common cases.
+ * Encodes a URL component while preserving already-encoded sequences (%XX).
+ * Handles both ASCII illegal characters and non-ASCII (Unicode) characters
+ * by percent-encoding their UTF-8 byte sequences.
  */
 private fun encodeUrlComponent(component: String): String {
     if (component.isEmpty()) return component
-    
-    // Quick check: if it's already properly encoded (no spaces or illegal chars), return as-is
-    if (!component.contains(' ') && !containsIllegalUriCharacters(component)) {
+
+    if (!containsIllegalUriCharacters(component)) {
         return component
     }
-    
-    // Simple approach: replace spaces and let other characters be handled by URI constructor
-    // More sophisticated approach would be to selectively encode only illegal characters
-    return component.replace(" ", "%20")
-        .replace("\n", "%0A")
-        .replace("\r", "%0D")
-        .replace("<", "%3C")
-        .replace(">", "%3E")
-        .replace("\"", "%22")
-        .replace("{", "%7B")
-        .replace("}", "%7D")
-        .replace("|", "%7C")
-        .replace("\\", "%5C")
-        .replace("^", "%5E")
-        .replace("`", "%60")
+
+    val sb = StringBuilder(component.length * 2)
+    var i = 0
+    while (i < component.length) {
+        val c = component[i]
+        when {
+            c == '%' && i + 2 < component.length
+                    && component[i + 1].isHexDigit()
+                    && component[i + 2].isHexDigit() -> {
+                sb.append(c)
+                sb.append(component[i + 1])
+                sb.append(component[i + 2])
+                i += 3
+            }
+            c.isAsciiSafe() -> {
+                sb.append(c)
+                i++
+            }
+            else -> {
+                for (byte in c.toString().toByteArray(Charsets.UTF_8)) {
+                    sb.append('%')
+                    sb.append(HEX_DIGITS[(byte.toInt() shr 4) and 0x0F])
+                    sb.append(HEX_DIGITS[byte.toInt() and 0x0F])
+                }
+                i++
+            }
+        }
+    }
+    return sb.toString()
 }
 
+private val HEX_DIGITS = "0123456789ABCDEF".toCharArray()
+
+private fun Char.isHexDigit(): Boolean =
+    this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+
 /**
- * Checks if a string contains characters that are illegal in URI components.
+ * Characters that are safe to leave unencoded in a URI path/query component.
+ * Unreserved characters (RFC 3986 §2.3) plus sub-delimiters and path-legal delimiters.
+ */
+private fun Char.isAsciiSafe(): Boolean =
+    this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
+            || this == '-' || this == '.' || this == '_' || this == '~'
+            || this == '!' || this == '$' || this == '\'' || this == '(' || this == ')' || this == '*'
+            || this == '+' || this == ',' || this == ';' || this == ':' || this == '@'
+            || this == '/' || this == '?'
+
+/**
+ * Checks if a string contains characters that need percent-encoding in a URI component:
+ * ASCII illegal characters or non-ASCII (Unicode) characters.
  */
 private fun containsIllegalUriCharacters(s: String): Boolean {
-    return s.any { c ->
-        c == ' ' || c == '\n' || c == '\r' || c == '<' || c == '>' || c == '"' || 
-        c == '{' || c == '}' || c == '|' || c == '\\' || c == '^' || c == '`'
-    }
+    return s.any { c -> !c.isAsciiSafe() && !(c == '%') }
 }
 
 /**
