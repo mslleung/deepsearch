@@ -1,44 +1,38 @@
 package io.deepsearch.presentation.admin.controllers
 
-import io.deepsearch.application.services.IBatchPeriodicIndexJobService
 import io.deepsearch.application.services.ICostCalculationService
 import io.deepsearch.domain.models.entities.BatchPeriodicIndexJobState
 import io.deepsearch.domain.models.valueobjects.BatchPeriodicIndexSessionId
+import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
+import io.deepsearch.domain.repositories.IBatchUrlStateRepository
+import io.deepsearch.presentation.admin.dto.AdminBatchJobStatsDto
 import io.deepsearch.presentation.admin.dto.toAdminDto
 import io.deepsearch.presentation.dto.toDto
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
-/**
- * Admin controller for batch periodic index jobs.
- * Provides endpoints for listing, viewing, and managing batch jobs.
- */
+@OptIn(ExperimentalTime::class)
 class AdminBatchPeriodicIndexJobController(
-    private val batchPeriodicIndexJobService: IBatchPeriodicIndexJobService,
+    private val batchJobRepository: IBatchPeriodicIndexJobRepository,
+    private val urlStateRepository: IBatchUrlStateRepository,
     private val costCalculationService: ICostCalculationService
 ) {
 
-    /**
-     * GET /admin/batch-periodic-index-jobs
-     * List all batch periodic index jobs, optionally filtered by state.
-     */
     suspend fun getAllBatchJobs(call: ApplicationCall) {
         val stateParam = call.request.queryParameters["state"]
-        val state = stateParam?.let { 
+        val state = stateParam?.let {
             runCatching { BatchPeriodicIndexJobState.valueOf(it.uppercase()) }.getOrNull()
         }
-        
-        val jobs = batchPeriodicIndexJobService.list(state)
+
+        val jobs = batchJobRepository.listAll(state)
         val jobsDto = jobs.map { it.toAdminDto() }
-        
+
         call.respond(HttpStatusCode.OK, jobsDto)
     }
 
-    /**
-     * GET /admin/batch-periodic-index-jobs/{id}
-     * Get a specific batch job by ID.
-     */
     suspend fun getBatchJobById(call: ApplicationCall) {
         val jobId = call.parameters["id"]?.toLongOrNull()
         if (jobId == null) {
@@ -46,7 +40,7 @@ class AdminBatchPeriodicIndexJobController(
             return
         }
 
-        val job = batchPeriodicIndexJobService.findById(jobId)
+        val job = batchJobRepository.findById(jobId)
         if (job == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Job not found"))
             return
@@ -55,10 +49,6 @@ class AdminBatchPeriodicIndexJobController(
         call.respond(HttpStatusCode.OK, job.toAdminDto())
     }
 
-    /**
-     * GET /admin/batch-periodic-index-jobs/{id}/stats
-     * Get detailed statistics for a batch job.
-     */
     suspend fun getBatchJobStats(call: ApplicationCall) {
         val jobId = call.parameters["id"]?.toLongOrNull()
         if (jobId == null) {
@@ -66,19 +56,41 @@ class AdminBatchPeriodicIndexJobController(
             return
         }
 
-        val stats = batchPeriodicIndexJobService.getStats(jobId)
-        if (stats == null) {
+        val job = batchJobRepository.findById(jobId)
+        if (job == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Job not found"))
             return
         }
 
-        call.respond(HttpStatusCode.OK, stats.toAdminDto())
+        val counts = urlStateRepository.countByStage(jobId)
+
+        val estimatedCompletionTimeMs = if (job.isWaitingForBatch()) {
+            job.batchJobCreatedAt?.let { createdAt ->
+                val elapsedMs = Clock.System.now().toEpochMilliseconds() - createdAt.toEpochMilliseconds()
+                val remainingMs = (24 * 60 * 60 * 1000L) - elapsedMs
+                if (remainingMs > 0) remainingMs else null
+            }
+        } else {
+            null
+        }
+
+        val statsDto = AdminBatchJobStatsDto(
+            jobId = jobId,
+            state = job.state.name,
+            stage = job.currentStage(),
+            stageDescription = job.stageDescription(),
+            totalUrls = counts.total,
+            processedUrls = counts.extracted,
+            contentProcessedUrls = counts.contentLlmDone,
+            finalProcessedUrls = counts.finalLlmDone,
+            cachedUrls = counts.cached,
+            failedUrls = counts.failed,
+            estimatedCompletionTimeMs = estimatedCompletionTimeMs
+        )
+
+        call.respond(HttpStatusCode.OK, statsDto)
     }
 
-    /**
-     * GET /admin/batch-periodic-index-jobs/{id}/cost
-     * Get cost breakdown for a batch job.
-     */
     suspend fun getBatchJobCost(call: ApplicationCall) {
         val jobId = call.parameters["id"]?.toLongOrNull()
         if (jobId == null) {
@@ -86,7 +98,7 @@ class AdminBatchPeriodicIndexJobController(
             return
         }
 
-        val job = batchPeriodicIndexJobService.findById(jobId)
+        val job = batchJobRepository.findById(jobId)
         if (job == null) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to "Job not found"))
             return
@@ -94,35 +106,7 @@ class AdminBatchPeriodicIndexJobController(
 
         val sessionId = BatchPeriodicIndexSessionId(jobId)
         val costSummary = costCalculationService.calculateSessionCost(sessionId)
-        
+
         call.respond(HttpStatusCode.OK, costSummary.toDto())
-    }
-
-    /**
-     * POST /admin/batch-periodic-index-jobs/{id}/stop
-     * Stop a running batch job.
-     */
-    suspend fun stopBatchJob(call: ApplicationCall) {
-        val jobId = call.parameters["id"]?.toLongOrNull()
-        if (jobId == null) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid job ID"))
-            return
-        }
-
-        val job = batchPeriodicIndexJobService.findById(jobId)
-        if (job == null) {
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Job not found"))
-            return
-        }
-
-        batchPeriodicIndexJobService.stop(jobId)
-        
-        // Fetch the updated job to return
-        val updatedJob = batchPeriodicIndexJobService.findById(jobId)
-        if (updatedJob != null) {
-            call.respond(HttpStatusCode.OK, updatedJob.toAdminDto())
-        } else {
-            call.respond(HttpStatusCode.NoContent)
-        }
     }
 }

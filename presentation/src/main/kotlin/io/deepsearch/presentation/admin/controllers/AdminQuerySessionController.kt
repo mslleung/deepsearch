@@ -6,7 +6,9 @@ import io.deepsearch.application.services.ISearchFlowEventService
 import io.deepsearch.application.services.IUrlAccessService
 import io.deepsearch.domain.models.entities.SearchFlowEvent
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.repositories.IQuerySessionRepository
 import io.deepsearch.presentation.admin.dto.toAdminDetailDto
+import io.deepsearch.presentation.admin.dto.toAdminDto
 import io.deepsearch.presentation.dto.SearchFlowTimelineDto
 import io.deepsearch.presentation.dto.TimelineSummaryDto
 import io.deepsearch.presentation.dto.toDto
@@ -15,11 +17,18 @@ import io.ktor.server.application.*
 import io.ktor.server.response.*
 
 class AdminQuerySessionController(
+    private val querySessionRepository: IQuerySessionRepository,
     private val querySessionService: IQuerySessionService,
     private val urlAccessService: IUrlAccessService,
     private val searchFlowEventService: ISearchFlowEventService,
     private val costCalculationService: ICostCalculationService
 ) {
+
+    suspend fun getQuerySessions(call: ApplicationCall) {
+        val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 100
+        val sessions = querySessionRepository.findAll(limit.coerceIn(1, 500))
+        call.respond(HttpStatusCode.OK, sessions.map { it.toAdminDto(emptyList()) })
+    }
 
     suspend fun getQuerySessionById(call: ApplicationCall) {
         val sessionIdParam = call.parameters["id"]

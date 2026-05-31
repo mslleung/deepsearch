@@ -318,4 +318,22 @@ class ExposedQuerySessionRepository(
             .map { mapRowToQuerySession(it) }
             .toList()
     }
+
+    override suspend fun findAll(limit: Int): List<QuerySession> = transactionService.withTransaction {
+        querySessionTable.selectAll()
+            .orderBy(querySessionTable.createdAtEpochMs to SortOrder.DESC)
+            .limit(limit)
+            .map { mapRowToQuerySession(it) }
+            .toList()
+    }
+
+    override suspend fun findByDateRange(start: Instant, end: Instant): List<QuerySession> = transactionService.withTransaction {
+        querySessionTable.selectAll()
+            .where {
+                (querySessionTable.createdAtEpochMs greaterEq start.toEpochMilliseconds()) and
+                (querySessionTable.createdAtEpochMs less end.toEpochMilliseconds())
+            }
+            .map { mapRowToQuerySession(it) }
+            .toList()
+    }
 }

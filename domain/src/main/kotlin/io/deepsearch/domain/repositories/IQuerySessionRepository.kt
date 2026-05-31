@@ -110,5 +110,20 @@ interface IQuerySessionRepository {
      * @return All sessions in the chain, ordered chronologically
      */
     suspend fun findSessionChain(rootSessionId: QuerySessionId): List<QuerySession>
+
+    /**
+     * Find the most recent query sessions across all users.
+     * Ordered by creation date descending (newest first).
+     *
+     * @param limit Maximum number of sessions to return
+     * @return List of most recent query sessions
+     */
+    suspend fun findAll(limit: Int): List<QuerySession>
+
+    /**
+     * Find all query sessions within a date range across all users.
+     * Used for aggregate admin analytics (no user filter).
+     */
+    suspend fun findByDateRange(start: Instant, end: Instant): List<QuerySession>
 }
 

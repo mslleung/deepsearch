@@ -8,6 +8,11 @@ import org.koin.ktor.plugin.scope
 fun Application.configureAdminQuerySessionRoutes() {
     routing {
         route("/admin/query-sessions") {
+            get {
+                val controller = call.scope.get<AdminQuerySessionController>()
+                controller.getQuerySessions(call)
+            }
+
             get("/{id}") {
                 val controller = call.scope.get<AdminQuerySessionController>()
                 controller.getQuerySessionById(call)

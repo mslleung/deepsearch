@@ -45,7 +45,7 @@ class AdminUsageController(
         // Get usage stats
         val now = Clock.System.now()
         val startDate = now - days.days
-        val sessions = querySessionRepository.findByUserIdAndDateRange(UserId(0), startDate, now) // Get all sessions
+        val sessions = querySessionRepository.findByDateRange(startDate, now)
         
         val dailyUsage = sessions.groupBy { session ->
             // Format as YYYY-MM-DD from epoch millis
