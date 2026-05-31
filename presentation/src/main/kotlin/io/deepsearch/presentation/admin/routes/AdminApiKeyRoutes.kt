@@ -7,6 +7,13 @@ import org.koin.ktor.plugin.scope
 
 fun Application.configureAdminApiKeyRoutes() {
     routing {
+        route("/admin/benchmark-keys") {
+            post {
+                val controller = call.scope.get<AdminApiKeyController>()
+                controller.createBenchmarkKey(call)
+            }
+        }
+
         route("/admin/api-keys") {
             post {
                 val controller = call.scope.get<AdminApiKeyController>()

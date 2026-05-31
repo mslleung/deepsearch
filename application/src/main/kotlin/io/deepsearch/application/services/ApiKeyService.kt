@@ -2,10 +2,12 @@ package io.deepsearch.application.services
 
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.models.entities.ApiKey
+import io.deepsearch.domain.models.entities.User
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
 import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
+import io.deepsearch.domain.repositories.IUserRepository
 import io.deepsearch.domain.services.IApiKeyCryptoService
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -15,6 +17,7 @@ import kotlin.time.ExperimentalTime
 
 interface IApiKeyService {
     suspend fun generateApiKey(userId: UserId, name: String, type: ApiKeyType = ApiKeyType.REGULAR): Pair<ApiKey, String>
+    suspend fun generateBenchmarkKey(name: String): Pair<ApiKey, String>
     suspend fun validateApiKey(rawKey: String): Boolean
     suspend fun incrementApiKeyUsage(rawKey: String)
     suspend fun listUserApiKeys(userId: UserId): List<ApiKey>
@@ -28,7 +31,8 @@ interface IApiKeyService {
 class ApiKeyService(
     private val apiKeyRepository: IApiKeyRepository,
     private val apiKeyConfig: ApiKeyConfig,
-    private val apiKeyCryptoService: IApiKeyCryptoService
+    private val apiKeyCryptoService: IApiKeyCryptoService,
+    private val userRepository: IUserRepository
 ) : IApiKeyService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -72,6 +76,13 @@ class ApiKeyService(
         val savedApiKey = apiKeyRepository.save(apiKey)
         
         return Pair(savedApiKey, rawKey)
+    }
+
+    override suspend fun generateBenchmarkKey(name: String): Pair<ApiKey, String> {
+        val systemUser = userRepository.findByEmail(User.SYSTEM_USER_EMAIL)
+            ?: userRepository.save(User(email = User.SYSTEM_USER_EMAIL))
+
+        return generateApiKey(systemUser.id!!, name, ApiKeyType.BENCHMARK)
     }
 
     override suspend fun validateApiKey(rawKey: String): Boolean {

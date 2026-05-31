@@ -32,4 +32,8 @@ class User(
         this.passwordHash = newPasswordHash
         this.updatedAt = updatedAt
     }
+
+    companion object {
+        val SYSTEM_USER_EMAIL = Email("system@deepsearch.internal")
+    }
 } 

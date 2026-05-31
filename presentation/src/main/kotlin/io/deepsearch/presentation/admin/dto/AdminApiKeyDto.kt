@@ -48,3 +48,8 @@ data class CreateApiKeyRequest(
     val type: String
 )
 
+@Serializable
+data class CreateBenchmarkKeyRequest(
+    val name: String
+)
+
