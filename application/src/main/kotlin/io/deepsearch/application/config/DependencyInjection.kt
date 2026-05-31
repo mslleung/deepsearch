@@ -24,7 +24,7 @@ import org.koin.module.requestScope
 
 import org.koin.core.module.dsl.createdAtStart
 
-val applicationModule = module {
+val sharedApplicationModule = module {
     includes(domainModule)
     includes(infrastructureModule)
 
@@ -32,9 +32,6 @@ val applicationModule = module {
     singleOf(::UrlProcessingLockRegistry) bind IUrlProcessingLockRegistry::class
     singleOf(::SitemapLinkDiscoveryLockRegistry) bind ISitemapLinkDiscoveryLockRegistry::class
     singleOf(::PeriodicIndexJobRegistry) bind IPeriodicIndexJobRegistry::class
-
-    // Stripe services
-    singleOf(::StripePlanSyncService) { createdAtStart() }  bind IStripePlanSyncService::class
 
     // Singleton services needed by PeriodicIndexScheduler/PeriodicIndexJobRegistry
     singleOf(::UrlAccessService) bind IUrlAccessService::class
@@ -103,8 +100,6 @@ val applicationModule = module {
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 
-    singleOf(::PeriodicIndexScheduler) { createdAtStart() }
-
     // ProxySettingsService is stateless and needed by singletons (PeriodicIndexJobRegistry, CrawlAndExtractHandler)
     singleOf(::ProxySettingsService) bind IProxySettingsService::class
 
@@ -132,4 +127,14 @@ val applicationModule = module {
         scopedOf(::QuerySessionService) bind IQuerySessionService::class
         scopedOf(::PaymentService) bind IPaymentService::class
     }
+}
+
+private val mainOnlyModule = module {
+    singleOf(::StripePlanSyncService) { createdAtStart() } bind IStripePlanSyncService::class
+    singleOf(::PeriodicIndexScheduler) { createdAtStart() }
+}
+
+val applicationModule = module {
+    includes(sharedApplicationModule)
+    includes(mainOnlyModule)
 }
