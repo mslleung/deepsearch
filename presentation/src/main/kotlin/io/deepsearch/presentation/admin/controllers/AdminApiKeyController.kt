@@ -8,6 +8,7 @@ import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import io.deepsearch.domain.repositories.IUserRepository
 import io.deepsearch.presentation.admin.dto.CreateApiKeyRequest
+import io.deepsearch.presentation.admin.dto.CreateApiKeyResponse
 import io.deepsearch.presentation.admin.dto.CreateBenchmarkKeyRequest
 import io.deepsearch.presentation.admin.dto.toAdminDto
 import io.ktor.http.*
@@ -42,7 +43,7 @@ class AdminApiKeyController(
             val (apiKey, rawKey) = apiKeyService.generateApiKey(UserId(request.userId), request.name, type)
             call.respond(
                 HttpStatusCode.Created,
-                mapOf("rawKey" to rawKey, "apiKey" to apiKey.toAdminDto())
+                CreateApiKeyResponse(rawKey = rawKey, apiKey = apiKey.toAdminDto())
             )
         } catch (e: IllegalStateException) {
             call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
@@ -56,7 +57,7 @@ class AdminApiKeyController(
             val (apiKey, rawKey) = apiKeyService.generateBenchmarkKey(request.name)
             call.respond(
                 HttpStatusCode.Created,
-                mapOf("rawKey" to rawKey, "apiKey" to apiKey.toAdminDto())
+                CreateApiKeyResponse(rawKey = rawKey, apiKey = apiKey.toAdminDto())
             )
         } catch (e: IllegalStateException) {
             call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))

@@ -49,6 +49,12 @@ data class CreateApiKeyRequest(
 )
 
 @Serializable
+data class CreateApiKeyResponse(
+    val rawKey: String,
+    val apiKey: AdminApiKeyDto
+)
+
+@Serializable
 data class CreateBenchmarkKeyRequest(
     val name: String
 )
