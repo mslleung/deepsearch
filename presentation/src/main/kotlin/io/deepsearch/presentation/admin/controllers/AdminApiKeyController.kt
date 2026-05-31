@@ -3,12 +3,15 @@ package io.deepsearch.presentation.admin.controllers
 import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.IUsageService
 import io.deepsearch.domain.models.valueobjects.ApiKeyId
+import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.models.valueobjects.UserId
 import io.deepsearch.domain.repositories.IApiKeyRepository
 import io.deepsearch.domain.repositories.IUserRepository
+import io.deepsearch.presentation.admin.dto.CreateApiKeyRequest
 import io.deepsearch.presentation.admin.dto.toAdminDto
 import io.ktor.http.*
 import io.ktor.server.application.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 
 class AdminApiKeyController(
@@ -17,6 +20,33 @@ class AdminApiKeyController(
     private val userRepository: IUserRepository,
     private val usageService: IUsageService
 ) {
+
+    suspend fun createApiKey(call: ApplicationCall) {
+        val request = call.receive<CreateApiKeyRequest>()
+
+        val type = try {
+            ApiKeyType.fromString(request.type)
+        } catch (e: IllegalArgumentException) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid API key type: ${request.type}"))
+            return
+        }
+
+        val user = userRepository.findById(UserId(request.userId))
+        if (user == null) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "User not found"))
+            return
+        }
+
+        try {
+            val (apiKey, rawKey) = apiKeyService.generateApiKey(UserId(request.userId), request.name, type)
+            call.respond(
+                HttpStatusCode.Created,
+                mapOf("rawKey" to rawKey, "apiKey" to apiKey.toAdminDto())
+            )
+        } catch (e: IllegalStateException) {
+            call.respond(HttpStatusCode.Conflict, mapOf("error" to e.message))
+        }
+    }
 
     suspend fun getAllApiKeys(call: ApplicationCall) {
         val userId = call.request.queryParameters["userId"]?.toIntOrNull()

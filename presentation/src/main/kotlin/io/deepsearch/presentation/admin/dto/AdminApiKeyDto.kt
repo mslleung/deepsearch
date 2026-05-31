@@ -41,3 +41,10 @@ data class AdminApiKeyWithUsageDto(
     val recentUsage: Map<String, Int> // date to count
 )
 
+@Serializable
+data class CreateApiKeyRequest(
+    val userId: Int,
+    val name: String,
+    val type: String
+)
+

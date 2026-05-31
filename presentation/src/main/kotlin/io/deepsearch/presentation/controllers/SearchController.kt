@@ -4,6 +4,7 @@ import io.deepsearch.application.services.IApiKeyService
 import io.deepsearch.application.services.ISearchService
 import io.deepsearch.application.services.IUserSubscriptionService
 import io.deepsearch.application.services.SearchEvent
+import io.deepsearch.domain.models.valueobjects.ApiKeyType
 import io.deepsearch.domain.repositories.IWebpageImageRepository
 import io.deepsearch.domain.services.IImageStorageService
 import io.deepsearch.presentation.dto.ImageDto
@@ -56,17 +57,19 @@ class SearchController(
 
         val apiKey = apiKeyService.getApiKeyByRawKey(rawApiKey)!!
 
-        // Check usage limit (subscription quota)
-        val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
-        if (!hasUsageRemaining) {
-            call.respond(
-                HttpStatusCode.PaymentRequired,
-                mapOf(
-                    "error" to "Usage limit exceeded",
-                    "message" to "You have reached your plan's search limit. Please upgrade your plan."
+        // Benchmark keys bypass usage limits
+        if (apiKey.type != ApiKeyType.BENCHMARK) {
+            val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
+            if (!hasUsageRemaining) {
+                call.respond(
+                    HttpStatusCode.PaymentRequired,
+                    mapOf(
+                        "error" to "Usage limit exceeded",
+                        "message" to "You have reached your plan's search limit. Please upgrade your plan."
+                    )
                 )
-            )
-            return
+                return
+            }
         }
 
         apiKeyService.incrementApiKeyUsage(rawApiKey)
@@ -122,8 +125,9 @@ class SearchController(
             request.continueSessionId
         )
 
-        // Consume usage after successful search
-        subscriptionPlanService.consumeUsage(apiKey.userId)
+        if (apiKey.type != ApiKeyType.BENCHMARK) {
+            subscriptionPlanService.consumeUsage(apiKey.userId)
+        }
 
         // Fetch images if there are any referenced in the answer
         val images = if (sessionDetail.imageIds.isNotEmpty()) {
@@ -188,23 +192,25 @@ class SearchController(
 
             val apiKey = apiKeyService.getApiKeyByRawKey(rawApiKey)!!
 
-            // Check usage limit
-            val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
-            if (!hasUsageRemaining) {
-                sse.send(
-                    ServerSentEvent(
-                        Json.encodeToString(
-                            SearchEventDto.serializer(),
-                            SearchEventDto.SessionErrorDto(
-                                sessionId = "",
-                                errorType = "UsageLimitExceeded",
-                                errorMessage = "You have reached your plan's search limit. Please upgrade your plan.",
-                                timestampMs = System.currentTimeMillis()
+            // Benchmark keys bypass usage limits
+            if (apiKey.type != ApiKeyType.BENCHMARK) {
+                val hasUsageRemaining = subscriptionPlanService.checkUsageLimit(apiKey.userId)
+                if (!hasUsageRemaining) {
+                    sse.send(
+                        ServerSentEvent(
+                            Json.encodeToString(
+                                SearchEventDto.serializer(),
+                                SearchEventDto.SessionErrorDto(
+                                    sessionId = "",
+                                    errorType = "UsageLimitExceeded",
+                                    errorMessage = "You have reached your plan's search limit. Please upgrade your plan.",
+                                    timestampMs = System.currentTimeMillis()
+                                )
                             )
                         )
                     )
-                )
-                return
+                    return
+                }
             }
 
             // Parse request params
@@ -313,7 +319,9 @@ class SearchController(
             }
 
             apiKeyService.incrementApiKeyUsage(rawApiKey)
-            subscriptionPlanService.consumeUsage(apiKey.userId)
+            if (apiKey.type != ApiKeyType.BENCHMARK) {
+                subscriptionPlanService.consumeUsage(apiKey.userId)
+            }
 
             // Execute streaming search and forward events
             val eventFlow = searchService.executeStreaming(
