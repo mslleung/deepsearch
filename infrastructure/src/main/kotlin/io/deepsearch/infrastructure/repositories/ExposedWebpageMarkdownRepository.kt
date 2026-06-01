@@ -107,7 +107,7 @@ class ExposedWebpageMarkdownRepository(
             it[httpStatus] = webpage.httpStatus
             it[httpReason] = webpage.httpReason
             it[mimeType] = webpage.mimeType
-            it[embedding] = webpage.embedding
+            it[embedding] = webpage.embedding?.toFloatArray()
             it[fileSearchDocumentName] = webpage.fileSearchDocumentName
             it[imageMapping] = imageMappingJson
             it[contentMapJson] = webpage.contentMapJson
@@ -400,7 +400,7 @@ class ExposedWebpageMarkdownRepository(
             httpStatus = row[webpageMarkdownTable.httpStatus],
             httpReason = row[webpageMarkdownTable.httpReason],
             mimeType = row[webpageMarkdownTable.mimeType],
-            embedding = row[webpageMarkdownTable.embedding],
+            embedding = row[webpageMarkdownTable.embedding]?.toList(),
             fileSearchDocumentName = row[webpageMarkdownTable.fileSearchDocumentName],
             imageMapping = imageMapping,
             contentMapJson = row[webpageMarkdownTable.contentMapJson],

@@ -13,7 +13,7 @@ import kotlinx.coroutines.coroutineScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.net.URI
-import java.util.UUID
+import kotlin.uuid.Uuid
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -178,7 +178,7 @@ class KgHybridRetrievalService(
             // Get entity IDs for traversal
             val entityIds = entities.mapNotNull { 
                 try {
-                    UUID.fromString(it.id)
+                    Uuid.parse(it.id)
                 } catch (e: Exception) {
                     null
                 }

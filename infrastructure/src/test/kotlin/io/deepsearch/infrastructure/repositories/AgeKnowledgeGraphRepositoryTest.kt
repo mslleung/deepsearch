@@ -15,9 +15,10 @@ import org.junit.jupiter.api.extension.RegisterExtension
 import io.deepsearch.domain.testing.IsolatedKoinExtension
 import io.deepsearch.domain.testing.IsolatedKoinTest
 import kotlin.getValue
+import kotlin.uuid.Uuid
 import kotlin.time.ExperimentalTime
 
-@OptIn(ExperimentalTime::class)
+@OptIn(ExperimentalTime::class, kotlin.uuid.ExperimentalUuidApi::class)
 class AgeKnowledgeGraphRepositoryTest : IsolatedKoinTest() {
 
     @JvmField
@@ -148,7 +149,7 @@ class AgeKnowledgeGraphRepositoryTest : IsolatedKoinTest() {
         )
 
         assertTrue(searchResults.isNotEmpty(), "Should find starting entity")
-        val startEntityId = java.util.UUID.fromString(searchResults.first().id)
+        val startEntityId = Uuid.parse(searchResults.first().id)
 
         // When: traversing from the entity
         val subgraph = knowledgeGraphRepository.traverseFromEntities(

@@ -3,7 +3,7 @@ package io.deepsearch.domain.repositories
 import io.deepsearch.domain.knowledgegraph.KgEntity
 import io.deepsearch.domain.knowledgegraph.KgExtractionResult
 import io.deepsearch.domain.knowledgegraph.KgSubgraph
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 /**
  * Pre-computed embeddings for entity names.
@@ -105,7 +105,7 @@ interface IKnowledgeGraphRepository {
      * @return Subgraph containing entities and relationships
      */
     suspend fun traverseFromEntities(
-        entityIds: List<UUID>,
+        entityIds: List<Uuid>,
         maxHops: Int = 2
     ): KgSubgraph
     

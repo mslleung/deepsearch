@@ -14,7 +14,7 @@ import io.deepsearch.domain.repositories.IWebpageMarkdownRepository
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.net.URI
-import java.util.UUID
+import kotlin.uuid.Uuid
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -221,7 +221,7 @@ class QuerySessionService(
         previousSessionId: QuerySessionId?,
         rootSessionId: QuerySessionId?
     ): QuerySession {
-        val sessionId = QuerySessionId(UUID.randomUUID().toString())
+        val sessionId = QuerySessionId(Uuid.random().toString())
         val session = QuerySession(sessionId, query, url, apiKeyId, searchMode, searchBudget, previousSessionId, rootSessionId)
         val saved = querySessionRepository.save(session)
         logger.info(

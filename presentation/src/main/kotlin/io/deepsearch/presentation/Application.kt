@@ -51,7 +51,7 @@ import org.slf4j.event.Level
 import java.security.KeyFactory
 import java.security.interfaces.ECPublicKey
 import java.security.spec.X509EncodedKeySpec
-import java.util.UUID
+import kotlin.uuid.Uuid
 import kotlin.io.encoding.Base64
 import kotlin.time.Duration.Companion.seconds
 
@@ -94,7 +94,7 @@ fun Application.module() {
 private fun Application.configureCallId() {
     install(CallId) {
         header(HttpHeaders.XRequestId)
-        generate { UUID.randomUUID().toString() }
+        generate { Uuid.random().toString() }
         verify { it.isNotEmpty() }
     }
 }

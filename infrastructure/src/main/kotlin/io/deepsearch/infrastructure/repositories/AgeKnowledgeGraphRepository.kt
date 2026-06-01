@@ -25,7 +25,7 @@ import org.jetbrains.exposed.v1.r2dbc.upsert
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.net.URI
-import java.util.UUID
+import kotlin.uuid.Uuid
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -36,7 +36,7 @@ import kotlin.time.ExperimentalTime
  * Note: Embeddings must be pre-computed by the caller to ensure proper token tracking.
  * The repository does not generate embeddings itself.
  */
-@OptIn(ExperimentalTime::class)
+@OptIn(ExperimentalTime::class, kotlin.uuid.ExperimentalUuidApi::class)
 class AgeKnowledgeGraphRepository(
     private val entityEmbeddingsTable: KgEntityEmbeddingsTable,
     private val entitySourcesTable: KgEntitySourcesTable,
@@ -95,7 +95,7 @@ class AgeKnowledgeGraphRepository(
             removeProvenanceForUrl(url)
 
             // Step 2: Resolve entities (find existing or create new)
-            val resolvedEntities = mutableMapOf<String, UUID>()
+            val resolvedEntities = mutableMapOf<String, Uuid>()
             for (entity in extraction.entities) {
                 val embedding = embeddings[entity.name]
                 val entityId = resolveEntityWithEmbedding(entity, url, now, embedding, domain)
@@ -153,7 +153,7 @@ class AgeKnowledgeGraphRepository(
                 removeProvenanceForUrl(url)
 
                 // Resolve entities with pre-computed embeddings
-                val resolvedEntities = mutableMapOf<String, UUID>()
+                val resolvedEntities = mutableMapOf<String, Uuid>()
                 for (entity in extraction.entities) {
                     val embedding = embeddings[entity.name]
                     val entityId = resolveEntityWithEmbedding(entity, url, now, embedding, domain)
@@ -250,17 +250,17 @@ class AgeKnowledgeGraphRepository(
         }
     }
 
-    override suspend fun traverseFromEntities(entityIds: List<UUID>, maxHops: Int): KgSubgraph {
+    override suspend fun traverseFromEntities(entityIds: List<Uuid>, maxHops: Int): KgSubgraph {
         if (entityIds.isEmpty()) return KgSubgraph(emptyList(), emptyList(), emptyList())
 
         return transactionService.withTransaction {
-            val entities = mutableMapOf<UUID, KgEntity>()
+            val entities = mutableMapOf<Uuid, KgEntity>()
             val relationships = mutableListOf<KgRelationship>()
 
             // Batch load starting entities using IN clause
             val startingEntities = batchLoadEntitiesByIds(entityIds)
             for (entity in startingEntities) {
-                entities[UUID.fromString(entity.id)] = entity
+                entities[Uuid.parse(entity.id)] = entity
             }
 
             // Traverse N hops using the relationship provenance tables
@@ -281,12 +281,12 @@ class AgeKnowledgeGraphRepository(
                 if (missingEntityIds.isNotEmpty()) {
                     val loadedEntities = batchLoadEntitiesByIds(missingEntityIds)
                     for (entity in loadedEntities) {
-                        entities[UUID.fromString(entity.id)] = entity
+                        entities[Uuid.parse(entity.id)] = entity
                     }
                 }
 
                 // Build relationships and determine next hop
-                val nextHop = mutableSetOf<UUID>()
+                val nextHop = mutableSetOf<Uuid>()
                 for ((fromId, toId, relationType) in allRels) {
                     val fromEntity = entities[fromId]
                     val toEntity = entities[toId]
@@ -502,7 +502,7 @@ class AgeKnowledgeGraphRepository(
         now: Long,
         embedding: List<Float>?,
         domain: String
-    ): UUID {
+    ): Uuid {
         val canonicalName = entity.name.lowercase().trim()
 
         // Only merge on exact canonical name + type match.
@@ -539,8 +539,8 @@ class AgeKnowledgeGraphRepository(
         embedding: List<Float>?,
         now: Long,
         domain: String
-    ): UUID {
-        val entityId = UUID.randomUUID()
+    ): Uuid {
+        val entityId = Uuid.random()
 
         entityEmbeddingsTable.insert {
             it[entityEmbeddingsTable.entityId] = entityId
@@ -548,7 +548,7 @@ class AgeKnowledgeGraphRepository(
             it[type] = entity.type.name
             it[entityEmbeddingsTable.canonicalName] = canonicalName
             if (embedding != null) {
-                it[entityEmbeddingsTable.embedding] = embedding
+                it[entityEmbeddingsTable.embedding] = embedding.toFloatArray()
             }
             it[createdAtEpochMs] = now
             it[updatedAtEpochMs] = now
@@ -571,8 +571,8 @@ class AgeKnowledgeGraphRepository(
     }
 
     private suspend fun indexRelationship(
-        fromId: UUID,
-        toId: UUID,
+        fromId: Uuid,
+        toId: Uuid,
         relationType: RelationType,
         confidence: Float,
         sourceUrl: String,
@@ -639,7 +639,7 @@ class AgeKnowledgeGraphRepository(
         }
     }
 
-    private suspend fun fetchEntityDetails(entityId: UUID, name: String, type: String): KgEntity {
+    private suspend fun fetchEntityDetails(entityId: Uuid, name: String, type: String): KgEntity {
         // Fetch facts from all sources
         val allFacts = entitySourcesTable.selectAll()
             .where { entitySourcesTable.entityId eq entityId }
@@ -678,7 +678,7 @@ class AgeKnowledgeGraphRepository(
      * Batch query relationships from multiple source entity IDs.
      * More efficient than individual queries.
      */
-    private suspend fun batchQueryRelationshipsFrom(fromIds: List<UUID>): List<Triple<UUID, UUID, RelationType>> {
+    private suspend fun batchQueryRelationshipsFrom(fromIds: List<Uuid>): List<Triple<Uuid, Uuid, RelationType>> {
         if (fromIds.isEmpty()) return emptyList()
 
         return relationshipSourcesTable.selectAll()
@@ -700,7 +700,7 @@ class AgeKnowledgeGraphRepository(
     /**
      * Batch load entities by their IDs using a single query with IN clause.
      */
-    private suspend fun batchLoadEntitiesByIds(entityIds: List<UUID>): List<KgEntity> {
+    private suspend fun batchLoadEntitiesByIds(entityIds: List<Uuid>): List<KgEntity> {
         if (entityIds.isEmpty()) return emptyList()
 
         // Get all entity base data in one query
@@ -758,7 +758,7 @@ class AgeKnowledgeGraphRepository(
      * Used by semanticEntitySearch for efficient detail retrieval.
      */
     private suspend fun batchFetchEntityDetails(
-        entities: List<Triple<UUID, String, String>>
+        entities: List<Triple<Uuid, String, String>>
     ): List<KgEntity> {
         if (entities.isEmpty()) return emptyList()
 

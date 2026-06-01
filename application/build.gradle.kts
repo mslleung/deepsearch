@@ -5,6 +5,12 @@ plugins {
     alias(libs.plugins.kotlin.plugin.serialization)
 }
 
+kotlin {
+    compilerOptions {
+        optIn.add("kotlin.uuid.ExperimentalUuidApi")
+    }
+}
+
 group = "io.deepsearch"
 
 repositories {

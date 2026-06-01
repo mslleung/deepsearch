@@ -18,6 +18,7 @@ import io.deepsearch.domain.testing.IsolatedKoinTest
 import io.deepsearch.domain.testing.IsolatedKoinExtension
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.uuid.Uuid
 
 class GoogleSearchOrchestratorTest : IsolatedKoinTest() {
     private lateinit var apiKeyId: ApiKeyId
@@ -37,7 +38,7 @@ class GoogleSearchOrchestratorTest : IsolatedKoinTest() {
     @org.junit.jupiter.api.BeforeEach
     fun setup() {
         kotlinx.coroutines.runBlocking {
-            val email = io.deepsearch.domain.models.valueobjects.Email("test-${java.util.UUID.randomUUID()}@example.com")
+            val email = io.deepsearch.domain.models.valueobjects.Email("test-${Uuid.random()}@example.com")
             val user = io.deepsearch.domain.models.entities.User(
                 email = email
             )
@@ -45,7 +46,7 @@ class GoogleSearchOrchestratorTest : IsolatedKoinTest() {
             
             val apiKey = io.deepsearch.domain.models.entities.ApiKey(
                 userId = savedUser.id!!,
-                keyHash = "hash-${java.util.UUID.randomUUID()}",
+                keyHash = "hash-${Uuid.random()}",
                 keyPrefix = "prefix",
                 name = "Test Key"
             )

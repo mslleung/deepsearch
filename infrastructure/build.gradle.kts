@@ -2,13 +2,19 @@ import java.sql.DriverManager
 
 buildscript {
     dependencies {
-        classpath("org.postgresql:postgresql:42.7.8")
+        classpath("org.postgresql:postgresql:42.7.11")
     }
 }
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.plugin.serialization)
+}
+
+kotlin {
+    compilerOptions {
+        optIn.add("kotlin.uuid.ExperimentalUuidApi")
+    }
 }
 
 group = "io.deepsearch"

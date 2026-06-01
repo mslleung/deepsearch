@@ -7,7 +7,7 @@ import io.deepsearch.domain.repositories.IExternalApiUsageRepository
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 /**
  * Interface for tracking external API usage for cost calculation.
@@ -75,7 +75,7 @@ class ExternalApiUsageService(
         withContext(NonCancellable) {
             try {
                 val usage = ExternalApiUsage.serperSearch(
-                    id = UUID.randomUUID().toString(),
+                    id = Uuid.random().toString(),
                     sessionId = sessionId,
                     query = query,
                     costUsd = costUsd

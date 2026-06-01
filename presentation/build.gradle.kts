@@ -6,6 +6,12 @@ plugins {
     alias(libs.plugins.shadow)
 }
 
+kotlin {
+    compilerOptions {
+        optIn.add("kotlin.uuid.ExperimentalUuidApi")
+    }
+}
+
 group = "io.deepsearch"
 version = "1.0.0"
 

@@ -28,7 +28,7 @@ class UrlContextTool : BaseTool("url_context", "url_context") {
                 .orElse(GenerateContentConfig.builder())
 
         val existingTools = configBuilder.build().tools().orElse(ImmutableList.of())
-        val updatedToolsBuilder = ImmutableList.builder<Tool?>()
+        val updatedToolsBuilder = ImmutableList.builder<Tool>()
         updatedToolsBuilder.addAll(existingTools)
 
         val model = llmRequestBuilder.build().model().get()

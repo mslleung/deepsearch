@@ -1,7 +1,6 @@
 package io.deepsearch.infrastructure.database
 
 import io.deepsearch.infrastructure.database.types.tsvector
-import io.deepsearch.infrastructure.database.types.vector
 import io.deepsearch.infrastructure.services.IDatabaseCryptoService
 import org.jetbrains.exposed.v1.core.Table
 

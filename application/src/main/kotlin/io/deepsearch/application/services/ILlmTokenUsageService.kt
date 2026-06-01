@@ -7,7 +7,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.util.UUID
+import kotlin.uuid.Uuid
 import kotlin.time.ExperimentalTime
 
 /**
@@ -68,7 +68,7 @@ class LlmTokenUsageService(
         withContext(NonCancellable) {
             try {
                 val usage = LlmTokenUsage(
-                    id = UUID.randomUUID().toString(),
+                    id = Uuid.random().toString(),
                     sessionId = sessionId,
                     agentName = agentName,
                     modelName = modelName,
