@@ -1,6 +1,7 @@
 package io.deepsearch.domain.config
 
 import com.google.genai.Client
+import com.google.genai.types.HttpOptions
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googlegenaiimpl.*
 import io.deepsearch.domain.browser.IBrowserPool
@@ -69,10 +70,24 @@ private val domainCommonTestModule = module {
         )
     }
     single {
-        val apiKey = System.getenv("GOOGLE_API_KEY")?.ifBlank { "test-gemini-api-key" } ?: "test-gemini-api-key"
-        Client.builder()
-            .apiKey(apiKey)
-            .build()
+        val useVertexAi = System.getenv("GOOGLE_GENAI_USE_VERTEXAI")?.equals("TRUE", ignoreCase = true) == true
+        val httpOptions = HttpOptions.builder().timeout(120_000).build()
+        if (useVertexAi) {
+            val project = System.getenv("GOOGLE_CLOUD_PROJECT") ?: error("GOOGLE_CLOUD_PROJECT required when GOOGLE_GENAI_USE_VERTEXAI=TRUE")
+            val location = System.getenv("GOOGLE_CLOUD_LOCATION") ?: "us-central1"
+            Client.builder()
+                .project(project)
+                .location(location)
+                .vertexAI(true)
+                .httpOptions(httpOptions)
+                .build()
+        } else {
+            val apiKey = System.getenv("GOOGLE_API_KEY")?.ifBlank { "test-gemini-api-key" } ?: "test-gemini-api-key"
+            Client.builder()
+                .apiKey(apiKey)
+                .httpOptions(httpOptions)
+                .build()
+        }
     }
     single {
         EnvironmentConfig(
@@ -130,6 +145,9 @@ private val domainCommonTestModule = module {
     singleOf(::LinearizedContentConversionAgentGenAiImpl) bind ILinearizedContentConversionAgent::class
     singleOf(::FullPageNavigationAgentGenAiImpl) bind IFullPageNavigationAgent::class
     singleOf(::ContentExtractionAgentGenAiImpl) bind IContentExtractionAgent::class
+    singleOf(::VisualContentExtractionAgentGenAiImpl) bind IVisualContentExtractionAgent::class
+    singleOf(::VisualSegmentationAgentGenAiImpl) bind IVisualSegmentationAgent::class
+    singleOf(::RegionDescriptionAgentGenAiImpl) bind IRegionDescriptionAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class

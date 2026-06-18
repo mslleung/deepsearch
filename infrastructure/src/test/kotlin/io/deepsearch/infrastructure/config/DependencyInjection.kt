@@ -2,16 +2,19 @@ package io.deepsearch.infrastructure.config
 
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
 import io.deepsearch.domain.config.EnvironmentConfig
+import io.deepsearch.domain.config.GcsConfig
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.config.PostgresConfig
 import io.deepsearch.domain.proxy.IProxyRuleRepository
 import io.deepsearch.domain.repositories.*
 import io.deepsearch.domain.services.IBatchSnapshotStorageService
 import io.deepsearch.domain.services.IImageStorageService
+import io.deepsearch.domain.services.IIterationScreenshotStorage
 import io.deepsearch.domain.services.ITemporaryFileStorageService
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
 import io.deepsearch.infrastructure.services.*
+import io.deepsearch.infrastructure.storage.GcsIterationScreenshotStorage
 import io.deepsearch.infrastructure.storage.InMemoryBatchSnapshotStorageService
 import io.deepsearch.infrastructure.storage.InMemoryImageStorageService
 import io.deepsearch.infrastructure.storage.InMemoryTemporaryFileStorageService
@@ -38,6 +41,12 @@ private val infrastructureCommonTestModule = module {
             database = System.getenv("DB_NAME"),
             username = System.getenv("DB_USERNAME"),
             password = System.getenv("DB_PASSWORD")
+        )
+    }
+    single {
+        GcsConfig(
+            tempBucketName = System.getenv("GCS_TEMP_BUCKET_NAME") ?: "deepsearch-temp-test",
+            imageBucketName = System.getenv("GCS_IMAGE_BUCKET_NAME") ?: "deepsearch-images-test"
         )
     }
     
@@ -96,6 +105,10 @@ private val infrastructureCommonTestModule = module {
     // Visual identification cache tables
     singleOf(::HiddenContainerTableCacheTable)
     singleOf(::VisionDetectionCacheTable)
+    
+    // Agentic navigation iteration tables
+    singleOf(::AgenticNavIterationTable)
+    singleOf(::AgenticNavScreenshotTable)
 
     // Repositories as singletons in tests (no request scope needed for testing)
     singleOf(::ExposedUserRepository) bind IUserRepository::class
@@ -141,6 +154,9 @@ private val infrastructureCommonTestModule = module {
     singleOf(::ExposedHiddenContainerTableCacheRepository) bind IHiddenContainerTableCacheRepository::class
     singleOf(::ExposedVisionDetectionCacheRepository) bind IVisionDetectionCacheRepository::class
     
+    // Agentic navigation iteration repository
+    singleOf(::ExposedAgenticNavIterationRepository) bind IAgenticNavIterationRepository::class
+    
     // In-memory temporary file storage for testing (replaces GCS in production)
     singleOf(::InMemoryTemporaryFileStorageService) bind ITemporaryFileStorageService::class
     
@@ -149,6 +165,9 @@ private val infrastructureCommonTestModule = module {
     
     // In-memory batch snapshot storage for testing (replaces GCS in production)
     singleOf(::InMemoryBatchSnapshotStorageService) bind IBatchSnapshotStorageService::class
+    
+    // GCS for agentic navigation iteration screenshots (same as production)
+    singleOf(::GcsIterationScreenshotStorage) bind IIterationScreenshotStorage::class
 }
 
 val infrastructureTestModule = module {

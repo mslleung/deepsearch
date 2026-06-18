@@ -96,6 +96,11 @@ data class ExtractedContent(
     val isTable: Boolean = false
 )
 
+enum class NavigationMode {
+    FULL_PAGE,
+    VIEWPORT
+}
+
 data class FullPageNavigationInput(
     val fullPageScreenshot: IBrowserPage.Screenshot,
     val query: String,
@@ -106,7 +111,7 @@ data class FullPageNavigationInput(
     val currentIteration: Int = 1,
     val maxIterations: Int = 12,
     val pageState: List<String> = emptyList(),
-    val isOverlayMode: Boolean = false,
+    val navigationMode: NavigationMode = NavigationMode.FULL_PAGE,
     val scrollStateHint: String? = null,
     val extractedRegionContent: List<ExtractedContent> = emptyList(),
     val contentObservation: String? = null
@@ -117,7 +122,6 @@ data class FullPageNavigationOutput(
     val questions: List<TrackedQuestion>,
     val pageState: List<String>,
     val observation: String?,
-    val captureRegions: List<CaptureRegion>,
     val decision: String,
     val relevantInfoFound: Boolean? = null,
     val tokenUsage: TokenUsageMetrics

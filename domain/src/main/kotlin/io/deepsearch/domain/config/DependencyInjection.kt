@@ -126,6 +126,9 @@ val domainModule = module {
     singleOf(::LinearizedContentConversionAgentGenAiImpl) bind ILinearizedContentConversionAgent::class
     singleOf(::FullPageNavigationAgentGenAiImpl) bind IFullPageNavigationAgent::class
     singleOf(::ContentExtractionAgentGenAiImpl) bind IContentExtractionAgent::class
+    singleOf(::VisualContentExtractionAgentGenAiImpl) bind IVisualContentExtractionAgent::class
+    singleOf(::VisualSegmentationAgentGenAiImpl) bind IVisualSegmentationAgent::class
+    singleOf(::RegionDescriptionAgentGenAiImpl) bind IRegionDescriptionAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
 
     // Markdown formatting agent (singleton for MarkdownFormattingService)

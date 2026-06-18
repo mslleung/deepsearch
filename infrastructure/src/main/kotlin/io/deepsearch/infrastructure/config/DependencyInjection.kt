@@ -6,6 +6,7 @@ import io.deepsearch.domain.repositories.*
 import io.deepsearch.domain.repositories.IWebpageImageLinkageRepository
 import io.deepsearch.domain.services.IBatchSnapshotStorageService
 import io.deepsearch.domain.services.IImageStorageService
+import io.deepsearch.domain.services.IIterationScreenshotStorage
 import io.deepsearch.domain.services.ITemporaryFileStorageService
 import io.deepsearch.infrastructure.database.*
 import io.deepsearch.infrastructure.repositories.*
@@ -17,6 +18,7 @@ import io.deepsearch.infrastructure.services.ITransactionService
 import io.deepsearch.infrastructure.services.TransactionService
 import io.deepsearch.infrastructure.storage.GcsBatchSnapshotStorageService
 import io.deepsearch.infrastructure.storage.GcsImageStorageService
+import io.deepsearch.infrastructure.storage.GcsIterationScreenshotStorage
 import io.deepsearch.infrastructure.storage.GcsTemporaryFileStorageService
 import org.koin.core.module.dsl.scopedOf
 import org.koin.core.module.dsl.singleOf
@@ -44,6 +46,10 @@ val infrastructureModule = module {
     // Stores intermediate batch processing data (HTML, screenshots, icons, images)
     // Uses temp bucket with lifecycle policy for automatic cleanup
     singleOf(::GcsBatchSnapshotStorageService) bind IBatchSnapshotStorageService::class
+    
+    // Google Cloud Storage for agentic navigation iteration screenshots
+    // Stores raw, annotated, and region-crop screenshots per iteration for debugging
+    singleOf(::GcsIterationScreenshotStorage) bind IIterationScreenshotStorage::class
     
     // DatabaseTables container (lazily resolves all tables via Koin instance, not GlobalContext)
     single { DatabaseTables(getKoin()) }
@@ -94,6 +100,10 @@ val infrastructureModule = module {
     singleOf(::HiddenContainerTableCacheTable)
     singleOf(::VisionDetectionCacheTable)
     
+    // Agentic navigation iteration tables (for debugging session replay)
+    singleOf(::AgenticNavIterationTable)
+    singleOf(::AgenticNavScreenshotTable)
+    
     // Singleton repositories (stateless, used by singleton services)
     singleOf(::ExposedWebpageIconRepository) bind IWebpageIconRepository::class
     singleOf(::ExposedWebpageImageRepository) bind IWebpageImageRepository::class
@@ -133,6 +143,9 @@ val infrastructureModule = module {
     // Visual identification cache repositories
     singleOf(::ExposedHiddenContainerTableCacheRepository) bind IHiddenContainerTableCacheRepository::class
     singleOf(::ExposedVisionDetectionCacheRepository) bind IVisionDetectionCacheRepository::class
+    
+    // Agentic navigation iteration repository (for debugging session replay)
+    singleOf(::ExposedAgenticNavIterationRepository) bind IAgenticNavIterationRepository::class
 
     // Request-scoped repositories (user/auth related)
     requestScope {

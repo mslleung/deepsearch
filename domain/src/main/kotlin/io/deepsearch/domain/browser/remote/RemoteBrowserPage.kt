@@ -1,5 +1,6 @@
 package io.deepsearch.domain.browser.remote
 
+import io.deepsearch.domain.agents.NavigationMode
 import io.deepsearch.domain.browser.ElementOperationException
 import io.deepsearch.domain.browser.IBrowserPage
 import io.deepsearch.domain.browser.PageOperationException
@@ -550,17 +551,18 @@ class RemoteBrowserPage(
      * scrollable containers, screenshot, title, description, interactive elements, DOM snapshot.
      */
     override suspend fun fetchAgenticIterationData(
-        isOverlayMode: Boolean,
+        navigationMode: NavigationMode,
         cachedScreenshot: IBrowserPage.Screenshot?
     ): IBrowserPage.AgenticIterationFetchData {
+        val isViewport = navigationMode == NavigationMode.VIEWPORT
         val commands = buildList {
             add(PageCommand.AnnotateScrollableContainers)
             if (cachedScreenshot == null) {
-                add(if (isOverlayMode) PageCommand.TakeScreenshot else PageCommand.TakeFullPageScreenshot)
+                add(if (isViewport) PageCommand.TakeScreenshot else PageCommand.TakeFullPageScreenshot)
             }
             add(PageCommand.GetTitle)
             add(PageCommand.GetDescription)
-            add(PageCommand.GetInteractiveElements(fullPage = !isOverlayMode))
+            add(PageCommand.GetInteractiveElements(fullPage = !isViewport))
             add(PageCommand.CaptureDomSnapshot)
         }
         val raws = runCommandsOrBatch(commands)

@@ -596,7 +596,7 @@ object RealWorldBenchmarks {
         )
     )
 
-    // ==================== Stripe Pricing (verified April 2026) ====================
+    // ==================== Stripe Pricing (verified June 2026, pinned to /us/ locale) ====================
 
     fun stripe(): List<BenchmarkCase> = listOf(
         stripeDomesticCardRate(),
@@ -622,14 +622,14 @@ object RealWorldBenchmarks {
     // ---- Easy: visible after scrolling ----
 
     /**
-     * The headline pricing is at the very top of the page: "2.9% + 30¢ per
-     * successful transaction for domestic cards".
+     * The headline pricing is at the very top of the page: "2.9% + 30¢ per successful
+     * transaction for domestic cards". URL uses /us/ to pin US pricing regardless of VPN geo-IP.
      * Ideal: read directly -> answer.
      */
     private fun stripeDomesticCardRate() = BenchmarkCase(
         id = "stripe-domestic-card-rate",
         description = "Stripe standard domestic card processing rate (headline pricing)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What is Stripe's standard processing fee for domestic card transactions?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("2.9%", "30")),
         idealActionSequence = listOf(
@@ -649,7 +649,7 @@ object RealWorldBenchmarks {
     private fun stripeInternationalSurcharge() = BenchmarkCase(
         id = "stripe-international-surcharge",
         description = "Stripe international card surcharge (near top)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What additional fee does Stripe charge for international card transactions?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("1.5%")),
         idealActionSequence = listOf(
@@ -669,7 +669,7 @@ object RealWorldBenchmarks {
     private fun stripeAchDebitRate() = BenchmarkCase(
         id = "stripe-ach-debit-rate",
         description = "Stripe ACH Direct Debit rate and cap (Payments section)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What is Stripe's fee for ACH Direct Debit transactions and what is the maximum fee?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("0.8%", "5.00")),
         idealActionSequence = listOf(
@@ -689,7 +689,7 @@ object RealWorldBenchmarks {
     private fun stripeTerminalDomesticRate() = BenchmarkCase(
         id = "stripe-terminal-domestic-rate",
         description = "Stripe Terminal in-person domestic card rate (mid-page)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What is Stripe Terminal's processing fee for in-person domestic card transactions?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("2.7%", "5")),
         idealActionSequence = listOf(
@@ -711,7 +711,7 @@ object RealWorldBenchmarks {
     private fun stripeBillingUsageRate() = BenchmarkCase(
         id = "stripe-billing-usage-rate",
         description = "Stripe Billing usage-based rate (expandable section)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What is Stripe's usage-based Billing fee as a percentage of volume?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("0.7%")),
         idealActionSequence = listOf(
@@ -733,7 +733,7 @@ object RealWorldBenchmarks {
     private fun stripeTaxApiPrice() = BenchmarkCase(
         id = "stripe-tax-api-price",
         description = "Stripe Tax API per-transaction price (expandable Tax section)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What does Stripe Tax charge per transaction for API integrations?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("0.50")),
         idealActionSequence = listOf(
@@ -755,7 +755,7 @@ object RealWorldBenchmarks {
     private fun stripeAtlasFee() = BenchmarkCase(
         id = "stripe-atlas-fee",
         description = "Stripe Atlas incorporation one-time fee (deep scroll)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What is the one-time setup fee for Stripe Atlas incorporation?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("500")),
         idealActionSequence = listOf(
@@ -779,7 +779,7 @@ object RealWorldBenchmarks {
     private fun stripeRadarFraudTeamsCustom() = BenchmarkCase(
         id = "stripe-radar-fraud-custom",
         description = "Stripe Radar for Fraud Teams custom pricing per transaction (More features)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What does Stripe Radar for Fraud Teams charge per screened transaction for accounts with custom pricing?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("0.07")),
         idealActionSequence = listOf(
@@ -801,7 +801,7 @@ object RealWorldBenchmarks {
     private fun stripeIssuingVirtualCard() = BenchmarkCase(
         id = "stripe-issuing-virtual-card",
         description = "Stripe Issuing virtual card price (deep Money Management section)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "How much does Stripe charge per virtual card issued?",
         expectedOutcome = ExpectedOutcome.AnswerContains(listOf("0.10")),
         idealActionSequence = listOf(
@@ -823,7 +823,7 @@ object RealWorldBenchmarks {
     private fun stripeFreePlan() = BenchmarkCase(
         id = "stripe-free-plan",
         description = "Stripe free plan/tier (does not exist)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What is included in Stripe's free plan and how many free transactions per month does it offer?",
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
@@ -843,7 +843,7 @@ object RealWorldBenchmarks {
     private fun stripePhoneSupport() = BenchmarkCase(
         id = "stripe-phone-support",
         description = "Stripe phone support for standard users (not available)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What is the phone number for Stripe standard-pricing customer support?",
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
@@ -862,7 +862,7 @@ object RealWorldBenchmarks {
     private fun stripeEscrowService() = BenchmarkCase(
         id = "stripe-escrow-service",
         description = "Stripe escrow/held-funds service (does not exist)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "What is the fee for Stripe's escrow service that holds funds between buyer and seller?",
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
@@ -882,7 +882,7 @@ object RealWorldBenchmarks {
     private fun stripeChargebackInsurance() = BenchmarkCase(
         id = "stripe-chargeback-insurance",
         description = "Stripe chargeback insurance/guarantee (does not exist)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "How much does Stripe's chargeback insurance cost to guarantee against all dispute losses?",
         expectedOutcome = ExpectedOutcome.ShouldGiveUp,
         idealActionSequence = listOf(
@@ -903,7 +903,7 @@ object RealWorldBenchmarks {
     private fun stripeFaqSetupFees() = BenchmarkCase(
         id = "stripe-faq-setup-fees",
         description = "Stripe FAQ: setup/monthly/closure fees (accordion)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "According to Stripe's FAQ, does Stripe charge setup fees, monthly fees, or closure fees?",
         expectedOutcome = ExpectedOutcome.AnswerContains(
             listOf("does not charge setup fees", "monthly fees"), caseSensitive = false
@@ -927,7 +927,7 @@ object RealWorldBenchmarks {
     private fun stripeFaqRefundStandard() = BenchmarkCase(
         id = "stripe-faq-refund-standard",
         description = "Stripe FAQ: refund fees for standard pricing (multi-bullet accordion)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "According to Stripe's FAQ, are there fees for refunds on standard pricing for non-bank-transfer payments?",
         expectedOutcome = ExpectedOutcome.AnswerContains(
             listOf("refund"), caseSensitive = false
@@ -951,7 +951,7 @@ object RealWorldBenchmarks {
     private fun stripeMoreFeaturesExpand() = BenchmarkCase(
         id = "stripe-more-features-expand",
         description = "Stripe hidden Payments rows behind 'More features' expand",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "Is 3D Secure authentication available on Stripe's standard pricing page under Payments?",
         expectedOutcome = ExpectedOutcome.AnswerContains(
             listOf("3D Secure"), caseSensitive = false
@@ -974,7 +974,7 @@ object RealWorldBenchmarks {
     private fun stripeFaqDiscounts() = BenchmarkCase(
         id = "stripe-faq-discounts",
         description = "Stripe FAQ: volume discounts (accordion)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
         query = "According to Stripe's FAQ, does Stripe offer discounts for large processing volumes?",
         expectedOutcome = ExpectedOutcome.AnswerContains(
             listOf("custom pricing", "large"), caseSensitive = false
@@ -990,17 +990,19 @@ object RealWorldBenchmarks {
     )
 
     /**
-     * The Custom pricing section deep in the page cites a Forrester TEI study
-     * claiming 326% ROI. Must scroll well past the Standard pricing document
-     * and not confuse with other stats (100+, 350+) on the same page.
-     * Ideal: find_on_page("326") -> scroll_to_text -> answer.
+     * The Custom pricing section cites a Forrester TEI study claiming "more than
+     * 3x return on investment". The DOM text contains "3x" — the exact "326%"
+     * figure may only appear in an infographic image, not in DOM text.
+     * Ideal: scroll to Custom section -> answer.
      */
     private fun stripeCustomRoi() = BenchmarkCase(
         id = "stripe-custom-roi",
         description = "Stripe Custom pricing section Forrester ROI stat (deep scroll)",
-        pageSource = PageSource.Url("https://stripe.com/pricing"),
-        query = "What ROI percentage does Stripe cite from Forrester on the custom pricing section?",
-        expectedOutcome = ExpectedOutcome.AnswerContains(listOf("326")),
+        pageSource = PageSource.Url("https://stripe.com/us/pricing"),
+        query = "What ROI does Stripe cite from the Forrester study on the custom pricing section?",
+        expectedOutcome = ExpectedOutcome.AnswerContains(
+            listOf("3x", "return on investment"), caseSensitive = false
+        ),
         idealActionSequence = listOf(
             NavigationAction.ExplorationFinished::class
         ),

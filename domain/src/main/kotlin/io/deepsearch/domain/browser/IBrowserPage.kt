@@ -1,5 +1,6 @@
 package io.deepsearch.domain.browser
 
+import io.deepsearch.domain.agents.NavigationMode
 import io.deepsearch.domain.constants.ImageMimeType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -833,26 +834,27 @@ interface IBrowserPage {
      * (e.g. [remote.RemoteBrowserPage]) may override to use a batch HTTP
      * endpoint for lower overhead.
      *
-     * @param isOverlayMode true when a fixed overlay is detected (viewport screenshot + viewport elements)
+     * @param navigationMode FULL_PAGE for full-page screenshot + all-page elements; VIEWPORT for viewport-only
      * @param cachedScreenshot reuse a screenshot from a previous iteration whose page state is unchanged
      */
     suspend fun fetchAgenticIterationData(
-        isOverlayMode: Boolean,
+        navigationMode: NavigationMode,
         cachedScreenshot: Screenshot? = null
     ): AgenticIterationFetchData {
+        val isViewport = navigationMode == NavigationMode.VIEWPORT
         return coroutineScope {
             val containersDeferred = async {
                 try { annotateScrollableContainers() } catch (_: Exception) { emptyList() }
             }
             val screenshotDeferred = async {
                 cachedScreenshot
-                    ?: if (isOverlayMode) takeScreenshot() else takeFullPageScreenshot()
+                    ?: if (isViewport) takeScreenshot() else takeFullPageScreenshot()
             }
             val titleDeferred = async { getTitle() }
             val descDeferred = async { getDescription() }
             val elementsDeferred = async {
                 try {
-                    getInteractiveElements(fullPage = !isOverlayMode)
+                    getInteractiveElements(fullPage = !isViewport)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {

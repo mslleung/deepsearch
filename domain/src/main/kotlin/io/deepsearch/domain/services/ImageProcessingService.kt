@@ -208,6 +208,21 @@ class ImageProcessingService : IImageProcessingService {
         val textOrigin = Point()
         val baselinePtr = IntPointer(1L).put(0)
 
+        data class IntRect(val x: Int, val y: Int, val w: Int, val h: Int)
+
+        fun overlaps(a: IntRect, b: IntRect): Boolean =
+            a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+
+        val occupiedRects = mutableListOf<IntRect>()
+
+        for (element in elements) {
+            val boxX = element.left.toInt().coerceIn(0, imgW - 1)
+            val boxY = element.top.toInt().coerceIn(0, imgH - 1)
+            val boxR = element.right.toInt().coerceIn((boxX + 4).coerceAtMost(imgW), imgW)
+            val boxB = element.bottom.toInt().coerceIn((boxY + 4).coerceAtMost(imgH), imgH)
+            occupiedRects.add(IntRect(boxX, boxY, boxR - boxX, boxB - boxY))
+        }
+
         for (element in elements) {
             val labelNumber = element.index
             elementIndex[labelNumber] = AnnotatedElement(
@@ -241,8 +256,30 @@ class ImageProcessingService : IImageProcessingService {
 
             val badgeW = textW + LABEL_PAD_X * 2
             val badgeH = textH + LABEL_PAD_Y * 2
-            val badgeX = boxX.coerceIn(0, (imgW - badgeW).coerceAtLeast(0))
-            val badgeY = (boxY - badgeH - 1).coerceIn(0, (imgH - badgeH).coerceAtLeast(0))
+
+            val candidates = listOf(
+                boxX to (boxY - badgeH - 1),                   // above-left
+                (boxR - badgeW) to (boxY - badgeH - 1),        // above-right
+                boxX to (boxB + 1),                             // below-left
+                (boxR - badgeW) to (boxB + 1),                  // below-right
+                (boxX + 1) to (boxY + 1)                        // inside top-left (last resort)
+            )
+
+            var badgeX = boxX.coerceIn(0, (imgW - badgeW).coerceAtLeast(0))
+            var badgeY = (boxY - badgeH - 1).coerceIn(0, (imgH - badgeH).coerceAtLeast(0))
+
+            for ((cx, cy) in candidates) {
+                val clampedX = cx.coerceIn(0, (imgW - badgeW).coerceAtLeast(0))
+                val clampedY = cy.coerceIn(0, (imgH - badgeH).coerceAtLeast(0))
+                val candidate = IntRect(clampedX, clampedY, badgeW, badgeH)
+                if (occupiedRects.none { overlaps(candidate, it) }) {
+                    badgeX = clampedX
+                    badgeY = clampedY
+                    break
+                }
+            }
+
+            occupiedRects.add(IntRect(badgeX, badgeY, badgeW, badgeH))
 
             p1.x(badgeX - 1).y(badgeY - 1)
             p2.x(badgeX + badgeW + 1).y(badgeY + badgeH + 1)

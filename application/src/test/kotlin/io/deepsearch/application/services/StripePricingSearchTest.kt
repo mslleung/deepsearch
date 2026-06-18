@@ -19,9 +19,12 @@ import io.deepsearch.domain.testing.IsolatedKoinTest
 import org.koin.java.KoinJavaComponent.inject
 
 /**
- * Integration tests against https://stripe.com/pricing to validate the VLM
- * agent's ability to navigate a long, section-rich pricing page with expandable
- * "More features" sections, FAQ accordions, and multiple product categories.
+ * Integration tests against Stripe pricing to validate the VLM agent's ability
+ * to navigate a long, section-rich pricing page with expandable "More features"
+ * sections, FAQ accordions, and multiple product categories.
+ *
+ * Uses /us/ locale to pin US pricing regardless of VPN geo-IP location.
+ * Using /en-us/ only pins the language, not the pricing region.
  *
  * Tests cover:
  * - Reading headline pricing near the top (domestic card rate, international surcharge)
@@ -40,7 +43,7 @@ class StripePricingSearchTest : IsolatedKoinTest() {
     private val applicationScope by inject<IApplicationCoroutineScope>()
 
     companion object {
-        private const val PRICING_URL = "https://stripe.com/pricing"
+        private const val PRICING_URL = "https://stripe.com/us/pricing"
     }
 
     @BeforeAll

@@ -8,13 +8,10 @@ import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
 
 import io.deepsearch.domain.agents.ActionWithOutcome
-import io.deepsearch.domain.agents.BoundingBox
-import io.deepsearch.domain.agents.CaptureRegion
 import io.deepsearch.domain.agents.IFullPageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
+import io.deepsearch.domain.agents.NavigationMode
 import io.deepsearch.domain.agents.ScrollDirection
-import io.deepsearch.domain.agents.TableRegionRole
-import io.deepsearch.domain.agents.TableSubRegion
 import io.deepsearch.domain.agents.TrackedQuestion
 import io.deepsearch.domain.agents.FullPageNavigationInput
 import io.deepsearch.domain.agents.FullPageNavigationOutput
@@ -35,23 +32,6 @@ class FullPageNavigationAgentGenAiImpl(
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
     // ── Shared sub-schemas ──────────────────────────────────────────────
-
-    private val captureRegionSchema: Schema = Schema.builder()
-        .type("OBJECT")
-        .properties(
-            mapOf(
-                "x1" to Schema.builder().type("INTEGER").description("Left edge (0-1000).").build(),
-                "y1" to Schema.builder().type("INTEGER").description("Top edge (0-1000).").build(),
-                "x2" to Schema.builder().type("INTEGER").description("Right edge (0-1000).").build(),
-                "y2" to Schema.builder().type("INTEGER").description("Bottom edge (0-1000).").build(),
-                "relevance" to Schema.builder().type("STRING").description("Why this visual region is relevant to the query.").build(),
-                "containsTable" to Schema.builder().type("BOOLEAN")
-                    .description("True if this region contains tabular data (comparison grid, pricing table, feature matrix, data table, or an image of a table). False for plain text, paragraphs, or single values.")
-                    .build()
-            )
-        )
-        .required(listOf("x1", "y1", "x2", "y2", "relevance", "containsTable"))
-        .build()
 
     private val actionSchema: Schema = Schema.builder()
         .type("OBJECT")
@@ -153,12 +133,6 @@ class FullPageNavigationAgentGenAiImpl(
                     .items(questionStateSchema)
                     .description("The COMPLETE updated state of ALL questions. On the first turn, decompose the QUERY into sub-questions. On later turns, carry forward ALL previous questions. Mark questions resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE.")
                     .build(),
-                "captureRegions" to Schema.builder()
-                    .type("ARRAY")
-                    .items(captureRegionSchema)
-                    .description("Bounding boxes of regions containing data relevant to the query. Provide one region per distinct content block (a price, a heading, a paragraph, a table). Multiple regions are expected when more than one area is relevant. Size each region to cover ONE complete content block (a full paragraph, a full heading, a full table). For a multi-line paragraph, the region must span from the first line to the last line — not just one line. Use 0-1000 coordinates.")
-                    .nullable(true)
-                    .build(),
                 "decision" to Schema.builder()
                     .type("STRING")
                     .enum_(listOf("continue_exploring", "exploration_finished"))
@@ -177,7 +151,7 @@ class FullPageNavigationAgentGenAiImpl(
             )
         )
         .required(listOf("pageState", "observation", "questionsState", "decision", "relevantInfoFound"))
-        .propertyOrdering(listOf("pageState", "observation", "questionsState", "captureRegions", "decision", "relevantInfoFound", "actions"))
+        .propertyOrdering(listOf("pageState", "observation", "questionsState", "decision", "relevantInfoFound", "actions"))
         .build()
 
     private val fullPageNavigateInstruction = """
@@ -191,21 +165,17 @@ class FullPageNavigationAgentGenAiImpl(
         Complete this stage based ONLY on what you SEE in the screenshot — before considering the query.
         - pageState: Report ALL dynamic UI states (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements.
         - observation: Describe the page layout and any changes from the last action.
-        - captureRegions: For any area containing data relevant to the query (prices, numbers, text, tables), provide bounding boxes. The system extracts text from these regions and feeds it back as EXTRACTED KNOWLEDGE on the next turn.
-          - Use MULTIPLE capture regions — one per distinct content block (e.g. a price label, a package name, a description paragraph, a table). Prefer more regions over fewer.
-          - Size each region to cover ONE complete content block (a full paragraph, a full heading, a full table). For a multi-line paragraph, the region must span from the first line to the last line — not just one line.
         CRITICAL: Do NOT let the query influence your visual analysis. If the query mentions "X", do not assume X is visible — look at the screenshot and report what is ACTUALLY there.
 
         ## STAGE 2 — QUERY PLANNING
         Now read the query and use your Stage 1 analysis to decide what to do.
         1. Trust your Stage 1 analysis. If you reported "Active tab: Y" in pageState, that IS the active tab — even if you expected a different tab based on the query or your previous click. If the state doesn't match what you expected, your last click likely targeted the wrong element — try a different one.
-        2. EXTRACTED KNOWLEDGE (shown in the prompt) is the accumulated factual knowledge from previous capture regions. Use it to track progress and resolve questions.
+        2. EXTRACTED KNOWLEDGE (shown in the prompt) is the accumulated factual knowledge extracted by a separate system from the current screenshot. Use it to track progress and resolve questions.
         3. Explore the page by issuing actions: click, type_text.
         4. If a click led to navigation, it would be recorded separately, just continue exploring.
         5. Mark a question as resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE. If you have not yet seen the data in EXTRACTED KNOWLEDGE, continue exploring.
         6. If you see tabs, accordions, or toggles that MAY contain relevant content, you MUST click each one to reveal its content before finishing. Do NOT report content as "not listed" or "not available" if you haven't clicked the tab/toggle to check.
         7. When the query asks for a LIST of items (e.g. 'all prices', 'all packages'), you MUST systematically click through ALL relevant tabs/accordions/toggles to gather every item before calling exploration_finished.
-        8. Capture regions are your ONLY way to record information. Place them carefully — they must cover the actual answer content, not just headers or labels.
 
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information.
@@ -214,7 +184,7 @@ class FullPageNavigationAgentGenAiImpl(
 
         **exploration_finished**: Stop exploring.
         - Set `relevantInfoFound: true` if the EXTRACTED KNOWLEDGE contains data relevant to the query (even partial information is valuable).
-        - Set `relevantInfoFound: false` if after exploring all relevant sections, you concluded that the page does NOT contain information relevant to the query. Do NOT place capture regions when relevantInfoFound is false.
+        - Set `relevantInfoFound: false` if after exploring all relevant sections, you concluded that the page does NOT contain information relevant to the query.
     """.trimIndent()
 
     private val overlayNavigateInstruction = """
@@ -229,21 +199,17 @@ class FullPageNavigationAgentGenAiImpl(
         Complete this stage based ONLY on what you SEE in the screenshot — before considering the query.
         - pageState: Report ALL dynamic UI states (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements.
         - observation: Describe the overlay content and any changes from the last action. Note if content appears cut off (indicating more content available via scrolling).
-        - captureRegions: For any area containing data relevant to the query (prices, numbers, text, tables), provide bounding boxes. The system extracts text from these regions and feeds it back as EXTRACTED KNOWLEDGE on the next turn.
-          - Use MULTIPLE capture regions — one per distinct content block (e.g. a price label, a package name, a description paragraph, a table). Prefer more regions over fewer.
-          - Size each region to cover ONE complete content block (a full paragraph, a full heading, a full table). For a multi-line paragraph, the region must span from the first line to the last line — not just one line.
         CRITICAL: Do NOT let the query influence your visual analysis. If the query mentions "X", do not assume X is visible — look at the screenshot and report what is ACTUALLY there.
 
         ## STAGE 2 — QUERY PLANNING
         Now read the query and use your Stage 1 analysis to decide what to do.
         1. Trust your Stage 1 analysis. If you reported "Active tab: Y" in pageState, that IS the active tab — even if you expected a different tab based on the query or your previous click. If the state doesn't match what you expected, your last click likely targeted the wrong element — try a different one.
-        2. EXTRACTED KNOWLEDGE (shown in the prompt) is the accumulated factual knowledge from previous capture regions. Use it to track progress and resolve questions.
+        2. EXTRACTED KNOWLEDGE (shown in the prompt) is the accumulated factual knowledge extracted by a separate system from the current screenshot. Use it to track progress and resolve questions.
         3. Explore the page by issuing actions: click, type_text, scroll_element.
         4. If a click led to navigation, it would be recorded separately, just continue exploring.
         5. Mark a question as resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE. If you have not yet seen the data in EXTRACTED KNOWLEDGE, continue exploring.
         6. If the overlay does NOT contain the information you need, dismiss it by clicking the close button (X) or clicking the dimmed area outside, then continue exploring the main page.
         7. Do NOT call exploration_finished while inside an overlay unless all required data has been found.
-        8. Capture regions are your ONLY way to record information. Place them carefully — they must cover the actual answer content, not just headers or labels.
 
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information.
@@ -253,20 +219,10 @@ class FullPageNavigationAgentGenAiImpl(
 
         **exploration_finished**: Stop exploring.
         - Set `relevantInfoFound: true` if the EXTRACTED KNOWLEDGE contains data relevant to the query (even partial information is valuable).
-        - Set `relevantInfoFound: false` if after exploring all relevant sections, you concluded that the page does NOT contain information relevant to the query. Do NOT place capture regions when relevantInfoFound is false.
+        - Set `relevantInfoFound: false` if after exploring all relevant sections, you concluded that the page does NOT contain information relevant to the query.
     """.trimIndent()
 
     // ── Serializable response types ─────────────────────────────────────
-
-    @Serializable
-    private data class CaptureRegionResponse(
-        val x1: Int,
-        val y1: Int,
-        val x2: Int,
-        val y2: Int,
-        val relevance: String,
-        val containsTable: Boolean = false
-    )
 
     @Serializable
     private data class ClickParams(val element_label: Int? = null, val box_2d: List<Int>? = null, val label: String? = null)
@@ -297,7 +253,6 @@ class FullPageNavigationAgentGenAiImpl(
         val pageState: List<String>? = null,
         val observation: String? = null,
         val questionsState: List<QuestionStateResponse>? = null,
-        val captureRegions: List<CaptureRegionResponse>? = null,
         val decision: String? = null,
         val relevantInfoFound: Boolean? = null,
         val actions: List<ActionResponse>? = null
@@ -313,7 +268,10 @@ class FullPageNavigationAgentGenAiImpl(
 
         val response = withContext(dispatcherProvider.io) {
             retryLlmCall<NavigateResponse>(this@FullPageNavigationAgentGenAiImpl::class.simpleName!! + ".navigate") {
-                val screenshotLabel = if (input.isOverlayMode) "VIEWPORT SCREENSHOT (overlay detected):" else "FULL PAGE SCREENSHOT:"
+                val screenshotLabel = when (input.navigationMode) {
+                    NavigationMode.VIEWPORT -> "VIEWPORT SCREENSHOT (overlay detected):"
+                    NavigationMode.FULL_PAGE -> "FULL PAGE SCREENSHOT:"
+                }
                 val contentParts = listOf(
                     Part.fromText(screenshotLabel),
                     Part.fromBytes(input.fullPageScreenshot.bytes, input.fullPageScreenshot.mimeType.value),
@@ -333,7 +291,10 @@ class FullPageNavigationAgentGenAiImpl(
                                 .build()
                         )
                         .systemInstruction(Content.fromParts(Part.fromText(
-                            if (input.isOverlayMode) overlayNavigateInstruction else fullPageNavigateInstruction
+                            when (input.navigationMode) {
+                                NavigationMode.VIEWPORT -> overlayNavigateInstruction
+                                NavigationMode.FULL_PAGE -> fullPageNavigateInstruction
+                            }
                         )))
                         .build()
                 )
@@ -372,34 +333,15 @@ class FullPageNavigationAgentGenAiImpl(
             )
         }
 
-        val captureRegions = response.captureRegions?.mapNotNull { r ->
-            val bb = BoundingBox(
-                x1 = r.x1.coerceIn(0, 1000),
-                y1 = r.y1.coerceIn(0, 1000),
-                x2 = r.x2.coerceIn(0, 1000),
-                y2 = r.y2.coerceIn(0, 1000)
-            )
-            if (bb.x2 <= bb.x1 || bb.y2 <= bb.y1) return@mapNotNull null
-            if (r.containsTable) {
-                CaptureRegion.Table(
-                    relevance = r.relevance,
-                    regions = listOf(TableSubRegion(boundingBox = bb, role = TableRegionRole.DATA, description = r.relevance))
-                )
-            } else {
-                CaptureRegion.Element(relevance = r.relevance, boundingBox = bb)
-            }
-        } ?: emptyList()
-
         val decision = response.decision ?: "continue_exploring"
         val openCount = questionsState.count { !it.resolved }
         val resolvedCount = questionsState.count { it.resolved }
 
         logger.debug(
-            "Navigate: decision={} actions=[{}] | questions={} (open={}, resolved={}) | captures={} | pageState={}",
+            "Navigate: decision={} actions=[{}] | questions={} (open={}, resolved={}) | pageState={}",
             decision,
             actions.joinToString(", ") { it::class.simpleName ?: "?" },
             questionsState.size, openCount, resolvedCount,
-            captureRegions.size,
             pageState
         )
 
@@ -408,7 +350,6 @@ class FullPageNavigationAgentGenAiImpl(
             questions = questionsState,
             pageState = pageState,
             observation = response.observation,
-            captureRegions = captureRegions,
             decision = decision,
             relevantInfoFound = response.relevantInfoFound,
             tokenUsage = tokenUsage

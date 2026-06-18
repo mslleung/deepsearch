@@ -43,6 +43,8 @@ class DatabaseTables(private val koin: Koin) {
     val externalApiUsageTable: ExternalApiUsageTable by lazy { koin.get() }
     val hiddenContainerTableCacheTable: HiddenContainerTableCacheTable by lazy { koin.get() }
     val visionDetectionCacheTable: VisionDetectionCacheTable by lazy { koin.get() }
+    val agenticNavIterationTable: AgenticNavIterationTable by lazy { koin.get() }
+    val agenticNavScreenshotTable: AgenticNavScreenshotTable by lazy { koin.get() }
 
     /**
      * All tables as an array for schema operations (e.g., SchemaUtils.create).
@@ -79,6 +81,8 @@ class DatabaseTables(private val koin: Koin) {
             externalApiUsageTable,
             hiddenContainerTableCacheTable,
             visionDetectionCacheTable,
+            agenticNavIterationTable,
+            agenticNavScreenshotTable,
         )
     }
 }
