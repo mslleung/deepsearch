@@ -158,12 +158,35 @@ interface IBrowserPage {
     data class GuardedClickResult(val navigatedAwayTo: String?)
 
     /**
+     * Result of a guarded click that also checks for a modal overlay afterward.
+     * @param navigatedAwayTo the URL the click tried to navigate to, or null if same-page
+     * @param hasModalOverlay true if a modal overlay was detected after a same-page click
+     */
+    data class GuardedClickWithOverlayResult(
+        val navigatedAwayTo: String?,
+        val hasModalOverlay: Boolean
+    )
+
+    /**
      * Click at viewport coordinates with navigation interception.
      * If the click triggers a cross-page navigation, the navigation is aborted at the CDP level
      * and the target URL is returned. The current page remains intact.
      * Same-page interactions (accordions, tabs, modals) pass through normally.
      */
     suspend fun guardedClickAtCoordinates(x: Int, y: Int): GuardedClickResult
+
+    /**
+     * Click at viewport coordinates with navigation interception, then check for a modal overlay.
+     * Combines [guardedClickAtCoordinates] and [hasModalOverlay] to reduce round-trips.
+     */
+    suspend fun guardedClickAndCheckOverlay(x: Int, y: Int): GuardedClickWithOverlayResult {
+        val click = guardedClickAtCoordinates(x, y)
+        val overlay = if (click.navigatedAwayTo == null) hasModalOverlay() else false
+        return GuardedClickWithOverlayResult(
+            navigatedAwayTo = click.navigatedAwayTo,
+            hasModalOverlay = overlay
+        )
+    }
 
     /**
      * Type text at the current cursor/focus position using low-level input events.
@@ -198,6 +221,15 @@ interface IBrowserPage {
      * Get the current vertical scroll position as a percentage (0 = top, 100 = bottom).
      */
     suspend fun getScrollPosition(): Int
+
+    /**
+     * Scroll to [percent] and return the actual scroll position afterward.
+     * Combines [scrollToPercentage] and [getScrollPosition] to reduce round-trips.
+     */
+    suspend fun scrollToPercentageAndGetPosition(percent: Int): Int {
+        scrollToPercentage(percent)
+        return getScrollPosition()
+    }
 
     /**
      * Scroll the page by pixel deltas. Positive deltaY scrolls down, negative up.

@@ -305,6 +305,19 @@ class RemoteBrowserPage(
         return IBrowserPage.GuardedClickResult(navigatedAwayTo = resp.navigatedAwayTo)
     }
 
+    override suspend fun guardedClickAndCheckOverlay(x: Int, y: Int): IBrowserPage.GuardedClickWithOverlayResult {
+        val results = runCommandsOrBatch(listOf(
+            PageCommand.GuardedClickAtCoordinates(x, y),
+            PageCommand.HasModalOverlay
+        ))
+        val clickResp = json.decodeFromString<GuardedClickResponse>(results[0])
+        val hasOverlay = results[1].toBoolean()
+        return IBrowserPage.GuardedClickWithOverlayResult(
+            navigatedAwayTo = clickResp.navigatedAwayTo,
+            hasModalOverlay = if (clickResp.navigatedAwayTo != null) false else hasOverlay
+        )
+    }
+
     override suspend fun typeText(text: String) {
         pageCmd(PageCommand.TypeText(text))
     }
@@ -338,6 +351,14 @@ class RemoteBrowserPage(
 
     override suspend fun getScrollPosition(): Int =
         pageCmd(PageCommand.GetScrollPosition).toInt()
+
+    override suspend fun scrollToPercentageAndGetPosition(percent: Int): Int {
+        val results = runCommandsOrBatch(listOf(
+            PageCommand.ScrollToPercentage(percent),
+            PageCommand.GetScrollPosition
+        ))
+        return results[1].toInt()
+    }
 
     override suspend fun scrollPage(deltaX: Int, deltaY: Int) {
         pageCmd(PageCommand.ScrollPage(deltaX, deltaY))
