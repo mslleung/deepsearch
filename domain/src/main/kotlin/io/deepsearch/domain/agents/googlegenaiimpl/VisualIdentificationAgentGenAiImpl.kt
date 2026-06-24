@@ -274,8 +274,8 @@ class VisualIdentificationAgentGenAiImpl(
                     ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
                     listOf(
                         Content.fromParts(
-                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
-                            Part.fromText("Analyze this webpage screenshot for semantic elements and tables.")
+                            Part.fromText("Analyze this webpage screenshot for semantic elements and tables."),
+                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value)
                         )
                     ),
                     GenerateContentConfig.builder()
@@ -375,8 +375,8 @@ class VisualIdentificationAgentGenAiImpl(
                     ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
                     listOf(
                         Content.fromParts(
-                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
-                            Part.fromText("Identify the page chrome elements in this webpage screenshot.")
+                            Part.fromText("Identify the page chrome elements in this webpage screenshot."),
+                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value)
                         )
                     ),
                     GenerateContentConfig.builder()

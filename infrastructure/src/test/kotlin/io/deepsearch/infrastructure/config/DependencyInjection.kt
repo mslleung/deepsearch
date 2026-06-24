@@ -18,6 +18,7 @@ import io.deepsearch.infrastructure.storage.GcsIterationScreenshotStorage
 import io.deepsearch.infrastructure.storage.InMemoryBatchSnapshotStorageService
 import io.deepsearch.infrastructure.storage.InMemoryImageStorageService
 import io.deepsearch.infrastructure.storage.InMemoryTemporaryFileStorageService
+import io.deepsearch.infrastructure.storage.LocalIterationScreenshotStorage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.koin.core.module.dsl.createdAtStart
@@ -166,8 +167,8 @@ private val infrastructureCommonTestModule = module {
     // In-memory batch snapshot storage for testing (replaces GCS in production)
     singleOf(::InMemoryBatchSnapshotStorageService) bind IBatchSnapshotStorageService::class
     
-    // GCS for agentic navigation iteration screenshots (same as production)
-    singleOf(::GcsIterationScreenshotStorage) bind IIterationScreenshotStorage::class
+    // Local filesystem for agentic navigation iteration screenshots (saves to /tmp/benchmark-screenshots/)
+    single<IIterationScreenshotStorage> { LocalIterationScreenshotStorage() }
 }
 
 val infrastructureTestModule = module {

@@ -90,8 +90,8 @@ class DirectAnswerAgentGenAiImpl(
                     modelId,
                     listOf(
                         Content.fromParts(
-                            Part.fromBytes(input.screenshotBytes, "image/png"),
-                            Part.fromText(userPrompt)
+                            Part.fromText(userPrompt),
+                            Part.fromBytes(input.screenshotBytes, "image/png")
                         )
                     ),
                     GenerateContentConfig.builder()

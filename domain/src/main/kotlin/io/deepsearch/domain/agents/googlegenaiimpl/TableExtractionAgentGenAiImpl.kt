@@ -205,8 +205,8 @@ class TableExtractionAgentGenAiImpl(
 
         // Build content with single image
         val contentParts = listOf(
-            Part.fromBytes(image.bytes, image.mimeType.value),
-            Part.fromText("Extract all content from this image, converting any tables to HTML format")
+            Part.fromText("Extract all content from this image, converting any tables to HTML format"),
+            Part.fromBytes(image.bytes, image.mimeType.value)
         )
 
         val response = withContext(dispatcherProvider.io) {

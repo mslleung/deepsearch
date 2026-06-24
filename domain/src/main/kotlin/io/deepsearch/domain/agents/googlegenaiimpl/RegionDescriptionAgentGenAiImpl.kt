@@ -39,6 +39,8 @@ class RegionDescriptionAgentGenAiImpl(
         val description: String,
         val relevance: String,
         val visualLocation: String,
+        val roughYMin: Int? = null,
+        val roughYMax: Int? = null,
         val containsTable: Boolean = false,
         val tableSubRegions: List<TableSubRegionResponse>? = null
     )
@@ -81,6 +83,12 @@ class RegionDescriptionAgentGenAiImpl(
                 "visualLocation" to Schema.builder().type("STRING")
                     .description("Where this region is visually on the page. Use relative terms: 'top of page', 'upper third, below the hero section', 'middle of page, in a table', 'lower third, above the footer', etc.")
                     .build(),
+                "roughYMin" to Schema.builder().type("INTEGER")
+                    .description("Approximate vertical position of the region's TOP edge, normalized 0-1000 (0=page top, 1000=page bottom). Be generous — overestimate the range rather than clip the region.")
+                    .build(),
+                "roughYMax" to Schema.builder().type("INTEGER")
+                    .description("Approximate vertical position of the region's BOTTOM edge, normalized 0-1000 (0=page top, 1000=page bottom). Be generous — overestimate the range rather than clip the region.")
+                    .build(),
                 "containsTable" to Schema.builder().type("BOOLEAN")
                     .description("True if this region contains tabular/grid data (comparison table, pricing grid, feature matrix, data table). False for plain text, paragraphs, or single values.")
                     .build(),
@@ -90,7 +98,7 @@ class RegionDescriptionAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("description", "relevance", "visualLocation", "containsTable"))
+        .required(listOf("description", "relevance", "visualLocation", "roughYMin", "roughYMax", "containsTable"))
         .build()
 
     private val responseSchema: Schema = Schema.builder()
@@ -120,7 +128,8 @@ class RegionDescriptionAgentGenAiImpl(
         1. DESCRIPTION: What the region contains — be specific. Include exact text, numbers, prices, product names, column headers, etc. that you can read. Example: "A pricing card titled 'Payments' showing '2.9% + 30¢ per successful card charge' for domestic transactions."
         2. RELEVANCE: Why this region answers the user's query.
         3. VISUAL LOCATION: Where the region sits on the page using relative terms (top/middle/bottom, left/right, above/below landmarks).
-        4. CONTAINS TABLE: Set to true if the region contains tabular/grid data.
+        4. ROUGH VERTICAL POSITION: Estimate roughYMin and roughYMax as 0-1000 normalized values (0=very top of page, 1000=very bottom). Be generous — it is better to overestimate the range than to clip the region.
+        5. CONTAINS TABLE: Set to true if the region contains tabular/grid data.
 
         For TABLE regions (containsTable=true), also describe the sub-parts:
         - HEADER: The column/row headers (e.g. "column headers: Plan, Price, Features" at the top row).
@@ -188,6 +197,8 @@ class RegionDescriptionAgentGenAiImpl(
                 description = r.description,
                 relevance = r.relevance,
                 visualLocation = r.visualLocation,
+                roughYMin = r.roughYMin,
+                roughYMax = r.roughYMax,
                 containsTable = r.containsTable,
                 tableSubRegions = r.tableSubRegions?.map { s ->
                     TableSubRegionDescription(

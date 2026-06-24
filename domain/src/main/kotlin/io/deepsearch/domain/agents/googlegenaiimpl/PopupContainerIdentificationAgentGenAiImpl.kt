@@ -83,8 +83,8 @@ class PopupContainerIdentificationAgentGenAiImpl(
                     modelId,
                     listOf(
                         Content.fromParts(
-                            Part.fromBytes(input.screenshotBytes, input.mimetype.value),
-                            Part.fromText("CLEANED_HTML:\n" + cleanedHtml)
+                            Part.fromText("CLEANED_HTML:\n" + cleanedHtml),
+                            Part.fromBytes(input.screenshotBytes, input.mimetype.value)
                         )
                     ),
                     GenerateContentConfig.builder()

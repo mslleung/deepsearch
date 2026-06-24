@@ -113,6 +113,50 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
     }
 
     @Test
+    fun `otp wellwoman gold`() = runBlocking {
+        val cases = RealWorldBenchmarks.otpWellWomanGold()
+        val report = runner.runAll(cases)
+
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `otp hep-c accordion`() = runBlocking {
+        val cases = RealWorldBenchmarks.otpHepC()
+        val report = runner.runAll(cases)
+
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `stripe radar fraud custom`() = runBlocking {
+        val cases = RealWorldBenchmarks.stripeRadarFraud()
+        val report = runner.runAll(cases)
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `stripe faq discounts`() = runBlocking {
+        val cases = RealWorldBenchmarks.stripeFaqDiscount()
+        val report = runner.runAll(cases)
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `notion faq student discount`() = runBlocking {
+        val cases = RealWorldBenchmarks.notionStudentDiscount()
+        val report = runner.runAll(cases)
+        println(report.toMarkdown())
+    }
+
+    @Test
+    fun `notion faq refund policy`() = runBlocking {
+        val cases = RealWorldBenchmarks.notionRefundPolicy()
+        val report = runner.runAll(cases)
+        println(report.toMarkdown())
+    }
+
+    @Test
     fun `otp healthcare benchmark`() = runBlocking {
         val cases = RealWorldBenchmarks.otpHealthcare()
         val report = runner.runAll(cases)

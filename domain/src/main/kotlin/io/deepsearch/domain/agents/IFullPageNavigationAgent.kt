@@ -20,14 +20,13 @@ data class TrackedQuestion(
 sealed class NavigationAction {
     @Serializable
     data class Click(
-        val elementLabel: Int? = null,
-        val box2d: List<Int>? = null,
-        val label: String? = null,
-        val reason: String
-    ) : NavigationAction() {
-        val centerX: Int? get() = box2d?.let { (it[1] + it[3]) / 2 }
-        val centerY: Int? get() = box2d?.let { (it[0] + it[2]) / 2 }
-    }
+        val target: String,
+        val reason: String,
+        val roughY: Int? = null,
+        val resolvedElementLabel: Int? = null,
+        val resolvedCenterX: Int? = null,
+        val resolvedCenterY: Int? = null
+    ) : NavigationAction()
 
     @Serializable
     data class ExplorationFinished(

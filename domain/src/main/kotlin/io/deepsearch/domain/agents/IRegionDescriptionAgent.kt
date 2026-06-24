@@ -14,6 +14,8 @@ data class RegionDescription(
     val description: String,
     val relevance: String,
     val visualLocation: String,
+    val roughYMin: Int? = null,
+    val roughYMax: Int? = null,
     val containsTable: Boolean = false,
     val tableSubRegions: List<TableSubRegionDescription> = emptyList()
 )

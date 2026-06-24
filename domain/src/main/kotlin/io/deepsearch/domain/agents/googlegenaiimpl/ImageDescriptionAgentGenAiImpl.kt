@@ -202,8 +202,8 @@ class ImageDescriptionAgentGenAiImpl(
 
         // Build content with single image
         val contentParts = listOf(
-            Part.fromBytes(image.bytes, image.mimeType.value),
-            Part.fromText("Describe this image, identifying its type, purpose, and visual content")
+            Part.fromText("Describe this image, identifying its type, purpose, and visual content"),
+            Part.fromBytes(image.bytes, image.mimeType.value)
         )
 
         val response = withContext(dispatcherProvider.io) {

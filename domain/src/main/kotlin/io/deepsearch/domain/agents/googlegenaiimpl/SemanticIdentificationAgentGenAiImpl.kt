@@ -243,8 +243,8 @@ class SemanticIdentificationAgentGenAiImpl(
                     modelId,
                     listOf(
                         Content.fromParts(
-                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value),
-                            Part.fromText("Analyze this screenshot")
+                            Part.fromText("Analyze this screenshot"),
+                            Part.fromBytes(screenshot.bytes, screenshot.mimeType.value)
                         )
                     ),
                     GenerateContentConfig.builder()

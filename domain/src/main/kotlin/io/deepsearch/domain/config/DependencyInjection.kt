@@ -125,6 +125,7 @@ val domainModule = module {
     singleOf(::SemanticTableClassificationAgentGenAiImpl) bind ISemanticTableClassificationAgent::class
     singleOf(::LinearizedContentConversionAgentGenAiImpl) bind ILinearizedContentConversionAgent::class
     singleOf(::FullPageNavigationAgentGenAiImpl) bind IFullPageNavigationAgent::class
+    singleOf(::ElementLocatorAgentGenAiImpl) bind IElementLocatorAgent::class
     singleOf(::ContentExtractionAgentGenAiImpl) bind IContentExtractionAgent::class
     singleOf(::VisualContentExtractionAgentGenAiImpl) bind IVisualContentExtractionAgent::class
     singleOf(::VisualSegmentationAgentGenAiImpl) bind IVisualSegmentationAgent::class

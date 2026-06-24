@@ -749,14 +749,14 @@ class GeminiBatchServiceImpl(
         // Build the content parts
         val parts = mutableListOf<Part>()
         
+        // Add text prompt first (text before image per Gemini best practices)
+        parts.add(Part.fromText(request.userPrompt))
+        
         // Add image if present
         if (request.imageData != null && request.imageMimeType != null) {
             val imageBytes = java.util.Base64.getDecoder().decode(request.imageData)
             parts.add(Part.fromBytes(imageBytes, request.imageMimeType))
         }
-        
-        // Add text prompt
-        parts.add(Part.fromText(request.userPrompt))
 
         val userContent = Content.builder()
             .parts(parts)

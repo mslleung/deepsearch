@@ -81,8 +81,8 @@ class BlinkTestAgentGenAiImpl(
                     modelId,
                     listOf(
                         Content.fromParts(
-                            Part.fromBytes(input.screenshotBytes, "image/jpeg"),
-                            Part.fromText(userPrompt)
+                            Part.fromText(userPrompt),
+                            Part.fromBytes(input.screenshotBytes, "image/jpeg")
                         )
                     ),
                     GenerateContentConfig.builder()

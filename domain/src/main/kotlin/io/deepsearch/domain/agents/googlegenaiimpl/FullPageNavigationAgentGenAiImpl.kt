@@ -49,20 +49,14 @@ class FullPageNavigationAgentGenAiImpl(
                     .type("OBJECT")
                     .nullable(true)
                     .properties(mapOf(
-                        "element_label" to Schema.builder().type("INTEGER")
-                            .description("Number shown on the annotated screenshot for the element to click. Preferred over box_2d.")
-                            .nullable(true)
+                        "target" to Schema.builder().type("STRING")
+                            .description("Highly specific description of the element to click. Include exact visible text, the section heading directly above it, what's below it, and its vertical position on the page.")
                             .build(),
-                        "box_2d" to Schema.builder().type("ARRAY")
-                            .description("Fallback: bounding box [ymin, xmin, ymax, xmax] in 0-1000 scale. Only use when no element_label matches the target.")
-                            .items(Schema.builder().type("INTEGER").build())
-                            .nullable(true)
-                            .build(),
-                        "label" to Schema.builder().type("STRING")
-                            .description("Brief description of the element being clicked.")
+                        "roughY" to Schema.builder().type("INTEGER")
+                            .description("Approximate vertical position of the element on the page, normalized 0-1000 (0=very top, 500=middle, 1000=very bottom). This is a coarse estimate used for cropping.")
                             .build()
                     ))
-                    .required(listOf("label"))
+                    .required(listOf("target", "roughY"))
                     .build(),
                 "type" to Schema.builder()
                     .type("OBJECT")
@@ -157,8 +151,9 @@ class FullPageNavigationAgentGenAiImpl(
     private val fullPageNavigateInstruction = """
         You are a webpage exploration agent. You should imitate a human navigating a webpage looking for information.
 
-        You see a screenshot of the **entire page** from top to bottom. Interactive elements are marked with **numbered labels** overlaid on the screenshot.
-        You can click on any labeled element by providing its `element_label` number.
+        You see a screenshot of the **entire page** from top to bottom.
+        To click an element, describe it in the `target` field. A separate system will locate the exact element from your description.
+        You do NOT need to identify label numbers — just describe what to click.
         If content is hidden (behind accordions, tabs, etc.), click the header/toggle to reveal it. You will see the updated full page on the next turn.
 
         ## STAGE 1 — VISUAL ANALYSIS
@@ -180,7 +175,20 @@ class FullPageNavigationAgentGenAiImpl(
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information.
         - **type_text**: Type into input field at (x,y). Highest priority.
-        - **click**: Click an interactive element by element_label (preferred) or box_2d [ymin, xmin, ymax, xmax] 0-1000 scale as fallback. Every click MUST include element_label or box_2d coordinates.
+        - **click**: Describe the element to click in `target`. Your description will be used to find the element on the page.
+
+        ## TARGET DESCRIPTION FORMAT (CRITICAL)
+        Your `target` description must be EXTREMELY specific and unambiguous. Always include ALL of the following:
+        1. The element's exact visible text (in quotes)
+        2. The section heading DIRECTLY above the element (in quotes)
+        3. What text or element is DIRECTLY below it
+        4. Its vertical position on the page: "in the top quarter / upper-middle / center / lower-middle / bottom quarter"
+        5. If there are other elements with the same text on the page, state how many you see and which one you mean
+
+        Also provide `roughY`: your estimate of the element's vertical position as 0-1000 (0=very top of page, 500=middle, 1000=very bottom).
+
+        GOOD example: "The 'Learn More' link that appears directly below the 'Well Woman Check-ups' heading and above the 'Platinum Health Screening' heading. It is in the lower-middle of the page. There are 6 'Learn More' links on this page and this is the 4th one from the top."
+        BAD example: "The Learn More button in the Well Woman section"
 
         **exploration_finished**: Stop exploring.
         - Set `relevantInfoFound: true` if the EXTRACTED KNOWLEDGE contains data relevant to the query (even partial information is valuable).
@@ -190,8 +198,8 @@ class FullPageNavigationAgentGenAiImpl(
     private val overlayNavigateInstruction = """
         You are a webpage exploration agent. You should imitate a human navigating a webpage looking for information.
 
-        You see a **viewport screenshot**. A dialog/overlay is open on the page, and the screenshot shows what is currently visible in the browser viewport. Interactive elements are marked with **numbered labels**.
-        You can interact with labeled elements by providing their `element_label` number. Use `box_2d` as a fallback only when no label matches.
+        You see a **viewport screenshot**. A dialog/overlay is open on the page, and the screenshot shows what is currently visible in the browser viewport.
+        To click an element, describe it in the `target` field. A separate system will locate the exact element from your description.
         Use `scroll_element` to scroll within the overlay if content is cut off at the bottom or top.
         To dismiss the overlay, click the close button (X) or click on the dimmed/empty space outside the overlay.
 
@@ -214,7 +222,7 @@ class FullPageNavigationAgentGenAiImpl(
         ## Decision & Actions
         **continue_exploring**: Provide ALL exploration actions you think will yield information.
         - **type_text**: Type into input field at (x,y). Highest priority.
-        - **click**: Click an interactive element by element_label (preferred) or box_2d [ymin, xmin, ymax, xmax] 0-1000 scale as fallback. Every click MUST include element_label or box_2d coordinates.
+        - **click**: Describe the element to click in `target` with full context (visible text, section heading above, position).
         - **scroll_element**: Scroll within an overlay or container. Provide x,y coordinates of the scrollable area and the direction (DOWN, UP, LEFT, RIGHT).
 
         **exploration_finished**: Stop exploring.
@@ -225,7 +233,7 @@ class FullPageNavigationAgentGenAiImpl(
     // ── Serializable response types ─────────────────────────────────────
 
     @Serializable
-    private data class ClickParams(val element_label: Int? = null, val box_2d: List<Int>? = null, val label: String? = null)
+    private data class ClickParams(val target: String? = null, val roughY: Int? = null)
 
     @Serializable
     private data class TypeParams(val x: Int? = null, val y: Int? = null, val text: String? = null)
@@ -423,14 +431,11 @@ class FullPageNavigationAgentGenAiImpl(
         return when (resp.action) {
             "click" -> {
                 val p = checkNotNull(resp.click) { "click action missing click params" }
-                val box2d = p.box_2d?.map { it.coerceIn(0, 1000) }
-                if (box2d != null) require(box2d.size == 4) { "click box_2d must have 4 elements: [ymin, xmin, ymax, xmax]" }
-                require(p.element_label != null || box2d != null) { "click must have element_label or box_2d" }
+                val target = checkNotNull(p.target) { "click must have target description" }
                 NavigationAction.Click(
-                    elementLabel = p.element_label,
-                    box2d = box2d,
-                    label = p.label,
-                    reason = reason
+                    target = target,
+                    reason = reason,
+                    roughY = p.roughY?.coerceIn(0, 1000)
                 )
             }
             "type_text" -> {
@@ -487,17 +492,16 @@ class FullPageNavigationAgentGenAiImpl(
 
     private fun formatActionDesc(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> {
-            val target = if (action.elementLabel != null) "element_label=${action.elementLabel}" else "box_2d=${action.box2d}"
-            "click ${action.label ?: action.reason.take(60)} $target"
+            "click '${action.target}' (reason: ${action.reason})"
         }
         is NavigationAction.Type -> {
-            "type_text '${action.text.take(30)}' into ${action.reason.take(60).ifEmpty { "(${action.x},${action.y})" }}"
+            "type_text '${action.text}' into ${action.reason.ifEmpty { "(${action.x},${action.y})" }}"
         }
         is NavigationAction.ScrollAt -> {
             "scroll_element (${action.x},${action.y}) ${action.scrollDirection} ${action.scrollPercent}%"
         }
         is NavigationAction.ExplorationFinished -> {
-            val summary = action.answer?.take(80) ?: "no findings"
+            val summary = action.answer ?: "no findings"
             "exploration_finished: $summary"
         }
         else -> action.toString()

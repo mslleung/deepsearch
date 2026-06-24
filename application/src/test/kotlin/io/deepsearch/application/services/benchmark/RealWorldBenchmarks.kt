@@ -27,6 +27,13 @@ object RealWorldBenchmarks {
         sfSalesforceIntegration()
     )
 
+    fun otpWellWomanGold(): List<BenchmarkCase> = listOf(otpWellWomanGoldPrice())
+    fun otpHepC(): List<BenchmarkCase> = listOf(otpHepCAccordion())
+    fun stripeRadarFraud(): List<BenchmarkCase> = listOf(stripeRadarFraudTeamsCustom())
+    fun stripeFaqDiscount(): List<BenchmarkCase> = listOf(stripeFaqDiscounts())
+    fun notionStudentDiscount(): List<BenchmarkCase> = listOf(notionFaqStudentDiscount())
+    fun notionRefundPolicy(): List<BenchmarkCase> = listOf(notionFaqRefundPolicy())
+
     fun otpHealthcare(): List<BenchmarkCase> = listOf(
         otpStandardPrice(),
         otpUltraPrice(),

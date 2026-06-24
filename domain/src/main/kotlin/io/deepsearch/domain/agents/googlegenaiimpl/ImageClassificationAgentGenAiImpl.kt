@@ -215,8 +215,8 @@ class ImageClassificationAgentGenAiImpl(
 
         // Build content with single image
         val contentParts = listOf(
-            Part.fromBytes(image.bytes, image.mimeType.value),
-            Part.fromText("Classify this image and provide a comprehensive description")
+            Part.fromText("Classify this image and provide a comprehensive description"),
+            Part.fromBytes(image.bytes, image.mimeType.value)
         )
 
         val response = withContext(dispatcherProvider.io) {
