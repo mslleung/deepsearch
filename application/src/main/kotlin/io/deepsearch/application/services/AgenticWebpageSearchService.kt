@@ -361,14 +361,25 @@ class AgenticWebpageSearchService(
                 extractionResult = ExtractionResult(emptyList(), emptyList())
 
                 val locStart = clock.markNow()
-                resolvedActions = if (navOutput.decision != "exploration_finished") {
-                    resolveClickTargets(navOutput.actions, screenshot, imgWidth, imgHeight, url, sessionId, state)
+                val locResult = if (navOutput.decision != "exploration_finished") {
+                    resolveClickTargets(navOutput.actions, screenshot, imgWidth, imgHeight, url)
                 } else {
-                    navOutput.actions
+                    ResolvedActionsResult(navOutput.actions, TokenUsageMetrics.empty("gemini-3.1-flash-lite"))
                 }
+                resolvedActions = locResult.actions
                 locatorMs = (clock.markNow() - locStart).inWholeMilliseconds
 
-                state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage
+                state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage + locResult.tokenUsage
+                if (locResult.tokenUsage.totalTokens > 0) {
+                    tokenUsageService.recordTokenUsage(
+                        sessionId = sessionId,
+                        agentName = "ElementLocatorAgent",
+                        modelName = locResult.tokenUsage.modelName,
+                        promptTokens = locResult.tokenUsage.promptTokens,
+                        outputTokens = locResult.tokenUsage.outputTokens,
+                        totalTokens = locResult.tokenUsage.totalTokens
+                    )
+                }
             } else {
                 val descInput = RegionDescriptionInput(
                     screenshot = IBrowserPage.Screenshot(bytes = screenshot.bytes, mimeType = ImageMimeType.PNG),
@@ -376,44 +387,68 @@ class AgenticWebpageSearchService(
                     extractedContent = state.extractedRegionContent.toList()
                 )
 
-                data class TimedNavResult(val output: FullPageNavigationOutput, val durationMs: Long)
-                data class TimedDescResult(val output: RegionDescriptionOutput, val durationMs: Long)
+                // ── Vertical Pipelines ───────────────────────────────────────────
+                // Pipeline 1 runs: Navigation Agent -> resolveClickTargets sequentially.
+                // Pipeline 2 runs: Region Description Agent -> Visual Segmentation Agent & Extract sequentially.
+                // They run concurrently via async blocks within a coroutineScope.
 
-                val (timedNav, timedDesc) = coroutineScope {
-                    val navDeferred = async {
-                        val start = clock.markNow()
-                        val result = fullPageNavigationAgent.generate(navInput)
-                        TimedNavResult(result, (clock.markNow() - start).inWholeMilliseconds)
-                    }
-                    val descDeferred = async {
-                        val start = clock.markNow()
-                        val result = regionDescriptionAgent.generate(descInput)
-                        TimedDescResult(result, (clock.markNow() - start).inWholeMilliseconds)
-                    }
-                    navDeferred.await() to descDeferred.await()
-                }
-                navOutput = timedNav.output
-                navAgentMs = timedNav.durationMs
-                extractionObservation = timedDesc.output.observation
-
-                // ── Phase 2: Extraction + Locator (parallel) ────────────────────────
-                // Locator only depends on navOutput; extraction only depends on regionDesc.
-                // Running them in parallel hides locator latency behind extraction.
-                data class ExtractionPhaseResult(
-                    val result: ExtractionResult,
-                    val durationMs: Long,
-                    val segTU: TokenUsageMetrics?,
-                    val observation: String?
+                data class NavigationPipelineResult(
+                    val navOutput: FullPageNavigationOutput,
+                    val navAgentMs: Long,
+                    val resolvedActions: List<NavigationAction>,
+                    val locatorMs: Long,
+                    val locatorTokenUsage: TokenUsageMetrics
                 )
 
-                val extractionDeferred: Deferred<ExtractionPhaseResult>
-                val locatorDeferred: Deferred<Pair<List<NavigationAction>, Long>>
+                data class ExtractionPipelineResult(
+                    val descOutput: RegionDescriptionOutput,
+                    val descAgentMs: Long,
+                    val extractionResult: ExtractionResult,
+                    val extractionMs: Long,
+                    val segTokenUsage: TokenUsageMetrics?,
+                    val extractionObservation: String?,
+                    val extractedTextHashes: Set<String>,
+                    val capturedHashes: Set<String>
+                )
 
-                coroutineScope {
-                    extractionDeferred = async {
-                        val extractionStart = clock.markNow()
-                        if (timedDesc.output.descriptions.isNotEmpty()) {
-                            val descriptions = timedDesc.output.descriptions
+                val (navPipelineResult, extPipelineResult) = coroutineScope {
+                    val navigationDeferred = async {
+                        val navStart = clock.markNow()
+                        val navOutputResult = fullPageNavigationAgent.generate(navInput)
+                        val navDurationMs = (clock.markNow() - navStart).inWholeMilliseconds
+
+                        val locStart = clock.markNow()
+                        val locResult = if (navOutputResult.decision != "exploration_finished") {
+                            resolveClickTargets(navOutputResult.actions, screenshot, imgWidth, imgHeight, url)
+                        } else {
+                            ResolvedActionsResult(navOutputResult.actions, TokenUsageMetrics.empty("gemini-3.1-flash-lite"))
+                        }
+                        val locDurationMs = (clock.markNow() - locStart).inWholeMilliseconds
+
+                        NavigationPipelineResult(
+                            navOutput = navOutputResult,
+                            navAgentMs = navDurationMs,
+                            resolvedActions = locResult.actions,
+                            locatorMs = locDurationMs,
+                            locatorTokenUsage = locResult.tokenUsage
+                        )
+                    }
+
+                    val extractionDeferred = async {
+                        val descStart = clock.markNow()
+                        val descOutputResult = regionDescriptionAgent.generate(descInput)
+                        val descDurationMs = (clock.markNow() - descStart).inWholeMilliseconds
+
+                        var extractionResultResult = ExtractionResult(emptyList(), emptyList())
+                        var extractionDurationMs = 0L
+                        var segTokenUsageResult: TokenUsageMetrics? = null
+                        var extractionObservationResult: String? = descOutputResult.observation
+                        val pipelineTextHashes = mutableSetOf<String>()
+                        val pipelineCapturedHashes = mutableSetOf<String>()
+
+                        if (descOutputResult.descriptions.isNotEmpty()) {
+                            val extractionStart = clock.markNow()
+                            val descriptions = descOutputResult.descriptions
                             val useCropping = imgHeight >= MIN_PAGE_HEIGHT_FOR_CROP
                                 && descriptions.any { it.roughYMin != null && it.roughYMax != null }
 
@@ -433,54 +468,81 @@ class AgenticWebpageSearchService(
                             val result = if (segResult.regions.isNotEmpty()) {
                                 extractVisualSegmentationRegions(
                                     screenshot.bytes, imgWidth, imgHeight,
-                                    segResult.regions, query, state.extractedTextHashes,
-                                    state.capturedHashes, page, navigationMode, actualViewportHeight,
+                                    segResult.regions, query, pipelineTextHashes,
+                                    pipelineCapturedHashes, page, navigationMode, actualViewportHeight,
                                     sessionId, iteration, url
                                 )
-                            } else ExtractionResult(emptyList(), emptyList())
-                            ExtractionPhaseResult(result, (clock.markNow() - extractionStart).inWholeMilliseconds, segResult.tokenUsage, obs)
-                        } else {
-                            ExtractionPhaseResult(
-                                ExtractionResult(emptyList(), emptyList()),
-                                (clock.markNow() - extractionStart).inWholeMilliseconds,
-                                null, null
-                            )
+                            } else {
+                                ExtractionResult(emptyList(), emptyList())
+                            }
+
+                            extractionResultResult = result
+                            extractionDurationMs = (clock.markNow() - extractionStart).inWholeMilliseconds
+                            segTokenUsageResult = segResult.tokenUsage
+                            if (obs != null) {
+                                extractionObservationResult = obs
+                            }
                         }
+
+                        ExtractionPipelineResult(
+                            descOutput = descOutputResult,
+                            descAgentMs = descDurationMs,
+                            extractionResult = extractionResultResult,
+                            extractionMs = extractionDurationMs,
+                            segTokenUsage = segTokenUsageResult,
+                            extractionObservation = extractionObservationResult,
+                            extractedTextHashes = pipelineTextHashes,
+                            capturedHashes = pipelineCapturedHashes
+                        )
                     }
 
-                    locatorDeferred = async {
-                        if (navOutput.decision != "exploration_finished") {
-                            val locStart = clock.markNow()
-                            val resolved = resolveClickTargets(navOutput.actions, screenshot, imgWidth, imgHeight, url, sessionId, state)
-                            resolved to (clock.markNow() - locStart).inWholeMilliseconds
-                        } else {
-                            navOutput.actions to 0L
-                        }
-                    }
-
-                    val exPhase = extractionDeferred.await()
-                    val (locResult, locMs) = locatorDeferred.await()
-                    extractionResult = exPhase.result
-                    extractionMs = exPhase.durationMs
-                    segTokenUsage = exPhase.segTU
-                    if (exPhase.observation != null) extractionObservation = exPhase.observation
-                    resolvedActions = locResult
-                    locatorMs = locMs
+                    navigationDeferred.await() to extractionDeferred.await()
                 }
 
-                state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage + timedDesc.output.tokenUsage
+                navOutput = navPipelineResult.navOutput
+                navAgentMs = navPipelineResult.navAgentMs
+                resolvedActions = navPipelineResult.resolvedActions
+                locatorMs = navPipelineResult.locatorMs
+
+                extractionResult = extPipelineResult.extractionResult
+                extractionMs = extPipelineResult.extractionMs
+                segTokenUsage = extPipelineResult.segTokenUsage
+                extractionObservation = extPipelineResult.extractionObservation
+
+                // Update integrated thread-safe state maps on main thread
+                state.extractedTextHashes.addAll(extPipelineResult.extractedTextHashes)
+                state.capturedHashes.addAll(extPipelineResult.capturedHashes)
+
+                state.aggregatedTokenUsage = state.aggregatedTokenUsage +
+                    navOutput.tokenUsage +
+                    extPipelineResult.descOutput.tokenUsage
+
+                if (navPipelineResult.locatorTokenUsage.totalTokens > 0) {
+                    state.aggregatedTokenUsage = state.aggregatedTokenUsage + navPipelineResult.locatorTokenUsage
+                }
                 if (segTokenUsage != null) {
                     state.aggregatedTokenUsage = state.aggregatedTokenUsage + segTokenUsage
                 }
 
+                // Record token usages safely in sequence
                 tokenUsageService.recordTokenUsage(
                     sessionId = sessionId,
                     agentName = "RegionDescriptionAgent",
-                    modelName = timedDesc.output.tokenUsage.modelName,
-                    promptTokens = timedDesc.output.tokenUsage.promptTokens,
-                    outputTokens = timedDesc.output.tokenUsage.outputTokens,
-                    totalTokens = timedDesc.output.tokenUsage.totalTokens
+                    modelName = extPipelineResult.descOutput.tokenUsage.modelName,
+                    promptTokens = extPipelineResult.descOutput.tokenUsage.promptTokens,
+                    outputTokens = extPipelineResult.descOutput.tokenUsage.outputTokens,
+                    totalTokens = extPipelineResult.descOutput.tokenUsage.totalTokens
                 )
+                if (navPipelineResult.locatorTokenUsage.totalTokens > 0) {
+                    tokenUsageService.recordTokenUsage(
+                        sessionId = sessionId,
+                        agentName = "ElementLocatorAgent",
+                        modelName = navPipelineResult.locatorTokenUsage.modelName,
+                        promptTokens = navPipelineResult.locatorTokenUsage.promptTokens,
+                        outputTokens = navPipelineResult.locatorTokenUsage.outputTokens,
+                        totalTokens = navPipelineResult.locatorTokenUsage.totalTokens
+                    )
+                }
                 if (segTokenUsage != null) {
                     tokenUsageService.recordTokenUsage(
                         sessionId = sessionId,
@@ -883,10 +945,8 @@ class AgenticWebpageSearchService(
         rawScreenshot: IBrowserPage.Screenshot,
         imgWidth: Int,
         imgHeight: Int,
-        pageUrl: String,
-        sessionId: SessionId,
-        state: NavigationLoopState
-    ): List<NavigationAction> {
+        pageUrl: String
+    ): ResolvedActionsResult {
         val clickActions = actions.withIndex()
             .filter { it.value is NavigationAction.Click }
             .map { (idx, action) ->
@@ -894,7 +954,9 @@ class AgenticWebpageSearchService(
                 LocatorTarget(index = idx, target = click.target, reason = click.reason)
             }
 
-        if (clickActions.isEmpty()) return actions
+        if (clickActions.isEmpty()) {
+            return ResolvedActionsResult(actions, TokenUsageMetrics.empty("gemini-3.1-flash-lite"))
+        }
 
         val useCropping = imgHeight >= MIN_PAGE_HEIGHT_FOR_CROP
             && actions.filterIsInstance<NavigationAction.Click>().any { it.roughY != null }
@@ -925,17 +987,7 @@ class AgenticWebpageSearchService(
             }
         }
 
-        state.aggregatedTokenUsage = state.aggregatedTokenUsage + locatorOutput.tokenUsage
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "ElementLocatorAgent",
-            modelName = locatorOutput.tokenUsage.modelName,
-            promptTokens = locatorOutput.tokenUsage.promptTokens,
-            outputTokens = locatorOutput.tokenUsage.outputTokens,
-            totalTokens = locatorOutput.tokenUsage.totalTokens
-        )
-
-        return resolvedActions
+        return ResolvedActionsResult(resolvedActions, locatorOutput.tokenUsage)
     }
 
     private suspend fun resolveClickTargetsWithCrops(
@@ -1065,6 +1117,11 @@ class AgenticWebpageSearchService(
             elementIndex
         )
     }
+
+    private data class ResolvedActionsResult(
+        val actions: List<NavigationAction>,
+        val tokenUsage: TokenUsageMetrics
+    )
 
     private data class RegionCropMeta(val index: Int, val description: String)
 
