@@ -132,6 +132,9 @@ val domainModule = module {
     singleOf(::RegionDescriptionAgentGenAiImpl) bind IRegionDescriptionAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
 
+    // Computer Use navigation agent (for CU benchmark comparison)
+    singleOf(::ComputerUseNavigationAgentGenAiImpl) bind IComputerUseNavigationAgent::class
+
     // Markdown formatting agent (singleton for MarkdownFormattingService)
     singleOf(::MarkdownFormattingAgentGenAiImpl) bind IMarkdownFormattingAgent::class
     

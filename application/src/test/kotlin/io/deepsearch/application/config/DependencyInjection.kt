@@ -122,6 +122,9 @@ private val applicationCommonTestModule = module {
     singleOf(::BatchPeriodicIndexOrchestrator) bind IBatchPeriodicIndexOrchestrator::class
     singleOf(::BatchPeriodicIndexJobService) bind IBatchPeriodicIndexJobService::class
 
+    // Computer Use search service (for CU benchmark comparison)
+    singleOf(::ComputerUseSearchService) bind IComputerUseSearchService::class
+
     // test stubs
     singleOf(::TestLlmTokenUsageService) bind ILlmTokenUsageService::class
 }

@@ -118,6 +118,7 @@ class AgenticWebpageSearchService(
         private const val COOKIE_DISMISS_DELAY_MS = 150L
         private const val CROP_PADDING_NORM = 150
         private const val MIN_PAGE_HEIGHT_FOR_CROP = 4000
+        private const val PAGE_HEIGHT_VIEWPORT_THRESHOLD = 10000
 
         /**
          * CSS selectors for common Consent Management Platform "Accept All" buttons.
@@ -457,35 +458,14 @@ class AgenticWebpageSearchService(
                         }
                     }
 
-                    // Opt 4: If exploration_finished AND we already have content from prior
-                    // iterations, skip waiting for extraction. If no prior content exists
-                    // (e.g. first iteration), we must wait because extraction IS the answer.
-                    val canShortCircuit = navOutput.decision == "exploration_finished"
-                        && state.extractedRegionContent.isNotEmpty()
-
-                    if (canShortCircuit) {
-                        val (locResult, locMs) = locatorDeferred.await()
-                        val exPhase = if (extractionDeferred.isCompleted) extractionDeferred.await()
-                        else {
-                            extractionDeferred.cancel()
-                            ExtractionPhaseResult(ExtractionResult(emptyList(), emptyList()), 0L, null, null)
-                        }
-                        extractionResult = exPhase.result
-                        extractionMs = exPhase.durationMs
-                        segTokenUsage = exPhase.segTU
-                        if (exPhase.observation != null) extractionObservation = exPhase.observation
-                        resolvedActions = locResult
-                        locatorMs = locMs
-                    } else {
-                        val exPhase = extractionDeferred.await()
-                        val (locResult, locMs) = locatorDeferred.await()
-                        extractionResult = exPhase.result
-                        extractionMs = exPhase.durationMs
-                        segTokenUsage = exPhase.segTU
-                        if (exPhase.observation != null) extractionObservation = exPhase.observation
-                        resolvedActions = locResult
-                        locatorMs = locMs
-                    }
+                    val exPhase = extractionDeferred.await()
+                    val (locResult, locMs) = locatorDeferred.await()
+                    extractionResult = exPhase.result
+                    extractionMs = exPhase.durationMs
+                    segTokenUsage = exPhase.segTU
+                    if (exPhase.observation != null) extractionObservation = exPhase.observation
+                    resolvedActions = locResult
+                    locatorMs = locMs
                 }
 
                 state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage + timedDesc.output.tokenUsage
