@@ -449,20 +449,13 @@ class AgenticWebpageSearchService(
                         if (descOutputResult.descriptions.isNotEmpty()) {
                             val extractionStart = clock.markNow()
                             val descriptions = descOutputResult.descriptions
-                            val useCropping = imgHeight >= MIN_PAGE_HEIGHT_FOR_CROP
-                                && descriptions.any { it.roughYMin != null && it.roughYMax != null }
-
-                            val segResult = if (useCropping) {
-                                segmentWithCrops(descriptions, screenshot.bytes, imgWidth, imgHeight, query, state)
-                            } else {
-                                val segInput = VisualSegmentationInput(
-                                    screenshot = IBrowserPage.Screenshot(bytes = screenshot.bytes, mimeType = ImageMimeType.PNG),
-                                    query = query,
-                                    regionDescriptions = descriptions,
-                                    extractedRegionContent = state.extractedRegionContent.toList()
-                                )
-                                visualSegmentationAgent.generate(segInput)
-                            }
+                            val segInput = VisualSegmentationInput(
+                                screenshot = IBrowserPage.Screenshot(bytes = screenshot.bytes, mimeType = ImageMimeType.PNG),
+                                query = query,
+                                regionDescriptions = descriptions,
+                                extractedRegionContent = state.extractedRegionContent.toList()
+                            )
+                            val segResult = visualSegmentationAgent.generate(segInput)
 
                             val obs = segResult.observation
                             val result = if (segResult.regions.isNotEmpty()) {
@@ -1433,11 +1426,13 @@ class AgenticWebpageSearchService(
         roughYMin: Int,
         roughYMax: Int
     ): CroppedScreenshot {
-        val paddedYMin = maxOf(0, roughYMin - CROP_PADDING_NORM)
-        val paddedYMax = minOf(1000, roughYMax + CROP_PADDING_NORM)
+        val clampedYMin = roughYMin.coerceIn(0, 1000)
+        val clampedYMax = roughYMax.coerceIn(clampedYMin, 1000)
+        val paddedYMin = maxOf(0, clampedYMin - CROP_PADDING_NORM)
+        val paddedYMax = minOf(1000, clampedYMax + CROP_PADDING_NORM)
         val pixelYMin = (paddedYMin.toLong() * imageHeight / 1000).toInt()
-        val pixelYMax = (paddedYMax.toLong() * imageHeight / 1000).toInt()
-        val cropHeight = pixelYMax - pixelYMin
+        val pixelYMax = (paddedYMax.toLong() * imageHeight / 1000).toInt().coerceAtLeast(pixelYMin + 1)
+        val cropHeight = (pixelYMax - pixelYMin).coerceIn(1, imageHeight - pixelYMin)
 
         val croppedBytes = imageProcessingService.cropToPng(
             screenshotBytes, 0, pixelYMin, imageWidth, cropHeight

@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer
 import io.deepsearch.application.services.AgenticPageSearchResult
 import io.deepsearch.application.services.IAgenticWebpageSearchService
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
+import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
 import org.slf4j.LoggerFactory
 import java.net.InetSocketAddress
 
@@ -94,7 +95,15 @@ class NavigationBenchmarkRunner(
             )
         } catch (e: Exception) {
             logger.error("Benchmark case {} failed with exception: {}", case.id, e.message)
-            throw e
+            AgenticPageSearchResult(
+                answer = null,
+                evidence = null,
+                contentDate = null,
+                actionsPerformed = emptyList(),
+                observations = listOf("ERROR: ${e.message}"),
+                success = false,
+                totalTokenUsage = TokenUsageMetrics(modelName = "n/a", promptTokens = 0, outputTokens = 0, totalTokens = 0)
+            )
         }
         val durationMs = System.currentTimeMillis() - startMs
 

@@ -155,7 +155,11 @@ class ImageProcessingService : IImageProcessingService {
 
     override fun cropToPng(imageBytes: ByteArray, x: Int, y: Int, width: Int, height: Int): ByteArray {
         val image = decodeMat(imageBytes, IMREAD_COLOR)
-        val roi = Mat(image, Rect(x, y, width, height))
+        val clampedX = x.coerceIn(0, image.cols() - 1)
+        val clampedY = y.coerceIn(0, image.rows() - 1)
+        val clampedW = width.coerceIn(1, image.cols() - clampedX)
+        val clampedH = height.coerceIn(1, image.rows() - clampedY)
+        val roi = Mat(image, Rect(clampedX, clampedY, clampedW, clampedH))
         val result = encodePng(roi)
         roi.close()
         image.close()
