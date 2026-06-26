@@ -90,7 +90,7 @@ class ComputerUseSearchService(
                         actionsPerformed.add(actionDesc)
                         logger.info("CU iteration {}: executing {}", iterations, actionDesc)
 
-                        val error = executeAction(page, fc.name, fc.args)
+                        val error = executeAction(page, fc.name, fc.args, url)
 
                         delay(POST_ACTION_DELAY_MS)
 
@@ -128,7 +128,8 @@ class ComputerUseSearchService(
     private suspend fun executeAction(
         page: IBrowserPage,
         name: String,
-        args: Map<String, Any>
+        args: Map<String, Any>,
+        startUrl: String
     ): String? {
         return try {
             val snapshot = page.captureDomSnapshot()
@@ -173,10 +174,35 @@ class ComputerUseSearchService(
                     null
                 }
 
-                "navigate", "go_back", "go_forward" -> {
-                    val url = args["url"]?.toString() ?: ""
-                    logger.info("CU blocked cross-page navigation to: {}", url)
-                    "Navigation blocked: staying on current page"
+                "navigate" -> {
+                    val targetUrl = args["url"]?.toString() ?: ""
+                    if (targetUrl.isNotEmpty()) {
+                        if (isSameDomain(startUrl, targetUrl)) {
+                            logger.info("CU navigating to same-domain URL: {}", targetUrl)
+                            page.navigate(targetUrl)
+                            page.waitForLoad()
+                            null
+                        } else {
+                            logger.warn("CU blocked cross-domain navigation from {} to {}", startUrl, targetUrl)
+                            "Navigation blocked: staying on current domain to focus on the task"
+                        }
+                    } else {
+                        "Error: missing url parameter"
+                    }
+                }
+
+                "go_back" -> {
+                    logger.info("CU navigating back")
+                    page.goBack()
+                    page.waitForLoad()
+                    null
+                }
+
+                "go_forward" -> {
+                    logger.info("CU navigating forward")
+                    page.goForward()
+                    page.waitForLoad()
+                    null
                 }
 
                 "wait" -> {
@@ -198,6 +224,20 @@ class ComputerUseSearchService(
             logger.error("CU action '{}' failed: {}", name, e.message)
             "Error: ${e.message}"
         }
+    }
+
+    private fun getHost(url: String): String? {
+        return try {
+            java.net.URI(url).host?.lowercase()?.removePrefix("www.")
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun isSameDomain(startUrl: String, targetUrl: String): Boolean {
+        val startHost = getHost(startUrl) ?: return false
+        val targetHost = getHost(targetUrl) ?: return false
+        return startHost == targetHost
     }
 
     private fun extractTokenUsage(response: ComputerUseResponse): TokenUsageMetrics =

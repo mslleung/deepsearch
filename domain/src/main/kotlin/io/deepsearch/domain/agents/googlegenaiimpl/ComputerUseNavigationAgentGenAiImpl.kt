@@ -116,6 +116,10 @@ class ComputerUseNavigationAgentGenAiImpl(
         val modelId = MODEL.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
+        val prunedHistory = pruneHistory(history.toList())
+        history.clear()
+        history.addAll(prunedHistory)
+
         logger.debug(
             "CU calling model: history size={}, parts per content={}",
             history.size,
@@ -216,13 +220,49 @@ class ComputerUseNavigationAgentGenAiImpl(
         return ComputerUseResponse.Answer("", tokenUsage)
     }
 
+    private fun pruneHistory(history: List<Content>): List<Content> {
+        if (history.size <= 1) return history.toList()
+
+        return history.mapIndexed { index, content ->
+            if (index == history.size - 1) {
+                content
+            } else {
+                val role = content.role().orElse("user")
+                val oldParts = content.parts().orElse(emptyList())
+                val newParts = oldParts.mapNotNull { part ->
+                    when {
+                        part.inlineData().isPresent -> {
+                            null
+                        }
+                        part.functionResponse().isPresent -> {
+                            val oldFn = part.functionResponse().get()
+                            val newFn = FunctionResponse.builder()
+                                .name(oldFn.name().orElse(""))
+                                .id(oldFn.id().orElse(""))
+                                .response(oldFn.response().orElse(emptyMap()))
+                                .build()
+                            Part.builder().functionResponse(newFn).build()
+                        }
+                        else -> {
+                            part
+                        }
+                    }
+                }
+                Content.builder()
+                    .role(role)
+                    .parts(newParts)
+                    .build()
+            }
+        }
+    }
+
     companion object {
         val MODEL = ModelIds.GEMINI_3_5_FLASH
 
         private fun buildInitialPrompt(query: String, currentUrl: String): String = """
-            You are on the page: $currentUrl
+            You are on the starting page: $currentUrl
             
-            Task: Navigate this webpage to find the answer to the following question.
+            Task: Navigate this website to find the answer to the following question.
             
             Question: $query
             
@@ -230,18 +270,19 @@ class ComputerUseNavigationAgentGenAiImpl(
             - Look at the screenshot and interact with the page to find the answer.
             - Click on accordions, tabs, or expandable sections if the answer might be hidden.
             - Scroll down if the content is below the viewport.
+            - If the information is not on this page, click links or use navigation actions (navigate, go_back, go_forward) to explore other pages on the same website.
             - When you find the answer, respond with ONLY the factual answer text. Do NOT include explanations of how you found it.
-            - If the information is not on this page after thorough exploration, say "INFORMATION_NOT_FOUND".
+            - If the information is not on this website after thorough exploration, say "INFORMATION_NOT_FOUND".
         """.trimIndent()
 
-        private const val SYSTEM_INSTRUCTION = """You are a web research agent. Your task is to navigate a webpage using browser actions to find specific information requested by the user.
+        private const val SYSTEM_INSTRUCTION = """You are a web research agent. Your task is to navigate a website using browser actions to find specific information requested by the user.
 
-When you find the answer to the user's question, stop taking actions and respond with a clear, factual answer. Include specific numbers, prices, names, and details exactly as they appear on the page.
+            When you find the answer to the user's question, stop taking actions and respond with a clear, factual answer. Include specific numbers, prices, names, and details exactly as they appear on the page.
 
-Do NOT navigate away from the current page. Stay on this page and explore it thoroughly.
-Do NOT click links that would take you to a different page.
-Do NOT interact with cookie consent banners, privacy prompts, or GDPR notices. Ignore them completely and focus on the page content behind them.
-Focus on finding the specific information asked about."""
+            You are allowed to navigate to other pages on the same website using links, buttons, or the navigate/go_back/go_forward actions if the information is not on the starting page.
+            Do NOT navigate to completely different external websites. Stay on the target website.
+            Do NOT interact with cookie consent banners, privacy prompts, or GDPR notices. Ignore them completely and focus on the page content behind them.
+            Focus on finding the specific information asked about."""
 
         private val THINKING_LINE_REGEX = Regex("""^\d+_thought\b.*$""", RegexOption.MULTILINE)
 

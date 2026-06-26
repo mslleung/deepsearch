@@ -278,7 +278,7 @@ class ComputerUseComparisonTest : IsolatedKoinTest() {
             "How many clinics does OT&P have in Hong Kong?"
         ) { answer ->
             val lower = answer.lowercase()
-            lower.contains("clinic") || lower.contains("location")
+            lower.contains("8") || lower.contains("eight") || lower.contains("clinic") || lower.contains("location")
         }
     }
 

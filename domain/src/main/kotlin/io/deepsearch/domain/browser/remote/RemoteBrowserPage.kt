@@ -127,6 +127,14 @@ class RemoteBrowserPage(
         pageCmd(PageCommand.Navigate(safeUrl))
     }
 
+    override suspend fun goBack() {
+        pageCmd(PageCommand.GoBack)
+    }
+
+    override suspend fun goForward() {
+        pageCmd(PageCommand.GoForward)
+    }
+
     override suspend fun waitForLoad() {
         pageCmd(PageCommand.WaitForLoad)
     }

@@ -54,6 +54,16 @@ interface IBrowserPage {
     suspend fun navigate(url: String)
 
     /**
+     * Navigate back in the browser history.
+     */
+    suspend fun goBack()
+
+    /**
+     * Navigate forward in the browser history.
+     */
+    suspend fun goForward()
+
+    /**
      * Wait for the page to be visually ready (network idle or load, whichever first).
      * 
      * Returns immediately if `document.readyState` is already "complete".
