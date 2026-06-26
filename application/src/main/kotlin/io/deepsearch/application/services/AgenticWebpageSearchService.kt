@@ -958,19 +958,12 @@ class AgenticWebpageSearchService(
             return ResolvedActionsResult(actions, TokenUsageMetrics.empty("gemini-3.1-flash-lite"))
         }
 
-        val useCropping = imgHeight >= MIN_PAGE_HEIGHT_FOR_CROP
-            && actions.filterIsInstance<NavigationAction.Click>().any { it.roughY != null }
-
-        val locatorOutput = if (useCropping) {
-            resolveClickTargetsWithCrops(actions, rawScreenshot, imgWidth, imgHeight, pageUrl)
-        } else {
-            val locatorInput = ElementLocatorInput(
-                screenshot = rawScreenshot,
-                targets = clickActions,
-                pageUrl = pageUrl
-            )
-            elementLocatorAgent.generate(locatorInput)
-        }
+        val locatorInput = ElementLocatorInput(
+            screenshot = rawScreenshot,
+            targets = clickActions,
+            pageUrl = pageUrl
+        )
+        val locatorOutput = elementLocatorAgent.generate(locatorInput)
 
         val resolvedMap = locatorOutput.resolved.associateBy { it.index }
         val resolvedActions = actions.mapIndexed { idx, action ->
@@ -990,87 +983,6 @@ class AgenticWebpageSearchService(
         return ResolvedActionsResult(resolvedActions, locatorOutput.tokenUsage)
     }
 
-    private suspend fun resolveClickTargetsWithCrops(
-        actions: List<NavigationAction>,
-        rawScreenshot: IBrowserPage.Screenshot,
-        imgWidth: Int,
-        imgHeight: Int,
-        pageUrl: String
-    ): ElementLocatorOutput {
-        data class ClickWithIndex(val index: Int, val click: NavigationAction.Click)
-
-        val clicksWithIdx = actions.withIndex()
-            .filter { it.value is NavigationAction.Click }
-            .map { (idx, action) -> ClickWithIndex(idx, action as NavigationAction.Click) }
-
-        val withRoughY = clicksWithIdx.filter { it.click.roughY != null }
-        val withoutRoughY = clicksWithIdx.filter { it.click.roughY == null }
-
-        val allResolved = mutableListOf<ResolvedTarget>()
-        var combinedTokenUsage = TokenUsageMetrics.empty("gemini-3.1-flash-lite")
-
-        coroutineScope {
-            val croppedJobs = withRoughY.map { (idx, click) ->
-                async {
-                    val roughY = click.roughY!!
-                    val cropYMin = (roughY - 200).coerceAtLeast(0)
-                    val cropYMax = (roughY + 200).coerceAtMost(1000)
-                    val crop = cropScreenshotVertically(rawScreenshot.bytes, imgWidth, imgHeight, cropYMin, cropYMax)
-
-                    val locatorInput = ElementLocatorInput(
-                        screenshot = IBrowserPage.Screenshot(bytes = crop.bytes, mimeType = crop.mimeType),
-                        targets = listOf(LocatorTarget(index = idx, target = click.target, reason = click.reason)),
-                        pageUrl = pageUrl
-                    )
-                    val output = elementLocatorAgent.generate(locatorInput)
-                    val remapped = output.resolved.map { resolved ->
-                        resolved.copy(
-                            centerYNorm = resolved.centerYNorm?.let { remapYFromCropToFullPage(it, crop) }
-                        )
-                    }
-                    ElementLocatorOutput(resolved = remapped, tokenUsage = output.tokenUsage)
-                }
-            }
-
-            val fallbackJob = if (withoutRoughY.isNotEmpty()) {
-                async {
-                    val targets = withoutRoughY.map { (idx, click) ->
-                        LocatorTarget(index = idx, target = click.target, reason = click.reason)
-                    }
-                    val locatorInput = ElementLocatorInput(
-                        screenshot = rawScreenshot,
-                        targets = targets,
-                        pageUrl = pageUrl
-                    )
-                    elementLocatorAgent.generate(locatorInput)
-                }
-            } else null
-
-            for (job in croppedJobs) {
-                val result = job.await()
-                allResolved.addAll(result.resolved)
-                combinedTokenUsage = TokenUsageMetrics(
-                    modelName = combinedTokenUsage.modelName,
-                    promptTokens = combinedTokenUsage.promptTokens + result.tokenUsage.promptTokens,
-                    outputTokens = combinedTokenUsage.outputTokens + result.tokenUsage.outputTokens,
-                    totalTokens = combinedTokenUsage.totalTokens + result.tokenUsage.totalTokens
-                )
-            }
-
-            fallbackJob?.let { job ->
-                val result = job.await()
-                allResolved.addAll(result.resolved)
-                combinedTokenUsage = TokenUsageMetrics(
-                    modelName = combinedTokenUsage.modelName,
-                    promptTokens = combinedTokenUsage.promptTokens + result.tokenUsage.promptTokens,
-                    outputTokens = combinedTokenUsage.outputTokens + result.tokenUsage.outputTokens,
-                    totalTokens = combinedTokenUsage.totalTokens + result.tokenUsage.totalTokens
-                )
-            }
-        }
-
-        return ElementLocatorOutput(resolved = allResolved, tokenUsage = combinedTokenUsage)
-    }
 
     private suspend fun scrollAndMapToViewport(
         page: IBrowserPage,

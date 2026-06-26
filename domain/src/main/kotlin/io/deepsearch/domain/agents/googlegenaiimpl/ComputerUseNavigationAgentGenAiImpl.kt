@@ -41,6 +41,8 @@ class ComputerUseNavigationAgentGenAiImpl(
                 )
                 .build()
         )
+        .temperature(1.0f)
+        .maxOutputTokens(8192)
         .systemInstruction(
             Content.fromParts(
                 Part.fromText(SYSTEM_INSTRUCTION)
@@ -116,9 +118,9 @@ class ComputerUseNavigationAgentGenAiImpl(
         val modelId = MODEL.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
-        val prunedHistory = pruneHistory(history.toList())
+        val compressedHistory = compressHistoryImages(history.toList())
         history.clear()
-        history.addAll(prunedHistory)
+        history.addAll(compressedHistory)
 
         logger.debug(
             "CU calling model: history size={}, parts per content={}",
@@ -179,9 +181,10 @@ class ComputerUseNavigationAgentGenAiImpl(
         val modelContent = candidate.content()
             .orElseThrow { RuntimeException("No content in CU candidate") }
 
-        history.add(modelContent)
+        val sanitizedContent = sanitizeCoordinates(modelContent)
+        history.add(sanitizedContent)
 
-        val parts = modelContent.parts().orElse(emptyList())
+        val parts = sanitizedContent.parts().orElse(emptyList())
 
         val functionCalls = parts.mapNotNull { part ->
             part.functionCall().orElse(null)?.let { fc ->
@@ -220,32 +223,97 @@ class ComputerUseNavigationAgentGenAiImpl(
         return ComputerUseResponse.Answer("", tokenUsage)
     }
 
-    private fun pruneHistory(history: List<Content>): List<Content> {
+    /**
+     * Compress older screenshots to JPEG at reduced quality instead of removing them.
+     * Keeps the [KEEP_RECENT_SCREENSHOTS] most recent screenshots at full PNG quality;
+     * converts older ones to JPEG 25% quality to reduce token cost while retaining visual context.
+     */
+    private fun compressHistoryImages(history: List<Content>): List<Content> {
         if (history.size <= 1) return history.toList()
 
-        return history.mapIndexed { index, content ->
-            if (index == history.size - 1) {
+        val screenshotIndices = mutableListOf<Pair<Int, Int>>()
+        history.forEachIndexed { contentIdx, content ->
+            content.parts().orElse(emptyList()).forEachIndexed { partIdx, part ->
+                val hasImage = part.inlineData().isPresent ||
+                    (part.functionResponse().isPresent &&
+                        part.functionResponse().get().parts().orElse(emptyList()).any { fp ->
+                            fp.inlineData().isPresent
+                        })
+                if (hasImage) {
+                    screenshotIndices.add(contentIdx to partIdx)
+                }
+            }
+        }
+
+        if (screenshotIndices.size <= KEEP_RECENT_SCREENSHOTS) return history.toList()
+
+        val indicesToCompress = screenshotIndices.dropLast(KEEP_RECENT_SCREENSHOTS).toSet()
+
+        return history.mapIndexed { contentIdx, content ->
+            val oldParts = content.parts().orElse(emptyList())
+            val hasCompressiblePart = oldParts.indices.any { partIdx ->
+                (contentIdx to partIdx) in indicesToCompress
+            }
+
+            if (!hasCompressiblePart) {
                 content
             } else {
                 val role = content.role().orElse("user")
-                val oldParts = content.parts().orElse(emptyList())
-                val newParts = oldParts.mapNotNull { part ->
-                    when {
-                        part.inlineData().isPresent -> {
-                            null
+                val newParts = oldParts.mapIndexedNotNull { partIdx, part ->
+                    if ((contentIdx to partIdx) in indicesToCompress) {
+                        when {
+                            part.inlineData().isPresent -> {
+                                val data = part.inlineData().get()
+                                val compressed = compressToJpeg(
+                                    data.data().orElse(ByteArray(0)),
+                                    data.mimeType().orElse("image/png")
+                                )
+                                if (compressed != null) {
+                                    Part.fromBytes(compressed, "image/jpeg")
+                                } else {
+                                    null
+                                }
+                            }
+                            part.functionResponse().isPresent -> {
+                                val oldFn = part.functionResponse().get()
+                                val oldFnParts = oldFn.parts().orElse(emptyList())
+                                val newFnParts = oldFnParts.mapNotNull { fp ->
+                                    if (fp.inlineData().isPresent) {
+                                        val data = fp.inlineData().get()
+                                        val compressed = compressToJpeg(
+                                            data.data().orElse(ByteArray(0)),
+                                            data.mimeType().orElse("image/png")
+                                        )
+                                        if (compressed != null) {
+                                            FunctionResponsePart.builder()
+                                                .inlineData(
+                                                    FunctionResponseBlob.builder()
+                                                        .mimeType("image/jpeg")
+                                                        .data(compressed)
+                                                        .build()
+                                                )
+                                                .build()
+                                        } else {
+                                            null
+                                        }
+                                    } else {
+                                        fp
+                                    }
+                                }
+
+                                val newFnBuilder = FunctionResponse.builder()
+                                    .name(oldFn.name().orElse(""))
+                                    .id(oldFn.id().orElse(""))
+                                    .response(oldFn.response().orElse(emptyMap()))
+                                if (newFnParts.isNotEmpty()) {
+                                    newFnBuilder.parts(newFnParts)
+                                }
+                                Part.builder().functionResponse(newFnBuilder.build()).build()
+                            }
+                            else -> part
                         }
-                        part.functionResponse().isPresent -> {
-                            val oldFn = part.functionResponse().get()
-                            val newFn = FunctionResponse.builder()
-                                .name(oldFn.name().orElse(""))
-                                .id(oldFn.id().orElse(""))
-                                .response(oldFn.response().orElse(emptyMap()))
-                                .build()
-                            Part.builder().functionResponse(newFn).build()
-                        }
-                        else -> {
-                            part
-                        }
+                    } else {
+                        part
                     }
                 }
                 Content.builder()
@@ -256,41 +324,89 @@ class ComputerUseNavigationAgentGenAiImpl(
         }
     }
 
+    private fun compressToJpeg(imageBytes: ByteArray, @Suppress("UNUSED_PARAMETER") mimeType: String): ByteArray? {
+        if (imageBytes.isEmpty()) return null
+        return try {
+            val inputStream = java.io.ByteArrayInputStream(imageBytes)
+            val bufferedImage = javax.imageio.ImageIO.read(inputStream) ?: return null
+            val outputStream = java.io.ByteArrayOutputStream()
+            val writer = javax.imageio.ImageIO.getImageWritersByFormatName("jpeg").next()
+            val param = writer.defaultWriteParam.apply {
+                compressionMode = javax.imageio.ImageWriteParam.MODE_EXPLICIT
+                compressionQuality = JPEG_COMPRESSION_QUALITY
+            }
+            writer.output = javax.imageio.stream.MemoryCacheImageOutputStream(outputStream)
+            writer.write(null, javax.imageio.IIOImage(bufferedImage, null, null), param)
+            writer.dispose()
+            outputStream.toByteArray()
+        } catch (e: Exception) {
+            logger.warn("Failed to compress screenshot to JPEG: {}", e.message)
+            null
+        }
+    }
+
+    /**
+     * Clamp any out-of-range coordinates (>999) in function call args to 999.
+     * Prevents cascading errors from polluting conversation history.
+     */
+    private fun sanitizeCoordinates(content: Content): Content {
+        val parts = content.parts().orElse(emptyList())
+        var modified = false
+
+        val newParts = parts.map { part ->
+            val fc = part.functionCall().orElse(null)
+            if (fc != null) {
+                val args = fc.args().orElse(emptyMap())
+                val xVal = (args["x"] as? Number)?.toDouble()
+                val yVal = (args["y"] as? Number)?.toDouble()
+
+                if ((xVal != null && xVal > 999) || (yVal != null && yVal > 999)) {
+                    modified = true
+                    val newArgs = args.toMutableMap()
+                    if (xVal != null && xVal > 999) newArgs["x"] = 999
+                    if (yVal != null && yVal > 999) newArgs["y"] = 999
+                    Part.fromFunctionCall(fc.name().orElse(""), newArgs)
+                } else {
+                    part
+                }
+            } else {
+                part
+            }
+        }
+
+        return if (modified) {
+            Content.builder()
+                .role(content.role().orElse("model"))
+                .parts(newParts)
+                .build()
+        } else {
+            content
+        }
+    }
+
     companion object {
         val MODEL = ModelIds.GEMINI_3_5_FLASH
 
+        private const val KEEP_RECENT_SCREENSHOTS = 2
+        private const val JPEG_COMPRESSION_QUALITY = 0.25f
+
         private fun buildInitialPrompt(query: String, currentUrl: String): String = """
-            You are on the starting page: $currentUrl
+            Starting page: $currentUrl
             
-            Task: Navigate this website to find the answer to the following question.
+            Find the answer to: $query
             
-            Question: $query
-            
-            Instructions:
-            - Look at the screenshot and interact with the page to find the answer.
-            - Click on accordions, tabs, or expandable sections if the answer might be hidden.
-            - Scroll down if the content is below the viewport.
-            - If the information is not on this page, click links or use navigation actions (navigate, go_back, go_forward) to explore other pages on the same website.
-            - When you find the answer, respond with ONLY the factual answer text. Do NOT include explanations of how you found it.
-            - If the information is not on this website after thorough exploration, say "INFORMATION_NOT_FOUND".
+            When you find the answer, respond with ONLY the factual answer. Do NOT include explanations.
+            If the information cannot be found after thorough exploration, say "INFORMATION_NOT_FOUND".
         """.trimIndent()
 
-        private const val SYSTEM_INSTRUCTION = """You are a web research agent. Your task is to navigate a website using browser actions to find specific information requested by the user.
-
-            When you find the answer to the user's question, stop taking actions and respond with a clear, factual answer. Include specific numbers, prices, names, and details exactly as they appear on the page.
-
-            You are allowed to navigate to other pages on the same website using links, buttons, or the navigate/go_back/go_forward actions if the information is not on the starting page.
-            Do NOT navigate to completely different external websites. Stay on the target website.
-            Do NOT interact with cookie consent banners, privacy prompts, or GDPR notices. Ignore them completely and focus on the page content behind them.
-            Focus on finding the specific information asked about."""
+        private const val SYSTEM_INSTRUCTION =
+            "You are a browser agent whose job is to find specific information on a website. " +
+            "Navigate the site using browser actions to locate the answer to the user's question. " +
+            "When you find the answer, stop taking actions and respond with a clear, factual answer including specific numbers, prices, names, and details exactly as they appear on the page. " +
+            "Stay on the target website. Ignore cookie banners and privacy prompts."
 
         private val THINKING_LINE_REGEX = Regex("""^\d+_thought\b.*$""", RegexOption.MULTILINE)
 
-        /**
-         * Gemini 3.5 Flash sometimes leaks internal reasoning prefixed with lines like
-         * "10_thought\nThe price is clearly listed as ...".
-         * Strip those lines so the caller gets only the factual answer.
-         */
         fun stripThinkingPreamble(raw: String): String {
             return raw.replace(THINKING_LINE_REGEX, "")
                 .trimStart('\n', ' ')
