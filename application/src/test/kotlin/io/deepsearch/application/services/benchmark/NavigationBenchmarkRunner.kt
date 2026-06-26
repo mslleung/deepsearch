@@ -5,11 +5,17 @@ import io.deepsearch.application.services.AgenticPageSearchResult
 import io.deepsearch.application.services.IAgenticWebpageSearchService
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.slf4j.LoggerFactory
 import java.net.InetSocketAddress
 
 class NavigationBenchmarkRunner(
-    private val agenticSearchService: IAgenticWebpageSearchService
+    private val agenticSearchService: IAgenticWebpageSearchService,
+    private val maxConcurrency: Int = 5
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
 
@@ -21,22 +27,32 @@ class NavigationBenchmarkRunner(
     )
 
     suspend fun runAll(cases: List<BenchmarkCase>): BenchmarkReport {
-        val (inlineCases, urlCases) = cases.partition { it.pageSource is PageSource.InlineHtml }
+        val wallClockStart = System.currentTimeMillis()
 
+        val (inlineCases, urlCases) = cases.partition { it.pageSource is PageSource.InlineHtml }
         val allResults = mutableListOf<CaseResult>()
 
         if (inlineCases.isNotEmpty()) {
             allResults.addAll(runInlineHtmlCases(inlineCases))
         }
 
-        for (urlCase in urlCases) {
-            allResults.add(runSingleCase(urlCase))
+        val semaphore = Semaphore(maxConcurrency)
+        val urlResults = coroutineScope {
+            urlCases.map { urlCase ->
+                async {
+                    semaphore.withPermit {
+                        runSingleCase(urlCase)
+                    }
+                }
+            }.awaitAll()
         }
+        allResults.addAll(urlResults)
 
+        val wallClockMs = System.currentTimeMillis() - wallClockStart
         val scoreCards = allResults.map { it.scoreCard }
         val report = ActionEfficiencyAnalyzer.buildReport(scoreCards)
 
-        printConsoleReport(allResults, report)
+        printConsoleReport(allResults, report, wallClockMs)
 
         return report
     }
@@ -58,19 +74,23 @@ class NavigationBenchmarkRunner(
         server.start()
         logger.info("Benchmark HTTP server started on port {}", port)
 
-        val results = mutableListOf<CaseResult>()
+        val semaphore = Semaphore(maxConcurrency)
         try {
-            for (case in cases) {
-                val source = case.pageSource as PageSource.InlineHtml
-                val url = "http://localhost:$port${source.path}"
-                results.add(runCaseWithUrl(case, url))
+            return coroutineScope {
+                cases.map { case ->
+                    async {
+                        semaphore.withPermit {
+                            val source = case.pageSource as PageSource.InlineHtml
+                            val url = "http://localhost:$port${source.path}"
+                            runCaseWithUrl(case, url)
+                        }
+                    }
+                }.awaitAll()
             }
         } finally {
             server.stop(0)
             logger.info("Benchmark HTTP server stopped")
         }
-
-        return results
     }
 
     private suspend fun runSingleCase(case: BenchmarkCase): CaseResult {
@@ -123,7 +143,7 @@ class NavigationBenchmarkRunner(
         return CaseResult(case, result, scoreCard, durationMs)
     }
 
-    private fun printConsoleReport(results: List<CaseResult>, report: BenchmarkReport) {
+    private fun printConsoleReport(results: List<CaseResult>, report: BenchmarkReport, wallClockMs: Long) {
         val separator = "=".repeat(120)
 
         println()
@@ -201,8 +221,14 @@ class NavigationBenchmarkRunner(
         println("  Model: $modelName")
         println("  Cases run: ${results.size}")
         println()
+        val wallClockSec = wallClockMs / 1000.0
+
         println("  Latency:")
-        println("    Total wall time:     %8.1fs".format(totalDurationSec))
+        println("    Wall clock time:     %8.1fs".format(wallClockSec))
+        println("    Sum of case times:   %8.1fs".format(totalDurationSec))
+        if (totalDurationSec > 0) {
+            println("    Parallelism factor:  %8.1fx".format(totalDurationSec / wallClockSec))
+        }
         println("    Avg per case:        %8.1fs".format(avgDurationSec))
         println("    Min:                 %8.1fs".format(results.minOf { it.durationMs } / 1000.0))
         println("    Max:                 %8.1fs".format(results.maxOf { it.durationMs } / 1000.0))

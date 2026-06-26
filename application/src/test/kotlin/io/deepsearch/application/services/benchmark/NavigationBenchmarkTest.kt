@@ -44,7 +44,7 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
         koinApp.createEagerInstances()
         testKoin = koinApp.koin
 
-        runner = NavigationBenchmarkRunner(agenticSearchService)
+        runner = NavigationBenchmarkRunner(agenticSearchService, maxConcurrency = 15)
     }
 
     @AfterAll
