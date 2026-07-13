@@ -150,6 +150,7 @@ private val domainCommonTestModule = module {
     singleOf(::VisualSegmentationAgentGenAiImpl) bind IVisualSegmentationAgent::class
     singleOf(::RegionDescriptionAgentGenAiImpl) bind IRegionDescriptionAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
+    singleOf(::DirectionPlannerAgentGenAiImpl) bind IDirectionPlannerAgent::class
     singleOf(::ComputerUseNavigationAgentGenAiImpl) bind IComputerUseNavigationAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class

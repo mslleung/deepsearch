@@ -2,7 +2,6 @@ package io.deepsearch.application.services
 
 import com.sun.net.httpserver.HttpServer
 import io.deepsearch.application.config.applicationBenchmarkTestModule
-import io.deepsearch.application.services.benchmark.ActionEfficiencyAnalyzer
 import io.deepsearch.domain.agents.ActionWithOutcome
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.config.IApplicationCoroutineScope
@@ -313,7 +312,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
     // ==================== Helpers ====================
 
-    private fun printResult(result: AgenticPageSearchResult, optimalIterations: Int? = null) {
+    private fun printResult(result: AgenticPageSearchResult) {
         println("Success: ${result.success}")
         println("Answer: ${result.answer}")
         println("Evidence: ${result.evidence}")
@@ -322,10 +321,6 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
             println("  ${idx + 1}. $action")
         }
         println("Token usage: prompt=${result.totalTokenUsage.promptTokens}, output=${result.totalTokenUsage.outputTokens}, total=${result.totalTokenUsage.totalTokens}")
-
-        val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations ?: result.actionsPerformed.size)
-        println("\n--- Efficiency Summary ---")
-        println("click: ${report.clickCount} | scroll_at: ${report.scrollAtCount} | type: ${report.typeCount}")
     }
 
     // ==================== Test: Page dense with numbers (hallucination-prone) ====================
@@ -585,8 +580,6 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
         println("=== LONG PAGE BOTTOM (EFFICIENCY) ===")
         printResult(result)
-        val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations = 2)
-        ActionEfficiencyAnalyzer.printReport(report, "long-page-bottom")
 
         assertTrue(result.success, "Should find the answer")
         assertNotNull(result.answer, "Answer should not be null")
@@ -614,8 +607,6 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
         println("=== LONG PAGE ACCORDION BOTTOM (EFFICIENCY) ===")
         printResult(result)
-        val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations = 3)
-        ActionEfficiencyAnalyzer.printReport(report, "long-page-accordion-bottom")
 
         assertTrue(result.success, "Should find the answer")
         assertNotNull(result.answer, "Answer should not be null")
@@ -643,8 +634,6 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
         println("=== SEARCHABLE TABLE (EFFICIENCY) ===")
         printResult(result)
-        val report = ActionEfficiencyAnalyzer.analyze(result, optimalIterations = 2)
-        ActionEfficiencyAnalyzer.printReport(report, "searchable-table")
 
         assertTrue(result.success, "Should find the answer")
         assertNotNull(result.answer, "Answer should not be null")

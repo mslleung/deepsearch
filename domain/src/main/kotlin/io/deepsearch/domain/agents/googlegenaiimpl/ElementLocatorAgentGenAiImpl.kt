@@ -29,7 +29,7 @@ class ElementLocatorAgentGenAiImpl(
     @Serializable
     private data class ResolvedTargetResponse(
         val index: Int,
-        val box_2d: List<Int>? = null,
+        val label: Int = -1,
         val confidence: String? = null
     )
 
@@ -45,9 +45,8 @@ class ElementLocatorAgentGenAiImpl(
                 "index" to Schema.builder().type("INTEGER")
                     .description("The index of the target being resolved (from the input).")
                     .build(),
-                "box_2d" to Schema.builder().type("ARRAY")
-                    .items(Schema.builder().type("INTEGER").build())
-                    .description("Bounding box [ymin, xmin, ymax, xmax] normalized to 0-1000 around the target element. Set to [0, 0, 0, 0] if the element cannot be found.")
+                "label" to Schema.builder().type("INTEGER")
+                    .description("The numbered label on the screenshot that matches the target element. Set to -1 if the element cannot be found.")
                     .build(),
                 "confidence" to Schema.builder().type("STRING")
                     .description("How confident you are: 'high' if the match is unambiguous, 'low' if multiple candidates exist or the match is uncertain.")
@@ -55,7 +54,7 @@ class ElementLocatorAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("index", "box_2d", "confidence"))
+        .required(listOf("index", "label", "confidence"))
         .build()
 
     private val locatorSchema: Schema = Schema.builder()
@@ -65,7 +64,7 @@ class ElementLocatorAgentGenAiImpl(
                 "resolved" to Schema.builder()
                     .type("ARRAY")
                     .items(resolvedTargetSchema)
-                    .description("One entry per target, with a bounding box around the matching element on the screenshot.")
+                    .description("One entry per target, with the label number of the matching element on the annotated screenshot.")
                     .build()
             )
         )
@@ -74,22 +73,21 @@ class ElementLocatorAgentGenAiImpl(
 
     private val systemInstruction = """
         You are a visual element locator. You receive:
-        1. A screenshot of a webpage
+        1. An ANNOTATED screenshot of a webpage — interactive elements are highlighted with colored bounding boxes and numbered labels (e.g., [0], [1], [12])
         2. One or more TARGET DESCRIPTIONS of elements to find on that page
 
-        For each target, locate the described element on the screenshot and return a tight bounding box around it.
-        Return box_2d as [ymin, xmin, ymax, xmax] normalized to 0-1000. Origin (0,0) is top-left.
+        For each target, identify which numbered label on the screenshot matches the described element.
+        Return the label number of the matching element.
 
         CRITICAL: Multiple elements often have IDENTICAL visible text (e.g., many "Learn More" buttons).
         Do NOT pick the first match. For each target:
         1. Read the FULL target description carefully — it specifies section headings, position, and surrounding context
-        2. Scan the ENTIRE screenshot for ALL elements with matching text
-        3. Use the spatial and contextual cues in the description to select the CORRECT one
-        4. Draw a tight bounding box around ONLY that specific element (not the entire section)
+        2. Scan the ENTIRE screenshot for ALL labeled elements with matching text
+        3. Use the spatial and contextual cues in the description to select the CORRECT labeled element
+        4. Return the label number of ONLY that specific element
         5. If unsure between candidates, set confidence to "low"
 
-        The bounding box should tightly wrap the clickable element itself (button, link, text), not the surrounding section.
-        If no element on the screenshot matches the target description, set box_2d to [0, 0, 0, 0].
+        If no labeled element on the screenshot matches the target description, set label to -1.
     """.trimIndent()
 
     override suspend fun generate(input: ElementLocatorInput): ElementLocatorOutput {
@@ -101,29 +99,22 @@ class ElementLocatorAgentGenAiImpl(
         val response = withContext(dispatcherProvider.io) {
             retryLlmCall<LocatorResponse>(this@ElementLocatorAgentGenAiImpl::class.simpleName!! + ".locate") {
                 val contentParts = listOf(
-                    Part.fromText("SCREENSHOT:"),
+                    Part.fromText("ANNOTATED SCREENSHOT (elements are highlighted with numbered labels):"),
                     Part.fromBytes(input.screenshot.bytes, input.screenshot.mimeType.value),
                     Part.fromText(prompt)
                 )
-
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
+                        .temperature(1.0f)
                         .responseSchema(locatorSchema)
                         .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
-                                .build()
-                        )
+                        .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                         .build()
                 )
-
                 result.checkFinishReason()
-
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
                         modelName = modelId,
@@ -132,30 +123,25 @@ class ElementLocatorAgentGenAiImpl(
                         totalTokens = metadata.totalTokenCount().orElse(0)
                     )
                 }
-
                 result.text() ?: throw RuntimeException("No text response from model")
             }
         }
 
         val resolved = response.resolved.map { r ->
-            val box = r.box_2d
-            val isValid = box != null && box.size >= 4 && !(box[0] == 0 && box[1] == 0 && box[2] == 0 && box[3] == 0)
-            if (isValid) {
-                val ymin = box[0].coerceIn(0, 1000)
-                val xmin = box[1].coerceIn(0, 1000)
-                val ymax = box[2].coerceIn(0, 1000)
-                val xmax = box[3].coerceIn(0, 1000)
-                val centerXNorm = (xmin + xmax) / 2
-                val centerYNorm = (ymin + ymax) / 2
+            val label = r.label
+            val element = if (label >= 0) input.elementIndex[label] else null
+            if (element != null) {
                 ResolvedTarget(
                     index = r.index,
+                    elementLabel = label,
                     confidence = r.confidence,
-                    centerXNorm = centerXNorm,
-                    centerYNorm = centerYNorm
+                    centerXNorm = element.centerX,
+                    centerYNorm = element.centerY
                 )
             } else {
                 ResolvedTarget(
                     index = r.index,
+                    elementLabel = if (label >= 0) label else null,
                     confidence = r.confidence
                 )
             }
@@ -164,7 +150,7 @@ class ElementLocatorAgentGenAiImpl(
         logger.debug(
             "Element locator resolved {} targets: {}",
             resolved.size,
-            resolved.joinToString { "#${it.index}→center=(${it.centerXNorm},${it.centerYNorm})(${it.confidence})" }
+            resolved.joinToString { "#${it.index}→label=${it.elementLabel},center=(${it.centerXNorm},${it.centerYNorm})(${it.confidence})" }
         )
 
         return ElementLocatorOutput(
@@ -184,6 +170,6 @@ class ElementLocatorAgentGenAiImpl(
             }
         }
         appendLine()
-        appendLine("For each target, find the described element on the screenshot and return a tight bounding box [ymin, xmin, ymax, xmax] normalized to 0-1000.")
+        appendLine("For each target, find the described element on the annotated screenshot and return the label number of the matching element.")
     }
 }

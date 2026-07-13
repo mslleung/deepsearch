@@ -131,6 +131,7 @@ val domainModule = module {
     singleOf(::VisualSegmentationAgentGenAiImpl) bind IVisualSegmentationAgent::class
     singleOf(::RegionDescriptionAgentGenAiImpl) bind IRegionDescriptionAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
+    singleOf(::DirectionPlannerAgentGenAiImpl) bind IDirectionPlannerAgent::class
 
     // Computer Use navigation agent (for CU benchmark comparison)
     singleOf(::ComputerUseNavigationAgentGenAiImpl) bind IComputerUseNavigationAgent::class

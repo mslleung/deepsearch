@@ -40,6 +40,8 @@ out/
 .env
 .env.*
 !.env.example
+*-sa.json
+*-credentials.json
 
 ### IntelliJ Run Configurations ###
 .run/

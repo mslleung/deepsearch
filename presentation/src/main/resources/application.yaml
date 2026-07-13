@@ -31,6 +31,7 @@ serper:
 gemini:
     apiKey: ${GOOGLE_API_KEY}
 vertexai:
+    enabled: ${GOOGLE_GENAI_USE_VERTEXAI:FALSE}
     projectId: ${GOOGLE_CLOUD_PROJECT}
     location: ${GOOGLE_CLOUD_LOCATION}
 stripe:

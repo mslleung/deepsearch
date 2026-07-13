@@ -1,7 +1,6 @@
 package io.deepsearch.application.services
 
 import io.deepsearch.application.config.applicationBenchmarkTestModule
-import io.deepsearch.application.services.benchmark.ActionEfficiencyAnalyzer
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
@@ -595,8 +594,5 @@ class SleekFlowPricingPageSearchTest : IsolatedKoinTest() {
                 "output=${result.totalTokenUsage.outputTokens}, " +
                 "total=${result.totalTokenUsage.totalTokens}")
 
-        val report = ActionEfficiencyAnalyzer.analyze(result, result.actionsPerformed.size)
-        println("\n--- Efficiency Summary ---")
-        println("click: ${report.clickCount} | scroll_at: ${report.scrollAtCount} | type: ${report.typeCount}")
     }
 }

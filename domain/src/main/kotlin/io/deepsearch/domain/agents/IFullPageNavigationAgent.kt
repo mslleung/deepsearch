@@ -16,6 +16,11 @@ data class TrackedQuestion(
     val resolved: Boolean
 )
 
+data class ExplorationDirection(
+    val direction: String,
+    val status: String
+)
+
 @Serializable
 sealed class NavigationAction {
     @Serializable
@@ -104,25 +109,18 @@ data class FullPageNavigationInput(
     val fullPageScreenshot: IBrowserPage.Screenshot,
     val query: String,
     val previousActions: List<ActionWithOutcome>,
-    val questions: List<TrackedQuestion> = emptyList(),
     val pageUrl: String,
     val pageTitle: String,
-    val currentIteration: Int = 1,
-    val maxIterations: Int = 12,
     val pageState: List<String> = emptyList(),
     val navigationMode: NavigationMode = NavigationMode.FULL_PAGE,
-    val scrollStateHint: String? = null,
-    val extractedRegionContent: List<ExtractedContent> = emptyList(),
-    val contentObservation: String? = null
+    val directionOverrideHint: String? = null
 ) : IAgent.IAgentInput
 
 data class FullPageNavigationOutput(
     val actions: List<NavigationAction>,
-    val questions: List<TrackedQuestion>,
     val pageState: List<String>,
     val observation: String?,
     val decision: String,
-    val relevantInfoFound: Boolean? = null,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

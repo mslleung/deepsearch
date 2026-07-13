@@ -85,6 +85,10 @@ interface IImageProcessingService {
         screenshotBytes: ByteArray,
         elements: List<AnnotationTarget>
     ): AnnotatedScreenshot
+    fun annotateBoxesOnly(
+        screenshotBytes: ByteArray,
+        elements: List<AnnotationTarget>
+    ): ByteArray
     fun highlightRegion(imageBytes: ByteArray, centerX: Int, centerY: Int, margin: Int = 400): ByteArray
 }
 
@@ -310,6 +314,38 @@ class ImageProcessingService : IImageProcessingService {
             mimeType = "image/jpeg",
             elementIndex = elementIndex
         )
+    }
+
+    override fun annotateBoxesOnly(
+        screenshotBytes: ByteArray,
+        elements: List<AnnotationTarget>
+    ): ByteArray {
+        val image = decodeMat(screenshotBytes, IMREAD_COLOR)
+        val imgW = image.cols()
+        val imgH = image.rows()
+        val p1 = Point()
+        val p2 = Point()
+
+        for (element in elements) {
+            val boxX = element.left.toInt().coerceIn(0, imgW - 1)
+            val boxY = element.top.toInt().coerceIn(0, imgH - 1)
+            val boxR = element.right.toInt().coerceIn((boxX + 4).coerceAtMost(imgW), imgW)
+            val boxB = element.bottom.toInt().coerceIn((boxY + 4).coerceAtMost(imgH), imgH)
+
+            val accentColor = PALETTE_BGR[element.index % PALETTE_BGR.size]
+
+            p1.x(boxX).y(boxY)
+            p2.x(boxR).y(boxB)
+            rectangle(image, p1, p2, SHADOW, BOX_OUTER_THICKNESS, LINE_8, 0)
+            rectangle(image, p1, p2, accentColor, BOX_INNER_THICKNESS, LINE_8, 0)
+        }
+
+        p1.close()
+        p2.close()
+
+        val outputBytes = encodeJpeg(image, ANNOTATION_JPEG_QUALITY)
+        image.close()
+        return outputBytes
     }
 
     override fun highlightRegion(imageBytes: ByteArray, centerX: Int, centerY: Int, margin: Int): ByteArray {

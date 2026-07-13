@@ -4,15 +4,12 @@ import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Schema
-import com.google.genai.types.ThinkingConfig
-import com.google.genai.types.ThinkingLevel
 
 import io.deepsearch.domain.agents.ActionWithOutcome
 import io.deepsearch.domain.agents.IFullPageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.NavigationMode
 import io.deepsearch.domain.agents.ScrollDirection
-import io.deepsearch.domain.agents.TrackedQuestion
 import io.deepsearch.domain.agents.FullPageNavigationInput
 import io.deepsearch.domain.agents.FullPageNavigationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
@@ -85,19 +82,6 @@ class FullPageNavigationAgentGenAiImpl(
         .propertyOrdering(listOf("action", "reason", "click", "type", "scrollAt"))
         .build()
 
-    private val questionStateSchema: Schema = Schema.builder()
-        .type("OBJECT")
-        .properties(
-            mapOf(
-                "question" to Schema.builder().type("STRING").description("The question text.").build(),
-                "status" to Schema.builder().type("STRING").enum_(listOf("open", "resolved"))
-                    .description("Whether this question is still open or has been resolved. Only mark resolved when the relevant data appears in EXTRACTED KNOWLEDGE.").build()
-            )
-        )
-        .required(listOf("question", "status"))
-        .propertyOrdering(listOf("question", "status"))
-        .build()
-
     // ── Agent 1: Navigate + Decide ──────────────────────────────────────
 
     private val navigateSchema: Schema = Schema.builder()
@@ -122,60 +106,41 @@ class FullPageNavigationAgentGenAiImpl(
                     .type("STRING")
                     .description("Describe the page layout, visible sections, and any changes from the last action.")
                     .build(),
-                "questionsState" to Schema.builder()
-                    .type("ARRAY")
-                    .items(questionStateSchema)
-                    .description("The COMPLETE updated state of ALL questions. On the first turn, decompose the QUERY into sub-questions. On later turns, carry forward ALL previous questions. Mark questions resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE.")
-                    .build(),
                 "decision" to Schema.builder()
                     .type("STRING")
                     .enum_(listOf("continue_exploring", "exploration_finished"))
-                    .description("Top-level intent: continue exploring the page, or finish exploration.")
-                    .build(),
-                "relevantInfoFound" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("When decision is exploration_finished: true if the page contains information relevant to the query (even partial), false if no relevant information was found after exploring all relevant sections.")
+                    .description("continue_exploring: there are actions to execute for the current direction. exploration_finished: the current direction is fully explored (content extracted or confirmed irrelevant).")
                     .build(),
                 "actions" to Schema.builder()
                     .type("ARRAY")
                     .items(actionSchema)
-                    .description("Exploration actions to execute in order (decision=continue_exploring only). Eagerly include ALL actions that might yield information.")
+                    .description("Exploration actions to execute in order (decision=continue_exploring only). Eagerly include ALL actions that might yield information for the current direction.")
                     .nullable(true)
                     .build()
             )
         )
-        .required(listOf("pageState", "observation", "questionsState", "decision", "relevantInfoFound"))
-        .propertyOrdering(listOf("pageState", "observation", "questionsState", "decision", "relevantInfoFound", "actions"))
+        .required(listOf("pageState", "observation", "decision"))
+        .propertyOrdering(listOf("pageState", "observation", "decision", "actions"))
         .build()
 
     private val fullPageNavigateInstruction = """
-        You are a webpage exploration agent. You should imitate a human navigating a webpage looking for information.
+        You are a webpage exploration agent. You execute a specific exploration direction on a webpage.
 
         You see a screenshot of the **entire page** from top to bottom.
+        Interactive elements (buttons, links, tabs, toggles) are highlighted with colored bounding boxes on the screenshot.
         To click an element, describe it in the `target` field. A separate system will locate the exact element from your description.
-        You do NOT need to identify label numbers — just describe what to click.
         If content is hidden (behind accordions, tabs, etc.), click the header/toggle to reveal it. You will see the updated full page on the next turn.
 
-        ## STAGE 1 — VISUAL ANALYSIS
-        Complete this stage based ONLY on what you SEE in the screenshot — before considering the query.
-        - pageState: Report ALL dynamic UI states (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements.
-        - observation: Describe the page layout and any changes from the last action.
-        CRITICAL: Do NOT let the query influence your visual analysis. If the query mentions "X", do not assume X is visible — look at the screenshot and report what is ACTUALLY there.
+        ## YOUR ROLE
+        A separate planning agent decides WHICH directions to explore and WHEN to stop the search.
+        Your job is to execute the CURRENT DIRECTION given to you in the prompt.
+        Focus on thoroughly exploring that one direction — click the right elements, scroll to reveal content, and report when you're done with it.
 
-        ## STAGE 2 — QUERY PLANNING
-        Now read the query and use your Stage 1 analysis to decide what to do.
-        1. Trust your Stage 1 analysis. If you reported "Active tab: Y" in pageState, that IS the active tab — even if you expected a different tab based on the query or your previous click. If the state doesn't match what you expected, your last click likely targeted the wrong element — try a different one.
-        2. EXTRACTED KNOWLEDGE (shown in the prompt) is the accumulated factual knowledge extracted by a separate system from the current screenshot. Use it to track progress and resolve questions.
-        3. Explore the page by issuing actions: click, type_text.
-        4. If a click led to navigation, it would be recorded separately, just continue exploring.
-        5. Mark a question as resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE. If you have not yet seen the data in EXTRACTED KNOWLEDGE, continue exploring.
-        6. If you see tabs, accordions, or toggles that MAY contain relevant content, you MUST click each one to reveal its content before finishing. Do NOT report content as "not listed" or "not available" if you haven't clicked the tab/toggle to check.
-        7. When the query asks for a LIST of items (e.g. 'all prices', 'all packages'), you MUST systematically click through ALL relevant tabs/accordions/toggles to gather every item before calling exploration_finished.
-
-        ## Decision & Actions
-        **continue_exploring**: Provide ALL exploration actions you think will yield information.
-        - **type_text**: Type into input field at (x,y). Highest priority.
-        - **click**: Describe the element to click in `target`. Your description will be used to find the element on the page.
+        ## How to respond
+        1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements. CRITICAL: Do NOT let the query influence this — report what is ACTUALLY there.
+        2. **observation**: Describe the page layout and any changes from the last action.
+        3. **decision**: `continue_exploring` if there are actions to execute for the current direction. `exploration_finished` if the direction is fully explored (relevant content is visible on screen, or confirmed irrelevant).
+        4. **actions** (when continuing): The actions to execute. Eagerly include ALL actions that might yield information for the current direction.
 
         ## TARGET DESCRIPTION FORMAT (CRITICAL)
         Your `target` description must be EXTREMELY specific and unambiguous. Always include ALL of the following:
@@ -189,45 +154,39 @@ class FullPageNavigationAgentGenAiImpl(
 
         GOOD example: "The 'Learn More' link that appears directly below the 'Well Woman Check-ups' heading and above the 'Platinum Health Screening' heading. It is in the lower-middle of the page. There are 6 'Learn More' links on this page and this is the 4th one from the top."
         BAD example: "The Learn More button in the Well Woman section"
-
-        **exploration_finished**: Stop exploring.
-        - Set `relevantInfoFound: true` if the EXTRACTED KNOWLEDGE contains data relevant to the query (even partial information is valuable).
-        - Set `relevantInfoFound: false` if after exploring all relevant sections, you concluded that the page does NOT contain information relevant to the query.
     """.trimIndent()
 
     private val overlayNavigateInstruction = """
-        You are a webpage exploration agent. You should imitate a human navigating a webpage looking for information.
+        You are a webpage exploration agent. You execute a specific exploration direction on a webpage.
 
         You see a **viewport screenshot**. A dialog/overlay is open on the page, and the screenshot shows what is currently visible in the browser viewport.
         To click an element, describe it in the `target` field. A separate system will locate the exact element from your description.
         Use `scroll_element` to scroll within the overlay if content is cut off at the bottom or top.
         To dismiss the overlay, click the close button (X) or click on the dimmed/empty space outside the overlay.
 
-        ## STAGE 1 — VISUAL ANALYSIS
-        Complete this stage based ONLY on what you SEE in the screenshot — before considering the query.
-        - pageState: Report ALL dynamic UI states (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements.
-        - observation: Describe the overlay content and any changes from the last action. Note if content appears cut off (indicating more content available via scrolling).
-        CRITICAL: Do NOT let the query influence your visual analysis. If the query mentions "X", do not assume X is visible — look at the screenshot and report what is ACTUALLY there.
+        ## YOUR ROLE
+        A separate planning agent decides WHICH directions to explore and WHEN to stop the search.
+        Your job is to execute the CURRENT DIRECTION given to you in the prompt.
+        Focus on thoroughly exploring that one direction.
 
-        ## STAGE 2 — QUERY PLANNING
-        Now read the query and use your Stage 1 analysis to decide what to do.
-        1. Trust your Stage 1 analysis. If you reported "Active tab: Y" in pageState, that IS the active tab — even if you expected a different tab based on the query or your previous click. If the state doesn't match what you expected, your last click likely targeted the wrong element — try a different one.
-        2. EXTRACTED KNOWLEDGE (shown in the prompt) is the accumulated factual knowledge extracted by a separate system from the current screenshot. Use it to track progress and resolve questions.
-        3. Explore the page by issuing actions: click, type_text, scroll_element.
-        4. If a click led to navigation, it would be recorded separately, just continue exploring.
-        5. Mark a question as resolved ONLY when the relevant data appears in EXTRACTED KNOWLEDGE. If you have not yet seen the data in EXTRACTED KNOWLEDGE, continue exploring.
-        6. If the overlay does NOT contain the information you need, dismiss it by clicking the close button (X) or clicking the dimmed area outside, then continue exploring the main page.
-        7. Do NOT call exploration_finished while inside an overlay unless all required data has been found.
+        ## How to respond
+        1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements. CRITICAL: Do NOT let the query influence this — report what is ACTUALLY there.
+        2. **observation**: Describe the overlay content and any changes from the last action. Note if content appears cut off (more content available via scrolling).
+        3. **decision**: `continue_exploring` if there are actions to execute for the current direction. `exploration_finished` if the direction is fully explored (relevant content is visible on screen, or confirmed irrelevant).
+        4. **actions** (when continuing): The actions to execute. Use `scroll_element` for scrolling within the overlay.
 
-        ## Decision & Actions
-        **continue_exploring**: Provide ALL exploration actions you think will yield information.
-        - **type_text**: Type into input field at (x,y). Highest priority.
-        - **click**: Describe the element to click in `target` with full context (visible text, section heading above, position).
-        - **scroll_element**: Scroll within an overlay or container. Provide x,y coordinates of the scrollable area and the direction (DOWN, UP, LEFT, RIGHT).
+        ## TARGET DESCRIPTION FORMAT (CRITICAL)
+        Your `target` description must be EXTREMELY specific and unambiguous. Always include ALL of the following:
+        1. The element's exact visible text (in quotes)
+        2. The section heading DIRECTLY above the element (in quotes)
+        3. What text or element is DIRECTLY below it
+        4. Its vertical position on the page: "in the top quarter / upper-middle / center / lower-middle / bottom quarter"
+        5. If there are other elements with the same text on the page, state how many you see and which one you mean
 
-        **exploration_finished**: Stop exploring.
-        - Set `relevantInfoFound: true` if the EXTRACTED KNOWLEDGE contains data relevant to the query (even partial information is valuable).
-        - Set `relevantInfoFound: false` if after exploring all relevant sections, you concluded that the page does NOT contain information relevant to the query.
+        Also provide `roughY`: your estimate of the element's vertical position as 0-1000 (0=very top of page, 500=middle, 1000=very bottom).
+
+        GOOD example: "The 'Learn More' link that appears directly below the 'Well Woman Check-ups' heading and above the 'Platinum Health Screening' heading. It is in the lower-middle of the page. There are 6 'Learn More' links on this page and this is the 4th one from the top."
+        BAD example: "The Learn More button in the Well Woman section"
     """.trimIndent()
 
     // ── Serializable response types ─────────────────────────────────────
@@ -251,18 +210,10 @@ class FullPageNavigationAgentGenAiImpl(
     )
 
     @Serializable
-    private data class QuestionStateResponse(
-        val question: String,
-        val status: String? = null
-    )
-
-    @Serializable
     private data class NavigateResponse(
         val pageState: List<String>? = null,
         val observation: String? = null,
-        val questionsState: List<QuestionStateResponse>? = null,
         val decision: String? = null,
-        val relevantInfoFound: Boolean? = null,
         val actions: List<ActionResponse>? = null
     )
 
@@ -280,35 +231,26 @@ class FullPageNavigationAgentGenAiImpl(
                     NavigationMode.VIEWPORT -> "VIEWPORT SCREENSHOT (overlay detected):"
                     NavigationMode.FULL_PAGE -> "FULL PAGE SCREENSHOT:"
                 }
+                val sysInstruction = when (input.navigationMode) {
+                    NavigationMode.VIEWPORT -> overlayNavigateInstruction
+                    NavigationMode.FULL_PAGE -> fullPageNavigateInstruction
+                }
                 val contentParts = listOf(
                     Part.fromText(screenshotLabel),
                     Part.fromBytes(input.fullPageScreenshot.bytes, input.fullPageScreenshot.mimeType.value),
                     Part.fromText(prompt)
                 )
-
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
+                        .temperature(1.0f)
                         .responseSchema(navigateSchema)
                         .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
-                                .build()
-                        )
-                        .systemInstruction(Content.fromParts(Part.fromText(
-                            when (input.navigationMode) {
-                                NavigationMode.VIEWPORT -> overlayNavigateInstruction
-                                NavigationMode.FULL_PAGE -> fullPageNavigateInstruction
-                            }
-                        )))
+                        .systemInstruction(Content.fromParts(Part.fromText(sysInstruction)))
                         .build()
                 )
-
                 result.checkFinishReason()
-
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
                         modelName = modelId,
@@ -317,7 +259,6 @@ class FullPageNavigationAgentGenAiImpl(
                         totalTokens = metadata.totalTokenCount().orElse(0)
                     )
                 }
-
                 result.text() ?: throw RuntimeException("No text response from model")
             }
         }
@@ -334,32 +275,20 @@ class FullPageNavigationAgentGenAiImpl(
             }
         }
 
-        val questionsState = (response.questionsState ?: emptyList()).map { qs ->
-            TrackedQuestion(
-                question = qs.question,
-                resolved = qs.status?.lowercase() == "resolved"
-            )
-        }
-
         val decision = response.decision ?: "continue_exploring"
-        val openCount = questionsState.count { !it.resolved }
-        val resolvedCount = questionsState.count { it.resolved }
 
         logger.debug(
-            "Navigate: decision={} actions=[{}] | questions={} (open={}, resolved={}) | pageState={}",
+            "Navigate: decision={} actions=[{}] | pageState={}",
             decision,
             actions.joinToString(", ") { it::class.simpleName ?: "?" },
-            questionsState.size, openCount, resolvedCount,
             pageState
         )
 
         return FullPageNavigationOutput(
             actions = actions,
-            questions = questionsState,
             pageState = pageState,
             observation = response.observation,
             decision = decision,
-            relevantInfoFound = response.relevantInfoFound,
             tokenUsage = tokenUsage
         )
     }
@@ -377,41 +306,12 @@ class FullPageNavigationAgentGenAiImpl(
             }
         }
 
-        if (!input.contentObservation.isNullOrBlank()) {
-            appendLine()
-            appendLine("CONTENT OBSERVATION (from clean screenshot analysis):")
-            appendLine("  ${input.contentObservation}")
-        }
-
-        appendLine()
-        appendLine("--- QUERY & CONTEXT ---")
-
         appendLine()
         appendLine("QUERY: ${input.query}")
-        appendLine("ITERATION: ${input.currentIteration} / ${input.maxIterations}")
 
-        if (input.questions.isNotEmpty()) {
+        if (!input.directionOverrideHint.isNullOrBlank()) {
             appendLine()
-            appendLine("QUESTIONS:")
-            input.questions.forEachIndexed { idx, q ->
-                val tag = if (q.resolved) "RESOLVED" else "OPEN"
-                appendLine("  [$tag] Q${idx + 1}. ${q.question}")
-            }
-        }
-
-        if (input.extractedRegionContent.isNotEmpty()) {
-            appendLine()
-            appendLine("EXTRACTED KNOWLEDGE:")
-            input.extractedRegionContent.forEach { ec ->
-                appendLine("  [${ec.description}]${if (ec.isTable) " (table)" else ""}:")
-                appendLine("    ${ec.text}")
-            }
-        }
-
-        if (input.scrollStateHint != null) {
-            appendLine()
-            appendLine("SCROLL STATE:")
-            appendLine(input.scrollStateHint)
+            appendLine("CURRENT DIRECTION: ${input.directionOverrideHint}")
         }
 
         if (input.previousActions.isNotEmpty()) {

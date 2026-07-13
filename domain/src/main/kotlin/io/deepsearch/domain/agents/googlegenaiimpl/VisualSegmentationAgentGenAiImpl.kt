@@ -6,11 +6,9 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
-import io.deepsearch.domain.agents.ExtractedContent
 import io.deepsearch.domain.agents.IVisualSegmentationAgent
 import io.deepsearch.domain.agents.IdentifiedRegion
 import io.deepsearch.domain.agents.IdentifiedTableSubRegion
-import io.deepsearch.domain.agents.RegionDescription
 import io.deepsearch.domain.agents.TableRegionRole
 import io.deepsearch.domain.agents.VisualSegmentationInput
 import io.deepsearch.domain.agents.VisualSegmentationOutput
@@ -163,25 +161,18 @@ class VisualSegmentationAgentGenAiImpl(
                     Part.fromBytes(input.screenshot.bytes, input.screenshot.mimeType.value),
                     Part.fromText(prompt)
                 )
-
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
+                        .temperature(1.0f)
                         .responseSchema(segmentationSchema)
                         .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
-                                .build()
-                        )
+                        .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                         .systemInstruction(Content.fromParts(Part.fromText(activeSystemInstruction)))
                         .build()
                 )
-
                 result.checkFinishReason()
-
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
                         modelName = modelId,
@@ -190,7 +181,6 @@ class VisualSegmentationAgentGenAiImpl(
                         totalTokens = metadata.totalTokenCount().orElse(0)
                     )
                 }
-
                 result.text() ?: throw RuntimeException("No text response from model")
             }
         }

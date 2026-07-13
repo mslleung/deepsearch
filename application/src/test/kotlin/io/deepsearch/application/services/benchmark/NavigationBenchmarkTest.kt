@@ -1,5 +1,6 @@
 package io.deepsearch.application.services.benchmark
 
+import com.google.genai.Client
 import io.deepsearch.application.config.applicationBenchmarkTestModule
 import io.deepsearch.application.services.IAgenticWebpageSearchService
 import io.deepsearch.domain.config.IApplicationCoroutineScope
@@ -17,7 +18,7 @@ import org.koin.dsl.koinApplication
  * Navigation Agent Benchmark Suite.
  *
  * Runs all benchmark cases (controlled + real-world) against the
- * AgenticWebpageSearchService and produces multi-dimensional scoring reports.
+ * AgenticWebpageSearchService and produces pass/fail scoring via LLM judge.
  *
  * Requirements:
  * - deepsearch-browser running at localhost:8090
@@ -33,6 +34,7 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
 
     private lateinit var koinApp: KoinApplication
     private val agenticSearchService by inject<IAgenticWebpageSearchService>()
+    private val genaiClient by inject<Client>()
     private val applicationScope by inject<IApplicationCoroutineScope>()
     private lateinit var runner: NavigationBenchmarkRunner
 
@@ -44,7 +46,7 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
         koinApp.createEagerInstances()
         testKoin = koinApp.koin
 
-        runner = NavigationBenchmarkRunner(agenticSearchService, maxConcurrency = 15)
+        runner = NavigationBenchmarkRunner(agenticSearchService, genaiClient, maxConcurrency = 15)
     }
 
     @AfterAll
@@ -61,12 +63,8 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
         println(report.toMarkdown())
 
         assertTrue(
-            report.aggregateComposite >= 60.0,
-            "Controlled pages composite score should be >= 60, was ${"%.1f".format(report.aggregateComposite)}"
-        )
-        assertTrue(
-            report.successRate >= 0.70,
-            "Controlled pages success rate should be >= 70%, was ${"%.0f".format(report.successRate * 100)}%"
+            report.passRate >= 0.70,
+            "Controlled pages pass rate should be >= 70%, was ${"%.0f".format(report.passRate * 100)}%"
         )
     }
 
@@ -78,12 +76,8 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
         println(report.toMarkdown())
 
         assertTrue(
-            report.aggregateComposite >= 50.0,
-            "Real-world pages composite score should be >= 50, was ${"%.1f".format(report.aggregateComposite)}"
-        )
-        assertTrue(
-            report.successRate >= 0.60,
-            "Real-world pages success rate should be >= 60%, was ${"%.0f".format(report.successRate * 100)}%"
+            report.passRate >= 0.60,
+            "Real-world pages pass rate should be >= 60%, was ${"%.0f".format(report.passRate * 100)}%"
         )
     }
 
@@ -95,12 +89,8 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
         println(report.toMarkdown())
 
         assertTrue(
-            report.aggregateComposite >= 55.0,
-            "Full suite composite score should be >= 55, was ${"%.1f".format(report.aggregateComposite)}"
-        )
-        assertTrue(
-            report.successRate >= 0.65,
-            "Full suite success rate should be >= 65%, was ${"%.0f".format(report.successRate * 100)}%"
+            report.passRate >= 0.65,
+            "Full suite pass rate should be >= 65%, was ${"%.0f".format(report.passRate * 100)}%"
         )
     }
 
@@ -210,5 +200,34 @@ class NavigationBenchmarkTest : IsolatedKoinTest() {
         val report = runner.runAll(cases)
 
         println(report.toMarkdown())
+    }
+
+    @Test
+    fun `cf-workers-overage repeat 5x`() = runBlocking {
+        val case = RealWorldBenchmarks.cfWorkersOverage()
+        val reports = mutableListOf<BenchmarkReport>()
+
+        for (run in 1..5) {
+            println("\n${"=".repeat(80)}")
+            println("  RUN $run / 5: ${case.id}")
+            println("${"=".repeat(80)}\n")
+
+            val report = runner.runAll(listOf(case))
+            reports.add(report)
+
+            val sc = report.scoreCards.first()
+            println("\n  >>> Run $run result: ${if (sc.pass) "PASS" else "FAIL"} | iters=${sc.actualIterations}")
+        }
+
+        println("\n${"=".repeat(80)}")
+        println("  SUMMARY ACROSS 5 RUNS")
+        println("${"=".repeat(80)}")
+        reports.forEachIndexed { i, report ->
+            val sc = report.scoreCards.first()
+            println("  Run ${i + 1}: ${if (sc.pass) "PASS" else "FAIL"} | iters=${sc.actualIterations}")
+        }
+        val passCount = reports.count { it.scoreCards.first().pass }
+        println("  Total: $passCount/5 passed")
+        println("${"=".repeat(80)}")
     }
 }

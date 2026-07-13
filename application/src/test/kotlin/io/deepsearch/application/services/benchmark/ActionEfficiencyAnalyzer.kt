@@ -1,269 +1,128 @@
 package io.deepsearch.application.services.benchmark
 
+import com.google.genai.Client
+import com.google.genai.types.Content
+import com.google.genai.types.GenerateContentConfig
+import com.google.genai.types.Part
+import com.google.genai.types.Schema
 import io.deepsearch.application.services.AgenticPageSearchResult
-import io.deepsearch.domain.agents.ActionWithOutcome
 import io.deepsearch.domain.agents.NavigationAction
-import kotlin.reflect.KClass
+import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.retryLlmCall
+import org.slf4j.LoggerFactory
 
-object ActionEfficiencyAnalyzer {
+class ActionEfficiencyAnalyzer(
+    private val client: Client
+) {
+    private val logger = LoggerFactory.getLogger(this::class.java)
 
-    data class EfficiencyReport(
-        val clickCount: Int,
-        val scrollAtCount: Int,
-        val typeCount: Int,
-        val totalIterations: Int,
-        val optimalIterations: Int,
-        val efficiencyRatio: Double,
-        val wastedIterations: Int,
-        val failedClickCount: Int,
-        val offPageClickCount: Int
-    )
-
-    fun analyze(result: AgenticPageSearchResult, optimalIterations: Int): EfficiencyReport {
-        val actions = result.actionsPerformed
-        val clickCount = actions.count { it.action is NavigationAction.Click }
-        val scrollAtCount = actions.count { it.action is NavigationAction.ScrollAt }
-        val typeCount = actions.count { it.action is NavigationAction.Type }
-        val totalIterations = actions.size
-
-        val failedClickCount = actions.count { entry ->
-            entry.action is NavigationAction.Click &&
-                    entry.outcome?.contains("NO visible change", ignoreCase = true) == true
-        }
-        val offPageClickCount = actions.count { entry ->
-            entry.outcome?.contains("OFF-PAGE", ignoreCase = true) == true
-        }
-
-        val capped = optimalIterations.coerceAtLeast(1)
-        val efficiencyRatio = if (totalIterations > 0) {
-            (capped.toDouble() / totalIterations).coerceAtMost(1.0)
-        } else 1.0
-
-        val wastedIterations = (totalIterations - capped).coerceAtLeast(0)
-
-        return EfficiencyReport(
-            clickCount = clickCount,
-            scrollAtCount = scrollAtCount,
-            typeCount = typeCount,
-            totalIterations = totalIterations,
-            optimalIterations = capped,
-            efficiencyRatio = efficiencyRatio,
-            wastedIterations = wastedIterations,
-            failedClickCount = failedClickCount,
-            offPageClickCount = offPageClickCount
+    private val judgeSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .properties(
+            mapOf(
+                "pass" to Schema.builder()
+                    .type("BOOLEAN")
+                    .description("Whether the answer satisfies the criteria")
+                    .build(),
+                "reasoning" to Schema.builder()
+                    .type("STRING")
+                    .description("Explanation of why the answer passes or fails. On failure, describe what specific information is missing or incorrect.")
+                    .build()
+            )
         )
-    }
+        .required(listOf("pass", "reasoning"))
+        .build()
 
-    fun printReport(report: EfficiencyReport, caseName: String) {
-        println("\n=== Efficiency Report: $caseName ===")
-        println("Iterations: ${report.totalIterations} (optimal: ${report.optimalIterations})")
-        println("Efficiency ratio: ${"%.0f".format(report.efficiencyRatio * 100)}%")
-        println("Wasted iterations: ${report.wastedIterations}")
-        println("Actions: click=${report.clickCount}, scroll_at=${report.scrollAtCount}, type=${report.typeCount}")
-        println("Failed clicks: ${report.failedClickCount}, Off-page clicks: ${report.offPageClickCount}")
-    }
-
-    // --- Benchmark scoring API ---
-
-    fun score(benchmarkCase: BenchmarkCase, result: AgenticPageSearchResult): BenchmarkScoreCard {
+    suspend fun score(benchmarkCase: BenchmarkCase, result: AgenticPageSearchResult): BenchmarkScoreCard {
         val actions = result.actionsPerformed
         val actualIterations = actions.size
-
-        val correctnessScore = scoreCorrectness(benchmarkCase.expectedOutcome, result)
-        val efficiencyScore = scoreEfficiency(benchmarkCase.optimalIterations, actualIterations)
-        val toolChoiceScore = scoreToolChoice(benchmarkCase.idealActionSequence, actions)
-        val antiPatterns = detectAntiPatterns(actions)
-        val antiPatternScore = scoreAntiPatterns(antiPatterns)
-        val constraintViolations = checkConstraints(benchmarkCase.constraints, actions, result)
-
-        val composite = BenchmarkScoreCard.computeComposite(
-            correctnessScore, efficiencyScore, toolChoiceScore, antiPatternScore
-        )
-
         val sequenceSummary = actions.joinToString(" -> ") { actionTypeName(it.action) }
+
+        val (pass, reasoning) = when (val expected = benchmarkCase.expectedOutcome) {
+            is ExpectedOutcome.AnswerSatisfies -> {
+                judgeCorrectness(benchmarkCase.query, expected.criteria, result.answer)
+            }
+            is ExpectedOutcome.ShouldGiveUp -> {
+                if (!result.success) {
+                    Pair(true, "Correctly determined the information is not available")
+                } else {
+                    Pair(false, "Should have given up but reported success")
+                }
+            }
+        }
 
         return BenchmarkScoreCard(
             caseId = benchmarkCase.id,
-            correctnessScore = correctnessScore,
-            efficiencyScore = efficiencyScore,
-            toolChoiceScore = toolChoiceScore,
-            antiPatternScore = antiPatternScore,
-            compositeScore = composite,
+            pass = pass,
+            reasoning = reasoning,
             actualIterations = actualIterations,
-            optimalIterations = benchmarkCase.optimalIterations,
-            success = result.success || benchmarkCase.expectedOutcome is ExpectedOutcome.ShouldGiveUp && !result.success,
             answer = result.answer,
-            antiPatterns = antiPatterns,
-            constraintViolations = constraintViolations,
             actionSequenceSummary = sequenceSummary
         )
     }
 
-    private fun scoreCorrectness(expected: ExpectedOutcome, result: AgenticPageSearchResult): Double {
-        return when (expected) {
-            is ExpectedOutcome.AnswerContains -> {
-                if (!result.success || result.answer == null) return 0.0
-                val answer = if (expected.caseSensitive) result.answer else result.answer.lowercase()
-                val matched = expected.substrings.count { substring ->
-                    val target = if (expected.caseSensitive) substring else substring.lowercase()
-                    answer.contains(target)
-                }
-                (matched.toDouble() / expected.substrings.size) * 100.0
-            }
-            is ExpectedOutcome.ShouldGiveUp -> {
-                when {
-                    !result.success && result.answer == null -> 100.0
-                    !result.success -> 80.0
-                    else -> 0.0
-                }
-            }
+    private suspend fun judgeCorrectness(
+        query: String,
+        criteria: String,
+        actualAnswer: String?
+    ): Pair<Boolean, String> {
+        if (actualAnswer.isNullOrBlank()) {
+            return Pair(false, "No answer was produced")
         }
-    }
 
-    private fun scoreEfficiency(optimalIterations: Int, actualIterations: Int): Double {
-        if (actualIterations == 0) return 100.0
-        val optimal = optimalIterations.coerceAtLeast(1)
-        return ((optimal.toDouble() / actualIterations) * 100.0).coerceAtMost(100.0)
-    }
+        val prompt = """
+            You are a benchmark judge evaluating whether a search system's answer satisfies the expected criteria.
 
-    /**
-     * Compute tool choice score via longest common subsequence (LCS) of action types.
-     * Normalized by ideal sequence length so the agent is rewarded for using the
-     * right tools in roughly the right order.
-     */
-    private fun scoreToolChoice(
-        idealSequence: List<KClass<out NavigationAction>>,
-        actualActions: List<ActionWithOutcome>
-    ): Double {
-        if (idealSequence.isEmpty()) return 100.0
+            **Query**: $query
+            **Expected criteria**: $criteria
+            **Actual answer**: $actualAnswer
 
-        val actualTypes = actualActions.map { it.action::class }
-        val lcsLength = longestCommonSubsequence(idealSequence, actualTypes)
-        return (lcsLength.toDouble() / idealSequence.size) * 100.0
-    }
+            Evaluate whether the actual answer contains the information described in the criteria. 
+            Be lenient with formatting differences (e.g., "$5,900" vs "HK$5900" vs "5900"), 
+            but strict about factual correctness.
+            
+            If the answer fails, explain exactly what information is missing or incorrect.
+        """.trimIndent()
 
-    private fun <T> longestCommonSubsequence(a: List<T>, b: List<T>): Int {
-        val m = a.size
-        val n = b.size
-        val dp = Array(m + 1) { IntArray(n + 1) }
-        for (i in 1..m) {
-            for (j in 1..n) {
-                dp[i][j] = if (a[i - 1] == b[j - 1]) {
-                    dp[i - 1][j - 1] + 1
-                } else {
-                    maxOf(dp[i - 1][j], dp[i][j - 1])
-                }
-            }
-        }
-        return dp[m][n]
-    }
+        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
 
-    private fun detectAntiPatterns(actions: List<ActionWithOutcome>): List<AntiPattern> {
-        val patterns = mutableListOf<AntiPattern>()
-
-        val failedClickGroups = actions
-            .filter { entry ->
-                entry.action is NavigationAction.Click &&
-                        entry.outcome?.contains("NO visible change", ignoreCase = true) == true
-            }
-            .groupBy { entry ->
-                val a = entry.action as NavigationAction.Click
-                a.target
-            }
-        for ((desc, entries) in failedClickGroups) {
-            if (entries.size >= 2) {
-                patterns.add(
-                    AntiPattern(
-                        AntiPatternType.REPEATED_FAILED_CLICK,
-                        "Clicked '$desc' ${entries.size} times with no visible change",
-                        15.0 * (entries.size - 1)
-                    )
+        return try {
+            val response = retryLlmCall<JudgeResponse>("BenchmarkJudge") {
+                val result = client.models.generateContent(
+                    modelId,
+                    listOf(Content.fromParts(Part.fromText(prompt))),
+                    GenerateContentConfig.builder()
+                        .temperature(0.0F)
+                        .responseSchema(judgeSchema)
+                        .responseMimeType("application/json")
+                        .build()
                 )
+                result.text() ?: throw RuntimeException("No text response from judge model")
             }
+            Pair(response.pass, response.reasoning)
+        } catch (e: Exception) {
+            logger.error("LLM judge call failed for query '{}': {}", query, e.message)
+            Pair(false, "LLM judge error: ${e.message}")
         }
+    }
 
-        val labelErrors = actions.count { entry ->
-            entry.outcome?.contains("does NOT exist", ignoreCase = true) == true
-        }
-        if (labelErrors > 0) {
-            patterns.add(
-                AntiPattern(
-                    AntiPatternType.LABEL_HALLUCINATION,
-                    "$labelErrors action(s) referenced non-existent labels",
-                    20.0 * labelErrors
-                )
+    fun buildReport(scoreCards: List<BenchmarkScoreCard>): BenchmarkReport {
+        if (scoreCards.isEmpty()) {
+            return BenchmarkReport(
+                scoreCards = emptyList(),
+                passRate = 0.0,
+                failedCases = emptyList()
             )
         }
 
-        val offPageReClicks = actions
-            .filter { entry ->
-                entry.outcome?.contains("already navigates OFF this page", ignoreCase = true) == true
-            }
-        if (offPageReClicks.isNotEmpty()) {
-            patterns.add(
-                AntiPattern(
-                    AntiPatternType.OFF_PAGE_RE_CLICK,
-                    "${offPageReClicks.size} re-click(s) on known off-page elements",
-                    15.0 * offPageReClicks.size
-                )
-            )
-        }
+        val passRate = scoreCards.count { it.pass }.toDouble() / scoreCards.size
+        val failedCases = scoreCards.filter { !it.pass }
 
-        val prematureFinishRejections = actions.count { entry ->
-            entry.action is NavigationAction.ExplorationFinished &&
-                    entry.outcome?.contains("REJECTED", ignoreCase = true) == true
-        }
-        if (prematureFinishRejections > 0) {
-            patterns.add(
-                AntiPattern(
-                    AntiPatternType.PREMATURE_GIVE_UP_REJECTED,
-                    "$prematureFinishRejections premature exploration_finished attempt(s) rejected",
-                    20.0 * prematureFinishRejections
-                )
-            )
-        }
-
-        return patterns
-    }
-
-    private fun scoreAntiPatterns(antiPatterns: List<AntiPattern>): Double {
-        val totalPenalty = antiPatterns.sumOf { it.penaltyPoints }
-        return (100.0 - totalPenalty).coerceIn(0.0, 100.0)
-    }
-
-    private fun checkConstraints(
-        constraints: BenchmarkConstraints,
-        actions: List<ActionWithOutcome>,
-        result: AgenticPageSearchResult
-    ): List<String> {
-        val violations = mutableListOf<String>()
-        val totalIterations = actions.size
-
-        if (totalIterations > constraints.maxIterations) {
-            violations.add("Exceeded max iterations: $totalIterations > ${constraints.maxIterations}")
-        }
-
-        val actualActionTypes = actions.map { it.action::class }.toSet()
-        for (required in constraints.requiredActionTypes) {
-            if (required !in actualActionTypes) {
-                violations.add("Missing required action type: ${required.simpleName}")
-            }
-        }
-
-        for (forbidden in constraints.forbiddenActionTypes) {
-            if (forbidden in actualActionTypes) {
-                violations.add("Used forbidden action type: ${forbidden.simpleName}")
-            }
-        }
-
-        constraints.maxClickCount?.let { max ->
-            val clicks = actions.count { it.action is NavigationAction.Click }
-            if (clicks > max) {
-                violations.add("Exceeded max click count: $clicks > $max")
-            }
-        }
-
-        return violations
+        return BenchmarkReport(
+            scoreCards = scoreCards,
+            passRate = passRate,
+            failedCases = failedCases
+        )
     }
 
     private fun actionTypeName(action: NavigationAction): String = when (action) {
@@ -274,40 +133,9 @@ object ActionEfficiencyAnalyzer {
         is NavigationAction.GiveUp -> "give_up"
     }
 
-    fun buildReport(scoreCards: List<BenchmarkScoreCard>): BenchmarkReport {
-        if (scoreCards.isEmpty()) {
-            return BenchmarkReport(
-                scoreCards = emptyList(),
-                aggregateCorrectness = 0.0,
-                aggregateEfficiency = 0.0,
-                aggregateToolChoice = 0.0,
-                aggregateAntiPattern = 0.0,
-                aggregateComposite = 0.0,
-                successRate = 0.0,
-                worstCases = emptyList()
-            )
-        }
-
-        val avgCorrectness = scoreCards.map { it.correctnessScore }.average()
-        val avgEfficiency = scoreCards.map { it.efficiencyScore }.average()
-        val avgToolChoice = scoreCards.map { it.toolChoiceScore }.average()
-        val avgAntiPattern = scoreCards.map { it.antiPatternScore }.average()
-        val avgComposite = scoreCards.map { it.compositeScore }.average()
-        val successRate = scoreCards.count { it.success }.toDouble() / scoreCards.size
-
-        val worstCases = scoreCards
-            .sortedBy { it.compositeScore }
-            .take(5)
-
-        return BenchmarkReport(
-            scoreCards = scoreCards,
-            aggregateCorrectness = avgCorrectness,
-            aggregateEfficiency = avgEfficiency,
-            aggregateToolChoice = avgToolChoice,
-            aggregateAntiPattern = avgAntiPattern,
-            aggregateComposite = avgComposite,
-            successRate = successRate,
-            worstCases = worstCases
-        )
-    }
+    @kotlinx.serialization.Serializable
+    private data class JudgeResponse(
+        val pass: Boolean,
+        val reasoning: String
+    )
 }

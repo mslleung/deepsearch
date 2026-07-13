@@ -159,26 +159,19 @@ class RegionDescriptionAgentGenAiImpl(
                     Part.fromBytes(input.screenshot.bytes, input.screenshot.mimeType.value),
                     Part.fromText(prompt)
                 )
-
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
+                        .temperature(1.0f)
                         .responseSchema(responseSchema)
                         .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
-                                .build()
-                        )
+                        .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                         .maxOutputTokens(4096)
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                         .build()
                 )
-
                 result.checkFinishReason()
-
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
                         modelName = modelId,
@@ -187,7 +180,6 @@ class RegionDescriptionAgentGenAiImpl(
                         totalTokens = metadata.totalTokenCount().orElse(0)
                     )
                 }
-
                 result.text() ?: throw RuntimeException("No text response from model")
             }
         }

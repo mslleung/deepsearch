@@ -83,26 +83,19 @@ class VisualContentExtractionAgentGenAiImpl(
                     Part.fromBytes(input.regionImage, input.imageMimeType.value),
                     Part.fromText(prompt)
                 )
-
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
+                        .temperature(1.0f)
                         .responseSchema(responseSchema)
                         .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
-                                .build()
-                        )
+                        .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                         .maxOutputTokens(8192)
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                         .build()
                 )
-
                 result.checkFinishReason()
-
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
                         modelName = modelId,
@@ -111,7 +104,6 @@ class VisualContentExtractionAgentGenAiImpl(
                         totalTokens = metadata.totalTokenCount().orElse(0)
                     )
                 }
-
                 result.text() ?: throw RuntimeException("No text response from model")
             }
         }

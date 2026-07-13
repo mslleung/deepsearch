@@ -13,8 +13,18 @@ data class LocatorTarget(
 data class ElementLocatorInput(
     val screenshot: IBrowserPage.Screenshot,
     val targets: List<LocatorTarget>,
-    val pageUrl: String
+    val pageUrl: String,
+    val elementIndex: Map<Int, ElementLocatorLabel> = emptyMap()
 ) : IAgent.IAgentInput
+
+data class ElementLocatorLabel(
+    val tag: String,
+    val text: String,
+    val role: String?,
+    val ariaLabel: String?,
+    val centerX: Int,
+    val centerY: Int
+)
 
 data class ResolvedTarget(
     val index: Int,

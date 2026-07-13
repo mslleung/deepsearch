@@ -361,18 +361,19 @@ If you prefer to run PostgreSQL natively in a Linux environment:
 
 ### 1. Create Environment File
 
-Create a `.env` file in the project root with the following content:
+Copy `.env.example` to `.env` and fill in your values:
 
 ```bash
-GOOGLE_CLOUD_PROJECT=deep-search-466804
-GOOGLE_CLOUD_LOCATION=us-central1
-GOOGLE_API_KEY=
-GOOGLE_GENAI_USE_VERTEXAI=FALSE
+cp .env.example .env
 ```
+
+At minimum, configure the Google AI authentication (see section 2 below).
 
 ### 2. Configure LLM Authentication
 
-#### Development (Recommended - Free Tier)
+DeepSearch uses Google's Gemini models. There are two authentication modes:
+
+#### Option A: Gemini API Key (Development - Free Tier)
 
 1. **VPN Setup (for restricted regions):**
    - If Gemini is not available in your region (e.g., Hong Kong), use a VPN and connect to a supported region (e.g., Japan or Taiwan)
@@ -382,21 +383,27 @@ GOOGLE_GENAI_USE_VERTEXAI=FALSE
    - Generate a free API key (use your company account, NOT the deepsearch project)
    - Paste the key into the `GOOGLE_API_KEY` field in your `.env` file
 
-3. **Verify Settings:**
-   - Ensure `GOOGLE_GENAI_USE_VERTEXAI=FALSE` in `.env`
-   - Also update `.run/Template Gradle.run.xml` and `.run/Template Kotlin.run.xml` if they exist
-
-#### Production (Costs Money - Optional)
-
-⚠️ **Warning:** This option incurs costs. Only use if necessary.
-
-1. Install [gcloud CLI](https://cloud.google.com/sdk/docs/install)
-2. Authenticate:
+3. **Set in `.env`:**
    ```bash
-   gcloud auth login
-   gcloud auth application-default login
+   GOOGLE_API_KEY=your-api-key-here
+   GOOGLE_GENAI_USE_VERTEXAI=FALSE
    ```
-3. Set `GOOGLE_GENAI_USE_VERTEXAI=TRUE` in your `.env` file
+
+#### Option B: Vertex AI with Service Account (Production)
+
+This uses a GCP service account key file for authentication via Vertex AI.
+
+1. **Obtain a service account key file** (`.json`) from your GCP project admin
+2. **Place the key file** in the project root (it is gitignored by `*-sa.json` and `*-credentials.json` patterns)
+3. **Set in `.env`:**
+   ```bash
+   GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+   GOOGLE_CLOUD_LOCATION=global
+   GOOGLE_GENAI_USE_VERTEXAI=TRUE
+   GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/your-service-account-key.json
+   ```
+
+The `GOOGLE_APPLICATION_CREDENTIALS` environment variable tells the Google SDK to authenticate using the specified service account key file. This is automatically picked up by both the Ktor server and Gradle test tasks.
 
 ### 3. Generate JWT Keys
 
@@ -515,9 +522,8 @@ For quick manual testing during development:
    - Try creating the extension manually: `CREATE EXTENSION IF NOT EXISTS vector;`
 
 3. **Gemini API Not Working:**
-   - Verify your VPN is connected to a supported region
-   - Check that your API key is correctly set in `.env`
-   - Ensure `GOOGLE_GENAI_USE_VERTEXAI=FALSE` for development
+   - **API Key mode:** Verify your VPN is connected to a supported region and check that `GOOGLE_API_KEY` is set in `.env`
+   - **Vertex AI mode:** Verify `GOOGLE_APPLICATION_CREDENTIALS` points to a valid service account key file (absolute path) and `GOOGLE_CLOUD_PROJECT` matches the service account's project
 
 4. **Build Failures:**
    - Verify JDK is correctly added to PATH

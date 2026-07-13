@@ -186,15 +186,16 @@ private fun Application.configureDependencyInjection() {
                     )
                 }
                 single {
-                    if (environment.config.property("ktor.development").getString().toBoolean()) {
-                        Client.builder()
-                            .apiKey(environment.config.property("gemini.apiKey").getString())
-                            .build()
-                    } else {
+                    val useVertexAi = environment.config.propertyOrNull("vertexai.enabled")?.getString()?.toBoolean() ?: false
+                    if (useVertexAi) {
                         Client.builder()
                             .project(environment.config.property("vertexai.projectId").getString())
                             .location(environment.config.property("vertexai.location").getString())
                             .vertexAI(true)
+                            .build()
+                    } else {
+                        Client.builder()
+                            .apiKey(environment.config.property("gemini.apiKey").getString())
                             .build()
                     }
                 }

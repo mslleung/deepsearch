@@ -1,5 +1,6 @@
 package io.deepsearch.application.services.benchmark
 
+import com.google.genai.Client
 import com.sun.net.httpserver.HttpServer
 import io.deepsearch.application.services.AgenticPageSearchResult
 import io.deepsearch.application.services.IAgenticWebpageSearchService
@@ -15,9 +16,11 @@ import java.net.InetSocketAddress
 
 class NavigationBenchmarkRunner(
     private val agenticSearchService: IAgenticWebpageSearchService,
+    private val genaiClient: Client,
     private val maxConcurrency: Int = 5
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
+    private val analyzer = ActionEfficiencyAnalyzer(genaiClient)
 
     data class CaseResult(
         val benchmarkCase: BenchmarkCase,
@@ -50,7 +53,7 @@ class NavigationBenchmarkRunner(
 
         val wallClockMs = System.currentTimeMillis() - wallClockStart
         val scoreCards = allResults.map { it.scoreCard }
-        val report = ActionEfficiencyAnalyzer.buildReport(scoreCards)
+        val report = analyzer.buildReport(scoreCards)
 
         printConsoleReport(allResults, report, wallClockMs)
 
@@ -127,24 +130,20 @@ class NavigationBenchmarkRunner(
         }
         val durationMs = System.currentTimeMillis() - startMs
 
-        val scoreCard = ActionEfficiencyAnalyzer.score(case, result)
+        val scoreCard = analyzer.score(case, result)
 
         logger.info(
-            "Benchmark {} completed in {}ms — composite: {}, correctness: {}, efficiency: {}, tool: {}, antipattern: {}",
+            "Benchmark {} completed in {}ms — {}",
             case.id,
             durationMs,
-            "%.1f".format(scoreCard.compositeScore),
-            "%.1f".format(scoreCard.correctnessScore),
-            "%.1f".format(scoreCard.efficiencyScore),
-            "%.1f".format(scoreCard.toolChoiceScore),
-            "%.1f".format(scoreCard.antiPatternScore)
+            if (scoreCard.pass) "PASS" else "FAIL: ${scoreCard.reasoning}"
         )
 
         return CaseResult(case, result, scoreCard, durationMs)
     }
 
     private fun printConsoleReport(results: List<CaseResult>, report: BenchmarkReport, wallClockMs: Long) {
-        val separator = "=".repeat(120)
+        val separator = "=".repeat(140)
 
         println()
         println(separator)
@@ -152,58 +151,39 @@ class NavigationBenchmarkRunner(
         println(separator)
         println()
 
-        println("%-35s  %5s  %5s  %5s  %5s  %5s  %5s  %6s  %7s  %7s  %7s".format(
-            "Case", "Corr", "Effc", "Tool", "Anti", "COMP", "Iters", "Time", "Prompt", "Output", "Total"
+        println("%-35s  %6s  %5s  %7s  %7s  %s".format(
+            "Case", "Result", "Iters", "Time", "Tokens", "Reasoning"
         ))
-        println("-".repeat(120))
+        println("-".repeat(140))
 
         for (cr in results) {
             val sc = cr.scoreCard
             val tokens = cr.searchResult.totalTokenUsage
-            val status = if (sc.success) " " else "X"
+            val result = if (sc.pass) "PASS" else "FAIL"
+            val reasoning = if (sc.pass) "" else sc.reasoning.take(60)
             println(
-                "%s %-33s  %5.1f  %5.1f  %5.1f  %5.1f  %5.1f  %2d/%-2d  %5.1fs  %7d  %7d  %7d".format(
-                    status,
-                    sc.caseId.take(33),
-                    sc.correctnessScore,
-                    sc.efficiencyScore,
-                    sc.toolChoiceScore,
-                    sc.antiPatternScore,
-                    sc.compositeScore,
+                "%-35s  %6s  %5d  %5.1fs  %7d  %s".format(
+                    sc.caseId.take(35),
+                    result,
                     sc.actualIterations,
-                    sc.optimalIterations,
                     cr.durationMs / 1000.0,
-                    tokens.promptTokens,
-                    tokens.outputTokens,
-                    tokens.totalTokens
+                    tokens.totalTokens,
+                    reasoning
                 )
             )
-
-            if (sc.constraintViolations.isNotEmpty()) {
-                for (v in sc.constraintViolations) {
-                    println("    VIOLATION: $v")
-                }
-            }
-            if (sc.antiPatterns.isNotEmpty()) {
-                for (ap in sc.antiPatterns) {
-                    println("    ANTI-PATTERN: ${ap.type} — ${ap.description}")
-                }
-            }
         }
 
-        println("-".repeat(120))
-        println(
-            "  %-33s  %5.1f  %5.1f  %5.1f  %5.1f  %5.1f".format(
-                "AVERAGE",
-                report.aggregateCorrectness,
-                report.aggregateEfficiency,
-                report.aggregateToolChoice,
-                report.aggregateAntiPattern,
-                report.aggregateComposite
-            )
-        )
+        println("-".repeat(140))
         println()
-        println("Success rate: ${"%.0f".format(report.successRate * 100)}% (${report.scoreCards.count { it.success }}/${report.scoreCards.size})")
+        println("Pass rate: ${"%.0f".format(report.passRate * 100)}% (${report.scoreCards.count { it.pass }}/${report.scoreCards.size})")
+
+        if (report.failedCases.isNotEmpty()) {
+            println()
+            println("Failed cases:")
+            for (fc in report.failedCases) {
+                println("  ${fc.caseId}: ${fc.reasoning}")
+            }
+        }
 
         val totalDurationSec = results.sumOf { it.durationMs } / 1000.0
         val avgDurationSec = totalDurationSec / results.size
@@ -246,10 +226,8 @@ class NavigationBenchmarkRunner(
         println()
         println("  Iterations:")
         println("    Avg iterations:      %8.1f".format(results.map { it.scoreCard.actualIterations }.average()))
-        println("    Avg optimal:         %8.1f".format(results.map { it.scoreCard.optimalIterations }.average()))
-        println("    Tokens/iteration:    %8d".format(
-            totalTokens / results.sumOf { it.scoreCard.actualIterations }.coerceAtLeast(1)
-        ))
+        val totalIters = results.sumOf { it.scoreCard.actualIterations }.coerceAtLeast(1)
+        println("    Tokens/iteration:    %8d".format(totalTokens / totalIters))
         println()
         println(separator)
         println()

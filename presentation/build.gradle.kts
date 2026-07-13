@@ -79,6 +79,13 @@ dependencies {
 // Get shared env vars from root project
 val envVars: Map<String, String> by rootProject.extra
 
+// Inject .env vars into the server run task so Ktor can resolve ${VAR} placeholders
+tasks.named<JavaExec>("run") {
+    envVars.forEach { (key, value) ->
+        environment(key, System.getenv(key) ?: value)
+    }
+}
+
 tasks.test {
     useJUnitPlatform()
     

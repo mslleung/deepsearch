@@ -93,6 +93,7 @@ class AgenticWebpageSearchService(
     private val agenticTableConversionAgent: IAgenticTableConversionAgent,
     private val iterationScreenshotStorage: IIterationScreenshotStorage,
     private val agenticNavIterationRepository: IAgenticNavIterationRepository,
+    private val directionPlannerAgent: IDirectionPlannerAgent,
 ) : IAgenticWebpageSearchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -110,6 +111,7 @@ class AgenticWebpageSearchService(
 
     companion object {
         private const val MAX_ITERATIONS = 12
+        private const val MAX_STEPS_PER_DIRECTION = 5
         private const val MAX_FAILED_CLICKS = 2
         private const val POST_CLICK_DELAY_MS = 150L
         private const val POST_CLICK_SETTLE_DELAY_MS = 300L
@@ -187,7 +189,6 @@ class AgenticWebpageSearchService(
         val sessionId: SessionId,
         val onLinkDiscovered: (suspend (String) -> Unit)?,
         val actionsPerformed: MutableList<ActionWithOutcome> = mutableListOf(),
-        var trackedQuestions: List<TrackedQuestion> = emptyList(),
         val discoveredUrls: MutableList<String> = mutableListOf(),
         val capturedImages: MutableList<CapturedImage> = mutableListOf(),
         val capturedHashes: MutableSet<String> = mutableSetOf(),
@@ -201,7 +202,10 @@ class AgenticWebpageSearchService(
         var navigationMode: NavigationMode = NavigationMode.FULL_PAGE,
         val extractedRegionContent: MutableList<ExtractedContent> = mutableListOf(),
         val extractedTextHashes: MutableSet<String> = mutableSetOf(),
-        var contentObservation: String? = null
+        var contentObservation: String? = null,
+        var explorationDirections: List<ExplorationDirection> = emptyList(),
+        var currentDirectionHint: String? = null,
+        var directionStartIndex: Int = 0
     )
 
     // --- Public API ---
@@ -252,450 +256,506 @@ class AgenticWebpageSearchService(
         )
         val clock = TimeSource.Monotonic
         var cachedScreenshot: IBrowserPage.Screenshot? = null
-        for (iteration in 1..MAX_ITERATIONS) {
-            val iterStart = clock.markNow()
-            currentCoroutineContext().ensureActive()
-            logger.debug("Full-page search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
+        var iteration = 0
 
-            val navigationMode = state.navigationMode
-            if (navigationMode == NavigationMode.VIEWPORT) {
-                logger.debug("Viewport mode active — using viewport screenshot for iteration {}", iteration)
-            }
+        return coroutineScope {
+            var pendingExtraction: Deferred<ExtractionPipelineResult>? = null
 
-            if (navigationMode == NavigationMode.FULL_PAGE) {
-                page.scrollToPercentage(0)
-            }
+            // ── OUTER LOOP (planner) ──
+            outerLoop@ while (iteration < MAX_ITERATIONS) {
+                iteration++
+                val outerIterStart = clock.markNow()
+                currentCoroutineContext().ensureActive()
+                logger.debug("Full-page search iteration {}/{} (planner) for {}", iteration, MAX_ITERATIONS, url)
 
-            val fetchStart = clock.markNow()
-            val screenshotWasCached = cachedScreenshot != null
-            val fetchResult = page.fetchAgenticIterationData(navigationMode, cachedScreenshot)
-            cachedScreenshot = null
-            val fetchMs = (clock.markNow() - fetchStart).inWholeMilliseconds
-            val scrollableContainers = fetchResult.scrollableContainers
-            val screenshot = fetchResult.screenshot
-            val title = fetchResult.title
-            val interactiveElements = fetchResult.interactiveElements
+                awaitAndStoreExtraction(pendingExtraction, state, sessionId)
+                pendingExtraction = null
 
-            if (scrollableContainers.isNotEmpty()) {
-                logger.debug("Found {} scrollable containers: {}", scrollableContainers.size, scrollableContainers)
-            }
+                val setup = prepareIteration(page, state, cachedScreenshot, iteration)
+                cachedScreenshot = null
 
-            fireAndForget {
-                iterationScreenshotStorage.saveRawScreenshot(
-                    sessionId, url, iteration, screenshot.bytes, screenshot.mimeType
-                )
-            }
-
-            val annotateStart = clock.markNow()
-            val (imgWidth, imgHeight) = withContext(dispatcherProvider.default) {
-                imageProcessingService.getImageDimensions(screenshot.bytes)
-            }
-
-            val currentDomSnapshot = fetchResult.domSnapshot
-            if (state.previousClickScreenshot != null) {
-                applyVisualDiffAfterClick(screenshot.bytes, state, currentDomSnapshot)
-            }
-            state.previousDomSnapshot = currentDomSnapshot
-
-            val annotateMs = (clock.markNow() - annotateStart).inWholeMilliseconds
-
-            fireAndForget {
-                val (screenshotForAgent, _) = annotateScreenshot(screenshot, interactiveElements)
-                iterationScreenshotStorage.saveAnnotatedScreenshot(
-                    sessionId, url, iteration, screenshotForAgent.bytes
-                )
-            }
-
-            val scrollStateHint = if (scrollableContainers.isNotEmpty()) {
-                buildString {
-                    scrollableContainers.forEach { c ->
-                        append("- ${c.description}:")
-                        if (c.hasMoreBelow || c.hasMoreAbove) {
-                            append(" ${c.verticalScrollPercent}% scrolled vertically")
-                            if (c.hasMoreBelow) append(", MORE CONTENT BELOW")
-                            if (c.hasMoreAbove) append(", more content above")
-                            append(".")
-                        }
-                        if (c.hasMoreRight || c.hasMoreLeft) {
-                            append(" ${c.horizontalScrollPercent}% scrolled horizontally")
-                            if (c.hasMoreRight) append(", MORE CONTENT TO THE RIGHT")
-                            if (c.hasMoreLeft) append(", more content to the left")
-                            append(".")
-                        }
-                        appendLine()
+                if (!setup.screenshotWasCached) {
+                    pendingExtraction = async {
+                        runExtractionPipeline(
+                            setup.screenshot, query, state.extractedRegionContent.toList(),
+                            setup.imgWidth, setup.imgHeight, page, setup.navigationMode,
+                            actualViewportHeight, sessionId, iteration, url
+                        )
                     }
-                }.trimEnd()
-            } else null
-
-            // ── Phase 1: Navigation + Content Extraction (parallel) ─────
-            val navInput = FullPageNavigationInput(
-                fullPageScreenshot = screenshot,
-                query = query,
-                previousActions = state.actionsPerformed.toList(),
-                questions = state.trackedQuestions,
-                pageUrl = url,
-                pageTitle = title,
-                currentIteration = iteration,
-                maxIterations = MAX_ITERATIONS,
-                pageState = state.pageState,
-                navigationMode = navigationMode,
-                scrollStateHint = scrollStateHint,
-                extractedRegionContent = state.extractedRegionContent.toList(),
-                contentObservation = state.contentObservation
-            )
-
-            var navOutput: FullPageNavigationOutput
-            var segTokenUsage: TokenUsageMetrics? = null
-            var extractionObservation: String? = state.contentObservation
-            var extractionResult: ExtractionResult
-            var navAgentMs = 0L
-            var extractionMs = 0L
-            var resolvedActions: List<NavigationAction>
-            var locatorMs = 0L
-
-            if (screenshotWasCached) {
-                logger.debug("Screenshot cached (page unchanged) — skipping extraction for iteration {}", iteration)
-                val navStart = clock.markNow()
-                navOutput = fullPageNavigationAgent.generate(navInput)
-                navAgentMs = (clock.markNow() - navStart).inWholeMilliseconds
-                extractionResult = ExtractionResult(emptyList(), emptyList())
-
-                val locStart = clock.markNow()
-                val locResult = if (navOutput.decision != "exploration_finished") {
-                    resolveClickTargets(navOutput.actions, screenshot, imgWidth, imgHeight, url)
-                } else {
-                    ResolvedActionsResult(navOutput.actions, TokenUsageMetrics.empty("gemini-3.1-flash-lite"))
                 }
-                resolvedActions = locResult.actions
-                locatorMs = (clock.markNow() - locStart).inWholeMilliseconds
 
-                state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage + locResult.tokenUsage
-                if (locResult.tokenUsage.totalTokens > 0) {
-                    tokenUsageService.recordTokenUsage(
-                        sessionId = sessionId,
-                        agentName = "ElementLocatorAgent",
-                        modelName = locResult.tokenUsage.modelName,
-                        promptTokens = locResult.tokenUsage.promptTokens,
-                        outputTokens = locResult.tokenUsage.outputTokens,
-                        totalTokens = locResult.tokenUsage.totalTokens
-                    )
-                }
-            } else {
-                val descInput = RegionDescriptionInput(
-                    screenshot = IBrowserPage.Screenshot(bytes = screenshot.bytes, mimeType = ImageMimeType.PNG),
+                // ── PLANNER ──
+                val plannerInput = DirectionPlannerInput(
+                    screenshot = setup.screenshot,
                     query = query,
-                    extractedContent = state.extractedRegionContent.toList()
+                    interactiveElementsHint = null,
+                    previousActions = state.actionsPerformed.toList(),
+                    explorationDirections = state.explorationDirections,
+                    extractedContent = state.extractedRegionContent.toList(),
+                    currentIteration = iteration,
+                    maxIterations = MAX_ITERATIONS
                 )
-
-                // ── Vertical Pipelines ───────────────────────────────────────────
-                // Pipeline 1 runs: Navigation Agent -> resolveClickTargets sequentially.
-                // Pipeline 2 runs: Region Description Agent -> Visual Segmentation Agent & Extract sequentially.
-                // They run concurrently via async blocks within a coroutineScope.
-
-                data class NavigationPipelineResult(
-                    val navOutput: FullPageNavigationOutput,
-                    val navAgentMs: Long,
-                    val resolvedActions: List<NavigationAction>,
-                    val locatorMs: Long,
-                    val locatorTokenUsage: TokenUsageMetrics
-                )
-
-                data class ExtractionPipelineResult(
-                    val descOutput: RegionDescriptionOutput,
-                    val descAgentMs: Long,
-                    val extractionResult: ExtractionResult,
-                    val extractionMs: Long,
-                    val segTokenUsage: TokenUsageMetrics?,
-                    val extractionObservation: String?,
-                    val extractedTextHashes: Set<String>,
-                    val capturedHashes: Set<String>
-                )
-
-                val (navPipelineResult, extPipelineResult) = coroutineScope {
-                    val navigationDeferred = async {
-                        val navStart = clock.markNow()
-                        val navOutputResult = fullPageNavigationAgent.generate(navInput)
-                        val navDurationMs = (clock.markNow() - navStart).inWholeMilliseconds
-
-                        val locStart = clock.markNow()
-                        val locResult = if (navOutputResult.decision != "exploration_finished") {
-                            resolveClickTargets(navOutputResult.actions, screenshot, imgWidth, imgHeight, url)
-                        } else {
-                            ResolvedActionsResult(navOutputResult.actions, TokenUsageMetrics.empty("gemini-3.1-flash-lite"))
-                        }
-                        val locDurationMs = (clock.markNow() - locStart).inWholeMilliseconds
-
-                        NavigationPipelineResult(
-                            navOutput = navOutputResult,
-                            navAgentMs = navDurationMs,
-                            resolvedActions = locResult.actions,
-                            locatorMs = locDurationMs,
-                            locatorTokenUsage = locResult.tokenUsage
-                        )
-                    }
-
-                    val extractionDeferred = async {
-                        val descStart = clock.markNow()
-                        val descOutputResult = regionDescriptionAgent.generate(descInput)
-                        val descDurationMs = (clock.markNow() - descStart).inWholeMilliseconds
-
-                        var extractionResultResult = ExtractionResult(emptyList(), emptyList())
-                        var extractionDurationMs = 0L
-                        var segTokenUsageResult: TokenUsageMetrics? = null
-                        var extractionObservationResult: String? = descOutputResult.observation
-                        val pipelineTextHashes = mutableSetOf<String>()
-                        val pipelineCapturedHashes = mutableSetOf<String>()
-
-                        if (descOutputResult.descriptions.isNotEmpty()) {
-                            val extractionStart = clock.markNow()
-                            val descriptions = descOutputResult.descriptions
-                            val segInput = VisualSegmentationInput(
-                                screenshot = IBrowserPage.Screenshot(bytes = screenshot.bytes, mimeType = ImageMimeType.PNG),
-                                query = query,
-                                regionDescriptions = descriptions,
-                                extractedRegionContent = state.extractedRegionContent.toList()
-                            )
-                            val segResult = visualSegmentationAgent.generate(segInput)
-
-                            val obs = segResult.observation
-                            val result = if (segResult.regions.isNotEmpty()) {
-                                extractVisualSegmentationRegions(
-                                    screenshot.bytes, imgWidth, imgHeight,
-                                    segResult.regions, query, pipelineTextHashes,
-                                    pipelineCapturedHashes, page, navigationMode, actualViewportHeight,
-                                    sessionId, iteration, url
-                                )
-                            } else {
-                                ExtractionResult(emptyList(), emptyList())
-                            }
-
-                            extractionResultResult = result
-                            extractionDurationMs = (clock.markNow() - extractionStart).inWholeMilliseconds
-                            segTokenUsageResult = segResult.tokenUsage
-                            if (obs != null) {
-                                extractionObservationResult = obs
-                            }
-                        }
-
-                        ExtractionPipelineResult(
-                            descOutput = descOutputResult,
-                            descAgentMs = descDurationMs,
-                            extractionResult = extractionResultResult,
-                            extractionMs = extractionDurationMs,
-                            segTokenUsage = segTokenUsageResult,
-                            extractionObservation = extractionObservationResult,
-                            extractedTextHashes = pipelineTextHashes,
-                            capturedHashes = pipelineCapturedHashes
-                        )
-                    }
-
-                    navigationDeferred.await() to extractionDeferred.await()
-                }
-
-                navOutput = navPipelineResult.navOutput
-                navAgentMs = navPipelineResult.navAgentMs
-                resolvedActions = navPipelineResult.resolvedActions
-                locatorMs = navPipelineResult.locatorMs
-
-                extractionResult = extPipelineResult.extractionResult
-                extractionMs = extPipelineResult.extractionMs
-                segTokenUsage = extPipelineResult.segTokenUsage
-                extractionObservation = extPipelineResult.extractionObservation
-
-                // Update integrated thread-safe state maps on main thread
-                state.extractedTextHashes.addAll(extPipelineResult.extractedTextHashes)
-                state.capturedHashes.addAll(extPipelineResult.capturedHashes)
-
-                state.aggregatedTokenUsage = state.aggregatedTokenUsage +
-                    navOutput.tokenUsage +
-                    extPipelineResult.descOutput.tokenUsage
-
-                if (navPipelineResult.locatorTokenUsage.totalTokens > 0) {
-                    state.aggregatedTokenUsage = state.aggregatedTokenUsage + navPipelineResult.locatorTokenUsage
-                }
-                if (segTokenUsage != null) {
-                    state.aggregatedTokenUsage = state.aggregatedTokenUsage + segTokenUsage
-                }
-
-                // Record token usages safely in sequence
+                val plannerOutput = directionPlannerAgent.generate(plannerInput)
+                state.explorationDirections = plannerOutput.explorationDirections
+                state.currentDirectionHint = plannerOutput.nextDirectionHint
+                state.directionStartIndex = state.actionsPerformed.size
+                state.aggregatedTokenUsage = state.aggregatedTokenUsage + plannerOutput.tokenUsage
                 tokenUsageService.recordTokenUsage(
                     sessionId = sessionId,
-                    agentName = "RegionDescriptionAgent",
-                    modelName = extPipelineResult.descOutput.tokenUsage.modelName,
-                    promptTokens = extPipelineResult.descOutput.tokenUsage.promptTokens,
-                    outputTokens = extPipelineResult.descOutput.tokenUsage.outputTokens,
-                    totalTokens = extPipelineResult.descOutput.tokenUsage.totalTokens
+                    agentName = "DirectionPlannerAgent",
+                    modelName = plannerOutput.tokenUsage.modelName,
+                    promptTokens = plannerOutput.tokenUsage.promptTokens,
+                    outputTokens = plannerOutput.tokenUsage.outputTokens,
+                    totalTokens = plannerOutput.tokenUsage.totalTokens
                 )
-                if (navPipelineResult.locatorTokenUsage.totalTokens > 0) {
-                    tokenUsageService.recordTokenUsage(
-                        sessionId = sessionId,
-                        agentName = "ElementLocatorAgent",
-                        modelName = navPipelineResult.locatorTokenUsage.modelName,
-                        promptTokens = navPipelineResult.locatorTokenUsage.promptTokens,
-                        outputTokens = navPipelineResult.locatorTokenUsage.outputTokens,
-                        totalTokens = navPipelineResult.locatorTokenUsage.totalTokens
-                    )
-                }
-                if (segTokenUsage != null) {
-                    tokenUsageService.recordTokenUsage(
-                        sessionId = sessionId,
-                        agentName = "VisualSegmentationAgent",
-                        modelName = segTokenUsage.modelName,
-                        promptTokens = segTokenUsage.promptTokens,
-                        outputTokens = segTokenUsage.outputTokens,
-                        totalTokens = segTokenUsage.totalTokens
-                    )
-                }
-            }
-
-            tokenUsageService.recordTokenUsage(
-                sessionId = sessionId,
-                agentName = "FullPageNavigationAgent",
-                modelName = navOutput.tokenUsage.modelName,
-                promptTokens = navOutput.tokenUsage.promptTokens,
-                outputTokens = navOutput.tokenUsage.outputTokens,
-                totalTokens = navOutput.tokenUsage.totalTokens
-            )
-
-            val postNavStart = clock.markNow()
-            state.pageState = navOutput.pageState
-            state.trackedQuestions = navOutput.questions
-            state.contentObservation = extractionObservation
-
-            var pageChanged = false
-
-            val newContent = extractionResult.extractedContent
-            if (newContent.isNotEmpty()) {
-                pageChanged = true
-                state.extractedRegionContent.addAll(newContent)
-            }
-            if (extractionResult.capturedImages.isNotEmpty()) {
-                state.capturedImages.addAll(extractionResult.capturedImages)
-            }
-
-            if (navOutput.decision == "exploration_finished") {
-                val actionsMs = (clock.markNow() - postNavStart).inWholeMilliseconds
-                val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
                 logger.info(
-                    "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms locator={}ms extraction={}ms actions={}ms",
-                    iteration, iterMs, fetchMs, annotateMs, navAgentMs, locatorMs, extractionMs, actionsMs
+                    "Planner iter={}: {} directions ({} unexplored), allExhausted={}, searchComplete={}, hint={}",
+                    iteration, plannerOutput.explorationDirections.size,
+                    plannerOutput.explorationDirections.count { it.status == "unexplored" },
+                    plannerOutput.allDirectionsExhausted,
+                    plannerOutput.searchComplete,
+                    plannerOutput.nextDirectionHint?.take(80)
                 )
 
-                if (navOutput.relevantInfoFound == false) {
-                    state.actionsPerformed.add(
-                        ActionWithOutcome(NavigationAction.GiveUp, observation = navOutput.observation)
-                    )
-                    saveIterationMetadata(
-                        sessionId, url, iteration, navOutput, screenshot.mimeType, iterMs,
-                        extractionResult.regionCropMetas
-                    )
+                if (plannerOutput.searchComplete) {
+                    val plannerMs = (clock.markNow() - outerIterStart).inWholeMilliseconds
                     logger.info(
-                        "Agent finished with relevantInfoFound=false after {} iterations for {}: no relevant information found",
-                        iteration, state.url
+                        "Planner declares searchComplete at iter={} ({}ms) — stopping search",
+                        iteration, plannerMs
                     )
-                    return AgenticPageSearchResult(
-                        answer = null,
-                        evidence = null,
-                        contentDate = null,
-                        actionsPerformed = state.actionsPerformed,
-                        observations = emptyList(),
-                        success = false,
-                        totalTokenUsage = state.aggregatedTokenUsage,
-                        discoveredUrls = state.discoveredUrls,
-                        capturedImages = state.capturedImages.toList()
-                    )
+                    awaitAndStoreExtraction(pendingExtraction, state, sessionId)
+                    return@coroutineScope handleSearchComplete(state, iteration, plannerOutput.allDirectionsExhausted)
                 }
 
-                saveIterationMetadata(
-                    sessionId, url, iteration, navOutput, screenshot.mimeType, iterMs,
-                    extractionResult.regionCropMetas
-                )
-                return handleExplorationFinished(state, iteration)
-            }
+                // ── INNER LOOP (nav agent per direction) ──
+                var directionSteps = 0
+                var currentSetup = setup
 
-            // ── Execute proposed actions from Phase 1 ────────────────────────
-            for ((actionIdx, action) in resolvedActions.withIndex()) {
-                state.actionsPerformed.add(
-                    if (actionIdx == 0) ActionWithOutcome(
-                        action,
-                        observation = navOutput.observation
-                    )
-                    else ActionWithOutcome(action)
-                )
+                innerLoop@ while (directionSteps < MAX_STEPS_PER_DIRECTION) {
+                    val innerIterStart: TimeSource.Monotonic.ValueTimeMark
 
-                val effect = when (action) {
-                    is NavigationAction.Click ->
-                        if (navigationMode == NavigationMode.VIEWPORT)
-                            handleViewportClick(
-                                action,
-                                page,
-                                state,
-                                screenshot.bytes
-                            )
-                        else
-                            handleFullPageClick(
-                                action,
-                                page,
-                                state,
-                                screenshot.bytes,
-                                imgWidth,
-                                imgHeight,
-                                actualViewportHeight
-                            )
+                    if (directionSteps > 0) {
+                        iteration++
+                        if (iteration > MAX_ITERATIONS) break@innerLoop
 
-                    is NavigationAction.Type ->
-                        if (navigationMode == NavigationMode.VIEWPORT)
-                            handleViewportType(action, page, state, imgWidth, imgHeight)
-                        else
-                            handleFullPageType(
-                                action,
-                                page,
-                                state,
-                                screenshot.bytes,
-                                imgWidth,
-                                imgHeight,
-                                actualViewportHeight
-                            )
+                        innerIterStart = clock.markNow()
+                        currentCoroutineContext().ensureActive()
+                        logger.debug("Full-page search iteration {}/{} (nav step {}) for {}", iteration, MAX_ITERATIONS, directionSteps, url)
 
-                    is NavigationAction.ScrollAt ->
-                        handleScrollAt(action, page, state, imgWidth, imgHeight)
+                        awaitAndStoreExtraction(pendingExtraction, state, sessionId)
+                        pendingExtraction = null
 
-                    else -> {
-                        logger.warn("Unsupported action in full-page mode: {}", action)
-                        ActionEffect.PAGE_UNCHANGED
+                        currentSetup = prepareIteration(page, state, cachedScreenshot, iteration)
+                        cachedScreenshot = null
+
+                        if (!currentSetup.screenshotWasCached) {
+                            pendingExtraction = async {
+                                runExtractionPipeline(
+                                    currentSetup.screenshot, query, state.extractedRegionContent.toList(),
+                                    currentSetup.imgWidth, currentSetup.imgHeight, page, currentSetup.navigationMode,
+                                    actualViewportHeight, sessionId, iteration, url
+                                )
+                            }
+                        }
+                    } else {
+                        innerIterStart = outerIterStart
                     }
-                }
-                if (effect == ActionEffect.PAGE_CHANGED) {
-                    pageChanged = true
-                    if (action !is NavigationAction.Click) {
-                        val wasViewport = state.navigationMode == NavigationMode.VIEWPORT
-                        val hasOverlay = page.hasModalOverlay()
-                        state.navigationMode = if (hasOverlay) NavigationMode.VIEWPORT else NavigationMode.FULL_PAGE
-                        if (state.navigationMode == NavigationMode.VIEWPORT && !wasViewport) {
-                            logger.info("Modal overlay detected after action — switching to viewport mode")
-                        } else if (state.navigationMode == NavigationMode.FULL_PAGE && wasViewport) {
-                            logger.info("Overlay dismissed after action — returning to full-page mode")
+
+                    // ── Nav agent ──
+                    val directionActions = state.actionsPerformed.subList(
+                        state.directionStartIndex, state.actionsPerformed.size
+                    ).toList()
+                    val navInput = FullPageNavigationInput(
+                        fullPageScreenshot = currentSetup.navScreenshot,
+                        query = query,
+                        previousActions = directionActions,
+                        pageUrl = url,
+                        pageTitle = currentSetup.title,
+                        pageState = state.pageState,
+                        navigationMode = currentSetup.navigationMode,
+                        directionOverrideHint = state.currentDirectionHint
+                    )
+
+                    val navStart = clock.markNow()
+                    val navOutput = fullPageNavigationAgent.generate(navInput)
+                    val navAgentMs = (clock.markNow() - navStart).inWholeMilliseconds
+
+                    val locStart = clock.markNow()
+                    val locResult = if (navOutput.decision != "exploration_finished") {
+                        resolveClickTargets(navOutput.actions, currentSetup.screenshot, currentSetup.interactiveElements, url)
+                    } else {
+                        ResolvedActionsResult(navOutput.actions, TokenUsageMetrics.empty("gemini-3.1-flash-lite"))
+                    }
+                    val resolvedActions = locResult.actions
+                    val locatorMs = (clock.markNow() - locStart).inWholeMilliseconds
+
+                    state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage
+                    if (locResult.tokenUsage.totalTokens > 0) {
+                        state.aggregatedTokenUsage = state.aggregatedTokenUsage + locResult.tokenUsage
+                    }
+                    tokenUsageService.recordTokenUsage(
+                        sessionId = sessionId,
+                        agentName = "FullPageNavigationAgent",
+                        modelName = navOutput.tokenUsage.modelName,
+                        promptTokens = navOutput.tokenUsage.promptTokens,
+                        outputTokens = navOutput.tokenUsage.outputTokens,
+                        totalTokens = navOutput.tokenUsage.totalTokens
+                    )
+                    if (locResult.tokenUsage.totalTokens > 0) {
+                        tokenUsageService.recordTokenUsage(
+                            sessionId = sessionId,
+                            agentName = "ElementLocatorAgent",
+                            modelName = locResult.tokenUsage.modelName,
+                            promptTokens = locResult.tokenUsage.promptTokens,
+                            outputTokens = locResult.tokenUsage.outputTokens,
+                            totalTokens = locResult.tokenUsage.totalTokens
+                        )
+                    }
+
+                    val postNavStart = clock.markNow()
+                    state.pageState = navOutput.pageState
+
+                    if (navOutput.decision == "exploration_finished") {
+                        val actionsMs = (clock.markNow() - postNavStart).inWholeMilliseconds
+                        val iterMs = (clock.markNow() - innerIterStart).inWholeMilliseconds
+                        logger.info(
+                            "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms locator={}ms actions={}ms",
+                            iteration, iterMs, currentSetup.fetchMs, currentSetup.annotateMs, navAgentMs, locatorMs, actionsMs
+                        )
+                        saveIterationMetadata(
+                            sessionId, url, iteration, navOutput, currentSetup.screenshot.mimeType, iterMs,
+                            emptyList()
+                        )
+
+                        logger.info(
+                            "Nav agent finished current direction at iter={} — planner will decide next step",
+                            iteration
+                        )
+                        continue@outerLoop
+                    }
+
+                    // ── Execute proposed actions ──
+                    var pageChanged = false
+                    for ((actionIdx, action) in resolvedActions.withIndex()) {
+                        state.actionsPerformed.add(
+                            if (actionIdx == 0) ActionWithOutcome(action, observation = navOutput.observation)
+                            else ActionWithOutcome(action)
+                        )
+
+                        val effect = when (action) {
+                            is NavigationAction.Click ->
+                                if (currentSetup.navigationMode == NavigationMode.VIEWPORT)
+                                    handleViewportClick(action, page, state, currentSetup.screenshot.bytes)
+                                else
+                                    handleFullPageClick(
+                                        action, page, state, currentSetup.screenshot.bytes,
+                                        currentSetup.imgWidth, currentSetup.imgHeight, actualViewportHeight
+                                    )
+
+                            is NavigationAction.Type ->
+                                if (currentSetup.navigationMode == NavigationMode.VIEWPORT)
+                                    handleViewportType(action, page, state, currentSetup.imgWidth, currentSetup.imgHeight)
+                                else
+                                    handleFullPageType(
+                                        action, page, state, currentSetup.screenshot.bytes,
+                                        currentSetup.imgWidth, currentSetup.imgHeight, actualViewportHeight
+                                    )
+
+                            is NavigationAction.ScrollAt ->
+                                handleScrollAt(action, page, state, currentSetup.imgWidth, currentSetup.imgHeight)
+
+                            else -> {
+                                logger.warn("Unsupported action in full-page mode: {}", action)
+                                ActionEffect.PAGE_UNCHANGED
+                            }
+                        }
+                        if (effect == ActionEffect.PAGE_CHANGED) {
+                            pageChanged = true
+                            if (action !is NavigationAction.Click) {
+                                val wasViewport = state.navigationMode == NavigationMode.VIEWPORT
+                                val hasOverlay = page.hasModalOverlay()
+                                state.navigationMode = if (hasOverlay) NavigationMode.VIEWPORT else NavigationMode.FULL_PAGE
+                                if (state.navigationMode == NavigationMode.VIEWPORT && !wasViewport) {
+                                    logger.info("Modal overlay detected after action — switching to viewport mode")
+                                } else if (state.navigationMode == NavigationMode.FULL_PAGE && wasViewport) {
+                                    logger.info("Overlay dismissed after action — returning to full-page mode")
+                                }
+                            }
+                            break
                         }
                     }
-                    break
+                    val actionsMs = (clock.markNow() - postNavStart).inWholeMilliseconds
+                    val iterMs = (clock.markNow() - innerIterStart).inWholeMilliseconds
+                    logger.info(
+                        "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms locator={}ms actions={}ms",
+                        iteration, iterMs, currentSetup.fetchMs, currentSetup.annotateMs, navAgentMs, locatorMs, actionsMs
+                    )
+                    saveIterationMetadata(
+                        sessionId, url, iteration, navOutput, currentSetup.screenshot.mimeType, iterMs,
+                        emptyList()
+                    )
+
+                    if (!pageChanged) {
+                        cachedScreenshot = currentSetup.screenshot
+                    }
+
+                    directionSteps++
+                    if (directionSteps >= MAX_STEPS_PER_DIRECTION) {
+                        logger.info(
+                            "Direction capped at {} steps at iter={} — returning to planner",
+                            MAX_STEPS_PER_DIRECTION, iteration
+                        )
+                    }
                 }
             }
-            val actionsMs = (clock.markNow() - postNavStart).inWholeMilliseconds
-            val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
-            logger.info(
-                "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms locator={}ms extraction={}ms actions={}ms",
-                iteration, iterMs, fetchMs, annotateMs, navAgentMs, locatorMs, extractionMs, actionsMs
+
+            awaitAndStoreExtraction(pendingExtraction, state, sessionId)
+            buildFinalResult(state)
+        }
+    }
+
+    // --- Iteration setup and extraction helpers ---
+
+    private suspend fun prepareIteration(
+        page: IBrowserPage,
+        state: NavigationLoopState,
+        cachedScreenshot: IBrowserPage.Screenshot?,
+        iteration: Int
+    ): IterationSetup {
+        val clock = TimeSource.Monotonic
+
+        val navigationMode = state.navigationMode
+        if (navigationMode == NavigationMode.VIEWPORT) {
+            logger.debug("Viewport mode active — using viewport screenshot for iteration {}", iteration)
+        }
+        if (navigationMode == NavigationMode.FULL_PAGE) {
+            page.scrollToPercentage(0)
+        }
+
+        val fetchStart = clock.markNow()
+        val screenshotWasCached = cachedScreenshot != null
+        val fetchResult = page.fetchAgenticIterationData(navigationMode, cachedScreenshot)
+        val fetchMs = (clock.markNow() - fetchStart).inWholeMilliseconds
+        val screenshot = fetchResult.screenshot
+        val title = fetchResult.title
+        val interactiveElements = fetchResult.interactiveElements
+        val scrollableContainers = fetchResult.scrollableContainers
+
+        if (scrollableContainers.isNotEmpty()) {
+            logger.debug("Found {} scrollable containers: {}", scrollableContainers.size, scrollableContainers)
+        }
+
+        fireAndForget {
+            iterationScreenshotStorage.saveRawScreenshot(
+                state.sessionId, state.url, iteration, screenshot.bytes, screenshot.mimeType
             )
-            saveIterationMetadata(
-                sessionId, url, iteration, navOutput, screenshot.mimeType, iterMs,
-                extractionResult.regionCropMetas
+        }
+
+        val annotateStart = clock.markNow()
+        val (imgWidth, imgHeight) = withContext(dispatcherProvider.default) {
+            imageProcessingService.getImageDimensions(screenshot.bytes)
+        }
+
+        val currentDomSnapshot = fetchResult.domSnapshot
+        if (state.previousClickScreenshot != null) {
+            applyVisualDiffAfterClick(screenshot.bytes, state, currentDomSnapshot)
+        }
+        state.previousDomSnapshot = currentDomSnapshot
+
+        val annotateMs = (clock.markNow() - annotateStart).inWholeMilliseconds
+
+        fireAndForget {
+            val (screenshotForAgent, _) = annotateScreenshot(screenshot, interactiveElements)
+            iterationScreenshotStorage.saveAnnotatedScreenshot(
+                state.sessionId, state.url, iteration, screenshotForAgent.bytes
             )
-            if (!pageChanged) {
-                cachedScreenshot = screenshot
+        }
+
+        val scrollStateHint = if (scrollableContainers.isNotEmpty()) {
+            buildString {
+                scrollableContainers.forEach { c ->
+                    append("- ${c.description}:")
+                    if (c.hasMoreBelow || c.hasMoreAbove) {
+                        append(" ${c.verticalScrollPercent}% scrolled vertically")
+                        if (c.hasMoreBelow) append(", MORE CONTENT BELOW")
+                        if (c.hasMoreAbove) append(", more content above")
+                        append(".")
+                    }
+                    if (c.hasMoreRight || c.hasMoreLeft) {
+                        append(" ${c.horizontalScrollPercent}% scrolled horizontally")
+                        if (c.hasMoreRight) append(", MORE CONTENT TO THE RIGHT")
+                        if (c.hasMoreLeft) append(", more content to the left")
+                        append(".")
+                    }
+                    appendLine()
+                }
+            }.trimEnd()
+        } else null
+
+        val navScreenshot = if (interactiveElements.isNotEmpty()) {
+            val boxBytes = imageProcessingService.annotateBoxesOnly(
+                screenshot.bytes,
+                interactiveElements.map { e ->
+                    AnnotationTarget(
+                        tag = e.tag, text = e.text, role = e.role, ariaLabel = e.ariaLabel,
+                        left = e.boundingBox.left, top = e.boundingBox.top,
+                        right = e.boundingBox.right, bottom = e.boundingBox.bottom,
+                        centerX = e.centerX, centerY = e.centerY,
+                        index = e.index
+                    )
+                }
+            )
+            IBrowserPage.Screenshot(bytes = boxBytes, mimeType = ImageMimeType.JPEG)
+        } else screenshot
+
+        val interactiveElementsHint = if (interactiveElements.isNotEmpty()) {
+            interactiveElements
+                .filter { it.text.isNotBlank() }
+                .joinToString("\n") { e ->
+                    val type = e.role ?: e.tag
+                    "- [$type] \"${e.text.take(80)}\""
+                }
+        } else null
+
+        return IterationSetup(
+            screenshot = screenshot,
+            navScreenshot = navScreenshot,
+            title = title,
+            interactiveElements = interactiveElements,
+            imgWidth = imgWidth,
+            imgHeight = imgHeight,
+            fetchMs = fetchMs,
+            annotateMs = annotateMs,
+            screenshotWasCached = screenshotWasCached,
+            scrollStateHint = scrollStateHint,
+            interactiveElementsHint = interactiveElementsHint,
+            navigationMode = navigationMode
+        )
+    }
+
+    private suspend fun runExtractionPipeline(
+        screenshot: IBrowserPage.Screenshot,
+        query: String,
+        extractedRegionContentSnapshot: List<ExtractedContent>,
+        imgWidth: Int,
+        imgHeight: Int,
+        page: IBrowserPage,
+        navigationMode: NavigationMode,
+        actualViewportHeight: Int,
+        sessionId: SessionId,
+        iteration: Int,
+        url: String
+    ): ExtractionPipelineResult {
+        val clock = TimeSource.Monotonic
+        val descInput = RegionDescriptionInput(
+            screenshot = IBrowserPage.Screenshot(bytes = screenshot.bytes, mimeType = ImageMimeType.PNG),
+            query = query,
+            extractedContent = extractedRegionContentSnapshot
+        )
+
+        val descStart = clock.markNow()
+        val descOutput = regionDescriptionAgent.generate(descInput)
+        val descAgentMs = (clock.markNow() - descStart).inWholeMilliseconds
+
+        var extractionResult = ExtractionResult(emptyList(), emptyList())
+        var extractionMs = 0L
+        var segTokenUsage: TokenUsageMetrics? = null
+        var extractionObservation: String? = descOutput.observation
+        val pipelineTextHashes = mutableSetOf<String>()
+        val pipelineCapturedHashes = mutableSetOf<String>()
+
+        if (descOutput.descriptions.isNotEmpty()) {
+            val extractionStart = clock.markNow()
+            val segInput = VisualSegmentationInput(
+                screenshot = IBrowserPage.Screenshot(bytes = screenshot.bytes, mimeType = ImageMimeType.PNG),
+                query = query,
+                regionDescriptions = descOutput.descriptions,
+                extractedRegionContent = extractedRegionContentSnapshot
+            )
+            val segResult = visualSegmentationAgent.generate(segInput)
+
+            val obs = segResult.observation
+            val result = if (segResult.regions.isNotEmpty()) {
+                extractVisualSegmentationRegions(
+                    screenshot.bytes, imgWidth, imgHeight,
+                    segResult.regions, query, pipelineTextHashes,
+                    pipelineCapturedHashes, page, navigationMode, actualViewportHeight,
+                    sessionId, iteration, url
+                )
+            } else {
+                ExtractionResult(emptyList(), emptyList())
+            }
+
+            extractionResult = result
+            extractionMs = (clock.markNow() - extractionStart).inWholeMilliseconds
+            segTokenUsage = segResult.tokenUsage
+            if (obs != null) {
+                extractionObservation = obs
             }
         }
 
-        return buildFinalResult(state)
+        return ExtractionPipelineResult(
+            descTokenUsage = descOutput.tokenUsage,
+            descAgentMs = descAgentMs,
+            extractionResult = extractionResult,
+            extractionMs = extractionMs,
+            segTokenUsage = segTokenUsage,
+            extractionObservation = extractionObservation,
+            extractedTextHashes = pipelineTextHashes,
+            capturedHashes = pipelineCapturedHashes
+        )
+    }
+
+    private suspend fun storeExtractionResults(
+        result: ExtractionPipelineResult,
+        state: NavigationLoopState,
+        sessionId: SessionId
+    ) {
+        val newContent = result.extractionResult.extractedContent
+        if (newContent.isNotEmpty()) {
+            state.extractedRegionContent.addAll(newContent)
+        }
+        if (result.extractionResult.capturedImages.isNotEmpty()) {
+            state.capturedImages.addAll(result.extractionResult.capturedImages)
+        }
+        state.extractedTextHashes.addAll(result.extractedTextHashes)
+        state.capturedHashes.addAll(result.capturedHashes)
+        if (result.extractionObservation != null) {
+            state.contentObservation = result.extractionObservation
+        }
+
+        state.aggregatedTokenUsage = state.aggregatedTokenUsage + result.descTokenUsage
+        if (result.segTokenUsage != null) {
+            state.aggregatedTokenUsage = state.aggregatedTokenUsage + result.segTokenUsage
+        }
+
+        tokenUsageService.recordTokenUsage(
+            sessionId = sessionId,
+            agentName = "RegionDescriptionAgent",
+            modelName = result.descTokenUsage.modelName,
+            promptTokens = result.descTokenUsage.promptTokens,
+            outputTokens = result.descTokenUsage.outputTokens,
+            totalTokens = result.descTokenUsage.totalTokens
+        )
+        if (result.segTokenUsage != null) {
+            tokenUsageService.recordTokenUsage(
+                sessionId = sessionId,
+                agentName = "VisualSegmentationAgent",
+                modelName = result.segTokenUsage.modelName,
+                promptTokens = result.segTokenUsage.promptTokens,
+                outputTokens = result.segTokenUsage.outputTokens,
+                totalTokens = result.segTokenUsage.totalTokens
+            )
+        }
+    }
+
+    private suspend fun awaitAndStoreExtraction(
+        pendingExtraction: Deferred<ExtractionPipelineResult>?,
+        state: NavigationLoopState,
+        sessionId: SessionId
+    ) {
+        val result = pendingExtraction?.await() ?: return
+        storeExtractionResults(result, state, sessionId)
     }
 
     private suspend fun handleFullPageClick(
@@ -936,8 +996,7 @@ class AgenticWebpageSearchService(
     private suspend fun resolveClickTargets(
         actions: List<NavigationAction>,
         rawScreenshot: IBrowserPage.Screenshot,
-        imgWidth: Int,
-        imgHeight: Int,
+        interactiveElements: List<IBrowserPage.InteractiveElementInfo>,
         pageUrl: String
     ): ResolvedActionsResult {
         val clickActions = actions.withIndex()
@@ -951,10 +1010,19 @@ class AgenticWebpageSearchService(
             return ResolvedActionsResult(actions, TokenUsageMetrics.empty("gemini-3.1-flash-lite"))
         }
 
+        val (annotatedScreenshot, elementIndex) = annotateScreenshot(rawScreenshot, interactiveElements)
+        val locatorElementIndex = elementIndex.mapValues { (_, e) ->
+            ElementLocatorLabel(
+                tag = e.tag, text = e.text, role = e.role, ariaLabel = e.ariaLabel,
+                centerX = e.centerX, centerY = e.centerY
+            )
+        }
+
         val locatorInput = ElementLocatorInput(
-            screenshot = rawScreenshot,
+            screenshot = annotatedScreenshot,
             targets = clickActions,
-            pageUrl = pageUrl
+            pageUrl = pageUrl,
+            elementIndex = locatorElementIndex
         )
         val locatorOutput = elementLocatorAgent.generate(locatorInput)
 
@@ -962,11 +1030,9 @@ class AgenticWebpageSearchService(
         val resolvedActions = actions.mapIndexed { idx, action ->
             if (action is NavigationAction.Click) {
                 val resolved = resolvedMap[idx]
-                val centerX = resolved?.centerXNorm?.let { it * imgWidth / 1000 }
-                val centerY = resolved?.centerYNorm?.let { it * imgHeight / 1000 }
                 action.copy(
-                    resolvedCenterX = centerX,
-                    resolvedCenterY = centerY
+                    resolvedCenterX = resolved?.centerXNorm,
+                    resolvedCenterY = resolved?.centerYNorm
                 )
             } else {
                 action
@@ -1034,6 +1100,32 @@ class AgenticWebpageSearchService(
         val extractedContent: List<ExtractedContent>,
         val capturedImages: List<CapturedImage>,
         val regionCropMetas: List<RegionCropMeta> = emptyList()
+    )
+
+    private data class ExtractionPipelineResult(
+        val descTokenUsage: TokenUsageMetrics,
+        val descAgentMs: Long,
+        val extractionResult: ExtractionResult,
+        val extractionMs: Long,
+        val segTokenUsage: TokenUsageMetrics?,
+        val extractionObservation: String?,
+        val extractedTextHashes: Set<String>,
+        val capturedHashes: Set<String>
+    )
+
+    private data class IterationSetup(
+        val screenshot: IBrowserPage.Screenshot,
+        val navScreenshot: IBrowserPage.Screenshot,
+        val title: String,
+        val interactiveElements: List<IBrowserPage.InteractiveElementInfo>,
+        val imgWidth: Int,
+        val imgHeight: Int,
+        val fetchMs: Long,
+        val annotateMs: Long,
+        val screenshotWasCached: Boolean,
+        val scrollStateHint: String?,
+        val interactiveElementsHint: String?,
+        val navigationMode: NavigationMode
     )
 
     private data class PreparedRegion(
@@ -1533,23 +1625,24 @@ class AgenticWebpageSearchService(
 
     // --- Action handlers ---
 
-    private fun handleExplorationFinished(
+    private fun handleSearchComplete(
         state: NavigationLoopState,
-        iteration: Int
+        iteration: Int,
+        allDirectionsExhausted: Boolean
     ): AgenticPageSearchResult {
         val answer = state.extractedRegionContent
             .joinToString("\n\n") { "[${it.description}]${if (it.isTable) " (table)" else ""}:\n${it.text}" }
             .ifBlank { null }
         val observations = state.extractedRegionContent.map { "[${it.description}] ${it.text}" }
 
-        if (answer != null) {
+        if (answer != null && !allDirectionsExhausted) {
             logger.info(
-                "Agentic search finished after {} iterations ({} extracted, {} captures) for {}: {}",
-                iteration, state.extractedRegionContent.size, state.capturedImages.size, state.url, answer
+                "Search complete (planner) after {} iterations ({} extracted, {} captures) for {}",
+                iteration, state.extractedRegionContent.size, state.capturedImages.size, state.url
             )
         } else {
             logger.info(
-                "Agentic search finished with no extracted knowledge after {} iterations for {}",
+                "Search complete (planner) with no relevant content after {} iterations for {}",
                 iteration, state.url
             )
         }
@@ -1560,7 +1653,7 @@ class AgenticWebpageSearchService(
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
             observations = observations,
-            success = answer != null,
+            success = answer != null && !allDirectionsExhausted,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
             capturedImages = state.capturedImages.toList()
@@ -1620,7 +1713,7 @@ class AgenticWebpageSearchService(
                 contentDate = null,
                 actionsPerformed = state.actionsPerformed,
                 observations = observations,
-                success = true,
+                success = false,
                 totalTokenUsage = state.aggregatedTokenUsage,
                 discoveredUrls = state.discoveredUrls,
                 capturedImages = state.capturedImages.toList()
@@ -1765,4 +1858,5 @@ class AgenticWebpageSearchService(
         state.actionsPerformed[state.actionsPerformed.lastIndex] =
             state.actionsPerformed.last().copy(outcome = outcome)
     }
+
 }

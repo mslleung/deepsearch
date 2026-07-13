@@ -153,23 +153,17 @@ class AgenticTableConversionAgentGenAiImpl(
             retryLlmCall<TableConversionResponse>(this@AgenticTableConversionAgentGenAiImpl::class.simpleName!!) {
                 val result = client.models.generateContent(
                     modelId,
-                    listOf(Content.fromParts(*(contentParts.toTypedArray()))),
+                    listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
+                        .temperature(1.0f)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
-                                .build()
-                        )
+                        .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                         .maxOutputTokens(8192)
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                         .build()
                 )
-
                 result.checkFinishReason()
-
                 result.usageMetadata().ifPresent { metadata ->
                     tokenUsage = TokenUsageMetrics(
                         modelName = modelId,
@@ -178,7 +172,6 @@ class AgenticTableConversionAgentGenAiImpl(
                         totalTokens = metadata.totalTokenCount().orElse(0)
                     )
                 }
-
                 result.text() ?: throw RuntimeException("No text response from model")
             }
         }
