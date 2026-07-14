@@ -25,10 +25,9 @@ data class ExplorationDirection(
 sealed class NavigationAction {
     @Serializable
     data class Click(
-        val target: String,
+        val elementLabel: Int,
         val reason: String,
-        val roughY: Int? = null,
-        val resolvedElementLabel: Int? = null,
+        val target: String? = null,
         val resolvedCenterX: Int? = null,
         val resolvedCenterY: Int? = null
     ) : NavigationAction()
@@ -113,14 +112,20 @@ data class FullPageNavigationInput(
     val pageTitle: String,
     val pageState: List<String> = emptyList(),
     val navigationMode: NavigationMode = NavigationMode.FULL_PAGE,
-    val directionOverrideHint: String? = null
+    val explorationDirections: List<ExplorationDirection> = emptyList(),
+    val extractedContent: List<ExtractedContent> = emptyList(),
+    val currentIteration: Int = 1,
+    val maxIterations: Int = 12
 ) : IAgent.IAgentInput
 
 data class FullPageNavigationOutput(
     val actions: List<NavigationAction>,
     val pageState: List<String>,
     val observation: String?,
-    val decision: String,
+    val explorationDirections: List<ExplorationDirection>,
+    val currentDirection: String?,
+    val searchComplete: Boolean,
+    val allDirectionsExhausted: Boolean,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

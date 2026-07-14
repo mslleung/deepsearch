@@ -6,6 +6,7 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 
 import io.deepsearch.domain.agents.ActionWithOutcome
+import io.deepsearch.domain.agents.ExplorationDirection
 import io.deepsearch.domain.agents.IFullPageNavigationAgent
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.NavigationMode
@@ -28,7 +29,7 @@ class FullPageNavigationAgentGenAiImpl(
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
 
-    // ── Shared sub-schemas ──────────────────────────────────────────────
+    // ── Sub-schemas ─────────────────────────────────────────────────────
 
     private val actionSchema: Schema = Schema.builder()
         .type("OBJECT")
@@ -46,14 +47,14 @@ class FullPageNavigationAgentGenAiImpl(
                     .type("OBJECT")
                     .nullable(true)
                     .properties(mapOf(
-                        "target" to Schema.builder().type("STRING")
-                            .description("Highly specific description of the element to click. Include exact visible text, the section heading directly above it, what's below it, and its vertical position on the page.")
+                        "elementLabel" to Schema.builder().type("INTEGER")
+                            .description("The numbered label [N] visible on the screenshot for the element to click.")
                             .build(),
-                        "roughY" to Schema.builder().type("INTEGER")
-                            .description("Approximate vertical position of the element on the page, normalized 0-1000 (0=very top, 500=middle, 1000=very bottom). This is a coarse estimate used for cropping.")
+                        "target" to Schema.builder().type("STRING")
+                            .description("Brief description of the element for logging (e.g. 'Learn More under Well Woman').")
                             .build()
                     ))
-                    .required(listOf("target", "roughY"))
+                    .required(listOf("elementLabel"))
                     .build(),
                 "type" to Schema.builder()
                     .type("OBJECT")
@@ -82,7 +83,24 @@ class FullPageNavigationAgentGenAiImpl(
         .propertyOrdering(listOf("action", "reason", "click", "type", "scrollAt"))
         .build()
 
-    // ── Agent 1: Navigate + Decide ──────────────────────────────────────
+    private val directionSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .properties(
+            mapOf(
+                "direction" to Schema.builder().type("STRING")
+                    .description("A distinct area, tab, section, or navigation path worth exploring.")
+                    .build(),
+                "status" to Schema.builder().type("STRING")
+                    .enum_(listOf("unexplored", "exploring", "exhausted"))
+                    .description("unexplored: not yet tried. exploring: currently being investigated. exhausted: fully explored or confirmed irrelevant.")
+                    .build()
+            )
+        )
+        .required(listOf("direction", "status"))
+        .propertyOrdering(listOf("direction", "status"))
+        .build()
+
+    // ── Combined navigate + plan schema ─────────────────────────────────
 
     private val navigateSchema: Schema = Schema.builder()
         .type("OBJECT")
@@ -106,93 +124,162 @@ class FullPageNavigationAgentGenAiImpl(
                     .type("STRING")
                     .description("Describe the page layout, visible sections, and any changes from the last action.")
                     .build(),
-                "decision" to Schema.builder()
+                "explorationDirections" to Schema.builder()
+                    .type("ARRAY")
+                    .items(directionSchema)
+                    .description("ALL exploration directions identified on the page, sorted by relevance to the query (most promising first). Carry forward previous directions and add any new ones discovered.")
+                    .build(),
+                "currentDirection" to Schema.builder()
                     .type("STRING")
-                    .enum_(listOf("continue_exploring", "exploration_finished"))
-                    .description("continue_exploring: there are actions to execute for the current direction. exploration_finished: the current direction is fully explored (content extracted or confirmed irrelevant).")
+                    .nullable(true)
+                    .description("The specific direction your actions are for. Null only when searchComplete=true.")
+                    .build(),
+                "searchComplete" to Schema.builder()
+                    .type("BOOLEAN")
+                    .description("True when the EXTRACTED KNOWLEDGE already contains sufficient information to answer the query. Set true when: (1) the core question is answered in the extracted content, OR (2) all directions are exhausted. Remaining unexplored directions that are unlikely to add important new information should NOT prevent completion.")
+                    .build(),
+                "allDirectionsExhausted" to Schema.builder()
+                    .type("BOOLEAN")
+                    .description("True only when EVERY direction has been explored and confirmed irrelevant or fully extracted.")
                     .build(),
                 "actions" to Schema.builder()
                     .type("ARRAY")
                     .items(actionSchema)
-                    .description("Exploration actions to execute in order (decision=continue_exploring only). Eagerly include ALL actions that might yield information for the current direction.")
+                    .description("Actions to execute in order. Include ALL actions that advance the current direction. Empty array when searchComplete=true. When switching to a new direction, include the first actions for the new direction immediately.")
                     .nullable(true)
                     .build()
             )
         )
-        .required(listOf("pageState", "observation", "decision"))
-        .propertyOrdering(listOf("pageState", "observation", "decision", "actions"))
+        .required(listOf("pageState", "observation", "explorationDirections", "searchComplete", "allDirectionsExhausted"))
+        .propertyOrdering(listOf("pageState", "observation", "explorationDirections", "currentDirection", "searchComplete", "allDirectionsExhausted", "actions"))
         .build()
 
     private val fullPageNavigateInstruction = """
-        You are a webpage exploration agent. You execute a specific exploration direction on a webpage.
+        You are a webpage exploration and planning agent. You both PLAN which directions to explore and EXECUTE navigation actions on the page.
 
         You see a screenshot of the **entire page** from top to bottom.
-        Interactive elements (buttons, links, tabs, toggles) are highlighted with colored bounding boxes on the screenshot.
-        To click an element, describe it in the `target` field. A separate system will locate the exact element from your description.
-        If content is hidden (behind accordions, tabs, etc.), click the header/toggle to reveal it. You will see the updated full page on the next turn.
+        Interactive elements (buttons, links, tabs, toggles) are highlighted with colored bounding boxes and **numbered labels** like [0], [1], [2], etc.
+        To click an element, provide its label number in `elementLabel`. If content is hidden (behind accordions, tabs, etc.), click the header/toggle to reveal it. You will see the updated full page on the next turn.
 
-        ## YOUR ROLE
-        A separate planning agent decides WHICH directions to explore and WHEN to stop the search.
-        Your job is to execute the CURRENT DIRECTION given to you in the prompt.
-        Focus on thoroughly exploring that one direction — click the right elements, scroll to reveal content, and report when you're done with it.
+        ## YOUR TWO RESPONSIBILITIES
+
+        ### 1. DIRECTION PLANNING (strategic)
+        Identify and track exploration directions on the page — these are distinct areas, tabs, sections, or navigation paths that could contain information relevant to the query.
+
+        **Direction Identification:**
+        Look at the screenshot. Identify elements that could reveal NEW content when clicked:
+        - Tabs visible in the screenshot (list each one individually by its exact text)
+        - Accordions, toggles, expandable sections
+        - Product cards, category links, "Learn more" buttons
+        - Navigation menu items that switch content on the same page
+
+        CRITICAL: List tabs even if their names seem unrelated to the query. Content is often categorized in non-obvious ways.
+        Sort directions by relevance to the query (most promising first).
+
+        **Direction Status Tracking:**
+        Review the ACTION HISTORY to determine each direction's status:
+        - unexplored: no action has been taken for this direction
+        - exploring: actions are being taken for this direction
+        - exhausted: action was taken AND outcome confirms it's done (off-page link, no relevant content, content already extracted)
+
+        ONLY mark 'exhausted' if the ACTION HISTORY contains actions matching this direction AND the outcome shows it's irrelevant or complete.
+
+        **Search Completion Evaluation:**
+        After updating directions, evaluate the EXTRACTED KNOWLEDGE against the query:
+
+        Set searchComplete=true when:
+        - The EXTRACTED KNOWLEDGE contains a clear, direct answer to the query
+        - The core question is answered even if there are unexplored directions about unrelated topics
+        - All directions have been exhausted (nothing more to try)
+
+        Set searchComplete=false when:
+        - No content has been extracted yet (EXTRACTED KNOWLEDGE is empty)
+        - The extracted content does NOT answer the query
+        - There are promising unexplored directions that could contain the answer
+
+        CRITICAL: Do NOT keep exploring just because unexplored directions exist. If the answer is already in the EXTRACTED KNOWLEDGE, stop immediately. Efficiency matters.
+
+        ### 2. NAVIGATION EXECUTION (tactical)
+        Execute actions to explore the current direction — click the right elements, scroll to reveal content.
+
+        When the current direction is done (content visible or confirmed irrelevant), switch to the next promising direction immediately:
+        - Mark the old direction as 'exhausted'
+        - Set the new direction as 'exploring'
+        - Provide actions for the new direction in the same response
+
+        ## CRITICAL: SCREENSHOT vs. EXTRACTED KNOWLEDGE
+        - The SCREENSHOT is for identifying DIRECTIONS and deciding which elements to click
+        - The EXTRACTED KNOWLEDGE list is the SOLE BASIS for your searchComplete decision
+        - Even if you can SEE an answer on the screenshot, it does NOT count unless it appears in the EXTRACTED KNOWLEDGE list
+        - Content visible on screen has NOT been captured until it shows up in EXTRACTED KNOWLEDGE
 
         ## How to respond
-        1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements. CRITICAL: Do NOT let the query influence this — report what is ACTUALLY there.
+        1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE (which tab is highlighted, which sections are expanded/collapsed). Carry forward previous entries for off-screen elements. Do NOT let the query influence this — report what is ACTUALLY there.
         2. **observation**: Describe the page layout and any changes from the last action.
-        3. **decision**: `continue_exploring` if there are actions to execute for the current direction. `exploration_finished` if the direction is fully explored (relevant content is visible on screen, or confirmed irrelevant).
-        4. **actions** (when continuing): The actions to execute. Eagerly include ALL actions that might yield information for the current direction.
+        3. **explorationDirections**: ALL directions with updated statuses. Carry forward previous directions. Add new ones discovered.
+        4. **currentDirection**: Which direction your actions are for. Null only when searchComplete=true.
+        5. **searchComplete / allDirectionsExhausted**: Your planning decisions.
+        6. **actions**: The navigation actions to execute. Empty when searchComplete=true.
 
-        ## TARGET DESCRIPTION FORMAT (CRITICAL)
-        Your `target` description must be EXTREMELY specific and unambiguous. Always include ALL of the following:
-        1. The element's exact visible text (in quotes)
-        2. The section heading DIRECTLY above the element (in quotes)
-        3. What text or element is DIRECTLY below it
-        4. Its vertical position on the page: "in the top quarter / upper-middle / center / lower-middle / bottom quarter"
-        5. If there are other elements with the same text on the page, state how many you see and which one you mean
+        ## CLICKING ELEMENTS
+        Reference elements by their numbered label [N] on the screenshot. Provide the number in `elementLabel`.
+        If you cannot find a suitable labeled element for what you need to click, use -1 and describe the element in `target`.
 
-        Also provide `roughY`: your estimate of the element's vertical position as 0-1000 (0=very top of page, 500=middle, 1000=very bottom).
-
-        GOOD example: "The 'Learn More' link that appears directly below the 'Well Woman Check-ups' heading and above the 'Platinum Health Screening' heading. It is in the lower-middle of the page. There are 6 'Learn More' links on this page and this is the 4th one from the top."
-        BAD example: "The Learn More button in the Well Woman section"
+        ## RULES
+        - NEVER set allDirectionsExhausted=true while ANY direction has status 'unexplored'
+        - Carry forward ALL previous directions — do NOT drop any
+        - When switching directions, include the first actions for the new direction immediately
     """.trimIndent()
 
     private val overlayNavigateInstruction = """
-        You are a webpage exploration agent. You execute a specific exploration direction on a webpage.
+        You are a webpage exploration and planning agent. You both PLAN which directions to explore and EXECUTE navigation actions on the page.
 
         You see a **viewport screenshot**. A dialog/overlay is open on the page, and the screenshot shows what is currently visible in the browser viewport.
-        To click an element, describe it in the `target` field. A separate system will locate the exact element from your description.
+        Interactive elements are highlighted with colored bounding boxes and **numbered labels** like [0], [1], [2], etc.
+        To click an element, provide its label number in `elementLabel`.
         Use `scroll_element` to scroll within the overlay if content is cut off at the bottom or top.
         To dismiss the overlay, click the close button (X) or click on the dimmed/empty space outside the overlay.
 
-        ## YOUR ROLE
-        A separate planning agent decides WHICH directions to explore and WHEN to stop the search.
-        Your job is to execute the CURRENT DIRECTION given to you in the prompt.
-        Focus on thoroughly exploring that one direction.
+        ## YOUR TWO RESPONSIBILITIES
+
+        ### 1. DIRECTION PLANNING (strategic)
+        Track exploration directions and evaluate search completion based on EXTRACTED KNOWLEDGE.
+
+        Set searchComplete=true when:
+        - The EXTRACTED KNOWLEDGE contains a clear, direct answer to the query
+        - All directions have been exhausted
+
+        Set searchComplete=false when:
+        - No content has been extracted yet
+        - The extracted content does NOT answer the query
+        - There are promising unexplored directions
+
+        CRITICAL: The EXTRACTED KNOWLEDGE list is the SOLE BASIS for searchComplete. Content visible on screen has NOT been captured until it appears in EXTRACTED KNOWLEDGE.
+
+        ### 2. NAVIGATION EXECUTION (tactical)
+        Execute actions to explore the current direction within the overlay. When the current direction is done, switch to the next promising direction immediately.
 
         ## How to respond
-        1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE (which tab is highlighted, which sections are expanded/collapsed, which toggles are on/off). Carry forward previous entries for off-screen elements. CRITICAL: Do NOT let the query influence this — report what is ACTUALLY there.
-        2. **observation**: Describe the overlay content and any changes from the last action. Note if content appears cut off (more content available via scrolling).
-        3. **decision**: `continue_exploring` if there are actions to execute for the current direction. `exploration_finished` if the direction is fully explored (relevant content is visible on screen, or confirmed irrelevant).
-        4. **actions** (when continuing): The actions to execute. Use `scroll_element` for scrolling within the overlay.
+        1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE. Carry forward previous entries. Do NOT let the query influence this.
+        2. **observation**: Describe the overlay content and any changes. Note if content appears cut off.
+        3. **explorationDirections**: ALL directions with updated statuses.
+        4. **currentDirection**: Which direction your actions are for. Null when searchComplete=true.
+        5. **searchComplete / allDirectionsExhausted**: Your planning decisions.
+        6. **actions**: Use `scroll_element` for scrolling within the overlay. Empty when searchComplete=true.
 
-        ## TARGET DESCRIPTION FORMAT (CRITICAL)
-        Your `target` description must be EXTREMELY specific and unambiguous. Always include ALL of the following:
-        1. The element's exact visible text (in quotes)
-        2. The section heading DIRECTLY above the element (in quotes)
-        3. What text or element is DIRECTLY below it
-        4. Its vertical position on the page: "in the top quarter / upper-middle / center / lower-middle / bottom quarter"
-        5. If there are other elements with the same text on the page, state how many you see and which one you mean
+        ## CLICKING ELEMENTS
+        Reference elements by their numbered label [N] on the screenshot. Provide the number in `elementLabel`.
+        If you cannot find a suitable labeled element for what you need to click, use -1 and describe the element in `target`.
 
-        Also provide `roughY`: your estimate of the element's vertical position as 0-1000 (0=very top of page, 500=middle, 1000=very bottom).
-
-        GOOD example: "The 'Learn More' link that appears directly below the 'Well Woman Check-ups' heading and above the 'Platinum Health Screening' heading. It is in the lower-middle of the page. There are 6 'Learn More' links on this page and this is the 4th one from the top."
-        BAD example: "The Learn More button in the Well Woman section"
+        ## RULES
+        - NEVER set allDirectionsExhausted=true while ANY direction has status 'unexplored'
+        - Carry forward ALL previous directions — do NOT drop any
     """.trimIndent()
 
     // ── Serializable response types ─────────────────────────────────────
 
     @Serializable
-    private data class ClickParams(val target: String? = null, val roughY: Int? = null)
+    private data class ClickParams(val elementLabel: Int? = null, val target: String? = null)
 
     @Serializable
     private data class TypeParams(val x: Int? = null, val y: Int? = null, val text: String? = null)
@@ -210,17 +297,26 @@ class FullPageNavigationAgentGenAiImpl(
     )
 
     @Serializable
+    private data class DirectionResponse(
+        val direction: String,
+        val status: String? = null
+    )
+
+    @Serializable
     private data class NavigateResponse(
         val pageState: List<String>? = null,
         val observation: String? = null,
-        val decision: String? = null,
+        val explorationDirections: List<DirectionResponse>? = null,
+        val currentDirection: String? = null,
+        val searchComplete: Boolean? = null,
+        val allDirectionsExhausted: Boolean? = null,
         val actions: List<ActionResponse>? = null
     )
 
-    // ── generate() — navigate + decide ────────────────────────────────
+    // ── generate() ──────────────────────────────────────────────────────
 
     override suspend fun generate(input: FullPageNavigationInput): FullPageNavigationOutput {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val prompt = buildNavigatePrompt(input)
@@ -264,7 +360,15 @@ class FullPageNavigationAgentGenAiImpl(
         }
 
         val pageState = response.pageState ?: emptyList()
-        logger.debug("Navigate: pageState={}", pageState)
+        val directions = (response.explorationDirections ?: emptyList()).map { d ->
+            ExplorationDirection(
+                direction = d.direction,
+                status = d.status ?: "unexplored"
+            )
+        }
+        val allExhausted = response.allDirectionsExhausted ?: false
+        val unexploredCount = directions.count { it.status == "unexplored" }
+        val searchComplete = response.searchComplete ?: false
 
         val actions = (response.actions ?: emptyList()).mapNotNull { action ->
             try {
@@ -275,11 +379,10 @@ class FullPageNavigationAgentGenAiImpl(
             }
         }
 
-        val decision = response.decision ?: "continue_exploring"
-
         logger.debug(
-            "Navigate: decision={} actions=[{}] | pageState={}",
-            decision,
+            "Navigate: directions={} (unexplored={}) | searchComplete={} | allExhausted={} | currentDir={} | actions=[{}] | pageState={}",
+            directions.size, unexploredCount, searchComplete, allExhausted,
+            response.currentDirection?.take(60),
             actions.joinToString(", ") { it::class.simpleName ?: "?" },
             pageState
         )
@@ -288,15 +391,19 @@ class FullPageNavigationAgentGenAiImpl(
             actions = actions,
             pageState = pageState,
             observation = response.observation,
-            decision = decision,
+            explorationDirections = directions,
+            currentDirection = response.currentDirection,
+            searchComplete = searchComplete || (allExhausted && unexploredCount == 0),
+            allDirectionsExhausted = allExhausted && unexploredCount == 0,
             tokenUsage = tokenUsage
         )
     }
 
-    // ── Prompt builders ─────────────────────────────────────────────────
+    // ── Prompt builder ──────────────────────────────────────────────────
 
     private fun buildNavigatePrompt(input: FullPageNavigationInput): String = buildString {
         appendLine("PAGE: ${input.pageTitle} — ${input.pageUrl}")
+        appendLine("ITERATION: ${input.currentIteration} / ${input.maxIterations}")
 
         if (input.pageState.isNotEmpty()) {
             appendLine()
@@ -309,14 +416,25 @@ class FullPageNavigationAgentGenAiImpl(
         appendLine()
         appendLine("QUERY: ${input.query}")
 
-        if (!input.directionOverrideHint.isNullOrBlank()) {
+        if (input.explorationDirections.isNotEmpty()) {
             appendLine()
-            appendLine("CURRENT DIRECTION: ${input.directionOverrideHint}")
+            appendLine("CURRENT EXPLORATION DIRECTIONS:")
+            input.explorationDirections.forEachIndexed { idx, d ->
+                appendLine("  [${d.status.uppercase()}] D${idx + 1}. ${d.direction}")
+            }
+        }
+
+        if (input.extractedContent.isNotEmpty()) {
+            appendLine()
+            appendLine("EXTRACTED KNOWLEDGE (already captured — basis for searchComplete decision):")
+            input.extractedContent.forEach { ec ->
+                appendLine("  [${ec.description}]: ${ec.text.take(200)}")
+            }
         }
 
         if (input.previousActions.isNotEmpty()) {
             appendLine()
-            appendLine("TURNS:")
+            appendLine("TURNS (current direction):")
             val turns = groupIntoTurns(input.previousActions)
             turns.forEachIndexed { idx, turn ->
                 appendLine(formatTurn(idx + 1, turn))
@@ -324,18 +442,18 @@ class FullPageNavigationAgentGenAiImpl(
         }
     }
 
-    // ── Shared helpers ──────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────
 
     private fun toNavigationAction(resp: ActionResponse): NavigationAction {
         val reason = resp.reason ?: ""
         return when (resp.action) {
             "click" -> {
                 val p = checkNotNull(resp.click) { "click action missing click params" }
-                val target = checkNotNull(p.target) { "click must have target description" }
+                val label = checkNotNull(p.elementLabel) { "click must have elementLabel" }
                 NavigationAction.Click(
-                    target = target,
+                    elementLabel = label,
                     reason = reason,
-                    roughY = p.roughY?.coerceIn(0, 1000)
+                    target = p.target
                 )
             }
             "type_text" -> {
@@ -392,7 +510,8 @@ class FullPageNavigationAgentGenAiImpl(
 
     private fun formatActionDesc(action: NavigationAction): String = when (action) {
         is NavigationAction.Click -> {
-            "click '${action.target}' (reason: ${action.reason})"
+            val desc = action.target ?: "[${action.elementLabel}]"
+            "click $desc (label=${action.elementLabel}, reason: ${action.reason})"
         }
         is NavigationAction.Type -> {
             "type_text '${action.text}' into ${action.reason.ifEmpty { "(${action.x},${action.y})" }}"

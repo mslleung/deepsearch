@@ -1,7 +1,12 @@
 package io.deepsearch.domain.config
 
 import com.google.genai.Client
+import com.google.genai.types.ClientOptions
 import com.google.genai.types.HttpOptions
+import okhttp3.ConnectionPool
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import java.util.concurrent.TimeUnit
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googlegenaiimpl.*
 import io.deepsearch.domain.browser.IBrowserPool
@@ -70,6 +75,17 @@ private val domainCommonTestModule = module {
         )
     }
     single {
+        val okhttp = OkHttpClient.Builder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectionPool(ConnectionPool(30, 5, TimeUnit.MINUTES))
+            .connectTimeout(0, TimeUnit.MILLISECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .writeTimeout(0, TimeUnit.MILLISECONDS)
+            .callTimeout(120_000, TimeUnit.MILLISECONDS)
+            .build()
+        val clientOptions = ClientOptions.builder()
+            .customHttpClient(okhttp)
+            .build()
         val useVertexAi = System.getenv("GOOGLE_GENAI_USE_VERTEXAI")?.equals("TRUE", ignoreCase = true) == true
         val httpOptions = HttpOptions.builder().timeout(120_000).build()
         if (useVertexAi) {
@@ -80,12 +96,14 @@ private val domainCommonTestModule = module {
                 .location(location)
                 .vertexAI(true)
                 .httpOptions(httpOptions)
+                .clientOptions(clientOptions)
                 .build()
         } else {
             val apiKey = System.getenv("GOOGLE_API_KEY")?.ifBlank { "test-gemini-api-key" } ?: "test-gemini-api-key"
             Client.builder()
                 .apiKey(apiKey)
                 .httpOptions(httpOptions)
+                .clientOptions(clientOptions)
                 .build()
         }
     }
@@ -144,13 +162,10 @@ private val domainCommonTestModule = module {
     singleOf(::SemanticTableClassificationAgentGenAiImpl) bind ISemanticTableClassificationAgent::class
     singleOf(::LinearizedContentConversionAgentGenAiImpl) bind ILinearizedContentConversionAgent::class
     singleOf(::FullPageNavigationAgentGenAiImpl) bind IFullPageNavigationAgent::class
-    singleOf(::ElementLocatorAgentGenAiImpl) bind IElementLocatorAgent::class
+    singleOf(::ContentRegionLocatorAgentGenAiImpl) bind IContentRegionLocatorAgent::class
     singleOf(::ContentExtractionAgentGenAiImpl) bind IContentExtractionAgent::class
     singleOf(::VisualContentExtractionAgentGenAiImpl) bind IVisualContentExtractionAgent::class
-    singleOf(::VisualSegmentationAgentGenAiImpl) bind IVisualSegmentationAgent::class
-    singleOf(::RegionDescriptionAgentGenAiImpl) bind IRegionDescriptionAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
-    singleOf(::DirectionPlannerAgentGenAiImpl) bind IDirectionPlannerAgent::class
     singleOf(::ComputerUseNavigationAgentGenAiImpl) bind IComputerUseNavigationAgent::class
     singleOf(::TextLinkDiscoveryAgentGenAiImpl) bind ITextLinkDiscoveryAgent::class
     singleOf(::FollowUpQueryDedupAgentGenAiImpl) bind IFollowUpQueryDedupAgent::class

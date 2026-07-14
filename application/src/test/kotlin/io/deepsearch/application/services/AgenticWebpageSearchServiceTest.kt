@@ -378,7 +378,7 @@ class AgenticWebpageSearchServiceTest : IsolatedKoinTest() {
 
         val suspectedHallucinations = result.actionsPerformed.count { entry ->
             when (val action = entry.action) {
-                is NavigationAction.Click -> (action.resolvedElementLabel ?: 0) >= 25
+                is NavigationAction.Click -> action.elementLabel >= 25
                 is NavigationAction.Type -> action.x >= 25
                 else -> false
             }

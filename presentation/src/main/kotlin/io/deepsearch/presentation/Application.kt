@@ -3,6 +3,11 @@ package io.deepsearch.presentation
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import com.google.genai.Client
+import com.google.genai.types.ClientOptions
+import okhttp3.ConnectionPool
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import java.util.concurrent.TimeUnit
 import io.deepsearch.domain.config.ApiKeyConfig
 import io.deepsearch.domain.config.DeepSearchBrowserConfig
 import io.deepsearch.domain.config.DatabaseEncryptionConfig
@@ -186,16 +191,29 @@ private fun Application.configureDependencyInjection() {
                     )
                 }
                 single {
+                    val okhttp = OkHttpClient.Builder()
+                        .protocols(listOf(Protocol.HTTP_1_1))
+                        .connectionPool(ConnectionPool(30, 5, TimeUnit.MINUTES))
+                        .connectTimeout(0, TimeUnit.MILLISECONDS)
+                        .readTimeout(0, TimeUnit.MILLISECONDS)
+                        .writeTimeout(0, TimeUnit.MILLISECONDS)
+                        .callTimeout(120_000, TimeUnit.MILLISECONDS)
+                        .build()
+                    val clientOptions = ClientOptions.builder()
+                        .customHttpClient(okhttp)
+                        .build()
                     val useVertexAi = environment.config.propertyOrNull("vertexai.enabled")?.getString()?.toBoolean() ?: false
                     if (useVertexAi) {
                         Client.builder()
                             .project(environment.config.property("vertexai.projectId").getString())
                             .location(environment.config.property("vertexai.location").getString())
                             .vertexAI(true)
+                            .clientOptions(clientOptions)
                             .build()
                     } else {
                         Client.builder()
                             .apiKey(environment.config.property("gemini.apiKey").getString())
+                            .clientOptions(clientOptions)
                             .build()
                     }
                 }

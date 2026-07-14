@@ -125,14 +125,10 @@ val domainModule = module {
     singleOf(::SemanticTableClassificationAgentGenAiImpl) bind ISemanticTableClassificationAgent::class
     singleOf(::LinearizedContentConversionAgentGenAiImpl) bind ILinearizedContentConversionAgent::class
     singleOf(::FullPageNavigationAgentGenAiImpl) bind IFullPageNavigationAgent::class
-    singleOf(::ElementLocatorAgentGenAiImpl) bind IElementLocatorAgent::class
+    singleOf(::ContentRegionLocatorAgentGenAiImpl) bind IContentRegionLocatorAgent::class
     singleOf(::ContentExtractionAgentGenAiImpl) bind IContentExtractionAgent::class
     singleOf(::VisualContentExtractionAgentGenAiImpl) bind IVisualContentExtractionAgent::class
-    singleOf(::VisualSegmentationAgentGenAiImpl) bind IVisualSegmentationAgent::class
-    singleOf(::RegionDescriptionAgentGenAiImpl) bind IRegionDescriptionAgent::class
     singleOf(::WebpageReconnaissanceAgentGenAiImpl) bind IWebpageReconnaissanceAgent::class
-    singleOf(::DirectionPlannerAgentGenAiImpl) bind IDirectionPlannerAgent::class
-
     // Computer Use navigation agent (for CU benchmark comparison)
     singleOf(::ComputerUseNavigationAgentGenAiImpl) bind IComputerUseNavigationAgent::class
 

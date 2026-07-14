@@ -126,7 +126,7 @@ class ActionEfficiencyAnalyzer(
     }
 
     private fun actionTypeName(action: NavigationAction): String = when (action) {
-        is NavigationAction.Click -> "click(${action.resolvedElementLabel ?: "?"})_${action.target}"
+        is NavigationAction.Click -> "click(${action.elementLabel})_${action.target ?: "?"}"
         is NavigationAction.ScrollAt -> "scroll_at(${action.x},${action.y})_${action.scrollDirection.name.lowercase()}"
         is NavigationAction.Type -> "type(${action.x},${action.y})"
         is NavigationAction.ExplorationFinished -> "exploration_finished"
