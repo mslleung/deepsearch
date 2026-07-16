@@ -173,7 +173,7 @@ class FullPageNavigationAgentGenAiImpl(
         - Product cards, category links, "Learn more" buttons
         - Navigation menu items that switch content on the same page
 
-        CRITICAL: List tabs even if their names seem unrelated to the query. Content is often categorized in non-obvious ways.
+        List directions that could PLAUSIBLY contain information related to the query based on your understanding of the webpage.
         Sort directions by relevance to the query (most promising first).
 
         **Direction Status Tracking:**
@@ -191,6 +191,7 @@ class FullPageNavigationAgentGenAiImpl(
         - The EXTRACTED KNOWLEDGE contains a clear, direct answer to the query
         - The core question is answered even if there are unexplored directions about unrelated topics
         - All directions have been exhausted (nothing more to try)
+        - You have explored all plausible directions and none contained the answer
 
         Set searchComplete=false when:
         - No content has been extracted yet (EXTRACTED KNOWLEDGE is empty)
@@ -201,6 +202,8 @@ class FullPageNavigationAgentGenAiImpl(
 
         ### 2. NAVIGATION EXECUTION (tactical)
         Execute actions to explore the current direction — click the right elements, scroll to reveal content.
+
+        Be selective: when a section has multiple items (accordions, tabs, links), only click ones whose visible labels are plausibly relevant to the query. Do NOT exhaustively open every item in a section. If none of the remaining items in a section could plausibly contain the answer, mark the direction as exhausted and move on.
 
         When the current direction is done (content visible or confirmed irrelevant), switch to the next promising direction immediately:
         - Mark the old direction as 'exhausted'
@@ -244,10 +247,12 @@ class FullPageNavigationAgentGenAiImpl(
 
         ### 1. DIRECTION PLANNING (strategic)
         Track exploration directions and evaluate search completion based on EXTRACTED KNOWLEDGE.
+        List directions that could PLAUSIBLY contain information related to the query based on your understanding of the webpage.
 
         Set searchComplete=true when:
         - The EXTRACTED KNOWLEDGE contains a clear, direct answer to the query
         - All directions have been exhausted
+        - You have explored all plausible directions and none contained the answer
 
         Set searchComplete=false when:
         - No content has been extracted yet
@@ -257,7 +262,8 @@ class FullPageNavigationAgentGenAiImpl(
         CRITICAL: The EXTRACTED KNOWLEDGE list is the SOLE BASIS for searchComplete. Content visible on screen has NOT been captured until it appears in EXTRACTED KNOWLEDGE.
 
         ### 2. NAVIGATION EXECUTION (tactical)
-        Execute actions to explore the current direction within the overlay. When the current direction is done, switch to the next promising direction immediately.
+        Execute actions to explore the current direction within the overlay. Be selective: only click items whose labels are plausibly relevant to the query. Do NOT exhaustively open every item.
+        When the current direction is done, switch to the next promising direction immediately.
 
         ## How to respond
         1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE. Carry forward previous entries. Do NOT let the query influence this.

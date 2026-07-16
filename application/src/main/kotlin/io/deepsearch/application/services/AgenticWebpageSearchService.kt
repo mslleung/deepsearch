@@ -336,7 +336,7 @@ class AgenticWebpageSearchService(
                         sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
                     )
                     awaitAndStoreExtraction(pendingExtraction, state, sessionId)
-                    return@coroutineScope handleSearchComplete(state, iteration, navOutput.allDirectionsExhausted)
+                    return@coroutineScope handleSearchComplete(state, iteration)
                 }
 
                 if (resolvedActions.isEmpty()) {
@@ -1357,25 +1357,17 @@ class AgenticWebpageSearchService(
 
     private fun handleSearchComplete(
         state: NavigationLoopState,
-        iteration: Int,
-        allDirectionsExhausted: Boolean
+        iteration: Int
     ): AgenticPageSearchResult {
         val answer = state.extractedRegionContent
             .joinToString("\n\n") { "[${it.description}]${if (it.isTable) " (table)" else ""}:\n${it.text}" }
             .ifBlank { null }
         val observations = state.extractedRegionContent.map { "[${it.description}] ${it.text}" }
 
-        if (answer != null && !allDirectionsExhausted) {
-            logger.info(
-                "Search complete after {} iterations ({} extracted, {} captures) for {}",
-                iteration, state.extractedRegionContent.size, state.capturedImages.size, state.url
-            )
-        } else {
-            logger.info(
-                "Search complete with no relevant content after {} iterations for {}",
-                iteration, state.url
-            )
-        }
+        logger.info(
+            "Search complete after {} iterations ({} extracted, {} captures) for {}",
+            iteration, state.extractedRegionContent.size, state.capturedImages.size, state.url
+        )
 
         return AgenticPageSearchResult(
             answer = answer,
@@ -1383,7 +1375,7 @@ class AgenticWebpageSearchService(
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
             observations = observations,
-            success = answer != null && !allDirectionsExhausted,
+            success = answer != null,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
             capturedImages = state.capturedImages.toList()
@@ -1429,34 +1421,22 @@ class AgenticWebpageSearchService(
 
     private fun buildFinalResult(state: NavigationLoopState): AgenticPageSearchResult {
         val observations = state.extractedRegionContent.map { "[${it.description}] ${it.text}" }
+        val answer = if (state.extractedRegionContent.isNotEmpty()) {
+            observations.joinToString("; ")
+        } else null
+
         logger.info(
-            "Agentic search exhausted {} iterations for {} without finding answer ({} extracted, {} captures)",
+            "Agentic search exhausted {} iterations for {} ({} extracted, {} captures)",
             MAX_ITERATIONS, state.url, state.extractedRegionContent.size, state.capturedImages.size
         )
 
-        if (state.extractedRegionContent.isNotEmpty()) {
-            val synthesized = observations.joinToString("; ")
-            logger.info("Synthesizing partial answer from {} extracted regions for {}", observations.size, state.url)
-            return AgenticPageSearchResult(
-                answer = synthesized,
-                evidence = observations.lastOrNull(),
-                contentDate = null,
-                actionsPerformed = state.actionsPerformed,
-                observations = observations,
-                success = false,
-                totalTokenUsage = state.aggregatedTokenUsage,
-                discoveredUrls = state.discoveredUrls,
-                capturedImages = state.capturedImages.toList()
-            )
-        }
-
         return AgenticPageSearchResult(
-            answer = null,
-            evidence = null,
+            answer = answer,
+            evidence = observations.lastOrNull(),
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
-            observations = emptyList(),
-            success = false,
+            observations = observations,
+            success = answer != null,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
             capturedImages = state.capturedImages.toList()

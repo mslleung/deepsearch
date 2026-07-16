@@ -43,10 +43,17 @@ class ActionEfficiencyAnalyzer(
                 judgeCorrectness(benchmarkCase.query, expected.criteria, result.answer)
             }
             is ExpectedOutcome.ShouldGiveUp -> {
-                if (!result.success) {
-                    Pair(true, "Correctly determined the information is not available")
+                if (result.answer.isNullOrBlank()) {
+                    Pair(true, "Correctly produced no answer")
                 } else {
-                    Pair(false, "Should have given up but reported success")
+                    judgeCorrectness(
+                        benchmarkCase.query,
+                        "The information asked about does not exist on this page. " +
+                                "The answer should NOT contain a definitive response to the query. " +
+                                "PASS if the answer is irrelevant, tangential, or does not actually answer the query. " +
+                                "FAIL only if the answer fabricates or hallucinates a specific answer to the query.",
+                        result.answer
+                    )
                 }
             }
         }
