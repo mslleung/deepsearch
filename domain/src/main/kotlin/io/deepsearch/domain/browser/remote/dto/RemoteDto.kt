@@ -75,6 +75,9 @@ sealed class PageCommand {
 
     @Serializable @SerialName("getScrollPosition")
     data object GetScrollPosition : PageCommand()
+
+    @Serializable @SerialName("getScrollState")
+    data object GetScrollState : PageCommand()
     
     @Serializable @SerialName("scrollPage")
     data class ScrollPage(val deltaX: Int = 0, val deltaY: Int = 0) : PageCommand()
@@ -226,6 +229,13 @@ data class AttributeInjection(
 )
 
 // ==================== Response Data Types ====================
+
+@Serializable
+data class ScrollStateResponse(
+    val scrollY: Double,
+    val scrollHeight: Int,
+    val innerHeight: Int
+)
 
 @Serializable
 data class ScrollableContainerInfoResponse(

@@ -13,6 +13,7 @@ import io.deepsearch.domain.agents.TableRegionRole
 import io.deepsearch.domain.agents.VisualSegmentationInput
 import io.deepsearch.domain.agents.VisualSegmentationOutput
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.llm.ILlmClient
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
@@ -22,7 +23,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 class VisualSegmentationAgentGenAiImpl(
-    private val client: com.google.genai.Client,
+    private val llmClient: ILlmClient,
     private val dispatcherProvider: IDispatcherProvider
 ) : IVisualSegmentationAgent {
 
@@ -161,27 +162,28 @@ class VisualSegmentationAgentGenAiImpl(
                     Part.fromBytes(input.screenshot.bytes, input.screenshot.mimeType.value),
                     Part.fromText(prompt)
                 )
-                val result = client.models.generateContent(
+                val config = GenerateContentConfig.builder()
+                    .temperature(1.0f)
+                    .responseSchema(segmentationSchema)
+                    .responseMimeType("application/json")
+                    .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
+                    .systemInstruction(Content.fromParts(Part.fromText(activeSystemInstruction)))
+                    .build()
+
+                val result = llmClient.generateContent(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
-                    GenerateContentConfig.builder()
-                        .temperature(1.0f)
-                        .responseSchema(segmentationSchema)
-                        .responseMimeType("application/json")
-                        .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
-                        .systemInstruction(Content.fromParts(Part.fromText(activeSystemInstruction)))
-                        .build()
+                    config
                 )
-                result.checkFinishReason()
-                result.usageMetadata().ifPresent { metadata ->
-                    tokenUsage = TokenUsageMetrics(
-                        modelName = modelId,
-                        promptTokens = metadata.promptTokenCount().orElse(0),
-                        outputTokens = metadata.candidatesTokenCount().orElse(0),
-                        totalTokens = metadata.totalTokenCount().orElse(0)
-                    )
-                }
-                result.text() ?: throw RuntimeException("No text response from model")
+
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = result.inputTokens.toInt(),
+                    outputTokens = result.outputTokens.toInt(),
+                    totalTokens = result.totalTokens.toInt()
+                )
+
+                result.text ?: throw RuntimeException("No text response from model")
             }
         }
 

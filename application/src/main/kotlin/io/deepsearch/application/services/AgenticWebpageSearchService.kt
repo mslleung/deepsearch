@@ -20,13 +20,24 @@ import io.deepsearch.domain.services.IImageProcessingService
 import io.deepsearch.domain.services.IIterationScreenshotStorage
 import io.deepsearch.domain.services.IterationScreenshotPath
 import kotlinx.coroutines.*
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.zip
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import com.ibm.icu.lang.UScript
 import com.ibm.icu.text.Transliterator
+import org.apache.lucene.analysis.Analyzer
+import org.apache.lucene.analysis.cjk.CJKAnalyzer
+import org.apache.lucene.analysis.en.EnglishAnalyzer
+import org.apache.lucene.analysis.standard.StandardAnalyzer
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute
 import java.security.MessageDigest
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 
 private val LATIN_ASCII_TRANSLITERATOR: Transliterator =
@@ -99,6 +110,7 @@ class AgenticWebpageSearchService(
 
     companion object {
         private const val MAX_ITERATIONS = 12
+        private const val MAX_UNPRODUCTIVE_ITERATIONS = 3
         private const val MAX_FAILED_CLICKS = 2
         private const val POST_CLICK_DELAY_MS = 150L
         private const val POST_CLICK_SETTLE_DELAY_MS = 300L
@@ -191,7 +203,13 @@ class AgenticWebpageSearchService(
         var contentObservation: String? = null,
         var explorationDirections: List<ExplorationDirection> = emptyList(),
         var currentDirectionHint: String? = null,
-        var directionStartIndex: Int = 0
+        var directionStartIndex: Int = 0,
+        var queryKeywords: List<String> = emptyList(),
+        var keywordsRefined: Boolean = false,
+        var keywordScan: List<KeywordScanEntry> = emptyList(),
+        var lastScannedKeywords: List<String> = emptyList(),
+        var lastExtractedCount: Int = 0,
+        var unproductiveIterations: Int = 0
     )
 
     // --- Public API ---
@@ -238,187 +256,320 @@ class AgenticWebpageSearchService(
             url = url,
             query = query,
             sessionId = sessionId,
-            onLinkDiscovered = onLinkDiscovered
+            onLinkDiscovered = onLinkDiscovered,
+            queryKeywords = deriveInitialKeywords(query)
         )
         val clock = TimeSource.Monotonic
         var cachedScreenshot: IBrowserPage.Screenshot? = null
         var iteration = 0
 
-        return coroutineScope {
-            var pendingExtraction: Deferred<ExtractionPipelineResult>? = null
+        while (iteration < MAX_ITERATIONS) {
+            iteration++
+            val iterStart = clock.markNow()
+            currentCoroutineContext().ensureActive()
+            logger.debug("Full-page search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
 
-            while (iteration < MAX_ITERATIONS) {
-                iteration++
-                val iterStart = clock.markNow()
-                currentCoroutineContext().ensureActive()
-                logger.debug("Full-page search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
+            if (iteration > 1) {
+                if (state.extractedRegionContent.size > state.lastExtractedCount) {
+                    state.unproductiveIterations = 0
+                } else {
+                    state.unproductiveIterations++
+                }
+            }
+            state.lastExtractedCount = state.extractedRegionContent.size
 
-                awaitAndStoreExtraction(pendingExtraction, state, sessionId)
-                pendingExtraction = null
+            if (state.unproductiveIterations >= MAX_UNPRODUCTIVE_ITERATIONS) {
+                logger.info(
+                    "Force-stopping at iter={}: no new query-relevant content for {} consecutive iterations",
+                    iteration, state.unproductiveIterations
+                )
+                return buildFinalResult(state)
+            }
 
-                val setup = prepareIteration(page, state, cachedScreenshot, iteration)
-                cachedScreenshot = null
+            val setup = prepareIteration(page, state, cachedScreenshot, iteration)
+            cachedScreenshot = null
 
+            refreshKeywordScan(page, state, pageChangedSinceLastScan = !setup.screenshotWasCached)
+
+            val directionActions = state.actionsPerformed.subList(
+                state.directionStartIndex, state.actionsPerformed.size
+            ).toList()
+            val navInput = FullPageNavigationInput(
+                fullPageScreenshot = setup.labeledScreenshot,
+                query = query,
+                previousActions = directionActions,
+                pageUrl = url,
+                pageTitle = setup.title,
+                pageState = state.pageState,
+                navigationMode = setup.navigationMode,
+                explorationDirections = state.explorationDirections,
+                extractedContent = state.extractedRegionContent.toList(),
+                keywordScan = state.keywordScan,
+                currentIteration = iteration,
+                maxIterations = MAX_ITERATIONS
+            )
+
+            val extractionFlow: Flow<ExtractionPipelineResult?> = flow {
                 if (!setup.screenshotWasCached) {
-                    pendingExtraction = async {
-                        runExtractionPipeline(
+                    try {
+                        emit(runExtractionPipeline(
                             setup.screenshot, query, state.extractedRegionContent.toList(),
                             setup.imgWidth, setup.imgHeight, page, setup.navigationMode,
                             actualViewportHeight, sessionId, iteration, url
-                        )
+                        ))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.warn("Extraction pipeline failed at iter={}: {}", iteration, e.message)
+                        emit(ExtractionPipelineResult(
+                            regionLocatorTokenUsage = TokenUsageMetrics.empty("gemini-3.1-flash-lite"),
+                            regionLocatorMs = 0,
+                            extractionResult = ExtractionResult(emptyList(), emptyList()),
+                            extractionMs = 0,
+                            extractionObservation = null,
+                            extractedTextHashes = emptySet(),
+                            capturedHashes = emptySet()
+                        ))
                     }
+                } else {
+                    emit(null)
                 }
+            }
 
-                val directionActions = state.actionsPerformed.subList(
-                    state.directionStartIndex, state.actionsPerformed.size
-                ).toList()
-                val navInput = FullPageNavigationInput(
-                    fullPageScreenshot = setup.labeledScreenshot,
-                    query = query,
-                    previousActions = directionActions,
-                    pageUrl = url,
-                    pageTitle = setup.title,
-                    pageState = state.pageState,
-                    navigationMode = setup.navigationMode,
-                    explorationDirections = state.explorationDirections,
-                    extractedContent = state.extractedRegionContent.toList(),
-                    currentIteration = iteration,
-                    maxIterations = MAX_ITERATIONS
-                )
-
+            val navigationFlow: Flow<Pair<FullPageNavigationOutput, Long>> = flow {
                 val navStart = clock.markNow()
                 val navOutput = fullPageNavigationAgent.generate(navInput)
                 val navAgentMs = (clock.markNow() - navStart).inWholeMilliseconds
+                emit(navOutput to navAgentMs)
+            }
 
-                val resolvedActions = resolveClicksByElementIndex(
-                    navOutput.actions, setup.elementIndex
-                )
+            val (extractionResult, navPair) = extractionFlow.zip(navigationFlow) { extraction, nav ->
+                extraction to nav
+            }.first()
+            val (navOutput, navAgentMs) = navPair
 
-                state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage
-                tokenUsageService.recordTokenUsage(
-                    sessionId = sessionId,
-                    agentName = "FullPageNavigationAgent",
-                    modelName = navOutput.tokenUsage.modelName,
-                    promptTokens = navOutput.tokenUsage.promptTokens,
-                    outputTokens = navOutput.tokenUsage.outputTokens,
-                    totalTokens = navOutput.tokenUsage.totalTokens
-                )
+            if (extractionResult != null) {
+                storeExtractionResults(extractionResult, state, sessionId)
+            }
 
-                state.pageState = navOutput.pageState
-                state.explorationDirections = navOutput.explorationDirections
+            val resolvedActions = resolveClicksByElementIndex(
+                navOutput.actions, setup.elementIndex
+            )
 
-                if (navOutput.currentDirection != state.currentDirectionHint) {
-                    logger.info(
-                        "Direction switch at iter={}: '{}' -> '{}'",
-                        iteration, state.currentDirectionHint?.take(60), navOutput.currentDirection?.take(60)
-                    )
-                    state.currentDirectionHint = navOutput.currentDirection
-                    state.directionStartIndex = state.actionsPerformed.size
-                }
+            state.aggregatedTokenUsage = state.aggregatedTokenUsage + navOutput.tokenUsage
+            tokenUsageService.recordTokenUsage(
+                sessionId = sessionId,
+                agentName = "FullPageNavigationAgent",
+                modelName = navOutput.tokenUsage.modelName,
+                promptTokens = navOutput.tokenUsage.promptTokens,
+                outputTokens = navOutput.tokenUsage.outputTokens,
+                totalTokens = navOutput.tokenUsage.totalTokens
+            )
 
+            state.pageState = navOutput.pageState
+            state.explorationDirections = navOutput.explorationDirections
+            if (navOutput.queryKeywords.isNotEmpty()) {
+                state.queryKeywords = navOutput.queryKeywords
+                state.keywordsRefined = true
+            }
+
+            if (normalizeDirectionName(navOutput.currentDirection) != normalizeDirectionName(state.currentDirectionHint)) {
                 logger.info(
-                    "iter={}: {} directions ({} unexplored), searchComplete={}, allExhausted={}, dir={}, actions={}",
-                    iteration, navOutput.explorationDirections.size,
-                    navOutput.explorationDirections.count { it.status == "unexplored" },
-                    navOutput.searchComplete,
-                    navOutput.allDirectionsExhausted,
-                    navOutput.currentDirection?.take(60),
-                    resolvedActions.size
+                    "Direction switch at iter={}: '{}' -> '{}'",
+                    iteration, state.currentDirectionHint?.take(60), navOutput.currentDirection?.take(60)
                 )
+                state.currentDirectionHint = navOutput.currentDirection
+                state.directionStartIndex = state.actionsPerformed.size
+            }
 
-                if (navOutput.searchComplete) {
-                    val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
-                    logger.info(
-                        "Agent declares searchComplete at iter={} ({}ms) — stopping search",
-                        iteration, iterMs
-                    )
-                    saveIterationMetadata(
-                        sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
-                    )
-                    awaitAndStoreExtraction(pendingExtraction, state, sessionId)
-                    return@coroutineScope handleSearchComplete(state, iteration)
-                }
+            logger.info(
+                "iter={}: {} directions ({} unexplored), searchComplete={}, allExhausted={}, dir={}, actions={}",
+                iteration, navOutput.explorationDirections.size,
+                navOutput.explorationDirections.count { it.status == "unexplored" },
+                navOutput.searchComplete,
+                navOutput.allDirectionsExhausted,
+                navOutput.currentDirection?.take(60),
+                resolvedActions.size
+            )
 
-                if (resolvedActions.isEmpty()) {
-                    val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
-                    logger.info(
-                        "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms (no actions)",
-                        iteration, iterMs, setup.fetchMs, setup.annotateMs, navAgentMs
-                    )
-                    saveIterationMetadata(
-                        sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
-                    )
-                    continue
-                }
-
-                val postNavStart = clock.markNow()
-
-                var pageChanged = false
-                for ((actionIdx, action) in resolvedActions.withIndex()) {
-                    state.actionsPerformed.add(
-                        if (actionIdx == 0) ActionWithOutcome(action, observation = navOutput.observation)
-                        else ActionWithOutcome(action)
-                    )
-
-                    val effect = when (action) {
-                        is NavigationAction.Click ->
-                            if (setup.navigationMode == NavigationMode.VIEWPORT)
-                                handleViewportClick(action, page, state, setup.screenshot.bytes)
-                            else
-                                handleFullPageClick(
-                                    action, page, state, setup.screenshot.bytes,
-                                    setup.imgWidth, setup.imgHeight, actualViewportHeight
-                                )
-
-                        is NavigationAction.Type ->
-                            if (setup.navigationMode == NavigationMode.VIEWPORT)
-                                handleViewportType(action, page, state, setup.imgWidth, setup.imgHeight)
-                            else
-                                handleFullPageType(
-                                    action, page, state, setup.screenshot.bytes,
-                                    setup.imgWidth, setup.imgHeight, actualViewportHeight
-                                )
-
-                        is NavigationAction.ScrollAt ->
-                            handleScrollAt(action, page, state, setup.imgWidth, setup.imgHeight)
-
-                        else -> {
-                            logger.warn("Unsupported action in full-page mode: {}", action)
-                            ActionEffect.PAGE_UNCHANGED
-                        }
-                    }
-                    if (effect == ActionEffect.PAGE_CHANGED) {
-                        pageChanged = true
-                        if (action !is NavigationAction.Click) {
-                            val wasViewport = state.navigationMode == NavigationMode.VIEWPORT
-                            val hasOverlay = page.hasModalOverlay()
-                            state.navigationMode = if (hasOverlay) NavigationMode.VIEWPORT else NavigationMode.FULL_PAGE
-                            if (state.navigationMode == NavigationMode.VIEWPORT && !wasViewport) {
-                                logger.info("Modal overlay detected after action — switching to viewport mode")
-                            } else if (state.navigationMode == NavigationMode.FULL_PAGE && wasViewport) {
-                                logger.info("Overlay dismissed after action — returning to full-page mode")
-                            }
-                        }
-                        break
-                    }
-                }
-                val actionsMs = (clock.markNow() - postNavStart).inWholeMilliseconds
+            if (navOutput.searchComplete) {
                 val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
                 logger.info(
-                    "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms actions={}ms",
-                    iteration, iterMs, setup.fetchMs, setup.annotateMs, navAgentMs, actionsMs
+                    "Agent declares searchComplete at iter={} ({}ms) — stopping search",
+                    iteration, iterMs
                 )
                 saveIterationMetadata(
                     sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
                 )
-
-                if (!pageChanged) {
-                    cachedScreenshot = setup.screenshot
-                }
+                return handleSearchComplete(state, iteration)
             }
 
-            awaitAndStoreExtraction(pendingExtraction, state, sessionId)
-            buildFinalResult(state)
+            if (resolvedActions.isEmpty()) {
+                val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
+                logger.info(
+                    "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms (no actions)",
+                    iteration, iterMs, setup.fetchMs, setup.annotateMs, navAgentMs
+                )
+                saveIterationMetadata(
+                    sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
+                )
+                continue
+            }
+
+            val postNavStart = clock.markNow()
+
+            var pageChanged = false
+            for ((actionIdx, action) in resolvedActions.withIndex()) {
+                state.actionsPerformed.add(
+                    if (actionIdx == 0) ActionWithOutcome(action, observation = navOutput.observation)
+                    else ActionWithOutcome(action)
+                )
+
+                val effect = when (action) {
+                    is NavigationAction.Click ->
+                        if (setup.navigationMode == NavigationMode.VIEWPORT)
+                            handleViewportClick(action, page, state, setup.screenshot.bytes)
+                        else
+                            handleFullPageClick(
+                                action, page, state, setup.screenshot.bytes,
+                                setup.imgWidth, setup.imgHeight, actualViewportHeight
+                            )
+
+                    is NavigationAction.Type ->
+                        if (setup.navigationMode == NavigationMode.VIEWPORT)
+                            handleViewportType(action, page, state, setup.imgWidth, setup.imgHeight)
+                        else
+                            handleFullPageType(
+                                action, page, state, setup.screenshot.bytes,
+                                setup.imgWidth, setup.imgHeight, actualViewportHeight
+                            )
+
+                    is NavigationAction.ScrollAt ->
+                        handleScrollAt(action, page, state, setup.imgWidth, setup.imgHeight)
+
+                    else -> {
+                        logger.warn("Unsupported action in full-page mode: {}", action)
+                        ActionEffect.PAGE_UNCHANGED
+                    }
+                }
+                if (effect == ActionEffect.PAGE_CHANGED) {
+                    pageChanged = true
+                    if (action !is NavigationAction.Click) {
+                        val wasViewport = state.navigationMode == NavigationMode.VIEWPORT
+                        val hasOverlay = page.hasModalOverlay()
+                        state.navigationMode = if (hasOverlay) NavigationMode.VIEWPORT else NavigationMode.FULL_PAGE
+                        if (state.navigationMode == NavigationMode.VIEWPORT && !wasViewport) {
+                            logger.info("Modal overlay detected after action — switching to viewport mode")
+                        } else if (state.navigationMode == NavigationMode.FULL_PAGE && wasViewport) {
+                            logger.info("Overlay dismissed after action — returning to full-page mode")
+                        }
+                    }
+                    break
+                }
+            }
+            val actionsMs = (clock.markNow() - postNavStart).inWholeMilliseconds
+            val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
+            logger.info(
+                "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms actions={}ms",
+                iteration, iterMs, setup.fetchMs, setup.annotateMs, navAgentMs, actionsMs
+            )
+            saveIterationMetadata(
+                sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
+            )
+
+            if (!pageChanged) {
+                cachedScreenshot = setup.screenshot
+            }
+        }
+
+        return buildFinalResult(state)
+    }
+
+    /**
+     * The LLM sometimes prefixes direction names with the "D1." list markers from the prompt,
+     * which would register as a spurious direction switch and reset the turn history.
+     */
+    private fun normalizeDirectionName(name: String?): String? =
+        name?.replace(Regex("^D\\d+\\.\\s*"), "")?.trim()?.lowercase()?.ifEmpty { null }
+
+    // --- Keyword scan (page-wide Ctrl+F grounding for the navigation agent) ---
+
+    /**
+     * Derive first-iteration scan keywords from the raw query using Lucene tokenization
+     * with standard stopword removal. For CJK queries, uses [CJKAnalyzer] with bigram
+     * tokenization; for Latin/other scripts, uses [StandardAnalyzer] with English
+     * stopwords (no stemming, since the keyword scan does exact text matching).
+     * The navigation agent supplies refined keywords from iteration 2 onwards.
+     */
+    private fun deriveInitialKeywords(query: String): List<String> {
+        val (analyzer, minTokenLength) = chooseQueryAnalyzer(query)
+        val tokens = mutableListOf<String>()
+        analyzer.use { a ->
+            a.tokenStream("query", query).use { stream ->
+                val termAttr = stream.addAttribute(CharTermAttribute::class.java)
+                stream.reset()
+                while (stream.incrementToken()) {
+                    val term = termAttr.toString()
+                    if (term.length >= minTokenLength) tokens.add(term)
+                }
+                stream.end()
+            }
+        }
+        return tokens.distinct().take(8)
+    }
+
+    private fun chooseQueryAnalyzer(query: String): Pair<Analyzer, Int> {
+        val scriptCounts = mutableMapOf<Int, Int>()
+        query.codePoints().forEach { cp ->
+            val script = UScript.getScript(cp)
+            if (script != UScript.COMMON && script != UScript.INHERITED) {
+                scriptCounts.merge(script, 1, Int::plus)
+            }
+        }
+        val dominantScript = scriptCounts.maxByOrNull { it.value }?.key
+        return when (dominantScript) {
+            UScript.HAN, UScript.HIRAGANA, UScript.KATAKANA, UScript.HANGUL ->
+                CJKAnalyzer() to 1
+            else ->
+                StandardAnalyzer(EnglishAnalyzer.getDefaultStopSet()) to 4
+        }
+    }
+
+    /**
+     * Re-run the page-wide text match scan when the page changed or the keyword set changed.
+     * One CDP round trip (~10ms); counts include content hidden behind accordions/tabs.
+     */
+    private suspend fun refreshKeywordScan(
+        page: IBrowserPage,
+        state: NavigationLoopState,
+        pageChangedSinceLastScan: Boolean
+    ) {
+        if (state.queryKeywords.isEmpty()) return
+        if (!pageChangedSinceLastScan && state.queryKeywords == state.lastScannedKeywords) return
+        try {
+            val counts = page.countTextMatches(state.queryKeywords)
+            state.keywordScan = state.queryKeywords.mapNotNull { kw ->
+                counts[kw]?.let { c ->
+                    val hiddenCount = c.total - c.visible
+                    if (hiddenCount > 0) {
+                        KeywordScanEntry(
+                            keyword = kw,
+                            visibleCount = c.visible,
+                            totalCount = c.total,
+                            firstContext = c.firstContext
+                        )
+                    } else null
+                }
+            }
+            state.lastScannedKeywords = state.queryKeywords
+            logger.debug(
+                "Keyword scan: {}",
+                state.keywordScan.joinToString(", ") { "'${it.keyword}':${it.totalCount}(${it.visibleCount}v)" }
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.warn("Keyword scan failed: {}", e.message)
         }
     }
 
@@ -612,15 +763,6 @@ class AgenticWebpageSearchService(
         )
     }
 
-    private suspend fun awaitAndStoreExtraction(
-        pendingExtraction: Deferred<ExtractionPipelineResult>?,
-        state: NavigationLoopState,
-        sessionId: SessionId
-    ) {
-        val result = pendingExtraction?.await() ?: return
-        storeExtractionResults(result, state, sessionId)
-    }
-
     private suspend fun handleFullPageClick(
         action: NavigationAction.Click,
         page: IBrowserPage,
@@ -748,11 +890,11 @@ class AgenticWebpageSearchService(
         val targetScrollY = (pageY - viewportHeight / 2).coerceAtLeast(0)
         val scrollableRange = (imgHeight - viewportHeight).coerceAtLeast(1)
         val percent = (targetScrollY * 100 / scrollableRange).coerceIn(0, 100)
+
         page.scrollToPercentage(percent)
         delay(POST_SCROLL_DELAY_MS)
 
-        val actualScrollPercent = page.getScrollPosition()
-        val actualScrollY = (actualScrollPercent / 100.0 * scrollableRange).toInt()
+        val actualScrollY = scrollYInImagePixels(page.getScrollState(), imgHeight)
         val viewportX = pageX
         val viewportY = pageY - actualScrollY
 
@@ -895,9 +1037,32 @@ class AgenticWebpageSearchService(
         val targetScrollY = (pageY - viewportHeight / 2).coerceAtLeast(0)
         val scrollableRange = (fullPageImgHeight - viewportHeight).coerceAtLeast(1)
         val percent = (targetScrollY * 100 / scrollableRange).coerceIn(0, 100)
-        val actualScrollPercent = page.scrollToPercentageAndGetPosition(percent)
-        val actualScrollY = (actualScrollPercent / 100.0 * scrollableRange).toInt()
+        val scroll = page.scrollToPercentageAndGetScrollState(percent)
+        val actualScrollY = scrollYInImagePixels(scroll, fullPageImgHeight)
         return pageX to (pageY - actualScrollY)
+    }
+
+    /**
+     * Convert a CSS-pixel scrollY into full-page-screenshot pixel space.
+     * The two are 1:1 in the normal case; they diverge when the screenshot was
+     * rendered at a non-1 device pixel ratio or capped below the page height,
+     * so only ratios well away from 1.0 are treated as a real scale difference.
+     */
+    private fun scrollYInImagePixels(
+        scroll: IBrowserPage.ScrollState,
+        fullPageImgHeight: Int
+    ): Int {
+        val ratio = if (scroll.scrollHeight > 0) {
+            fullPageImgHeight.toDouble() / scroll.scrollHeight
+        } else 1.0
+        val scale = if (abs(ratio - 1.0) > 0.02) ratio else 1.0
+        if (scale != 1.0) {
+            logger.debug(
+                "Screenshot/CSS pixel scale {} (imgHeight={}, scrollHeight={})",
+                scale, fullPageImgHeight, scroll.scrollHeight
+            )
+        }
+        return (scroll.scrollY * scale).roundToInt()
     }
 
     private fun annotateScreenshot(
@@ -1009,8 +1174,6 @@ class AgenticWebpageSearchService(
 
         val (tableRegions, textRegions) = regionsToExtract.partition { it.region.containsTable }
 
-        // Text extraction (VLM only, no browser) and table extraction (scrolls page + DOM)
-        // run on disjoint region lists with separate hash sets for thread safety.
         val textHashes = mutableSetOf<String>()
         val textCapturedHashes = mutableSetOf<String>()
         val tableHashes = mutableSetOf<String>()
@@ -1147,7 +1310,6 @@ class AgenticWebpageSearchService(
     ): ExtractionResult {
         if (tableRegions.isEmpty()) return ExtractionResult(emptyList(), emptyList())
 
-        val scrollableRange = (origHeight - viewportHeight).coerceAtLeast(1)
         val extracted = mutableListOf<ExtractedContent>()
         val images = mutableListOf<CapturedImage>()
         val regionCropMetas = mutableListOf<RegionCropMeta>()
@@ -1204,7 +1366,7 @@ class AgenticWebpageSearchService(
 
             val vpCoords = toViewportCoords(
                 prep.x, prep.y, prep.x + prep.w, prep.y + prep.h,
-                navigationMode, viewportHeight, scrollableRange, page
+                navigationMode, viewportHeight, origHeight, page
             )
             val domHtml = page.extractContentInRegion(
                 vpCoords[0].coerceAtLeast(0), vpCoords[1].coerceAtLeast(0),
@@ -1259,19 +1421,19 @@ class AgenticWebpageSearchService(
 
     private suspend fun toViewportCoords(
         pageX1: Int, pageY1: Int, pageX2: Int, pageY2: Int,
-        navigationMode: NavigationMode, viewportHeight: Int, scrollableRange: Int,
+        navigationMode: NavigationMode, viewportHeight: Int, fullPageImgHeight: Int,
         page: IBrowserPage
     ): List<Int> {
         if (navigationMode == NavigationMode.VIEWPORT) {
             return listOf(pageX1, pageY1, pageX2, pageY2)
         }
+        val scrollableRange = (fullPageImgHeight - viewportHeight).coerceAtLeast(1)
         val regionCenterY = (pageY1 + pageY2) / 2
         val targetScrollY = (regionCenterY - viewportHeight / 2).coerceAtLeast(0)
         val percent = (targetScrollY * 100 / scrollableRange).coerceIn(0, 100)
         page.scrollToPercentage(percent)
         delay(POST_SCROLL_DELAY_MS)
-        val actualScrollPercent = page.getScrollPosition()
-        val actualScrollY = (actualScrollPercent / 100.0 * scrollableRange).toInt()
+        val actualScrollY = scrollYInImagePixels(page.getScrollState(), fullPageImgHeight)
         return listOf(pageX1, pageY1 - actualScrollY, pageX2, pageY2 - actualScrollY)
     }
 

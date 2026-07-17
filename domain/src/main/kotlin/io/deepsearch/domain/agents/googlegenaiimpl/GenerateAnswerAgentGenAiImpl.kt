@@ -10,6 +10,7 @@ import io.deepsearch.domain.agents.GenerateAnswerInput
 import io.deepsearch.domain.agents.GenerateAnswerOutput
 import io.deepsearch.domain.agents.IGenerateAnswerAgent
 import io.deepsearch.domain.agents.infra.ModelIds
+import io.deepsearch.domain.agents.infra.llm.ILlmClient
 import io.deepsearch.domain.agents.infra.retryLlmCall
 import io.deepsearch.domain.config.IDispatcherProvider
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
@@ -23,7 +24,7 @@ import org.slf4j.LoggerFactory
  * to produce a comprehensive answer to the user's query.
  */
 class GenerateAnswerAgentGenAiImpl(
-    private val client: com.google.genai.Client,
+    private val llmClient: ILlmClient,
     private val dispatcherProvider: IDispatcherProvider
 ) : IGenerateAnswerAgent {
 
@@ -84,35 +85,32 @@ class GenerateAnswerAgentGenAiImpl(
         
         val response = withContext(dispatcherProvider.io) {
             retryLlmCall<GenerateAnswerResponse>(this@GenerateAnswerAgentGenAiImpl::class.simpleName!!) {
-                val result = client.models.generateContent(
+                val config = GenerateContentConfig.builder()
+                    .temperature(1.0F)
+                    .responseSchema(outputSchema)
+                    .responseMimeType("application/json")
+                    .thinkingConfig(
+                        ThinkingConfig.builder()
+                            .thinkingLevel(ThinkingLevel.Known.MINIMAL)
+                            .build()
+                    )
+                    .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
+                    .build()
+
+                val result = llmClient.generateContent(
                     modelId,
-                    userPrompt,
-                    GenerateContentConfig.builder()
-                        .temperature(1.0F)
-                        .responseSchema(outputSchema)
-                        .responseMimeType("application/json")
-                        .thinkingConfig(
-                            ThinkingConfig.builder()
-                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
-                                .build()
-                        )
-                        .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
-                        .build()
+                    listOf(Content.fromParts(Part.fromText(userPrompt))),
+                    config
                 )
 
-                result.checkFinishReason()
-                
-                // Extract token usage from result
-                result.usageMetadata().ifPresent { metadata ->
-                    tokenUsage = TokenUsageMetrics(
-                        modelName = modelId,
-                        promptTokens = metadata.promptTokenCount().orElse(0),
-                        outputTokens = metadata.candidatesTokenCount().orElse(0),
-                        totalTokens = metadata.totalTokenCount().orElse(0)
-                    )
-                }
+                tokenUsage = TokenUsageMetrics(
+                    modelName = modelId,
+                    promptTokens = result.inputTokens.toInt(),
+                    outputTokens = result.outputTokens.toInt(),
+                    totalTokens = result.totalTokens.toInt()
+                )
 
-                result.text() ?: throw RuntimeException("No text response from model")
+                result.text ?: throw RuntimeException("No text response from model")
             }
         }
 

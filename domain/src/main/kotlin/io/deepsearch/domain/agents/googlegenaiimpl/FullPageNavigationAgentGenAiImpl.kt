@@ -93,11 +93,19 @@ class FullPageNavigationAgentGenAiImpl(
                 "status" to Schema.builder().type("STRING")
                     .enum_(listOf("unexplored", "exploring", "exhausted"))
                     .description("unexplored: not yet tried. exploring: currently being investigated. exhausted: fully explored or confirmed irrelevant.")
+                    .build(),
+                "priority" to Schema.builder().type("STRING")
+                    .enum_(listOf("high", "medium", "low"))
+                    .description(
+                        "high: label/section directly mentions query terms or synonyms, or the HIDDEN CONTENT signal shows matches there. " +
+                        "medium: could plausibly contain the answer. " +
+                        "low: unlikely (generic navigation, unrelated topic). Unexplored LOW directions do NOT block completion."
+                    )
                     .build()
             )
         )
-        .required(listOf("direction", "status"))
-        .propertyOrdering(listOf("direction", "status"))
+        .required(listOf("direction", "status", "priority"))
+        .propertyOrdering(listOf("direction", "status", "priority"))
         .build()
 
     // ── Combined navigate + plan schema ─────────────────────────────────
@@ -140,7 +148,17 @@ class FullPageNavigationAgentGenAiImpl(
                     .build(),
                 "allDirectionsExhausted" to Schema.builder()
                     .type("BOOLEAN")
-                    .description("True only when EVERY direction has been explored and confirmed irrelevant or fully extracted.")
+                    .description("True only when every HIGH and MEDIUM priority direction has been explored and confirmed irrelevant or fully extracted. Unexplored LOW directions do not block this.")
+                    .build(),
+                "queryKeywords" to Schema.builder()
+                    .type("ARRAY")
+                    .items(Schema.builder().type("STRING").build())
+                    .description(
+                        "3-8 short, distinctive search terms whose presence on the page would indicate the query's answer exists. " +
+                        "Include synonyms and alternate phrasings (e.g. for telemedicine: 'telemedicine', 'virtual consultation', 'video consultation'). " +
+                        "Prefer single words or tight 2-word phrases. Avoid generic words ('price', 'plan') and the site's own brand/company name — they match everywhere and mask the absence signal. " +
+                        "These power the HIDDEN CONTENT scan on the next iteration. Provide on every response; refine as understanding improves."
+                    )
                     .build(),
                 "actions" to Schema.builder()
                     .type("ARRAY")
@@ -150,8 +168,8 @@ class FullPageNavigationAgentGenAiImpl(
                     .build()
             )
         )
-        .required(listOf("pageState", "observation", "explorationDirections", "searchComplete", "allDirectionsExhausted"))
-        .propertyOrdering(listOf("pageState", "observation", "explorationDirections", "currentDirection", "searchComplete", "allDirectionsExhausted", "actions"))
+        .required(listOf("pageState", "observation", "explorationDirections", "searchComplete", "allDirectionsExhausted", "queryKeywords"))
+        .propertyOrdering(listOf("pageState", "observation", "explorationDirections", "currentDirection", "queryKeywords", "searchComplete", "allDirectionsExhausted", "actions"))
         .build()
 
     private val fullPageNavigateInstruction = """
@@ -176,6 +194,20 @@ class FullPageNavigationAgentGenAiImpl(
         List directions that could PLAUSIBLY contain information related to the query based on your understanding of the webpage.
         Sort directions by relevance to the query (most promising first).
 
+        **Direction Priority:**
+        Assign each direction a priority:
+        - high: the label/section directly mentions query terms or synonyms, OR the HIDDEN CONTENT signal shows matches in that area
+        - medium: could plausibly contain the answer
+        - low: unlikely but not impossible (generic navigation menus, unrelated topics)
+        Explore in priority order. NEVER explore a low direction unless the HIDDEN CONTENT signal indicates matches there.
+        Unexplored LOW directions do NOT block completion.
+
+        **HIDDEN CONTENT (DOM evidence of collapsed/hidden content matching query terms):**
+        You may receive a HIDDEN CONTENT list — keywords found in DOM elements that are NOT visible on screen
+        (behind collapsed accordions, inactive tabs, etc.). The context snippet hints at which section contains them.
+        - Prioritize revealing hidden content by clicking the relevant accordion/tab.
+        - If no HIDDEN CONTENT section is shown, all query-relevant text is either already visible or absent from the DOM.
+
         **Direction Status Tracking:**
         Review the ACTION HISTORY to determine each direction's status:
         - unexplored: no action has been taken for this direction
@@ -190,15 +222,14 @@ class FullPageNavigationAgentGenAiImpl(
         Set searchComplete=true when:
         - The EXTRACTED KNOWLEDGE contains a clear, direct answer to the query
         - The core question is answered even if there are unexplored directions about unrelated topics
-        - All directions have been exhausted (nothing more to try)
-        - You have explored all plausible directions and none contained the answer
+        - All high/medium directions have been exhausted (nothing promising left to try)
 
         Set searchComplete=false when:
-        - No content has been extracted yet (EXTRACTED KNOWLEDGE is empty)
-        - The extracted content does NOT answer the query
-        - There are promising unexplored directions that could contain the answer
+        - No content has been extracted yet (EXTRACTED KNOWLEDGE is empty) AND there are promising unexplored high/medium directions
+        - The extracted content does NOT answer the query AND there are promising unexplored high/medium directions
 
-        CRITICAL: Do NOT keep exploring just because unexplored directions exist. If the answer is already in the EXTRACTED KNOWLEDGE, stop immediately. Efficiency matters.
+        CRITICAL: Do NOT keep exploring just because unexplored directions exist. If the answer is already in the EXTRACTED KNOWLEDGE, stop immediately.
+        Each iteration is expensive — diminishing returns apply. If the last two iterations produced no new query-relevant knowledge, give up rather than continuing to search.
 
         ### 2. NAVIGATION EXECUTION (tactical)
         Execute actions to explore the current direction — click the right elements, scroll to reveal content.
@@ -229,9 +260,11 @@ class FullPageNavigationAgentGenAiImpl(
         If you cannot find a suitable labeled element for what you need to click, use -1 and describe the element in `target`.
 
         ## RULES
-        - NEVER set allDirectionsExhausted=true while ANY direction has status 'unexplored'
+        - NEVER set allDirectionsExhausted=true while any HIGH or MEDIUM priority direction has status 'unexplored'
+          (unexplored LOW directions do not block completion)
         - Carry forward ALL previous directions — do NOT drop any
         - When switching directions, include the first actions for the new direction immediately
+        - ALWAYS provide queryKeywords (refined each turn)
     """.trimIndent()
 
     private val overlayNavigateInstruction = """
@@ -248,16 +281,18 @@ class FullPageNavigationAgentGenAiImpl(
         ### 1. DIRECTION PLANNING (strategic)
         Track exploration directions and evaluate search completion based on EXTRACTED KNOWLEDGE.
         List directions that could PLAUSIBLY contain information related to the query based on your understanding of the webpage.
+        Assign each direction a priority (high/medium/low); unexplored LOW directions do NOT block completion.
+
+        You may receive a HIDDEN CONTENT list — keywords found in DOM elements that are NOT visible on screen
+        (behind collapsed accordions, inactive tabs, etc.). Prioritize revealing them by clicking the relevant element.
 
         Set searchComplete=true when:
         - The EXTRACTED KNOWLEDGE contains a clear, direct answer to the query
-        - All directions have been exhausted
-        - You have explored all plausible directions and none contained the answer
+        - All high/medium directions have been exhausted
 
         Set searchComplete=false when:
-        - No content has been extracted yet
-        - The extracted content does NOT answer the query
-        - There are promising unexplored directions
+        - No content has been extracted yet AND there are promising unexplored high/medium directions
+        - The extracted content does NOT answer the query AND there are promising unexplored high/medium directions
 
         CRITICAL: The EXTRACTED KNOWLEDGE list is the SOLE BASIS for searchComplete. Content visible on screen has NOT been captured until it appears in EXTRACTED KNOWLEDGE.
 
@@ -305,7 +340,8 @@ class FullPageNavigationAgentGenAiImpl(
     @Serializable
     private data class DirectionResponse(
         val direction: String,
-        val status: String? = null
+        val status: String? = null,
+        val priority: String? = null
     )
 
     @Serializable
@@ -314,6 +350,7 @@ class FullPageNavigationAgentGenAiImpl(
         val observation: String? = null,
         val explorationDirections: List<DirectionResponse>? = null,
         val currentDirection: String? = null,
+        val queryKeywords: List<String>? = null,
         val searchComplete: Boolean? = null,
         val allDirectionsExhausted: Boolean? = null,
         val actions: List<ActionResponse>? = null
@@ -369,11 +406,16 @@ class FullPageNavigationAgentGenAiImpl(
         val directions = (response.explorationDirections ?: emptyList()).map { d ->
             ExplorationDirection(
                 direction = d.direction,
-                status = d.status ?: "unexplored"
+                status = d.status ?: "unexplored",
+                priority = when (d.priority?.lowercase()) {
+                    "high", "medium", "low" -> d.priority.lowercase()
+                    else -> "medium"
+                }
             )
         }
         val allExhausted = response.allDirectionsExhausted ?: false
-        val unexploredCount = directions.count { it.status == "unexplored" }
+        // Only high/medium priority directions block exhaustion; unexplored LOW directions never do.
+        val unexploredCount = directions.count { it.status == "unexplored" && it.priority != "low" }
         val searchComplete = response.searchComplete ?: false
 
         val actions = (response.actions ?: emptyList()).mapNotNull { action ->
@@ -401,6 +443,7 @@ class FullPageNavigationAgentGenAiImpl(
             currentDirection = response.currentDirection,
             searchComplete = searchComplete || (allExhausted && unexploredCount == 0),
             allDirectionsExhausted = allExhausted && unexploredCount == 0,
+            queryKeywords = (response.queryKeywords ?: emptyList()).map { it.trim() }.filter { it.isNotBlank() },
             tokenUsage = tokenUsage
         )
     }
@@ -422,11 +465,22 @@ class FullPageNavigationAgentGenAiImpl(
         appendLine()
         appendLine("QUERY: ${input.query}")
 
+        val hiddenEntries = input.keywordScan.filter { it.totalCount > it.visibleCount }
+        if (hiddenEntries.isNotEmpty()) {
+            appendLine()
+            appendLine("HIDDEN CONTENT (keywords found in collapsed/hidden DOM elements — click to reveal):")
+            hiddenEntries.forEach { e ->
+                val hidden = e.totalCount - e.visibleCount
+                val context = e.firstContext?.let { " | near: \"$it\"" } ?: ""
+                appendLine("  - \"${e.keyword}\": $hidden hidden match(es)$context")
+            }
+        }
+
         if (input.explorationDirections.isNotEmpty()) {
             appendLine()
             appendLine("CURRENT EXPLORATION DIRECTIONS:")
             input.explorationDirections.forEachIndexed { idx, d ->
-                appendLine("  [${d.status.uppercase()}] D${idx + 1}. ${d.direction}")
+                appendLine("  [${d.status.uppercase()}|${d.priority.uppercase()}] D${idx + 1}. ${d.direction}")
             }
         }
 

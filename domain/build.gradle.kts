@@ -28,6 +28,8 @@ dependencies {
     implementation(libs.google.adk)
     implementation(libs.google.adk.dev)
     implementation(libs.google.genai)
+    implementation(libs.google.auth.oauth2)
+    implementation(libs.openai.java)
     
     implementation(libs.apache.pdfbox)
 

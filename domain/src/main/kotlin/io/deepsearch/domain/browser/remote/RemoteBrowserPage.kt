@@ -360,12 +360,26 @@ class RemoteBrowserPage(
     override suspend fun getScrollPosition(): Int =
         pageCmd(PageCommand.GetScrollPosition).toInt()
 
-    override suspend fun scrollToPercentageAndGetPosition(percent: Int): Int {
+    override suspend fun getScrollState(): IBrowserPage.ScrollState {
+        val resp = pageCmdParse<ScrollStateResponse>(PageCommand.GetScrollState)
+        return IBrowserPage.ScrollState(
+            scrollY = resp.scrollY,
+            scrollHeight = resp.scrollHeight,
+            innerHeight = resp.innerHeight
+        )
+    }
+
+    override suspend fun scrollToPercentageAndGetScrollState(percent: Int): IBrowserPage.ScrollState {
         val results = runCommandsOrBatch(listOf(
             PageCommand.ScrollToPercentage(percent),
-            PageCommand.GetScrollPosition
+            PageCommand.GetScrollState
         ))
-        return results[1].toInt()
+        val resp = json.decodeFromString<ScrollStateResponse>(results[1])
+        return IBrowserPage.ScrollState(
+            scrollY = resp.scrollY,
+            scrollHeight = resp.scrollHeight,
+            innerHeight = resp.innerHeight
+        )
     }
 
     override suspend fun scrollPage(deltaX: Int, deltaY: Int) {

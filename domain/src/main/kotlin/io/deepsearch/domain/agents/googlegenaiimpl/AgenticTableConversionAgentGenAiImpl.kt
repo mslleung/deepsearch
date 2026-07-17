@@ -150,7 +150,11 @@ class AgenticTableConversionAgentGenAiImpl(
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
-            retryLlmCall<TableConversionResponse>(this@AgenticTableConversionAgentGenAiImpl::class.simpleName!!) {
+            // Large comparison tables can exceed the output budget mid-JSON; retry once on parse failure.
+            retryLlmCall<TableConversionResponse>(
+                this@AgenticTableConversionAgentGenAiImpl::class.simpleName!!,
+                maxDeserializationRetries = 2
+            ) {
                 val result = client.models.generateContent(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
@@ -159,7 +163,7 @@ class AgenticTableConversionAgentGenAiImpl(
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
-                        .maxOutputTokens(8192)
+                        .maxOutputTokens(32768)
                         .systemInstruction(Content.fromParts(Part.fromText(systemInstruction)))
                         .build()
                 )

@@ -3,6 +3,11 @@ package io.deepsearch.domain.config
 import com.google.genai.Client
 import com.google.genai.types.ClientOptions
 import com.google.genai.types.HttpOptions
+import io.deepsearch.domain.agents.infra.llm.GenAiLlmClient
+import io.deepsearch.domain.agents.infra.llm.ILlmClient
+import io.deepsearch.domain.agents.infra.llm.MaasAuthProvider
+import io.deepsearch.domain.agents.infra.llm.OpenAiLlmClient
+import io.deepsearch.domain.agents.infra.llm.RoutingLlmClient
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -107,6 +112,19 @@ private val domainCommonTestModule = module {
                 .build()
         }
     }
+    single { GenAiLlmClient(get()) }
+    single {
+        val useVertexAi = System.getenv("GOOGLE_GENAI_USE_VERTEXAI")?.equals("TRUE", ignoreCase = true) == true
+        val projectId = if (useVertexAi) {
+            System.getenv("GOOGLE_CLOUD_PROJECT") ?: error("GOOGLE_CLOUD_PROJECT required for MaaS client")
+        } else {
+            System.getenv("GOOGLE_CLOUD_PROJECT") ?: "test-project"
+        }
+        val location = System.getenv("GOOGLE_CLOUD_LOCATION") ?: "global"
+        val baseUrl = OpenAiLlmClient.buildBaseUrl(projectId, location)
+        OpenAiLlmClient(baseUrl, MaasAuthProvider.fromApplicationDefault())
+    }
+    single<ILlmClient> { RoutingLlmClient(get(), get()) }
     single {
         EnvironmentConfig(
             isDevelopmentMode = true
@@ -114,7 +132,7 @@ private val domainCommonTestModule = module {
     }
     single {
         DeepSearchBrowserConfig(
-            url = "http://localhost:8090"
+            url = System.getenv("DEEPSEARCH_BROWSER_URL") ?: "http://localhost:8090"
         )
     }
     single {

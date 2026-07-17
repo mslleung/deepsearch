@@ -233,12 +233,32 @@ interface IBrowserPage {
     suspend fun getScrollPosition(): Int
 
     /**
-     * Scroll to [percent] and return the actual scroll position afterward.
-     * Combines [scrollToPercentage] and [getScrollPosition] to reduce round-trips.
+     * Precise vertical scroll state in CSS pixels.
+     * @param scrollY current window.scrollY
+     * @param scrollHeight total page scroll height (max of body/documentElement)
+     * @param innerHeight viewport inner height
      */
-    suspend fun scrollToPercentageAndGetPosition(percent: Int): Int {
+    @Serializable
+    data class ScrollState(
+        val scrollY: Double,
+        val scrollHeight: Int,
+        val innerHeight: Int
+    )
+
+    /**
+     * Get the precise vertical scroll state in CSS pixels. Unlike [getScrollPosition],
+     * this is not quantized to an integer percent, so callers can map full-page
+     * coordinates to viewport coordinates without up to ±0.5% rounding error.
+     */
+    suspend fun getScrollState(): ScrollState
+
+    /**
+     * Scroll to [percent] and return the precise scroll state afterward.
+     * Combines [scrollToPercentage] and [getScrollState] to reduce round-trips.
+     */
+    suspend fun scrollToPercentageAndGetScrollState(percent: Int): ScrollState {
         scrollToPercentage(percent)
-        return getScrollPosition()
+        return getScrollState()
     }
 
     /**

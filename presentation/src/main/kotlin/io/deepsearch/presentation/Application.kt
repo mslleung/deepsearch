@@ -4,6 +4,9 @@ import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import com.google.genai.Client
 import com.google.genai.types.ClientOptions
+import io.deepsearch.domain.agents.infra.llm.GenAiLlmClient
+import io.deepsearch.domain.agents.infra.llm.MaasAuthProvider
+import io.deepsearch.domain.agents.infra.llm.OpenAiLlmClient
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -215,6 +218,21 @@ private fun Application.configureDependencyInjection() {
                             .apiKey(environment.config.property("gemini.apiKey").getString())
                             .clientOptions(clientOptions)
                             .build()
+                    }
+                }
+                single { GenAiLlmClient(get()) }
+                single {
+                    val useVertexAi = environment.config.propertyOrNull("vertexai.enabled")?.getString()?.toBoolean() ?: false
+                    if (useVertexAi) {
+                        val projectId = environment.config.property("vertexai.projectId").getString()
+                        val location = environment.config.property("vertexai.location").getString()
+                        val baseUrl = OpenAiLlmClient.buildBaseUrl(projectId, location)
+                        OpenAiLlmClient(baseUrl, MaasAuthProvider.fromApplicationDefault())
+                    } else {
+                        val projectId = environment.config.propertyOrNull("vertexai.projectId")?.getString() ?: ""
+                        val location = environment.config.propertyOrNull("vertexai.location")?.getString() ?: "global"
+                        val baseUrl = OpenAiLlmClient.buildBaseUrl(projectId, location)
+                        OpenAiLlmClient(baseUrl, MaasAuthProvider.fromApplicationDefault())
                     }
                 }
                 single {

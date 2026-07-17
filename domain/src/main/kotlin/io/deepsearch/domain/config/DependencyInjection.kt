@@ -2,6 +2,10 @@ package io.deepsearch.domain.config
 
 import io.deepsearch.domain.agents.*
 import io.deepsearch.domain.agents.googlegenaiimpl.*
+import io.deepsearch.domain.agents.infra.llm.GenAiLlmClient
+import io.deepsearch.domain.agents.infra.llm.ILlmClient
+import io.deepsearch.domain.agents.infra.llm.OpenAiLlmClient
+import io.deepsearch.domain.agents.infra.llm.RoutingLlmClient
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.browser.remote.RemoteBrowserPool
 import io.deepsearch.domain.services.IOcrImageTextExtractionService
@@ -64,6 +68,10 @@ import org.koin.module.requestScope
 val domainModule = module {
     singleOf(::ApplicationCoroutineScope) bind IApplicationCoroutineScope::class
     singleOf(::DefaultDispatcherProvider) bind IDispatcherProvider::class
+
+    // LLM client routing: GenAiLlmClient + OpenAiLlmClient are injected by the presentation layer.
+    // RoutingLlmClient selects the correct backend based on ModelIds.backend.
+    singleOf(::RoutingLlmClient) bind ILlmClient::class
 
     // Browser pool - connects to remote deepsearch-browser service
     // DeepsearchBrowserConfig is provided by the presentation layer

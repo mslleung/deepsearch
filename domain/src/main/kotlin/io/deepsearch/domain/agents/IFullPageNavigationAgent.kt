@@ -18,7 +18,15 @@ data class TrackedQuestion(
 
 data class ExplorationDirection(
     val direction: String,
-    val status: String
+    val status: String,
+    val priority: String = "medium"
+)
+
+data class KeywordScanEntry(
+    val keyword: String,
+    val visibleCount: Int,
+    val totalCount: Int,
+    val firstContext: String? = null
 )
 
 @Serializable
@@ -114,6 +122,7 @@ data class FullPageNavigationInput(
     val navigationMode: NavigationMode = NavigationMode.FULL_PAGE,
     val explorationDirections: List<ExplorationDirection> = emptyList(),
     val extractedContent: List<ExtractedContent> = emptyList(),
+    val keywordScan: List<KeywordScanEntry> = emptyList(),
     val currentIteration: Int = 1,
     val maxIterations: Int = 12
 ) : IAgent.IAgentInput
@@ -126,6 +135,7 @@ data class FullPageNavigationOutput(
     val currentDirection: String?,
     val searchComplete: Boolean,
     val allDirectionsExhausted: Boolean,
+    val queryKeywords: List<String> = emptyList(),
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 

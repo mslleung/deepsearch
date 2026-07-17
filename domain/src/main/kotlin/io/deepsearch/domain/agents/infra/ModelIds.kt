@@ -1,7 +1,17 @@
 package io.deepsearch.domain.agents.infra
 
 /**
- * Enum of supported Gemini model IDs with their pricing information.
+ * Discriminates which API backend a model uses.
+ */
+enum class LlmBackend {
+    /** Google GenAI SDK (:generateContent endpoint) */
+    GENAI,
+    /** OpenAI-compatible Chat Completions API (Vertex AI MaaS for open models) */
+    OPENAI_COMPATIBLE,
+}
+
+/**
+ * Enum of supported model IDs with their pricing information and backend routing.
  * 
  * Pricing is in USD per 1 million tokens.
  * Source: https://ai.google.dev/gemini-api/docs/pricing
@@ -12,11 +22,13 @@ package io.deepsearch.domain.agents.infra
  * @property modelId The model identifier string used in API calls
  * @property inputPricePerMillion Price per 1M input tokens in USD
  * @property outputPricePerMillion Price per 1M output tokens in USD
+ * @property backend Which API backend this model requires
  */
 enum class ModelIds(
     val modelId: String,
     val inputPricePerMillion: Double,
-    val outputPricePerMillion: Double
+    val outputPricePerMillion: Double,
+    val backend: LlmBackend = LlmBackend.GENAI
 ) {
     // Gemini 3.5 models
     GEMINI_3_5_FLASH("gemini-3.5-flash", 1.50, 9.00),
@@ -42,6 +54,10 @@ enum class ModelIds(
     // Gemini 2.0 Flash models
     GEMINI_2_0_FLASH("gemini-2.0-flash", 0.10, 0.40),
     GEMINI_2_0_FLASH_LITE("gemini-2.0-flash-lite", 0.075, 0.30),
+
+    // Gemma 4 models (open-weight, via Vertex AI MaaS OpenAI-compatible endpoint)
+    GEMMA_4_31B("gemma-4-31b-it", 0.15, 0.60, LlmBackend.OPENAI_COMPATIBLE),
+    GEMMA_4_26B_A4B("gemma-4-26b-a4b-it-maas", 0.15, 0.60, LlmBackend.OPENAI_COMPATIBLE),
 
     // Embedding models
     GEMINI_EMBEDDING_001("gemini-embedding-001", 0.15, 0.0),

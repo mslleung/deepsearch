@@ -1,6 +1,7 @@
 package io.deepsearch.domain.agents.infra
 
 import com.google.genai.errors.ClientException
+import com.openai.errors.RateLimitException
 import io.deepsearch.domain.exceptions.LlmDeserializationException
 import io.deepsearch.domain.exceptions.LlmRateLimitException
 import kotlinx.coroutines.currentCoroutineContext
@@ -53,11 +54,12 @@ internal fun parseRetryDelayOrDefault(message: String?, attempt: Int): Long {
 }
 
 /**
- * Checks if an exception is a rate limit (429) error from Google GenAI.
+ * Checks if an exception is a rate limit (429) error from either Google GenAI or the OpenAI SDK.
  */
 @PublishedApi
 internal fun isRateLimitException(e: Exception): Boolean {
-    return e is ClientException && e.message?.contains("429") == true
+    return (e is ClientException && e.message?.contains("429") == true) ||
+        e is RateLimitException
 }
 
 /**
