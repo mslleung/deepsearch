@@ -110,7 +110,6 @@ class AgenticWebpageSearchService(
 
     companion object {
         private const val MAX_ITERATIONS = 12
-        private const val MAX_UNPRODUCTIVE_ITERATIONS = 3
         private const val MAX_FAILED_CLICKS = 2
         private const val POST_CLICK_DELAY_MS = 150L
         private const val POST_CLICK_SETTLE_DELAY_MS = 300L
@@ -207,9 +206,7 @@ class AgenticWebpageSearchService(
         var queryKeywords: List<String> = emptyList(),
         var keywordsRefined: Boolean = false,
         var keywordScan: List<KeywordScanEntry> = emptyList(),
-        var lastScannedKeywords: List<String> = emptyList(),
-        var lastExtractedCount: Int = 0,
-        var unproductiveIterations: Int = 0
+        var lastScannedKeywords: List<String> = emptyList()
     )
 
     // --- Public API ---
@@ -268,23 +265,6 @@ class AgenticWebpageSearchService(
             val iterStart = clock.markNow()
             currentCoroutineContext().ensureActive()
             logger.debug("Full-page search iteration {}/{} for {}", iteration, MAX_ITERATIONS, url)
-
-            if (iteration > 1) {
-                if (state.extractedRegionContent.size > state.lastExtractedCount) {
-                    state.unproductiveIterations = 0
-                } else {
-                    state.unproductiveIterations++
-                }
-            }
-            state.lastExtractedCount = state.extractedRegionContent.size
-
-            if (state.unproductiveIterations >= MAX_UNPRODUCTIVE_ITERATIONS) {
-                logger.info(
-                    "Force-stopping at iter={}: no new query-relevant content for {} consecutive iterations",
-                    iteration, state.unproductiveIterations
-                )
-                return buildFinalResult(state)
-            }
 
             val setup = prepareIteration(page, state, cachedScreenshot, iteration)
             cachedScreenshot = null
