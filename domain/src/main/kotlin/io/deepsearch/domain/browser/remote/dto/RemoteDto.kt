@@ -278,7 +278,8 @@ data class RegionContentResponse(
     val text: String,
     val html: String,
     val tag: String,
-    val isTable: Boolean
+    val isTable: Boolean,
+    val hasVisualContent: Boolean = false
 )
 
 @Serializable

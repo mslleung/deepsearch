@@ -581,7 +581,8 @@ class RemoteBrowserPage(
             text = r.text,
             html = r.html,
             tag = r.tag,
-            isTable = r.isTable
+            isTable = r.isTable,
+            hasVisualContent = r.hasVisualContent
         )
     }
 

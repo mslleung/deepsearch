@@ -17,6 +17,7 @@ import io.deepsearch.domain.services.AnnotatedElement
 import io.deepsearch.domain.services.AnnotationTarget
 import io.deepsearch.domain.services.IDomDiffService
 import io.deepsearch.domain.services.IImageProcessingService
+import io.deepsearch.domain.services.IHtmlToMarkdownService
 import io.deepsearch.domain.services.IIterationScreenshotStorage
 import io.deepsearch.domain.services.IterationScreenshotPath
 import kotlinx.coroutines.*
@@ -71,6 +72,14 @@ data class SearchTimingBreakdown(
     val totalMs: Long
 )
 
+enum class TerminationReason {
+    ANSWER_FOUND,
+    PAGE_IRRELEVANT,
+    NO_UNEXPLORED_POTENTIAL,
+    REFEREE_OVERRIDE,
+    MAX_ITERATIONS
+}
+
 data class AgenticPageSearchResult(
     val answer: String?,
     val evidence: String?,
@@ -81,7 +90,8 @@ data class AgenticPageSearchResult(
     val totalTokenUsage: TokenUsageMetrics,
     val discoveredUrls: List<String> = emptyList(),
     val capturedImages: List<CapturedImage> = emptyList(),
-    val timingBreakdown: SearchTimingBreakdown? = null
+    val timingBreakdown: SearchTimingBreakdown? = null,
+    val terminationReason: TerminationReason = TerminationReason.MAX_ITERATIONS
 )
 
 interface IAgenticWebpageSearchService {
@@ -112,6 +122,7 @@ class AgenticWebpageSearchService(
     private val agenticTableConversionAgent: IAgenticTableConversionAgent,
     private val iterationScreenshotStorage: IIterationScreenshotStorage,
     private val agenticNavIterationRepository: IAgenticNavIterationRepository,
+    private val htmlToMarkdownService: IHtmlToMarkdownService,
 ) : IAgenticWebpageSearchService {
 
     private val logger: Logger = LoggerFactory.getLogger(this::class.java)
@@ -129,6 +140,7 @@ class AgenticWebpageSearchService(
 
     companion object {
         private const val MAX_ITERATIONS = 12
+        private const val REFEREE_OVERRIDE_AFTER = 2
         private const val MAX_FAILED_CLICKS = 2
         private const val POST_CLICK_DELAY_MS = 150L
         private const val POST_CLICK_SETTLE_DELAY_MS = 300L
@@ -222,11 +234,16 @@ class AgenticWebpageSearchService(
         var explorationDirections: List<ExplorationDirection> = emptyList(),
         var currentDirectionHint: String? = null,
         var directionStartIndex: Int = 0,
+        val directionBoundaries: MutableList<Pair<Int, String?>> = mutableListOf(),
         var queryKeywords: List<String> = emptyList(),
         var keywordsRefined: Boolean = false,
         var keywordScan: List<KeywordScanEntry> = emptyList(),
         var lastScannedKeywords: List<String> = emptyList(),
-        val iterationTimings: MutableList<IterationTimingBreakdown> = mutableListOf()
+        val iterationTimings: MutableList<IterationTimingBreakdown> = mutableListOf(),
+        val progressLog: MutableList<IterationProgress> = mutableListOf(),
+        val keywordCountBaseline: MutableMap<String, Pair<Int, Int>> = mutableMapOf(),
+        var keywordRevealsThisIteration: Int = 0,
+        var consecutiveBarrenContinues: Int = 0
     )
 
     // --- Public API ---
@@ -302,6 +319,7 @@ class AgenticWebpageSearchService(
             val directionActions = state.actionsPerformed.subList(
                 state.directionStartIndex, state.actionsPerformed.size
             ).toList()
+            val exploredActions = buildExploredActions(state)
             val navInput = FullPageNavigationInput(
                 fullPageScreenshot = setup.labeledScreenshot,
                 query = query,
@@ -314,7 +332,9 @@ class AgenticWebpageSearchService(
                 extractedContent = state.extractedRegionContent.toList(),
                 keywordScan = state.keywordScan,
                 currentIteration = iteration,
-                maxIterations = MAX_ITERATIONS
+                maxIterations = MAX_ITERATIONS,
+                progressLog = state.progressLog,
+                exploredActions = exploredActions
             )
 
             val extractionFlow: Flow<Pair<ExtractionPipelineResult?, Long>> = flow {
@@ -359,9 +379,9 @@ class AgenticWebpageSearchService(
             val (extractionResult, extractionPipelineMs) = extractionPair
             val (navOutput, navAgentMs) = navPair
 
-            if (extractionResult != null) {
+            val extractionGain = if (extractionResult != null) {
                 storeExtractionResults(extractionResult, state, sessionId)
-            }
+            } else 0
 
             val resolvedActions = resolveClicksByElementIndex(
                 navOutput.actions, setup.elementIndex
@@ -391,6 +411,7 @@ class AgenticWebpageSearchService(
                 )
                 state.currentDirectionHint = navOutput.currentDirection
                 state.directionStartIndex = state.actionsPerformed.size
+                state.directionBoundaries.add(state.actionsPerformed.size to navOutput.currentDirection)
             }
 
             logger.info(
@@ -410,16 +431,17 @@ class AgenticWebpageSearchService(
                     keywordScanMs = keywordScanMs, navAgentMs = navAgentMs,
                     extractionPipelineMs = extractionPipelineMs, actionsMs = 0, totalMs = iterMs
                 ))
+                val terminationReason = determineTerminationReason(navOutput.continuationAssessment)
                 logger.info(
-                    "Agent declares searchComplete at iter={} ({}ms) — stopping search",
-                    iteration, iterMs
+                    "Search stopping at iter={} ({}ms) — reason={}",
+                    iteration, iterMs, terminationReason
                 )
                 saveIterationMetadata(
                     sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
                 )
                 val totalMs = (clock.markNow() - searchStart).inWholeMilliseconds
                 val timing = SearchTimingBreakdown(initialLoadMs, cookieDismissMs, state.iterationTimings.toList(), totalMs)
-                return handleSearchComplete(state, iteration, timing)
+                return handleSearchComplete(state, iteration, timing, terminationReason)
             }
 
             if (resolvedActions.isEmpty()) {
@@ -436,6 +458,13 @@ class AgenticWebpageSearchService(
                 saveIterationMetadata(
                     sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
                 )
+                state.progressLog.add(IterationProgress(iteration, extractionGain, state.keywordRevealsThisIteration))
+                val refereeResult = checkRefereeOverride(state, extractionGain)
+                if (refereeResult != null) {
+                    val totalMs = (clock.markNow() - searchStart).inWholeMilliseconds
+                    val timing = SearchTimingBreakdown(initialLoadMs, cookieDismissMs, state.iterationTimings.toList(), totalMs)
+                    return buildFinalResult(state, timing, refereeResult)
+                }
                 continue
             }
 
@@ -505,6 +534,14 @@ class AgenticWebpageSearchService(
                 sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
             )
 
+            state.progressLog.add(IterationProgress(iteration, extractionGain, state.keywordRevealsThisIteration))
+            val refereeResult = checkRefereeOverride(state, extractionGain)
+            if (refereeResult != null) {
+                val totalMs = (clock.markNow() - searchStart).inWholeMilliseconds
+                val timing = SearchTimingBreakdown(initialLoadMs, cookieDismissMs, state.iterationTimings.toList(), totalMs)
+                return buildFinalResult(state, timing, refereeResult)
+            }
+
             if (!pageChanged) {
                 cachedScreenshot = setup.screenshot
             }
@@ -512,7 +549,7 @@ class AgenticWebpageSearchService(
 
         val totalMs = (clock.markNow() - searchStart).inWholeMilliseconds
         val timing = SearchTimingBreakdown(initialLoadMs, cookieDismissMs, state.iterationTimings.toList(), totalMs)
-        return buildFinalResult(state, timing)
+        return buildFinalResult(state, timing, TerminationReason.MAX_ITERATIONS)
     }
 
     /**
@@ -521,6 +558,56 @@ class AgenticWebpageSearchService(
      */
     private fun normalizeDirectionName(name: String?): String? =
         name?.replace(Regex("^D\\d+\\.\\s*"), "")?.trim()?.lowercase()?.ifEmpty { null }
+
+    private fun determineTerminationReason(assessment: ContinuationAssessment?): TerminationReason {
+        if (assessment == null) return TerminationReason.ANSWER_FOUND
+        return when {
+            assessment.answerFound.satisfied -> TerminationReason.ANSWER_FOUND
+            !assessment.pageRelevant.satisfied -> TerminationReason.PAGE_IRRELEVANT
+            !assessment.unexploredPotential.satisfied -> TerminationReason.NO_UNEXPLORED_POTENTIAL
+            else -> TerminationReason.ANSWER_FOUND
+        }
+    }
+
+    private fun checkRefereeOverride(state: NavigationLoopState, extractionGain: Int): TerminationReason? {
+        val totalGain = extractionGain + state.keywordRevealsThisIteration
+        if (totalGain == 0) {
+            state.consecutiveBarrenContinues++
+        } else {
+            state.consecutiveBarrenContinues = 0
+        }
+        return if (state.consecutiveBarrenContinues >= REFEREE_OVERRIDE_AFTER) {
+            logger.info(
+                "Referee override: {} consecutive iterations with no observed progress",
+                state.consecutiveBarrenContinues
+            )
+            TerminationReason.REFEREE_OVERRIDE
+        } else null
+    }
+
+    private fun buildExploredActions(state: NavigationLoopState): List<ExploredAction> {
+        val priorActions = state.actionsPerformed.subList(0, state.directionStartIndex)
+        if (priorActions.isEmpty()) return emptyList()
+
+        return priorActions.mapIndexedNotNull { idx, entry ->
+            val click = entry.action as? NavigationAction.Click ?: return@mapIndexedNotNull null
+            val target = click.target ?: return@mapIndexedNotNull null
+            val direction = findDirectionForActionIndex(idx, state.directionBoundaries)
+            ExploredAction(target = target, direction = direction, outcome = entry.outcome)
+        }
+    }
+
+    private fun findDirectionForActionIndex(
+        actionIndex: Int,
+        boundaries: List<Pair<Int, String?>>
+    ): String? {
+        var direction: String? = null
+        for ((startIdx, dirName) in boundaries) {
+            if (startIdx > actionIndex) break
+            direction = dirName
+        }
+        return direction
+    }
 
     // --- Keyword scan (page-wide Ctrl+F grounding for the navigation agent) ---
 
@@ -574,6 +661,7 @@ class AgenticWebpageSearchService(
         state: NavigationLoopState,
         pageChangedSinceLastScan: Boolean
     ) {
+        state.keywordRevealsThisIteration = 0
         if (state.queryKeywords.isEmpty()) return
         if (!pageChangedSinceLastScan && state.queryKeywords == state.lastScannedKeywords) return
         try {
@@ -592,9 +680,25 @@ class AgenticWebpageSearchService(
                 }
             }
             state.lastScannedKeywords = state.queryKeywords
+
+            for (kw in state.queryKeywords) {
+                val c = counts[kw] ?: continue
+                val baseline = state.keywordCountBaseline[kw]
+                if (baseline == null) {
+                    state.keywordCountBaseline[kw] = c.visible to c.total
+                } else {
+                    val (prevVisible, _) = baseline
+                    if (c.visible > prevVisible) {
+                        state.keywordRevealsThisIteration += (c.visible - prevVisible)
+                    }
+                    state.keywordCountBaseline[kw] = maxOf(c.visible, prevVisible) to c.total
+                }
+            }
+
             logger.debug(
-                "Keyword scan: {}",
-                state.keywordScan.joinToString(", ") { "'${it.keyword}':${it.totalCount}(${it.visibleCount}v)" }
+                "Keyword scan: {} (reveals this iter: {})",
+                state.keywordScan.joinToString(", ") { "'${it.keyword}':${it.totalCount}(${it.visibleCount}v)" },
+                state.keywordRevealsThisIteration
             )
         } catch (e: CancellationException) {
             throw e
@@ -767,7 +871,10 @@ class AgenticWebpageSearchService(
         result: ExtractionPipelineResult,
         state: NavigationLoopState,
         sessionId: SessionId
-    ) {
+    ): Int {
+        val newTextCount = result.extractedTextHashes.count { it !in state.extractedTextHashes }
+        val newImageCount = result.capturedHashes.count { it !in state.capturedHashes }
+
         val newContent = result.extractionResult.extractedContent
         if (newContent.isNotEmpty()) {
             state.extractedRegionContent.addAll(newContent)
@@ -791,6 +898,8 @@ class AgenticWebpageSearchService(
             outputTokens = result.regionLocatorTokenUsage.outputTokens,
             totalTokens = result.regionLocatorTokenUsage.totalTokens
         )
+
+        return newTextCount + newImageCount
     }
 
     private suspend fun handleFullPageClick(
@@ -1182,7 +1291,8 @@ class AgenticWebpageSearchService(
     /**
      * Crops identified regions from the original screenshot (0-1000 normalized coords),
      * maps them to original-resolution pixel coords, and extracts content.
-     * Text regions are extracted via VLM; table regions via [AgenticTableConversionAgent].
+     * Text-only regions use DOM extraction (fast, no LLM); mixed/visual content falls
+     * back to VLM. Table regions use [AgenticTableConversionAgent].
      */
     private suspend fun extractVisualSegmentationRegions(
         originalScreenshotBytes: ByteArray,
@@ -1214,6 +1324,7 @@ class AgenticWebpageSearchService(
                 extractTextRegions(
                     textRegions, originalScreenshotBytes, query, textHashes,
                     textCapturedHashes, MessageDigest.getInstance("SHA-256"),
+                    page, navigationMode, viewportHeight, origHeight,
                     sessionId, iteration, url
                 )
             }
@@ -1247,76 +1358,125 @@ class AgenticWebpageSearchService(
         extractedTextHashes: MutableSet<String>,
         capturedHashes: MutableSet<String>,
         sha256: MessageDigest,
+        page: IBrowserPage,
+        navigationMode: NavigationMode,
+        viewportHeight: Int,
+        fullPageImgHeight: Int,
         sessionId: SessionId,
         iteration: Int,
         url: String
     ): ExtractionResult {
         if (textRegions.isEmpty()) return ExtractionResult(emptyList(), emptyList())
 
-        val textResults = coroutineScope {
-            textRegions.mapIndexed { idx, prep ->
+        data class ProbedRegion(
+            val prep: PreparedRegion,
+            val idx: Int,
+            val cropBytes: ByteArray,
+            val domMarkdown: String?,
+            val needsVlm: Boolean,
+            val routeReason: String
+        )
+
+        val probed = mutableListOf<ProbedRegion>()
+        for ((idx, prep) in textRegions.withIndex()) {
+            val mark = TimeSource.Monotonic.markNow()
+            val cropBytes = withContext(dispatcherProvider.default) {
+                imageProcessingService.cropToPng(originalScreenshotBytes, prep.x, prep.y, prep.w, prep.h)
+            }
+            fireAndForget {
+                iterationScreenshotStorage.saveRegionCrop(
+                    sessionId, url, iteration, idx, cropBytes, prep.desc
+                )
+            }
+
+            val vpCoords = toViewportCoords(
+                prep.x, prep.y, prep.x + prep.w, prep.y + prep.h,
+                navigationMode, viewportHeight, fullPageImgHeight, page
+            )
+            val regionContent = page.extractContentInRegion(vpCoords[0], vpCoords[1], vpCoords[2], vpCoords[3])
+
+            val isTextOnly = regionContent.text.isNotBlank() && !regionContent.hasVisualContent
+            if (isTextOnly) {
+                val markdown = htmlToMarkdownService.convert(regionContent.html)
+                val elapsedMs = mark.elapsedNow().inWholeMilliseconds
+                logger.info(
+                    "DOM extracted region ({} chars, {}ms): [{}]",
+                    markdown.length, elapsedMs, prep.desc
+                )
+                probed.add(ProbedRegion(prep, idx, cropBytes, markdown, needsVlm = false, routeReason = "text-only"))
+            } else {
+                val reason = when {
+                    regionContent.text.isBlank() -> "no DOM text"
+                    regionContent.hasVisualContent -> "mixed content"
+                    else -> "unknown"
+                }
+                logger.info("VLM needed for region ({}): [{}]", reason, prep.desc)
+                probed.add(ProbedRegion(prep, idx, cropBytes, null, needsVlm = true, routeReason = reason))
+            }
+        }
+
+        val vlmResults = coroutineScope {
+            probed.filter { it.needsVlm }.map { pr ->
                 async {
-                    val cropBytes = withContext(dispatcherProvider.default) {
-                        imageProcessingService.cropToPng(originalScreenshotBytes, prep.x, prep.y, prep.w, prep.h)
-                    }
-
-                    fireAndForget {
-                        iterationScreenshotStorage.saveRegionCrop(
-                            sessionId, url, iteration, idx, cropBytes, prep.desc
-                        )
-                    }
-
-                    logger.info("VLM extracting region ({}x{} crop): {}", prep.w, prep.h, prep.desc)
-
+                    val mark = TimeSource.Monotonic.markNow()
                     val output = visualContentExtractionAgent.generate(
                         VisualContentExtractionInput(
-                            regionImage = cropBytes,
+                            regionImage = pr.cropBytes,
                             imageMimeType = ImageMimeType.PNG,
                             query = query,
-                            regionDescription = prep.region.relevance
+                            regionDescription = pr.prep.region.relevance
                         )
                     )
-
-                    Triple(prep.region, output, cropBytes)
+                    val elapsedMs = mark.elapsedNow().inWholeMilliseconds
+                    logger.info(
+                        "VLM fallback region ({}, {}ms, {}x{} crop): [{}]",
+                        pr.routeReason, elapsedMs, pr.prep.w, pr.prep.h, pr.prep.desc
+                    )
+                    pr.idx to output
                 }
-            }.awaitAll()
+            }.awaitAll().associate { it }
         }
 
         val extracted = mutableListOf<ExtractedContent>()
         val images = mutableListOf<CapturedImage>()
         val regionCropMetas = mutableListOf<RegionCropMeta>()
-        var totalTokens = TokenUsageMetrics.empty(
-            textResults.firstOrNull()?.second?.tokenUsage?.modelName ?: "gemini-3.1-flash-lite"
-        )
+        var totalVlmTokens: TokenUsageMetrics? = null
 
-        for ((idx, triple) in textResults.withIndex()) {
-            val (region, output, cropBytes) = triple
-            regionCropMetas.add(RegionCropMeta(idx, region.description))
-            totalTokens = totalTokens + output.tokenUsage
-            addCapturedImage(sha256, cropBytes, capturedHashes, images, region.relevance)
+        for (pr in probed) {
+            regionCropMetas.add(RegionCropMeta(pr.idx, pr.prep.region.description))
+            addCapturedImage(sha256, pr.cropBytes, capturedHashes, images, pr.prep.region.relevance)
 
-            val markdown = output.markdown
+            val markdown: String
+            if (!pr.needsVlm) {
+                markdown = pr.domMarkdown!!
+            } else {
+                val output = vlmResults[pr.idx] ?: continue
+                totalVlmTokens = if (totalVlmTokens == null) output.tokenUsage
+                    else totalVlmTokens + output.tokenUsage
+                markdown = output.markdown
+            }
+
             if (markdown.isBlank()) {
-                logger.debug("VLM returned blank for region: {}", region.description)
+                logger.debug("Blank extraction for region: {}", pr.prep.region.description)
                 continue
             }
             if (addIfNotDuplicate(sha256, markdown, extractedTextHashes)) {
-                extracted.add(ExtractedContent(description = region.relevance, text = markdown, isTable = false))
-                logger.info(
-                    "VLM extracted region ({} chars): [{}] text={}",
-                    markdown.length, region.description, markdown
+                extracted.add(
+                    ExtractedContent(description = pr.prep.region.relevance, text = markdown, isTable = false)
                 )
             }
         }
 
-        tokenUsageService.recordTokenUsage(
-            sessionId = sessionId,
-            agentName = "VisualContentExtractionAgent",
-            modelName = totalTokens.modelName,
-            promptTokens = totalTokens.promptTokens,
-            outputTokens = totalTokens.outputTokens,
-            totalTokens = totalTokens.totalTokens
-        )
+        if (totalVlmTokens != null) {
+            tokenUsageService.recordTokenUsage(
+                sessionId = sessionId,
+                agentName = "VisualContentExtractionAgent",
+                modelName = totalVlmTokens.modelName,
+                promptTokens = totalVlmTokens.promptTokens,
+                outputTokens = totalVlmTokens.outputTokens,
+                totalTokens = totalVlmTokens.totalTokens
+            )
+        }
 
         return ExtractionResult(extracted, images, regionCropMetas)
     }
@@ -1550,16 +1710,22 @@ class AgenticWebpageSearchService(
     private fun handleSearchComplete(
         state: NavigationLoopState,
         iteration: Int,
-        timing: SearchTimingBreakdown? = null
+        timing: SearchTimingBreakdown? = null,
+        terminationReason: TerminationReason = TerminationReason.ANSWER_FOUND
     ): AgenticPageSearchResult {
         val answer = state.extractedRegionContent
             .joinToString("\n\n") { "[${it.description}]${if (it.isTable) " (table)" else ""}:\n${it.text}" }
             .ifBlank { null }
         val observations = state.extractedRegionContent.map { "[${it.description}] ${it.text}" }
 
+        val success = when (terminationReason) {
+            TerminationReason.ANSWER_FOUND -> true
+            else -> answer != null
+        }
+
         logger.info(
-            "Search complete after {} iterations ({} extracted, {} captures) for {}",
-            iteration, state.extractedRegionContent.size, state.capturedImages.size, state.url
+            "Search complete after {} iterations ({} extracted, {} captures) for {} — reason={}",
+            iteration, state.extractedRegionContent.size, state.capturedImages.size, state.url, terminationReason
         )
 
         return AgenticPageSearchResult(
@@ -1568,11 +1734,12 @@ class AgenticWebpageSearchService(
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
             observations = observations,
-            success = answer != null,
+            success = success,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
             capturedImages = state.capturedImages.toList(),
-            timingBreakdown = timing
+            timingBreakdown = timing,
+            terminationReason = terminationReason
         )
     }
 
@@ -1615,16 +1782,22 @@ class AgenticWebpageSearchService(
 
     private fun buildFinalResult(
         state: NavigationLoopState,
-        timing: SearchTimingBreakdown? = null
+        timing: SearchTimingBreakdown? = null,
+        terminationReason: TerminationReason = TerminationReason.MAX_ITERATIONS
     ): AgenticPageSearchResult {
         val observations = state.extractedRegionContent.map { "[${it.description}] ${it.text}" }
         val answer = if (state.extractedRegionContent.isNotEmpty()) {
             observations.joinToString("; ")
         } else null
 
+        val success = when (terminationReason) {
+            TerminationReason.ANSWER_FOUND -> true
+            else -> false
+        }
+
         logger.info(
-            "Agentic search exhausted {} iterations for {} ({} extracted, {} captures)",
-            MAX_ITERATIONS, state.url, state.extractedRegionContent.size, state.capturedImages.size
+            "Agentic search terminated for {} ({} extracted, {} captures) — reason={}",
+            state.url, state.extractedRegionContent.size, state.capturedImages.size, terminationReason
         )
 
         return AgenticPageSearchResult(
@@ -1633,11 +1806,12 @@ class AgenticWebpageSearchService(
             contentDate = null,
             actionsPerformed = state.actionsPerformed,
             observations = observations,
-            success = answer != null,
+            success = success,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
             capturedImages = state.capturedImages.toList(),
-            timingBreakdown = timing
+            timingBreakdown = timing,
+            terminationReason = terminationReason
         )
     }
 
@@ -1701,7 +1875,11 @@ class AgenticWebpageSearchService(
                 )
             )
         }
+        val assessment = navOutput.continuationAssessment
         val decision = when {
+            navOutput.searchComplete && assessment?.answerFound?.satisfied == true -> "answer_found"
+            navOutput.searchComplete && assessment?.pageRelevant?.satisfied == false -> "page_irrelevant"
+            navOutput.searchComplete && assessment?.unexploredPotential?.satisfied == false -> "no_potential"
             navOutput.searchComplete -> "search_complete"
             navOutput.actions.isEmpty() -> "direction_switch"
             else -> "continue_exploring"

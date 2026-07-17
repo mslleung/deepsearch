@@ -6,8 +6,12 @@ import com.google.genai.types.Part
 import com.google.genai.types.Schema
 
 import io.deepsearch.domain.agents.ActionWithOutcome
+import io.deepsearch.domain.agents.ContinuationAssessment
+import io.deepsearch.domain.agents.DimensionAssessment
+import io.deepsearch.domain.agents.ExploredAction
 import io.deepsearch.domain.agents.ExplorationDirection
 import io.deepsearch.domain.agents.IFullPageNavigationAgent
+import io.deepsearch.domain.agents.IterationProgress
 import io.deepsearch.domain.agents.NavigationAction
 import io.deepsearch.domain.agents.NavigationMode
 import io.deepsearch.domain.agents.ScrollDirection
@@ -108,6 +112,30 @@ class FullPageNavigationAgentGenAiImpl(
         .propertyOrdering(listOf("direction", "status", "priority"))
         .build()
 
+    // ── Continuation assessment schema ─────────────────────────────────
+
+    private val dimensionAssessmentSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .properties(mapOf(
+            "satisfied" to Schema.builder().type("BOOLEAN")
+                .description("Whether this dimension is met.").build(),
+            "rationale" to Schema.builder().type("STRING")
+                .description("One-sentence justification grounded in observable evidence.").build()
+        ))
+        .required(listOf("satisfied", "rationale"))
+        .build()
+
+    private val continuationAssessmentSchema: Schema = Schema.builder()
+        .type("OBJECT")
+        .properties(mapOf(
+            "answerFound" to dimensionAssessmentSchema,
+            "pageRelevant" to dimensionAssessmentSchema,
+            "unexploredPotential" to dimensionAssessmentSchema,
+            "recentProgress" to dimensionAssessmentSchema
+        ))
+        .required(listOf("answerFound", "pageRelevant", "unexploredPotential", "recentProgress"))
+        .build()
+
     // ── Combined navigate + plan schema ─────────────────────────────────
 
     private val navigateSchema: Schema = Schema.builder()
@@ -140,16 +168,9 @@ class FullPageNavigationAgentGenAiImpl(
                 "currentDirection" to Schema.builder()
                     .type("STRING")
                     .nullable(true)
-                    .description("The specific direction your actions are for. Null only when searchComplete=true.")
+                    .description("The specific direction your actions are for. Null when the search is stopping.")
                     .build(),
-                "searchComplete" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("True when the EXTRACTED KNOWLEDGE already contains sufficient information to answer the query. Set true when: (1) the core question is answered in the extracted content, OR (2) all directions are exhausted. Remaining unexplored directions that are unlikely to add important new information should NOT prevent completion.")
-                    .build(),
-                "allDirectionsExhausted" to Schema.builder()
-                    .type("BOOLEAN")
-                    .description("True only when every HIGH and MEDIUM priority direction has been explored and confirmed irrelevant or fully extracted. Unexplored LOW directions do not block this.")
-                    .build(),
+                "continuationAssessment" to continuationAssessmentSchema,
                 "queryKeywords" to Schema.builder()
                     .type("ARRAY")
                     .items(Schema.builder().type("STRING").build())
@@ -163,13 +184,13 @@ class FullPageNavigationAgentGenAiImpl(
                 "actions" to Schema.builder()
                     .type("ARRAY")
                     .items(actionSchema)
-                    .description("Actions to execute in order. Include ALL actions that advance the current direction. Empty array when searchComplete=true. When switching to a new direction, include the first actions for the new direction immediately.")
+                    .description("Actions to execute in order. Include ALL actions that advance the current direction. Empty array when the search is stopping. When switching to a new direction, include the first actions for the new direction immediately.")
                     .nullable(true)
                     .build()
             )
         )
-        .required(listOf("pageState", "observation", "explorationDirections", "searchComplete", "allDirectionsExhausted", "queryKeywords"))
-        .propertyOrdering(listOf("pageState", "observation", "explorationDirections", "currentDirection", "queryKeywords", "searchComplete", "allDirectionsExhausted", "actions"))
+        .required(listOf("pageState", "observation", "explorationDirections", "continuationAssessment", "queryKeywords"))
+        .propertyOrdering(listOf("pageState", "observation", "explorationDirections", "currentDirection", "continuationAssessment", "queryKeywords", "actions"))
         .build()
 
     private val fullPageNavigateInstruction = """
@@ -216,21 +237,6 @@ class FullPageNavigationAgentGenAiImpl(
 
         ONLY mark 'exhausted' if the ACTION HISTORY contains actions matching this direction AND the outcome shows it's irrelevant or complete.
 
-        **Search Completion Evaluation:**
-        After updating directions, evaluate the EXTRACTED KNOWLEDGE against the query:
-
-        Set searchComplete=true when:
-        - The EXTRACTED KNOWLEDGE contains a clear, direct answer to the query
-        - The core question is answered even if there are unexplored directions about unrelated topics
-        - All high/medium directions have been exhausted (nothing promising left to try)
-
-        Set searchComplete=false when:
-        - No content has been extracted yet (EXTRACTED KNOWLEDGE is empty) AND there are promising unexplored high/medium directions
-        - The extracted content does NOT answer the query AND there are promising unexplored high/medium directions
-
-        CRITICAL: Do NOT keep exploring just because unexplored directions exist. If the answer is already in the EXTRACTED KNOWLEDGE, stop immediately.
-        Each iteration is expensive — diminishing returns apply. If the last two iterations produced no new query-relevant knowledge, give up rather than continuing to search.
-
         ### 2. NAVIGATION EXECUTION (tactical)
         Execute actions to explore the current direction — click the right elements, scroll to reveal content.
 
@@ -241,9 +247,34 @@ class FullPageNavigationAgentGenAiImpl(
         - Set the new direction as 'exploring'
         - Provide actions for the new direction in the same response
 
+        ## CONTINUATION ASSESSMENT
+        Assess these four dimensions BEFORE choosing actions. The search stops deterministically when answerFound is satisfied OR pageRelevant/unexploredPotential is unsatisfied. Evaluate honestly — continuing costs real money.
+
+        ### answerFound
+        - satisfied=true when the EXTRACTED KNOWLEDGE contains a clear answer to the query.
+        - CLOSED-WORLD RULE: If the page presents a COMPLETE enumeration of the relevant category (all services listed, all FAQ topics shown, all packages displayed) and the queried item is NOT in the enumeration, that absence IS the answer. State it in your observation: "The page lists [enumeration] and [target] is not among them." Set satisfied=true.
+        - satisfied=false when nothing extracted answers the query (including by absence).
+
+        ### pageRelevant
+        - satisfied=true if this page's content domain could plausibly contain the answer.
+        - satisfied=false if the page is about a fundamentally different topic than the query asks about.
+
+        ### unexploredPotential
+        - satisfied=true ONLY if you can name a SPECIFIC unexplored element (accordion, tab, section, or HIDDEN CONTENT keyword match) that plausibly contains the answer.
+        - The rationale MUST name the element. "There might be something" = NOT satisfied.
+        - Off-page links do not count (out of scope for in-page search).
+        - Elements already clicked (per TURNS history) do not count.
+        - satisfied=false when all promising areas are explored or no element's label/signal suggests query relevance.
+
+        ### recentProgress
+        - Judge strictly from the PROGRESS LOG. Did recent iterations produce new query-relevant extractions or keyword reveals?
+        - satisfied=true if the last 1-2 iterations produced gains.
+        - satisfied=false if the last 2+ iterations produced zero gains.
+        - If no PROGRESS LOG is shown (first iteration), set satisfied=true.
+
         ## CRITICAL: SCREENSHOT vs. EXTRACTED KNOWLEDGE
         - The SCREENSHOT is for identifying DIRECTIONS and deciding which elements to click
-        - The EXTRACTED KNOWLEDGE list is the SOLE BASIS for your searchComplete decision
+        - The EXTRACTED KNOWLEDGE list is the SOLE BASIS for answerFound
         - Even if you can SEE an answer on the screenshot, it does NOT count unless it appears in the EXTRACTED KNOWLEDGE list
         - Content visible on screen has NOT been captured until it shows up in EXTRACTED KNOWLEDGE
 
@@ -251,17 +282,16 @@ class FullPageNavigationAgentGenAiImpl(
         1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE (which tab is highlighted, which sections are expanded/collapsed). Carry forward previous entries for off-screen elements. Do NOT let the query influence this — report what is ACTUALLY there.
         2. **observation**: Describe the page layout and any changes from the last action.
         3. **explorationDirections**: ALL directions with updated statuses. Carry forward previous directions. Add new ones discovered.
-        4. **currentDirection**: Which direction your actions are for. Null only when searchComplete=true.
-        5. **searchComplete / allDirectionsExhausted**: Your planning decisions.
-        6. **actions**: The navigation actions to execute. Empty when searchComplete=true.
+        4. **currentDirection**: Which direction your actions are for. Null when the search is stopping.
+        5. **continuationAssessment**: Your 4-dimension assessment (answerFound, pageRelevant, unexploredPotential, recentProgress).
+        6. **actions**: The navigation actions to execute. Empty array when the search is stopping.
 
         ## CLICKING ELEMENTS
         Reference elements by their numbered label [N] on the screenshot. Provide the number in `elementLabel`.
         If you cannot find a suitable labeled element for what you need to click, use -1 and describe the element in `target`.
+        NEVER re-click an element listed in PREVIOUSLY EXPLORED / ALREADY EXPLORED. If all visible interactive elements have already been explored and no new content has appeared, set unexploredPotential.satisfied = false.
 
         ## RULES
-        - NEVER set allDirectionsExhausted=true while any HIGH or MEDIUM priority direction has status 'unexplored'
-          (unexplored LOW directions do not block completion)
         - Carry forward ALL previous directions — do NOT drop any
         - When switching directions, include the first actions for the new direction immediately
         - ALWAYS provide queryKeywords (refined each turn)
@@ -286,34 +316,49 @@ class FullPageNavigationAgentGenAiImpl(
         You may receive a HIDDEN CONTENT list — keywords found in DOM elements that are NOT visible on screen
         (behind collapsed accordions, inactive tabs, etc.). Prioritize revealing them by clicking the relevant element.
 
-        Set searchComplete=true when:
-        - The EXTRACTED KNOWLEDGE contains a clear, direct answer to the query
-        - All high/medium directions have been exhausted
-
-        Set searchComplete=false when:
-        - No content has been extracted yet AND there are promising unexplored high/medium directions
-        - The extracted content does NOT answer the query AND there are promising unexplored high/medium directions
-
-        CRITICAL: The EXTRACTED KNOWLEDGE list is the SOLE BASIS for searchComplete. Content visible on screen has NOT been captured until it appears in EXTRACTED KNOWLEDGE.
-
         ### 2. NAVIGATION EXECUTION (tactical)
         Execute actions to explore the current direction within the overlay. Be selective: only click items whose labels are plausibly relevant to the query. Do NOT exhaustively open every item.
         When the current direction is done, switch to the next promising direction immediately.
+
+        ## CONTINUATION ASSESSMENT
+        Assess these four dimensions BEFORE choosing actions. The search stops deterministically when answerFound is satisfied OR pageRelevant/unexploredPotential is unsatisfied. Evaluate honestly — continuing costs real money.
+
+        ### answerFound
+        - satisfied=true when the EXTRACTED KNOWLEDGE contains a clear answer to the query.
+        - CLOSED-WORLD RULE: If the page presents a COMPLETE enumeration of the relevant category and the queried item is NOT in it, that absence IS the answer. Set satisfied=true.
+        - satisfied=false when nothing extracted answers the query.
+
+        ### pageRelevant
+        - satisfied=true if this page's content domain could plausibly contain the answer.
+        - satisfied=false if the page is about a fundamentally different topic.
+
+        ### unexploredPotential
+        - satisfied=true ONLY if you can name a SPECIFIC unexplored element that plausibly contains the answer. The rationale MUST name it.
+        - Off-page links and already-clicked elements do not count.
+        - satisfied=false when all promising areas are explored or no element suggests query relevance.
+
+        ### recentProgress
+        - Judge strictly from the PROGRESS LOG.
+        - satisfied=true if the last 1-2 iterations produced gains.
+        - satisfied=false if the last 2+ iterations produced zero gains.
+        - If no PROGRESS LOG is shown (first iteration), set satisfied=true.
+
+        CRITICAL: The EXTRACTED KNOWLEDGE list is the SOLE BASIS for answerFound. Content visible on screen has NOT been captured until it appears in EXTRACTED KNOWLEDGE.
 
         ## How to respond
         1. **pageState**: Report ALL dynamic UI states based ONLY on what you SEE. Carry forward previous entries. Do NOT let the query influence this.
         2. **observation**: Describe the overlay content and any changes. Note if content appears cut off.
         3. **explorationDirections**: ALL directions with updated statuses.
-        4. **currentDirection**: Which direction your actions are for. Null when searchComplete=true.
-        5. **searchComplete / allDirectionsExhausted**: Your planning decisions.
-        6. **actions**: Use `scroll_element` for scrolling within the overlay. Empty when searchComplete=true.
+        4. **currentDirection**: Which direction your actions are for. Null when the search is stopping.
+        5. **continuationAssessment**: Your 4-dimension assessment.
+        6. **actions**: Use `scroll_element` for scrolling within the overlay. Empty when the search is stopping.
 
         ## CLICKING ELEMENTS
         Reference elements by their numbered label [N] on the screenshot. Provide the number in `elementLabel`.
         If you cannot find a suitable labeled element for what you need to click, use -1 and describe the element in `target`.
+        NEVER re-click an element listed in PREVIOUSLY EXPLORED / ALREADY EXPLORED. If all visible interactive elements have already been explored and no new content has appeared, set unexploredPotential.satisfied = false.
 
         ## RULES
-        - NEVER set allDirectionsExhausted=true while ANY direction has status 'unexplored'
         - Carry forward ALL previous directions — do NOT drop any
     """.trimIndent()
 
@@ -345,14 +390,27 @@ class FullPageNavigationAgentGenAiImpl(
     )
 
     @Serializable
+    private data class DimensionAssessmentResponse(
+        val satisfied: Boolean = false,
+        val rationale: String = ""
+    )
+
+    @Serializable
+    private data class ContinuationAssessmentResponse(
+        val answerFound: DimensionAssessmentResponse = DimensionAssessmentResponse(),
+        val pageRelevant: DimensionAssessmentResponse = DimensionAssessmentResponse(),
+        val unexploredPotential: DimensionAssessmentResponse = DimensionAssessmentResponse(),
+        val recentProgress: DimensionAssessmentResponse = DimensionAssessmentResponse()
+    )
+
+    @Serializable
     private data class NavigateResponse(
         val pageState: List<String>? = null,
         val observation: String? = null,
         val explorationDirections: List<DirectionResponse>? = null,
         val currentDirection: String? = null,
         val queryKeywords: List<String>? = null,
-        val searchComplete: Boolean? = null,
-        val allDirectionsExhausted: Boolean? = null,
+        val continuationAssessment: ContinuationAssessmentResponse? = null,
         val actions: List<ActionResponse>? = null
     )
 
@@ -413,10 +471,17 @@ class FullPageNavigationAgentGenAiImpl(
                 }
             )
         }
-        val allExhausted = response.allDirectionsExhausted ?: false
-        // Only high/medium priority directions block exhaustion; unexplored LOW directions never do.
-        val unexploredCount = directions.count { it.status == "unexplored" && it.priority != "low" }
-        val searchComplete = response.searchComplete ?: false
+
+        val assessmentResp = response.continuationAssessment ?: ContinuationAssessmentResponse()
+        val continuationAssessment = ContinuationAssessment(
+            answerFound = DimensionAssessment(assessmentResp.answerFound.satisfied, assessmentResp.answerFound.rationale),
+            pageRelevant = DimensionAssessment(assessmentResp.pageRelevant.satisfied, assessmentResp.pageRelevant.rationale),
+            unexploredPotential = DimensionAssessment(assessmentResp.unexploredPotential.satisfied, assessmentResp.unexploredPotential.rationale),
+            recentProgress = DimensionAssessment(assessmentResp.recentProgress.satisfied, assessmentResp.recentProgress.rationale)
+        )
+
+        val searchComplete = continuationAssessment.shouldStop()
+        val allDirectionsExhausted = !continuationAssessment.unexploredPotential.satisfied
 
         val actions = (response.actions ?: emptyList()).mapNotNull { action ->
             try {
@@ -428,11 +493,14 @@ class FullPageNavigationAgentGenAiImpl(
         }
 
         logger.debug(
-            "Navigate: directions={} (unexplored={}) | searchComplete={} | allExhausted={} | currentDir={} | actions=[{}] | pageState={}",
-            directions.size, unexploredCount, searchComplete, allExhausted,
+            "Navigate: directions={} | searchComplete={} (answer={}, relevant={}, potential={}, progress={}) | currentDir={} | actions=[{}]",
+            directions.size, searchComplete,
+            continuationAssessment.answerFound.satisfied,
+            continuationAssessment.pageRelevant.satisfied,
+            continuationAssessment.unexploredPotential.satisfied,
+            continuationAssessment.recentProgress.satisfied,
             response.currentDirection?.take(60),
-            actions.joinToString(", ") { it::class.simpleName ?: "?" },
-            pageState
+            actions.joinToString(", ") { it::class.simpleName ?: "?" }
         )
 
         return FullPageNavigationOutput(
@@ -441,9 +509,10 @@ class FullPageNavigationAgentGenAiImpl(
             observation = response.observation,
             explorationDirections = directions,
             currentDirection = response.currentDirection,
-            searchComplete = searchComplete || (allExhausted && unexploredCount == 0),
-            allDirectionsExhausted = allExhausted && unexploredCount == 0,
+            searchComplete = searchComplete,
+            allDirectionsExhausted = allDirectionsExhausted,
             queryKeywords = (response.queryKeywords ?: emptyList()).map { it.trim() }.filter { it.isNotBlank() },
+            continuationAssessment = continuationAssessment,
             tokenUsage = tokenUsage
         )
     }
@@ -486,11 +555,21 @@ class FullPageNavigationAgentGenAiImpl(
 
         if (input.extractedContent.isNotEmpty()) {
             appendLine()
-            appendLine("EXTRACTED KNOWLEDGE (already captured — basis for searchComplete decision):")
+            appendLine("EXTRACTED KNOWLEDGE (already captured — basis for answerFound assessment):")
             input.extractedContent.forEach { ec ->
                 appendLine("  [${ec.description}]: ${ec.text.take(200)}")
             }
         }
+
+        if (input.progressLog.isNotEmpty()) {
+            appendLine()
+            appendLine("PROGRESS LOG (host-measured, most recent last):")
+            input.progressLog.forEach { p ->
+                appendLine("  - iter ${p.iteration}: ${p.newExtractions} new extraction(s), ${p.newKeywordReveals} keyword reveal(s)")
+            }
+        }
+
+        renderExploredHistory(input.exploredActions)
 
         if (input.previousActions.isNotEmpty()) {
             appendLine()
@@ -536,6 +615,28 @@ class FullPageNavigationAgentGenAiImpl(
                 )
             }
             else -> throw IllegalArgumentException("Unknown action type: ${resp.action}")
+        }
+    }
+
+    private fun StringBuilder.renderExploredHistory(exploredActions: List<ExploredAction>) {
+        if (exploredActions.isEmpty()) return
+        val grouped = exploredActions.groupBy { it.direction ?: "(no direction)" }
+        appendLine()
+        appendLine("PREVIOUSLY EXPLORED (prior directions — do NOT re-click these targets):")
+        for ((direction, actions) in grouped) {
+            val targets = actions.joinToString(", ") { a ->
+                val outcomeTag = when {
+                    a.outcome == null -> ""
+                    a.outcome.contains("off-page", ignoreCase = true) ||
+                        a.outcome.contains("OFF-PAGE", ignoreCase = true) -> " (off-page)"
+                    a.outcome.contains("no visible change", ignoreCase = true) ||
+                        a.outcome.contains("NO visible change", ignoreCase = true) -> " (no change)"
+                    a.outcome.contains("changed", ignoreCase = true) -> " (page changed)"
+                    else -> ""
+                }
+                "${a.target}$outcomeTag"
+            }
+            appendLine("  - \"${direction.take(60)}\": $targets")
         }
     }
 

@@ -112,6 +112,28 @@ enum class NavigationMode {
     VIEWPORT
 }
 
+data class ContinuationAssessment(
+    val answerFound: DimensionAssessment,
+    val pageRelevant: DimensionAssessment,
+    val unexploredPotential: DimensionAssessment,
+    val recentProgress: DimensionAssessment
+) {
+    fun shouldStop(): Boolean =
+        answerFound.satisfied || !pageRelevant.satisfied || !unexploredPotential.satisfied
+}
+
+data class IterationProgress(
+    val iteration: Int,
+    val newExtractions: Int,
+    val newKeywordReveals: Int
+)
+
+data class ExploredAction(
+    val target: String,
+    val direction: String?,
+    val outcome: String?
+)
+
 data class FullPageNavigationInput(
     val fullPageScreenshot: IBrowserPage.Screenshot,
     val query: String,
@@ -124,7 +146,9 @@ data class FullPageNavigationInput(
     val extractedContent: List<ExtractedContent> = emptyList(),
     val keywordScan: List<KeywordScanEntry> = emptyList(),
     val currentIteration: Int = 1,
-    val maxIterations: Int = 12
+    val maxIterations: Int = 12,
+    val progressLog: List<IterationProgress> = emptyList(),
+    val exploredActions: List<ExploredAction> = emptyList()
 ) : IAgent.IAgentInput
 
 data class FullPageNavigationOutput(
@@ -136,6 +160,7 @@ data class FullPageNavigationOutput(
     val searchComplete: Boolean,
     val allDirectionsExhausted: Boolean,
     val queryKeywords: List<String> = emptyList(),
+    val continuationAssessment: ContinuationAssessment? = null,
     val tokenUsage: TokenUsageMetrics
 ) : IAgent.IAgentOutput
 
