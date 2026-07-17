@@ -53,6 +53,24 @@ data class CapturedImage(
     val bytesHash: ByteArray
 )
 
+data class IterationTimingBreakdown(
+    val iteration: Int,
+    val fetchMs: Long,
+    val annotateMs: Long,
+    val keywordScanMs: Long,
+    val navAgentMs: Long,
+    val extractionPipelineMs: Long,
+    val actionsMs: Long,
+    val totalMs: Long
+)
+
+data class SearchTimingBreakdown(
+    val initialLoadMs: Long,
+    val cookieDismissMs: Long,
+    val iterations: List<IterationTimingBreakdown>,
+    val totalMs: Long
+)
+
 data class AgenticPageSearchResult(
     val answer: String?,
     val evidence: String?,
@@ -62,7 +80,8 @@ data class AgenticPageSearchResult(
     val success: Boolean,
     val totalTokenUsage: TokenUsageMetrics,
     val discoveredUrls: List<String> = emptyList(),
-    val capturedImages: List<CapturedImage> = emptyList()
+    val capturedImages: List<CapturedImage> = emptyList(),
+    val timingBreakdown: SearchTimingBreakdown? = null
 )
 
 interface IAgenticWebpageSearchService {
@@ -206,7 +225,8 @@ class AgenticWebpageSearchService(
         var queryKeywords: List<String> = emptyList(),
         var keywordsRefined: Boolean = false,
         var keywordScan: List<KeywordScanEntry> = emptyList(),
-        var lastScannedKeywords: List<String> = emptyList()
+        var lastScannedKeywords: List<String> = emptyList(),
+        val iterationTimings: MutableList<IterationTimingBreakdown> = mutableListOf()
     )
 
     // --- Public API ---
@@ -245,9 +265,16 @@ class AgenticWebpageSearchService(
     ): AgenticPageSearchResult {
         logger.info("Starting FULL-PAGE agentic search for query='{}' on url={}", query, url)
 
-        dismissCookieBanner(page, url)
+        val clock = TimeSource.Monotonic
+        val searchStart = clock.markNow()
 
+        val cookieStart = clock.markNow()
+        dismissCookieBanner(page, url)
+        val cookieDismissMs = (clock.markNow() - cookieStart).inWholeMilliseconds
+
+        val loadStart = clock.markNow()
         val actualViewportHeight = page.captureDomSnapshot().viewportHeight
+        val initialLoadMs = (clock.markNow() - loadStart).inWholeMilliseconds
 
         val state = NavigationLoopState(
             url = url,
@@ -256,7 +283,6 @@ class AgenticWebpageSearchService(
             onLinkDiscovered = onLinkDiscovered,
             queryKeywords = deriveInitialKeywords(query)
         )
-        val clock = TimeSource.Monotonic
         var cachedScreenshot: IBrowserPage.Screenshot? = null
         var iteration = 0
 
@@ -269,7 +295,9 @@ class AgenticWebpageSearchService(
             val setup = prepareIteration(page, state, cachedScreenshot, iteration)
             cachedScreenshot = null
 
+            val kwScanStart = clock.markNow()
             refreshKeywordScan(page, state, pageChangedSinceLastScan = !setup.screenshotWasCached)
+            val keywordScanMs = (clock.markNow() - kwScanStart).inWholeMilliseconds
 
             val directionActions = state.actionsPerformed.subList(
                 state.directionStartIndex, state.actionsPerformed.size
@@ -289,14 +317,16 @@ class AgenticWebpageSearchService(
                 maxIterations = MAX_ITERATIONS
             )
 
-            val extractionFlow: Flow<ExtractionPipelineResult?> = flow {
+            val extractionFlow: Flow<Pair<ExtractionPipelineResult?, Long>> = flow {
+                val extStart = clock.markNow()
                 if (!setup.screenshotWasCached) {
                     try {
-                        emit(runExtractionPipeline(
+                        val result = runExtractionPipeline(
                             setup.screenshot, query, state.extractedRegionContent.toList(),
                             setup.imgWidth, setup.imgHeight, page, setup.navigationMode,
                             actualViewportHeight, sessionId, iteration, url
-                        ))
+                        )
+                        emit(result to (clock.markNow() - extStart).inWholeMilliseconds)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -309,10 +339,10 @@ class AgenticWebpageSearchService(
                             extractionObservation = null,
                             extractedTextHashes = emptySet(),
                             capturedHashes = emptySet()
-                        ))
+                        ) to (clock.markNow() - extStart).inWholeMilliseconds)
                     }
                 } else {
-                    emit(null)
+                    emit(null to 0L)
                 }
             }
 
@@ -323,9 +353,10 @@ class AgenticWebpageSearchService(
                 emit(navOutput to navAgentMs)
             }
 
-            val (extractionResult, navPair) = extractionFlow.zip(navigationFlow) { extraction, nav ->
+            val (extractionPair, navPair) = extractionFlow.zip(navigationFlow) { extraction, nav ->
                 extraction to nav
             }.first()
+            val (extractionResult, extractionPipelineMs) = extractionPair
             val (navOutput, navAgentMs) = navPair
 
             if (extractionResult != null) {
@@ -374,6 +405,11 @@ class AgenticWebpageSearchService(
 
             if (navOutput.searchComplete) {
                 val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
+                state.iterationTimings.add(IterationTimingBreakdown(
+                    iteration = iteration, fetchMs = setup.fetchMs, annotateMs = setup.annotateMs,
+                    keywordScanMs = keywordScanMs, navAgentMs = navAgentMs,
+                    extractionPipelineMs = extractionPipelineMs, actionsMs = 0, totalMs = iterMs
+                ))
                 logger.info(
                     "Agent declares searchComplete at iter={} ({}ms) — stopping search",
                     iteration, iterMs
@@ -381,14 +417,21 @@ class AgenticWebpageSearchService(
                 saveIterationMetadata(
                     sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
                 )
-                return handleSearchComplete(state, iteration)
+                val totalMs = (clock.markNow() - searchStart).inWholeMilliseconds
+                val timing = SearchTimingBreakdown(initialLoadMs, cookieDismissMs, state.iterationTimings.toList(), totalMs)
+                return handleSearchComplete(state, iteration, timing)
             }
 
             if (resolvedActions.isEmpty()) {
                 val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
+                state.iterationTimings.add(IterationTimingBreakdown(
+                    iteration = iteration, fetchMs = setup.fetchMs, annotateMs = setup.annotateMs,
+                    keywordScanMs = keywordScanMs, navAgentMs = navAgentMs,
+                    extractionPipelineMs = extractionPipelineMs, actionsMs = 0, totalMs = iterMs
+                ))
                 logger.info(
-                    "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms (no actions)",
-                    iteration, iterMs, setup.fetchMs, setup.annotateMs, navAgentMs
+                    "TIMING iter={} total={}ms | fetch={}ms annotate={}ms kwScan={}ms nav={}ms extraction={}ms (no actions)",
+                    iteration, iterMs, setup.fetchMs, setup.annotateMs, keywordScanMs, navAgentMs, extractionPipelineMs
                 )
                 saveIterationMetadata(
                     sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
@@ -449,9 +492,14 @@ class AgenticWebpageSearchService(
             }
             val actionsMs = (clock.markNow() - postNavStart).inWholeMilliseconds
             val iterMs = (clock.markNow() - iterStart).inWholeMilliseconds
+            state.iterationTimings.add(IterationTimingBreakdown(
+                iteration = iteration, fetchMs = setup.fetchMs, annotateMs = setup.annotateMs,
+                keywordScanMs = keywordScanMs, navAgentMs = navAgentMs,
+                extractionPipelineMs = extractionPipelineMs, actionsMs = actionsMs, totalMs = iterMs
+            ))
             logger.info(
-                "TIMING iter={} total={}ms | fetch={}ms annotate={}ms nav={}ms actions={}ms",
-                iteration, iterMs, setup.fetchMs, setup.annotateMs, navAgentMs, actionsMs
+                "TIMING iter={} total={}ms | fetch={}ms annotate={}ms kwScan={}ms nav={}ms extraction={}ms actions={}ms",
+                iteration, iterMs, setup.fetchMs, setup.annotateMs, keywordScanMs, navAgentMs, extractionPipelineMs, actionsMs
             )
             saveIterationMetadata(
                 sessionId, url, iteration, navOutput, setup.screenshot.mimeType, iterMs
@@ -462,7 +510,9 @@ class AgenticWebpageSearchService(
             }
         }
 
-        return buildFinalResult(state)
+        val totalMs = (clock.markNow() - searchStart).inWholeMilliseconds
+        val timing = SearchTimingBreakdown(initialLoadMs, cookieDismissMs, state.iterationTimings.toList(), totalMs)
+        return buildFinalResult(state, timing)
     }
 
     /**
@@ -601,13 +651,13 @@ class AgenticWebpageSearchService(
         }
         state.previousDomSnapshot = currentDomSnapshot
 
-        val annotateMs = (clock.markNow() - annotateStart).inWholeMilliseconds
-
         val (labeledScreenshot, elementIndex) = if (interactiveElements.isNotEmpty()) {
             annotateScreenshot(screenshot, interactiveElements)
         } else {
             Pair(screenshot, emptyMap())
         }
+
+        val annotateMs = (clock.markNow() - annotateStart).inWholeMilliseconds
 
         fireAndForget {
             iterationScreenshotStorage.saveAnnotatedScreenshot(
@@ -1499,7 +1549,8 @@ class AgenticWebpageSearchService(
 
     private fun handleSearchComplete(
         state: NavigationLoopState,
-        iteration: Int
+        iteration: Int,
+        timing: SearchTimingBreakdown? = null
     ): AgenticPageSearchResult {
         val answer = state.extractedRegionContent
             .joinToString("\n\n") { "[${it.description}]${if (it.isTable) " (table)" else ""}:\n${it.text}" }
@@ -1520,7 +1571,8 @@ class AgenticWebpageSearchService(
             success = answer != null,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
-            capturedImages = state.capturedImages.toList()
+            capturedImages = state.capturedImages.toList(),
+            timingBreakdown = timing
         )
     }
 
@@ -1561,7 +1613,10 @@ class AgenticWebpageSearchService(
 
     // --- Result building ---
 
-    private fun buildFinalResult(state: NavigationLoopState): AgenticPageSearchResult {
+    private fun buildFinalResult(
+        state: NavigationLoopState,
+        timing: SearchTimingBreakdown? = null
+    ): AgenticPageSearchResult {
         val observations = state.extractedRegionContent.map { "[${it.description}] ${it.text}" }
         val answer = if (state.extractedRegionContent.isNotEmpty()) {
             observations.joinToString("; ")
@@ -1581,7 +1636,8 @@ class AgenticWebpageSearchService(
             success = answer != null,
             totalTokenUsage = state.aggregatedTokenUsage,
             discoveredUrls = state.discoveredUrls,
-            capturedImages = state.capturedImages.toList()
+            capturedImages = state.capturedImages.toList(),
+            timingBreakdown = timing
         )
     }
 
