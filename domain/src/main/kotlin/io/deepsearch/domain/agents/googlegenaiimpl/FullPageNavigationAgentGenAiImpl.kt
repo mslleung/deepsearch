@@ -3,6 +3,8 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
+import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import com.google.genai.types.Schema
 
 import io.deepsearch.domain.agents.ActionWithOutcome
@@ -417,7 +419,7 @@ class FullPageNavigationAgentGenAiImpl(
     // ── generate() ──────────────────────────────────────────────────────
 
     override suspend fun generate(input: FullPageNavigationInput): FullPageNavigationOutput {
-        val modelId = ModelIds.GEMINI_3_5_FLASH.modelId
+        val modelId = ModelIds.GEMINI_3_6_FLASH.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val prompt = buildNavigatePrompt(input)
@@ -441,7 +443,11 @@ class FullPageNavigationAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0f)
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
+                                .build()
+                        )
                         .responseSchema(navigateSchema)
                         .responseMimeType("application/json")
                         .systemInstruction(Content.fromParts(Part.fromText(sysInstruction)))

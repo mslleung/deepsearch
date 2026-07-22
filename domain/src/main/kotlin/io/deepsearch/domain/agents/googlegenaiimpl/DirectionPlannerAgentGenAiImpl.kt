@@ -3,6 +3,8 @@ package io.deepsearch.domain.agents.googlegenaiimpl
 import com.google.genai.types.Content
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
+import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import com.google.genai.types.Schema
 
 import io.deepsearch.domain.agents.ActionWithOutcome
@@ -151,7 +153,7 @@ class DirectionPlannerAgentGenAiImpl(
     )
 
     override suspend fun generate(input: DirectionPlannerInput): DirectionPlannerOutput {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val prompt = buildPrompt(input)
@@ -167,7 +169,11 @@ class DirectionPlannerAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(0.5f)
+                        .thinkingConfig(
+                            ThinkingConfig.builder()
+                                .thinkingLevel(ThinkingLevel.Known.MINIMAL)
+                                .build()
+                        )
                         .responseSchema(plannerSchema)
                         .responseMimeType("application/json")
                         .systemInstruction(Content.fromParts(Part.fromText(systemPrompt)))

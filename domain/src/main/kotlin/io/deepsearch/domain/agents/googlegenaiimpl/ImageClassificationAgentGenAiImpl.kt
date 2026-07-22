@@ -132,7 +132,7 @@ class ImageClassificationAgentGenAiImpl(
             input.images.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.images.isEmpty()) {
@@ -173,7 +173,7 @@ class ImageClassificationAgentGenAiImpl(
             // Combine results in order
             val allClassifications = results.map { it.first }
             val aggregatedTokenUsage =
-                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)) { acc, (_, tokenUsage) ->
+                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_5_FLASH_LITE.modelId)) { acc, (_, tokenUsage) ->
                     TokenUsageMetrics(
                         modelName = acc.modelName,
                         promptTokens = acc.promptTokens + tokenUsage.promptTokens,
@@ -196,7 +196,7 @@ class ImageClassificationAgentGenAiImpl(
         image: ImageClassificationInput.ImageItem,
         imageIndex: Int
     ): Pair<ImageClassificationOutput.ImageClassification, TokenUsageMetrics> {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Check if image is too large
@@ -225,7 +225,6 @@ class ImageClassificationAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(*(contentParts.toTypedArray()))),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
@@ -302,12 +301,11 @@ class ImageClassificationAgentGenAiImpl(
     ): BatchContentRequest {
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
+            modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId,
             systemInstruction = systemInstruction,
             userPrompt = "Classify this image and provide a comprehensive description",
             imageData = Base64.encode(image.bytes),
-            imageMimeType = image.mimeType.value,
-            temperature = 1.0f
+            imageMimeType = image.mimeType.value
         ).withSchema(outputSchema) // Use same schema as interactive mode
     }
 

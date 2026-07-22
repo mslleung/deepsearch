@@ -104,7 +104,7 @@ class TextToCypherAgentGenAiImpl(
     override suspend fun generate(input: TextToCypherInput): TextToCypherOutput {
         logger.debug("Generating Cypher for query: '{}', domain: {}", input.query, input.domain)
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
         val systemInstruction = buildSystemInstruction(input.domain)
@@ -125,7 +125,6 @@ class TextToCypherAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(

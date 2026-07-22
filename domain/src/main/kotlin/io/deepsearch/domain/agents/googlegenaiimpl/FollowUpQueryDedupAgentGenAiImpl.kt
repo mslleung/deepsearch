@@ -93,7 +93,7 @@ class FollowUpQueryDedupAgentGenAiImpl(
             logger.debug("No candidate queries to deduplicate")
             return FollowUpQueryDedupOutput(
                 dedupedQueries = emptyList(),
-                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)
+                tokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_5_FLASH_LITE.modelId)
             )
         }
 
@@ -103,7 +103,7 @@ class FollowUpQueryDedupAgentGenAiImpl(
             input.previouslySearchedQueries.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val userPrompt = buildString {
@@ -131,7 +131,6 @@ class FollowUpQueryDedupAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(

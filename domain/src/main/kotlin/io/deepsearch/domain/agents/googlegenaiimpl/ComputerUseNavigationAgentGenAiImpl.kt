@@ -9,6 +9,8 @@ import com.google.genai.types.FunctionResponseBlob
 import com.google.genai.types.FunctionResponsePart
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
+import com.google.genai.types.ThinkingConfig
+import com.google.genai.types.ThinkingLevel
 import com.google.genai.types.Tool
 import io.deepsearch.domain.agents.ComputerUseResponse
 import io.deepsearch.domain.agents.CuFunctionCall
@@ -41,7 +43,11 @@ class ComputerUseNavigationAgentGenAiImpl(
                 )
                 .build()
         )
-        .temperature(1.0f)
+        .thinkingConfig(
+            ThinkingConfig.builder()
+                .thinkingLevel(ThinkingLevel.Known.MEDIUM)
+                .build()
+        )
         .maxOutputTokens(8192)
         .systemInstruction(
             Content.fromParts(
@@ -385,7 +391,7 @@ class ComputerUseNavigationAgentGenAiImpl(
     }
 
     companion object {
-        val MODEL = ModelIds.GEMINI_3_5_FLASH
+        val MODEL = ModelIds.GEMINI_3_6_FLASH
 
         private const val KEEP_RECENT_SCREENSHOTS = 2
         private const val JPEG_COMPRESSION_QUALITY = 0.25f

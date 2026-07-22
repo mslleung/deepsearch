@@ -52,11 +52,10 @@ class LlmClientIntegrationTest : IsolatedKoinTest() {
 
     @Test
     fun `GenAI client returns structured JSON via Gemini`() = runTest(testCoroutineDispatcher) {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         val config = GenerateContentConfig.builder()
             .responseSchema(capitalSchema)
             .responseMimeType("application/json")
-            .temperature(0.0f)
             .systemInstruction(Content.fromParts(Part.fromText("You answer geography questions.")))
             .build()
 
@@ -79,7 +78,6 @@ class LlmClientIntegrationTest : IsolatedKoinTest() {
         val config = GenerateContentConfig.builder()
             .responseSchema(capitalSchema)
             .responseMimeType("application/json")
-            .temperature(0.0f)
             .systemInstruction(Content.fromParts(Part.fromText("You answer geography questions. Return valid JSON.")))
             .build()
 
@@ -99,12 +97,11 @@ class LlmClientIntegrationTest : IsolatedKoinTest() {
     @Test
     fun `RoutingLlmClient routes Gemini model to GenAI backend`() = runTest(testCoroutineDispatcher) {
         val config = GenerateContentConfig.builder()
-            .temperature(0.0f)
             .systemInstruction(Content.fromParts(Part.fromText("Be concise.")))
             .build()
 
         val result = llmClient.generateContent(
-            ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
+            ModelIds.GEMINI_3_5_FLASH_LITE.modelId,
             listOf(Content.fromParts(Part.fromText("Say hello in one word."))),
             config
         )
@@ -116,7 +113,6 @@ class LlmClientIntegrationTest : IsolatedKoinTest() {
     @Test
     fun `RoutingLlmClient routes Gemma model to OpenAI backend`() = runTest(testCoroutineDispatcher) {
         val config = GenerateContentConfig.builder()
-            .temperature(0.0f)
             .systemInstruction(Content.fromParts(Part.fromText("Be concise.")))
             .build()
 

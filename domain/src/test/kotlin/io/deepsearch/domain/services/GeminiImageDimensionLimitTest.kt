@@ -6,6 +6,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
+import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.config.domainBenchmarkTestModule
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import kotlinx.coroutines.runBlocking
@@ -233,7 +234,7 @@ class GeminiImageDimensionLimitTest : IsolatedKoinTest() {
      * Returns the response text and token count.
      */
     private fun callGeminiWithImage(imageBytes: ByteArray): Pair<String, Int> {
-        val modelId = "gemini-2.5-flash-lite-preview-09-2025"
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
 
         val result = client.models.generateContent(
             modelId,
@@ -244,7 +245,6 @@ class GeminiImageDimensionLimitTest : IsolatedKoinTest() {
                 )
             ),
             GenerateContentConfig.builder()
-                .temperature(0F)
                 .thinkingConfig(
                     ThinkingConfig.builder()
                         .thinkingLevel(ThinkingLevel.Known.MINIMAL)

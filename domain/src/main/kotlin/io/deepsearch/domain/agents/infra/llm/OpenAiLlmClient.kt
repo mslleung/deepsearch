@@ -140,7 +140,6 @@ class OpenAiLlmClient(
             }
         }
 
-        config.temperature().ifPresent { builder.temperature(it.toDouble()) }
         config.maxOutputTokens().ifPresent { builder.maxCompletionTokens(it.toLong()) }
 
         if (config.responseMimeType().orElse(null) == "application/json") {

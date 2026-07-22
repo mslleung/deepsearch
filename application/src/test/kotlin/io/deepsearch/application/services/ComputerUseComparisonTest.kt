@@ -70,7 +70,7 @@ class ComputerUseComparisonTest : IsolatedKoinTest() {
         println("=".repeat(70))
 
         // --- DeepSearch ---
-        println("\n--- DeepSearch (multi-agent, ${ModelIds.GEMINI_3_1_FLASH_LITE.modelId}) ---")
+        println("\n--- DeepSearch (multi-agent, ${ModelIds.GEMINI_3_5_FLASH_LITE.modelId}) ---")
         val dsStart = System.currentTimeMillis()
         val dsResult = try {
             agenticSearchService.searchWithinPage(
@@ -98,7 +98,7 @@ class ComputerUseComparisonTest : IsolatedKoinTest() {
         println("  Answer: ${dsAnswer?.take(200) ?: "NULL"}")
 
         // --- Computer Use ---
-        println("\n--- Computer Use (single-model, ${ModelIds.GEMINI_3_5_FLASH.modelId}) ---")
+        println("\n--- Computer Use (single-model, ${ModelIds.GEMINI_3_6_FLASH.modelId}) ---")
         val cuStart = System.currentTimeMillis()
         val cuResult = try {
             computerUseSearchService.searchWithinPage(
@@ -319,8 +319,8 @@ class ComputerUseComparisonTest : IsolatedKoinTest() {
         )
         println(
             "%-30s | %-37s | %-37s".format(
-                "", "DeepSearch (${ModelIds.GEMINI_3_1_FLASH_LITE.modelId})",
-                "Computer Use (${ModelIds.GEMINI_3_5_FLASH.modelId})"
+                "", "DeepSearch (${ModelIds.GEMINI_3_5_FLASH_LITE.modelId})",
+                "Computer Use (${ModelIds.GEMINI_3_6_FLASH.modelId})"
             )
         )
         println(thinSep)

@@ -74,7 +74,7 @@ class PopupContainerIdentificationAgentGenAiImpl(
 
     override suspend fun generate(input: PopupContainerIdentificationInput): PopupContainerIdentificationOutput {
         val cleanedHtml = cleanHtml(input.html)
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -88,7 +88,6 @@ class PopupContainerIdentificationAgentGenAiImpl(
                         )
                     ),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(

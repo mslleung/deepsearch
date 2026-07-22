@@ -39,8 +39,8 @@ class Gemma4ExperimentTest : IsolatedKoinTest() {
     private val browserPool by inject<IBrowserPool>()
 
     private val models = listOf(
-        ModelIds.GEMINI_3_5_FLASH,
-        ModelIds.GEMINI_3_1_FLASH_LITE,
+        ModelIds.GEMINI_3_6_FLASH,
+        ModelIds.GEMINI_3_5_FLASH_LITE,
         ModelIds.GEMMA_4_26B_A4B,
     )
 
@@ -367,7 +367,6 @@ class Gemma4ExperimentTest : IsolatedKoinTest() {
                 Part.fromText(userPrompt),
             ))
             val config = GenerateContentConfig.builder()
-                .temperature(0.5F)
                 .responseSchema(responseSchema)
                 .responseMimeType("application/json")
                 .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
@@ -393,7 +392,6 @@ class Gemma4ExperimentTest : IsolatedKoinTest() {
                 Part.fromText(userPrompt),
             ))
             val config = GenerateContentConfig.builder()
-                .temperature(0F)
                 .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                 .build()
 
@@ -413,7 +411,6 @@ class Gemma4ExperimentTest : IsolatedKoinTest() {
         return try {
             val contents = listOf(Content.fromParts(Part.fromText(userPrompt)))
             val config = GenerateContentConfig.builder()
-                .temperature(0F)
                 .responseSchema(responseSchema)
                 .responseMimeType("application/json")
                 .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
@@ -434,7 +431,6 @@ class Gemma4ExperimentTest : IsolatedKoinTest() {
         return try {
             val contents = listOf(Content.fromParts(Part.fromText(userPrompt)))
             val config = GenerateContentConfig.builder()
-                .temperature(0F)
                 .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
                 .build()
 

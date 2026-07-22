@@ -66,7 +66,7 @@ class VisualContentExtractionAgentGenAiImpl(
     """.trimIndent()
 
     override suspend fun generate(input: VisualContentExtractionInput): VisualContentExtractionOutput {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val prompt = buildString {
@@ -87,7 +87,6 @@ class VisualContentExtractionAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0f)
                         .responseSchema(responseSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())

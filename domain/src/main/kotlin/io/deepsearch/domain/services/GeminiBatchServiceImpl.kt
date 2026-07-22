@@ -159,7 +159,6 @@ class GeminiBatchServiceImpl(
                 
                 // Add generation config
                 putJsonObject("generation_config") {
-                    put("temperature", request.temperature.toDouble())
                     // Note: Response schema is not directly serializable, 
                     // but for file-based batches we may need to handle this differently
                     if (request.schema != null) {
@@ -765,7 +764,6 @@ class GeminiBatchServiceImpl(
 
         // Build generate content config
         val configBuilder = GenerateContentConfig.builder()
-            .temperature(request.temperature)
             .thinkingConfig(
                 ThinkingConfig.builder()
                     .thinkingLevel(ThinkingLevel.Known.MINIMAL)

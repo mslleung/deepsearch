@@ -256,7 +256,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             input.previouslySearchedQueries.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
@@ -292,7 +292,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
@@ -369,7 +368,7 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
             input.previouslySearchedQueries.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
 
         if (input.evaluatedSources.isEmpty() || input.evaluatedSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No facts provided, emitting default message")
@@ -400,7 +399,6 @@ class StreamingAnswerSynthesisAgentGenAiImpl(
         val userPrompt = buildUserPrompt(input, globalImages)
 
         val config = GenerateContentConfig.builder()
-            .temperature(1.0F)
             .responseSchema(outputSchema)
             .responseMimeType("application/json")
             .thinkingConfig(

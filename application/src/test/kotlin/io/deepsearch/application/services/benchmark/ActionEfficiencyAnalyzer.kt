@@ -91,7 +91,7 @@ class ActionEfficiencyAnalyzer(
             If the answer fails, explain exactly what information is missing or incorrect.
         """.trimIndent()
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
 
         return try {
             val response = retryLlmCall<JudgeResponse>("BenchmarkJudge") {
@@ -99,7 +99,6 @@ class ActionEfficiencyAnalyzer(
                     modelId,
                     listOf(Content.fromParts(Part.fromText(prompt))),
                     GenerateContentConfig.builder()
-                        .temperature(0.0F)
                         .responseSchema(judgeSchema)
                         .responseMimeType("application/json")
                         .build()

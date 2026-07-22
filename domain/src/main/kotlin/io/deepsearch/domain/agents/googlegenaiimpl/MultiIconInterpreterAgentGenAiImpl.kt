@@ -115,7 +115,7 @@ class MultiIconInterpreterAgentGenAiImpl(
     override suspend fun generate(input: MultiIconInterpreterInput): MultiIconInterpreterOutput {
         logger.debug("Interpreting {} icons (will process in batches of {})", input.icons.size, BATCH_SIZE)
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.icons.isEmpty()) {
@@ -153,7 +153,7 @@ class MultiIconInterpreterAgentGenAiImpl(
 
             // Combine results from all batches in order
             val allInterpretations = batchResults.flatMap { it.first.interpretations }
-            val aggregatedTokenUsage = batchResults.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)) { acc, (_, tokenUsage) ->
+            val aggregatedTokenUsage = batchResults.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_5_FLASH_LITE.modelId)) { acc, (_, tokenUsage) ->
                 TokenUsageMetrics(
                     modelName = acc.modelName,
                     promptTokens = acc.promptTokens + tokenUsage.promptTokens,
@@ -175,7 +175,7 @@ class MultiIconInterpreterAgentGenAiImpl(
     private suspend fun processBatch(icons: List<MultiIconInterpreterInput.IconItem>): Pair<MultiIconInterpreterOutput, TokenUsageMetrics> {
         logger.debug("Processing batch of {} icons", icons.size)
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Pre-filter plain color icons to reduce LLM usage
@@ -217,7 +217,6 @@ class MultiIconInterpreterAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(*(contentParts.toTypedArray()))),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
@@ -316,12 +315,11 @@ class MultiIconInterpreterAgentGenAiImpl(
         // For multiple icons, they would need to be sent as separate requests
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
+            modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId,
             systemInstruction = systemInstruction,
             userPrompt = userPrompt,
             imageData = if (icons.size == 1) Base64.encode(icons[0].bytes) else null,
-            imageMimeType = if (icons.size == 1) icons[0].mimeType.value else null,
-            temperature = 1.0f
+            imageMimeType = if (icons.size == 1) icons[0].mimeType.value else null
         ).withSchema(outputSchema) // Use same schema as interactive mode
     }
 

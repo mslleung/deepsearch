@@ -6,6 +6,7 @@ import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.ThinkingConfig
 import com.google.genai.types.ThinkingLevel
+import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.browser.IBrowserPool
 import io.deepsearch.domain.config.domainTestModule
 import io.deepsearch.domain.services.IImageDimensionService
@@ -130,7 +131,7 @@ class SegmentationApiExperimentTest : IsolatedKoinTest() {
             
             val startTime = System.currentTimeMillis()
             val response = client.models.generateContent(
-                "gemini-2.5-flash-lite-preview-09-2025",
+                ModelIds.GEMINI_3_5_FLASH_LITE.modelId,
                 contents,
                 config
             )

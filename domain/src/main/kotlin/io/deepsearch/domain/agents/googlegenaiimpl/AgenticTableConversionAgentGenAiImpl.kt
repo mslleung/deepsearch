@@ -146,7 +146,7 @@ class AgenticTableConversionAgentGenAiImpl(
             }))
         }
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -159,7 +159,6 @@ class AgenticTableConversionAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(*contentParts.toTypedArray())),
                     GenerateContentConfig.builder()
-                        .temperature(1.0f)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())

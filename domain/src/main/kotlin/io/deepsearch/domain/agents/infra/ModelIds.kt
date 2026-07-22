@@ -30,8 +30,12 @@ enum class ModelIds(
     val outputPricePerMillion: Double,
     val backend: LlmBackend = LlmBackend.GENAI
 ) {
+    // Gemini 3.6 models
+    GEMINI_3_6_FLASH("gemini-3.6-flash", 1.50, 7.50),
+
     // Gemini 3.5 models
     GEMINI_3_5_FLASH("gemini-3.5-flash", 1.50, 9.00),
+    GEMINI_3_5_FLASH_LITE("gemini-3.5-flash-lite", 0.30, 2.50),
 
     // Gemini 3.1 models
     GEMINI_3_1_FLASH_LITE("gemini-3.1-flash-lite", 0.25, 1.50),

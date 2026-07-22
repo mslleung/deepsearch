@@ -63,7 +63,7 @@ class GoogleSearchLinkDiscoveryAgentGenAiImpl(
         logger.debug("Google search link discovery: '{}' on site {}", query, url)
 
         val userPrompt = "$query $url"
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -71,7 +71,6 @@ class GoogleSearchLinkDiscoveryAgentGenAiImpl(
                 modelId,
                 userPrompt,
                 GenerateContentConfig.builder()
-                    .temperature(1.0F)
                     .tools(listOf(searchTool))
                     .thinkingConfig(
                         ThinkingConfig.builder()

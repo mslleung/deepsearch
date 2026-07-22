@@ -45,7 +45,7 @@ class UrlContextTool : BaseTool("url_context", "url_context") {
                 Tool.builder().urlContext(UrlContext.builder().build()).build()
             )
             configBuilder.tools(updatedToolsBuilder.build())
-        } else if (model.startsWith("gemini-2")) {
+        } else if (model.startsWith("gemini-2") || model.startsWith("gemini-3")) {
             updatedToolsBuilder.add(Tool.builder().urlContext(UrlContext.builder().build()).build())
             configBuilder.tools(updatedToolsBuilder.build())
         } else {

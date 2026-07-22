@@ -253,7 +253,7 @@ class IncrementalSynthesisAgentGenAiImpl(
             input.currentCitedSourceUrls.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.newSources.isEmpty() || input.newSources.all { it.relevantFacts.isEmpty() }) {
@@ -277,7 +277,6 @@ class IncrementalSynthesisAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
@@ -343,7 +342,7 @@ class IncrementalSynthesisAgentGenAiImpl(
             input.currentAnswer.length
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
 
         if (input.newSources.isEmpty() || input.newSources.all { it.relevantFacts.isEmpty() }) {
             logger.warn("No new facts provided, emitting current answer unchanged")
@@ -362,7 +361,6 @@ class IncrementalSynthesisAgentGenAiImpl(
         val userPrompt = buildUserPrompt(input, globalImages)
 
         val config = GenerateContentConfig.builder()
-            .temperature(1.0F)
             .responseSchema(outputSchema)
             .responseMimeType("application/json")
             .thinkingConfig(

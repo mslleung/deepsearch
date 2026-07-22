@@ -148,7 +148,7 @@ class VisualSegmentationAgentGenAiImpl(
     """.trimIndent()
 
     override suspend fun generate(input: VisualSegmentationInput): VisualSegmentationOutput {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val isGuided = input.regionDescriptions.isNotEmpty()
@@ -163,7 +163,6 @@ class VisualSegmentationAgentGenAiImpl(
                     Part.fromText(prompt)
                 )
                 val config = GenerateContentConfig.builder()
-                    .temperature(1.0f)
                     .responseSchema(segmentationSchema)
                     .responseMimeType("application/json")
                     .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())

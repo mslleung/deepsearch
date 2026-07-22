@@ -56,7 +56,7 @@ class UrlContextExtractionAgentGenAiImpl(
     override suspend fun generate(input: UrlContextExtractionInput): UrlContextExtractionOutput {
         logger.debug("Extracting context from URL: {}", input.url)
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val responseText = withContext(dispatcherProvider.io) {
@@ -65,7 +65,6 @@ class UrlContextExtractionAgentGenAiImpl(
                     modelId,
                     "Please fetch and extract context from this URL: ${input.url}",
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .tools(listOf(urlContextTool))
                         .thinkingConfig(
                             ThinkingConfig.builder()

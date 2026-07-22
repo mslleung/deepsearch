@@ -166,7 +166,7 @@ class PdfSourceEvalAgentGenAiImpl(
             pdfSource.pageCount
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val userPrompt = buildUserPrompt(input)
@@ -177,7 +177,6 @@ class PdfSourceEvalAgentGenAiImpl(
                     modelId,
                     userPrompt,
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(

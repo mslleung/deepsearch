@@ -10,6 +10,7 @@ import io.deepsearch.domain.models.valueobjects.BatchUrlStateId
 import io.deepsearch.domain.models.valueobjects.TableDataId
 import io.deepsearch.domain.repositories.IBatchPeriodicIndexJobRepository
 import io.deepsearch.domain.repositories.IBatchUrlStateRepository
+import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.services.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import org.jsoup.Jsoup
@@ -321,7 +322,7 @@ class TableInterpretationBatchHandler(
         val results = geminiBatchService.fetchBatchResults(batchJobId)
 
         // Record token usage for table interpretation batch
-        val modelId = "gemini-2.5-flash-lite-preview-09-2025" // Table interpretation uses Flash Lite
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         batchTokenUsageRecorder.recordBatchTokenUsage(jobId, "TableInterpretationBatch", modelId, results)
 
         val batchJobIdTyped = BatchJobId(jobId)

@@ -58,7 +58,7 @@ class ComputerUseSearchService(
 
         dismissCookieBanners(page)
 
-        var totalTokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_5_FLASH.modelId)
+        var totalTokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_6_FLASH.modelId)
         val actionsPerformed = mutableListOf<String>()
         var iterations = 0
 

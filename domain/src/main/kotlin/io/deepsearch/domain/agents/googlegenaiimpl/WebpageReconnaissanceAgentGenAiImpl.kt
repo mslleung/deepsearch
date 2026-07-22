@@ -76,7 +76,7 @@ class WebpageReconnaissanceAgentGenAiImpl(
     )
 
     override suspend fun generate(input: WebpageReconnaissanceInput): WebpageReconnaissanceOutput {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val userPrompt = buildString {
@@ -92,7 +92,6 @@ class WebpageReconnaissanceAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(Part.fromText(userPrompt))),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(

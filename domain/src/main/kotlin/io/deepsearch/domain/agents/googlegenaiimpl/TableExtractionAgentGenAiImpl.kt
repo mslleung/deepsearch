@@ -126,7 +126,7 @@ class TableExtractionAgentGenAiImpl(
             input.images.size
         )
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         val emptyTokenUsage = TokenUsageMetrics.empty(modelId)
 
         if (input.images.isEmpty()) {
@@ -167,7 +167,7 @@ class TableExtractionAgentGenAiImpl(
             // Combine results in order
             val allExtractions = results.map { it.first }
             val aggregatedTokenUsage =
-                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_1_FLASH_LITE.modelId)) { acc, (_, tokenUsage) ->
+                results.fold(TokenUsageMetrics.empty(ModelIds.GEMINI_3_5_FLASH_LITE.modelId)) { acc, (_, tokenUsage) ->
                     TokenUsageMetrics(
                         modelName = acc.modelName,
                         promptTokens = acc.promptTokens + tokenUsage.promptTokens,
@@ -190,7 +190,7 @@ class TableExtractionAgentGenAiImpl(
         image: TableExtractionInput.ImageItem,
         imageIndex: Int
     ): Pair<TableExtractionOutput.TextExtraction, TokenUsageMetrics> {
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         // Check if image is too large
@@ -215,7 +215,6 @@ class TableExtractionAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(*(contentParts.toTypedArray()))),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(
@@ -297,12 +296,11 @@ class TableExtractionAgentGenAiImpl(
     ): BatchContentRequest {
         return BatchContentRequest(
             requestId = requestId,
-            modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId,
+            modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId,
             systemInstruction = systemInstruction,
             userPrompt = "Extract all content from this image, converting any tables to HTML format",
             imageData = Base64.encode(image.bytes),
-            imageMimeType = image.mimeType.value,
-            temperature = 1.0f
+            imageMimeType = image.mimeType.value
         ).withSchema(outputSchema) // Use same schema as interactive mode
     }
 

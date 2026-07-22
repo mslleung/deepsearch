@@ -8,6 +8,7 @@ import io.deepsearch.domain.constants.ImageMimeType
 import io.deepsearch.domain.models.valueobjects.QuerySessionId
 import io.deepsearch.domain.models.valueobjects.SessionId
 import io.deepsearch.domain.models.valueobjects.TokenUsageMetrics
+import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.agents.infra.TableMarkdownUtils
 import io.deepsearch.domain.models.entities.AgenticNavIteration
 import io.deepsearch.domain.models.entities.ScreenshotRecord
@@ -220,7 +221,7 @@ class AgenticWebpageSearchService(
         val discoveredUrls: MutableList<String> = mutableListOf(),
         val capturedImages: MutableList<CapturedImage> = mutableListOf(),
         val capturedHashes: MutableSet<String> = mutableSetOf(),
-        var aggregatedTokenUsage: TokenUsageMetrics = TokenUsageMetrics.empty("gemini-3.1-flash-lite"),
+        var aggregatedTokenUsage: TokenUsageMetrics = TokenUsageMetrics.empty(ModelIds.GEMINI_3_5_FLASH_LITE.modelId),
         var previousClickScreenshot: ByteArray? = null,
         var previousDomSnapshot: IBrowserPage.DomSnapshot? = null,
         var lastClickVisualChanged: Boolean = false,
@@ -352,7 +353,7 @@ class AgenticWebpageSearchService(
                     } catch (e: Exception) {
                         logger.warn("Extraction pipeline failed at iter={}: {}", iteration, e.message)
                         emit(ExtractionPipelineResult(
-                            regionLocatorTokenUsage = TokenUsageMetrics.empty("gemini-3.1-flash-lite"),
+                            regionLocatorTokenUsage = TokenUsageMetrics.empty(ModelIds.GEMINI_3_5_FLASH_LITE.modelId),
                             regionLocatorMs = 0,
                             extractionResult = ExtractionResult(emptyList(), emptyList()),
                             extractionMs = 0,
@@ -1503,7 +1504,7 @@ class AgenticWebpageSearchService(
         val extracted = mutableListOf<ExtractedContent>()
         val images = mutableListOf<CapturedImage>()
         val regionCropMetas = mutableListOf<RegionCropMeta>()
-        var totalTokens = TokenUsageMetrics.empty("gemini-3.1-flash-lite")
+        var totalTokens = TokenUsageMetrics.empty(ModelIds.GEMINI_3_5_FLASH_LITE.modelId)
 
         for ((tIdx, prep) in tableRegions.withIndex()) {
             val regionIdx = regionIndexOffset + tIdx

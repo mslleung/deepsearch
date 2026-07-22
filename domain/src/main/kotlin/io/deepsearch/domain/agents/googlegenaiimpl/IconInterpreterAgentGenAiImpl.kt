@@ -78,7 +78,7 @@ class IconInterpreterAgentGenAiImpl(
 
         // Plain colour icons carry no semantic meaning (they are just uniform background blocks).
         // Catch these early to reduce token usage.
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
         
         if (isPlainColorIcon(input.bytes, input.mimeType)) {
@@ -95,7 +95,6 @@ class IconInterpreterAgentGenAiImpl(
                     modelId,
                     listOf(Content.fromParts(Part.fromBytes(input.bytes, input.mimeType.value))),
                     GenerateContentConfig.builder()
-                        .temperature(1.0F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(

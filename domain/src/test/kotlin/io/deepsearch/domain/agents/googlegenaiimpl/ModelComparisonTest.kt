@@ -48,8 +48,8 @@ class ModelComparisonTest : IsolatedKoinTest() {
     private val browserPool by inject<IBrowserPool>()
 
     private val modelsUnderTest = listOf(
-        ModelIds.GEMINI_3_5_FLASH,
-        ModelIds.GEMINI_3_1_FLASH_LITE,
+        ModelIds.GEMINI_3_6_FLASH,
+        ModelIds.GEMINI_3_5_FLASH_LITE,
         ModelIds.GEMMA_4_26B_A4B,
     )
 
@@ -146,7 +146,6 @@ class ModelComparisonTest : IsolatedKoinTest() {
         """.trimIndent()
 
         val config = GenerateContentConfig.builder()
-            .temperature(0F)
             .responseSchema(pricingTierSchema)
             .responseMimeType("application/json")
             .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())
@@ -182,7 +181,6 @@ class ModelComparisonTest : IsolatedKoinTest() {
             """.trimIndent()
 
             val config = GenerateContentConfig.builder()
-                .temperature(0F)
                 .responseSchema(segmentationSchema)
                 .responseMimeType("application/json")
                 .thinkingConfig(ThinkingConfig.builder().thinkingLevel(ThinkingLevel.Known.MINIMAL).build())

@@ -54,7 +54,7 @@ class GoogleUrlContextSearchAgentGenAiImpl(
             appendLine("$query ${urls.joinToString(" ")}")
         }
 
-        val modelId = ModelIds.GEMINI_3_1_FLASH_LITE.modelId
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         var tokenUsage = TokenUsageMetrics.empty(modelId)
 
         val response = withContext(dispatcherProvider.io) {
@@ -62,7 +62,6 @@ class GoogleUrlContextSearchAgentGenAiImpl(
                 modelId,
                 userPrompt,
                 GenerateContentConfig.builder()
-                    .temperature(1.0F)
                     .thinkingConfig(
                         ThinkingConfig.builder()
                             .thinkingLevel(ThinkingLevel.Known.MINIMAL)

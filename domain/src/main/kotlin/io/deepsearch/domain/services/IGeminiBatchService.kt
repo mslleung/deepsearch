@@ -62,7 +62,7 @@ interface IGeminiBatchService {
 data class BatchContentRequest(
     /** Unique identifier for this request (used to match results) */
     val requestId: String,
-    /** The model to use (e.g., "gemini-2.5-flash-lite-preview") */
+    /** The model to use (e.g., "gemini-3.5-flash-lite") */
     val modelId: String,
     /** System instruction for the model */
     val systemInstruction: String?,
@@ -72,8 +72,6 @@ data class BatchContentRequest(
     val imageData: String? = null,
     /** Optional image MIME type */
     val imageMimeType: String? = null,
-    /** Temperature for generation */
-    val temperature: Float = 1.0f,
     /** Optional metadata for client-side use (not sent to the API) */
     val metadata: Map<String, String>? = null
 ) {

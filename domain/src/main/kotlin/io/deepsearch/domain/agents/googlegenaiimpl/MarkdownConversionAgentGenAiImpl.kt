@@ -94,7 +94,6 @@ class MarkdownConversionAgentGenAiImpl(
                         )
                     ),
                     GenerateContentConfig.builder()
-                        .temperature(1F)
                         .responseSchema(outputSchema)
                         .responseMimeType("application/json")
                         .thinkingConfig(

@@ -6,6 +6,7 @@ import com.google.genai.types.FileSearch
 import com.google.genai.types.GenerateContentConfig
 import com.google.genai.types.Part
 import com.google.genai.types.Tool
+import io.deepsearch.domain.agents.infra.ModelIds
 import io.deepsearch.domain.config.IApplicationCoroutineScope
 import io.deepsearch.domain.config.domainBenchmarkTestModule
 import io.deepsearch.domain.models.valueobjects.FileSearchStoreInfo
@@ -143,14 +144,13 @@ class FileSearchGroundingMetadataTest : IsolatedKoinTest() {
             )
             .build()
 
-        val modelId = "gemini-3.1-flash-lite"
+        val modelId = ModelIds.GEMINI_3_5_FLASH_LITE.modelId
         println("Using model: $modelId")
 
         val response = client.models.generateContent(
             modelId,
             query,
             GenerateContentConfig.builder()
-                .temperature(1.0F)
                 .tools(listOf(fileSearchTool))
                 .systemInstruction(
                     Content.fromParts(Part.fromText("Answer using only information from the file search results."))
